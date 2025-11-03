@@ -64,8 +64,12 @@ def test_forward_quantize(
     num_bits = 8
     quantization_scheme = create_quantization_scheme(
         targets=["*"],
-        weights=QuantizationArgs(num_bits=num_bits, symmetric=True),
-        input_activations=QuantizationArgs(num_bits=num_bits, symmetric=True),
+        weights=QuantizationArgs(
+            num_bits=num_bits, symmetric=True, scale_dtype=torch.float
+        ),
+        input_activations=QuantizationArgs(
+            num_bits=num_bits, symmetric=True, scale_dtype=torch.float
+        ),
     )
     quantization_args = QuantizationArgs(num_bits=num_bits, symmetric=True)
     layer = Linear(4, 4)
