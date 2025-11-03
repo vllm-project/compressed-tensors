@@ -15,7 +15,6 @@ from collections import defaultdict
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Optional, Set, Union
 
-import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
 from compressed_tensors.quantization.quant_scheme import (
