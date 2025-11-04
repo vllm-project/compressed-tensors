@@ -201,7 +201,7 @@ MXFP4A16 = dict(
         dynamic=False,
         group_size=32,
         scale_dtype=torch.uint8,
-        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
     )
 )
 
@@ -213,7 +213,7 @@ MXFP4 = dict(
         symmetric=True,
         dynamic=False,
         scale_dtype=torch.uint8,
-        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
     ),
     input_activations=QuantizationArgs(
         num_bits=4,
@@ -223,7 +223,7 @@ MXFP4 = dict(
         symmetric=True,
         group_size=32,
         scale_dtype=torch.uint8,
-        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
     ),
 )
 
