@@ -34,7 +34,7 @@ def test_model_forward_pass(model_stub):
     """
     # Load model
     model = AutoModelForCausalLM.from_pretrained(
-        model_stub, torch_dtype=torch.bfloat16, device_map="auto"
+        model_stub, torch_dtype=torch.float16, device_map="auto"
     )
 
     # Load tokenizer

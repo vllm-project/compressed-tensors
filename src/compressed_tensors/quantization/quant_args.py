@@ -269,7 +269,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         dynamic = model.dynamic
         observer = model.observer
         dynamic = model.dynamic
-        scale_dtype = model.scale_dtype
         zp_dtype = model.zp_dtype
 
         # infer strategy
@@ -361,14 +360,10 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         if zp_dtype is None:
             zp_dtype = model.pytorch_dtype()
 
-        if scale_dtype is None:
-            scale_dtype = torch.bfloat16
-
         # write back modified values
         model.strategy = strategy
         model.observer = observer
         model.zp_dtype = zp_dtype
-        model.scale_dtype = scale_dtype
         return model
 
     def pytorch_dtype(self) -> torch.dtype:
