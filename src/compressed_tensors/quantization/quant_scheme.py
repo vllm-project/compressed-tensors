@@ -11,11 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import warnings
 from copy import deepcopy
 from typing import List, Optional
 
+import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import (
     FP8_E4M3_DATA,
@@ -200,6 +200,8 @@ MXFP4A16 = dict(
         symmetric=True,
         dynamic=False,
         group_size=32,
+        scale_dtype=torch.uint8,
+        scale_dtype=torch.uint8,
     )
 )
 
@@ -210,7 +212,8 @@ MXFP4 = dict(
         strategy=QuantizationStrategy.GROUP,
         symmetric=True,
         dynamic=False,
-        group_size=32,
+        scale_dtype=torch.uint8,
+        scale_dtype=torch.uint8,
     ),
     input_activations=QuantizationArgs(
         num_bits=4,
@@ -219,6 +222,8 @@ MXFP4 = dict(
         dynamic=True,
         symmetric=True,
         group_size=32,
+        scale_dtype=torch.uint8,
+        scale_dtype=torch.uint8,
     ),
 )
 
