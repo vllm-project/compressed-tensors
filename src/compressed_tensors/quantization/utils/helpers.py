@@ -89,13 +89,13 @@ def calculate_qparams(
 
     if quantization_args.symmetric:
         max_val_pos = torch.max(torch.abs(min_vals), torch.abs(max_vals))
-        scales = max_val_pos / (float(bit_range) / 2)
+        #scales = max_val_pos / (float(bit_range) / 2)
 
         if global_scale is not None:
             # Conditionally scale the generated local scale by a global_scale
             scales = global_scale * scales
 
-        scales = maybe_convert_to_mxfp4_scales(args=quantization_args, scales=scales)
+        scales = maybe_convert_to_mxfp4_scales(args=quantization_args, scales=max_val_pos)
         if quantization_args.scale_dtype is not None:
             if torch.is_floating_point(
                 torch.empty((), dtype=quantization_args.scale_dtype)
@@ -120,8 +120,8 @@ def calculate_qparams(
                 torch.tensor(0.125, dtype=FP8_E4M3_DATA.dtype, device=device),
                 scales,
             )
-        else:
-            scales = torch.clamp(scales, min=torch.finfo(torch.float32).eps)
+        #else:
+        #    scales = torch.clamp(scales, min=torch.finfo(torch.float32).eps)
 
         zero_points = torch.zeros(scales.shape, device=device, dtype=min_vals.dtype)
     else:
