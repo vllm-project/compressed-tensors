@@ -14,8 +14,8 @@
 
 import torch
 from compressed_tensors.quantization.utils import (
-    convert_mxfp4_exp_scale,
     generate_mxfp4_scales,
+    maybe_convert_from_mxfp4_scale,
     round_to_power_2,
 )
 
@@ -61,6 +61,12 @@ def test_round_power_2():
 
 
 def test_mxfp4_scales_e2e():
+    from compressed_tensors.quantization.quant_args import (
+        QuantizationArgs,
+        QuantizationStrategy,
+        QuantizationType,
+    )
+
     mock_weight = torch.normal(mean=0.0002, std=0.0576, size=(2880, 2880))
 
     x = mock_weight.reshape(*mock_weight.shape[:-1], -1, 32).to(torch.bfloat16)
@@ -71,8 +77,16 @@ def test_mxfp4_scales_e2e():
     max_vals = torch.max(max_vals, torch.zeros_like(max_vals))
     block_max = torch.max(torch.abs(min_vals), torch.abs(max_vals))
 
-    scales_generated = generate_mxfp4_scales(block_max)
-    converted_ct = convert_mxfp4_exp_scale(scales_generated)
+    scales_generated = generate_mxfp4_scales(block_max, clamp=True)
+    args = QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+    )
+    converted_ct = maybe_convert_from_mxfp4_scale(args=args, scale=scales_generated)
 
     scales_exp = torch.log2(converted_ct)
     block_max_exp = torch.floor(torch.log2(round_to_power_2(block_max))) - 2

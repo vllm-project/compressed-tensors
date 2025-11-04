@@ -26,6 +26,9 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationType,
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
+from compressed_tensors.quantization.utils.mxfp4_utils import (
+    maybe_convert_to_mxfp4_scales,
+)
 from compressed_tensors.utils import deprecated
 from loguru import logger
 from torch import FloatTensor, IntTensor, Tensor
@@ -92,6 +95,7 @@ def calculate_qparams(
             # Conditionally scale the generated local scale by a global_scale
             scales = global_scale * scales
 
+        scales = maybe_convert_to_mxfp4_scales(args=quantization_args, scales=scales)
         if quantization_args.scale_dtype is not None:
             if torch.is_floating_point(
                 torch.empty((), dtype=quantization_args.scale_dtype)
