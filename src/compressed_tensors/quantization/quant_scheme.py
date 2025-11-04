@@ -212,6 +212,7 @@ MXFP4 = dict(
         strategy=QuantizationStrategy.GROUP,
         symmetric=True,
         dynamic=False,
+        group_size=32,
         scale_dtype=torch.uint8,
         zp_dtype=torch.uint8,
     ),
