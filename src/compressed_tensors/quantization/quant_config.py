@@ -22,7 +22,7 @@ from compressed_tensors.quantization.quant_scheme import (
     preset_name_to_scheme,
 )
 from compressed_tensors.quantization.utils import is_module_quantized, module_type
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
 
@@ -277,3 +277,6 @@ class QuantizationConfig(BaseModel):
                     return True
 
         return False
+
+    # TODO set `extra="forbid"` when upstream transformers is compatible
+    model_config = ConfigDict(extra="ignore")
