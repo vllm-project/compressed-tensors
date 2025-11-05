@@ -466,7 +466,7 @@ def _quantize(
     # if a global scale is optionally provided, use it
     # to further scale the local `scale` parameter
     if global_scale is not None:
-        scale = scale.to(global_scale.dtype) / global_scale
+        scale = scale / global_scale
 
     scaled = x / scale
 
@@ -499,7 +499,7 @@ def _dequantize(
     # if a global scale is optionally provided, use it
     # to further scale the local `scale` parameter
     if global_scale is not None:
-        scale = scale.to(global_scale.dtype) / global_scale
+        scale = scale / global_scale
 
     dequant_value = x_q.to(scale.dtype)
 

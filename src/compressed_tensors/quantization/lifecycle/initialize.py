@@ -248,19 +248,17 @@ def initialize_qparams(
         assert False, f"Unknown strategy {strategy}"
 
     # 2. Identify quantization scale and zp dtype
-    if quantization_args.scale_dtype is None:
-        if observed_dtype not in [
-            torch.float16,
-            torch.bfloat16,
-            torch.float32,
-            torch.float64,
-        ]:
-            observed_dtype = torch.float16
-        quantization_args.scale_dtype = observed_dtype
+    if observed_dtype not in [
+        torch.float16,
+        torch.bfloat16,
+        torch.float32,
+        torch.float64,
+    ]:
+        observed_dtype = torch.float16
 
     # 3. Initializes scale/zp for the module
     init_scale = Parameter(
-        torch.empty(expected_shape, dtype=quantization_args.scale_dtype, device=device),
+        torch.empty(expected_shape, dtype=observed_dtype, device=device),
         requires_grad=False,
     )
     register_offload_parameter(module, f"{base_name}_scale", init_scale)

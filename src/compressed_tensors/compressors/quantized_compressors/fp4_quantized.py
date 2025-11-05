@@ -103,6 +103,7 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         if device is not None:
             weight_packed = weight_packed.to(device)
         compressed_dict["weight_packed"] = weight_packed
+        compressed_dict["weight_scale"] = scale.to(quantization_args.scale_dtype)
         return compressed_dict
 
     def decompress_weight(
@@ -111,8 +112,8 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         quantization_args: Optional[QuantizationArgs] = None,
     ) -> torch.Tensor:
         weight = compressed_data["weight_packed"]
-        scale = compressed_data["weight_scale"]
         global_scale = compressed_data["weight_global_scale"]
+        scale = compressed_data["weight_scale"].to(global_scale.dtype)
         m, n = weight.shape
         # TODO: use a user provided dequant dtype
         unpacked = unpack_fp4_from_uint8(weight, m, n * 2)
