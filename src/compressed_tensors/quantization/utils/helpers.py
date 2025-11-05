@@ -123,12 +123,8 @@ def calculate_qparams(
         scales,
     )
 
-    # match zero-points to quantized type
-    # if casting to int, use round instead of truncate
-
-    if quantization_args.type == QuantizationType.INT:
-        zero_points = torch.round(zero_points)
-    zero_points = zero_points.to(quantization_args.zp_dtype)
+    # 5. Round the zp to zp_dtype
+    zero_points = round_to_quantized_type(zero_points, dtype=quantization_args.zp_dtype)
 
     if scales.ndim == 0:
         scales = scales.reshape(1)
