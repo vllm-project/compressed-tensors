@@ -479,3 +479,301 @@ def test_apply_attention():
         assert hasattr(layer.self_attn, "q_scale")
         assert hasattr(layer.self_attn, "k_scale")
         assert hasattr(layer.self_attn, "v_scale")
+
+
+def test_group_size_validation_raises_error():
+    """Test that GROUP strategy validation raises error for non-divisible layers"""
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    # Create config with GROUP strategy and group_size=128
+    # Most layers have 288 input features (NOT divisible by 128)
+    # down_proj layers have 768 input features (divisible by 128)
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=4,
+                    type="int",
+                    symmetric=True,
+                    strategy="group",
+                    group_size=128,
+                ),
+            )
+        },
+    )
+
+    # Should raise ValueError because most layers (q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj)
+    # have 288 input features which are not divisible by group_size=128
+    with pytest.raises(ValueError, match="Quantization divisibility validation failed"):
+        apply_quantization_config(model, config, validate_group_or_block_size=True)
+
+
+def test_group_size_validation_error_message():
+    """Test that validation error message contains helpful information"""
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=4,
+                    type="int",
+                    symmetric=True,
+                    strategy="group",
+                    group_size=128,
+                ),
+            )
+        },
+    )
+
+    try:
+        apply_quantization_config(model, config, validate_group_or_block_size=True)
+        pytest.fail("Should have raised ValueError")
+    except ValueError as e:
+        error_msg = str(e)
+        # Check that error message contains expected components
+        assert "Quantization divisibility validation failed" in error_msg
+        # Should contain some layer names with 288 input features
+        assert "q_proj" in error_msg or "k_proj" in error_msg or "gate_proj" in error_msg
+        assert "ignore:" in error_msg
+        assert "SUGGESTED FIX" in error_msg
+
+
+def test_group_size_validation_disabled():
+    """Test that validation can be disabled"""
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=4,
+                    type="int",
+                    symmetric=True,
+                    strategy="group",
+                    group_size=128,
+                ),
+            )
+        },
+    )
+
+    # Should NOT raise error when validation is disabled
+    apply_quantization_config(model, config, validate_group_or_block_size=False)
+
+    # Verify that quantization was still applied
+    assert hasattr(model.model.layers[0].self_attn.q_proj, "quantization_scheme")
+    assert hasattr(model.model.layers[0].mlp.down_proj, "quantization_scheme")
+
+
+def test_group_size_validation_with_ignore_list():
+    """Test that validation respects ignore list"""
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    # Create config with problematic layers (288 input features) in ignore list
+    # Only quantize down_proj layers which have 768 input features (divisible by 128)
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=4,
+                    type="int",
+                    symmetric=True,
+                    strategy="group",
+                    group_size=128,
+                ),
+            )
+        },
+        ignore=["re:.*q_proj", "re:.*k_proj", "re:.*v_proj", "re:.*o_proj",
+                "re:.*gate_proj", "re:.*up_proj", "lm_head"],
+    )
+
+    # Should NOT raise error because problematic layers are ignored
+    apply_quantization_config(model, config, validate_group_or_block_size=True)
+
+    # Verify that only down_proj layers were quantized
+    assert hasattr(model.model.layers[0].mlp.down_proj, "quantization_scheme")
+    assert not hasattr(model.model.layers[0].self_attn.q_proj, "quantization_scheme")
+    assert not hasattr(model.model.layers[0].mlp.gate_proj, "quantization_scheme")
+
+
+def test_channel_strategy_no_validation():
+    """Test that validation doesn't trigger for non-GROUP strategies"""
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    # Create config with CHANNEL strategy (not GROUP)
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=4,
+                    type="int",
+                    symmetric=True,
+                    strategy="channel",
+                ),
+            )
+        },
+    )
+
+    # Should NOT raise error for CHANNEL strategy
+    apply_quantization_config(model, config, validate_group_or_block_size=True)
+
+    # Verify that quantization was applied
+    assert hasattr(model.model.layers[0].self_attn.q_proj, "quantization_scheme")
+    assert hasattr(model.model.layers[0].mlp.down_proj, "quantization_scheme")
+
+
+def test_tensor_strategy_no_validation():
+    """Test that validation doesn't trigger for TENSOR strategy"""
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    # Create config with TENSOR strategy (not GROUP)
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=8,
+                    type="int",
+                    symmetric=True,
+                    strategy="tensor",
+                ),
+            )
+        },
+    )
+
+    # Should NOT raise error for TENSOR strategy
+    apply_quantization_config(model, config, validate_group_or_block_size=True)
+
+    # Verify that quantization was applied
+    assert hasattr(model.model.layers[0].self_attn.q_proj, "quantization_scheme")
+    assert hasattr(model.model.layers[0].mlp.down_proj, "quantization_scheme")
+
+
+def test_block_strategy_validation_raises_error():
+    """Test that BLOCK strategy validation raises error for non-divisible layers"""
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    # Create config with BLOCK strategy
+    # Using block_structure [100, 100] which won't divide layers with 288 input features
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=4,
+                    type="int",
+                    symmetric=True,
+                    strategy="block",
+                    block_structure=[100, 100],
+                ),
+            )
+        },
+    )
+
+    # Should raise ValueError because layers with 288 input features
+    # are not divisible by block_structure [100, 100]
+    with pytest.raises(ValueError, match="Quantization divisibility validation failed"):
+        apply_quantization_config(model, config, validate_group_or_block_size=True)
+
+
+def test_block_strategy_validation_passes():
+    """Test that BLOCK strategy validation passes when dimensions are divisible"""
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    # Create config with BLOCK strategy
+    # Using block_structure [96, 96] which divides down_proj layers (768x288)
+    # 768 % 96 = 0, 288 % 96 = 0
+    # but testing with ignore list for others
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=4,
+                    type="int",
+                    symmetric=True,
+                    strategy="block",
+                    block_structure=[96, 96],
+                ),
+            )
+        },
+        ignore=["re:.*q_proj", "re:.*k_proj", "re:.*v_proj", "re:.*o_proj",
+                "re:.*gate_proj", "re:.*up_proj", "lm_head"],
+    )
+
+    # Should NOT raise error
+    apply_quantization_config(model, config, validate_group_or_block_size=True)
+
+    # Verify that only down_proj layers were quantized
+    assert hasattr(model.model.layers[0].mlp.down_proj, "quantization_scheme")
+    assert not hasattr(model.model.layers[0].self_attn.q_proj, "quantization_scheme")
+
+
+def test_group_size_validation_with_divisible_group_size():
+    """Test that validation passes when all layers are divisible by group_size"""
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    # Using group_size=96 which divides both 288 and 768
+    # 288 % 96 = 0, 768 % 96 = 0
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=4,
+                    type="int",
+                    symmetric=True,
+                    strategy="group",
+                    group_size=96,
+                ),
+            )
+        },
+        ignore=["lm_head"],
+    )
+
+    # Should NOT raise error
+    apply_quantization_config(model, config, validate_group_or_block_size=True)
+
+    # Verify quantization was applied to layers
+    assert hasattr(model.model.layers[0].self_attn.q_proj, "quantization_scheme")
+    assert model.model.layers[0].self_attn.q_proj.quantization_scheme.weights.group_size == 96
+    assert hasattr(model.model.layers[0].mlp.down_proj, "quantization_scheme")
+    assert model.model.layers[0].mlp.down_proj.quantization_scheme.weights.group_size == 96
+
+
+def test_group_size_validation_with_partial_ignore():
+    """Test validation with partial ignore list"""
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    # Ignore only some layers, so other layers with 288 input features should still cause an error
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=4,
+                    type="int",
+                    symmetric=True,
+                    strategy="group",
+                    group_size=128,
+                ),
+            )
+        },
+        ignore=["re:.*gate_proj", "lm_head"],  # Only ignore gate_proj, not other 288-input layers
+    )
+
+    # Should raise ValueError because layers like q_proj, k_proj, etc. are not divisible and not ignored
+    with pytest.raises(ValueError) as exc_info:
+        apply_quantization_config(model, config, validate_group_or_block_size=True)
+
+    # Check that error mentions layers that aren't ignored
+    error_msg = str(exc_info.value)
+    # Should mention some of the non-ignored 288-input layers
+    assert any(name in error_msg for name in ["q_proj", "k_proj", "v_proj", "o_proj", "up_proj"])
+    # Should NOT mention gate_proj since it's ignored
+    assert "gate_proj" not in error_msg
