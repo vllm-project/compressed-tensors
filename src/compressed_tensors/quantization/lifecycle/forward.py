@@ -21,7 +21,7 @@ from compressed_tensors.quantization.quant_args import (
     DynamicType,
     QuantizationArgs,
     QuantizationStrategy,
-    round_to_quantized_type,
+    round_to_quantized_type_args,
 )
 from compressed_tensors.quantization.quant_config import QuantizationStatus
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
@@ -473,13 +473,10 @@ def _quantize(
     if zero_point is not None:
         scaled += zero_point.to(x.dtype)
 
-    # clamp first because cast isn't guaranteed to be saturated (ie for fp8)
-    clamped_value = torch.clamp(
-        scaled,
-        q_min,
-        q_max,
+    # clamp and round
+    quantized_value = round_to_quantized_type_args(
+        tensor=scaled, args=args, min=q_min, max=q_max
     )
-    quantized_value = round_to_quantized_type(clamped_value, args)
 
     if dtype is not None:
         quantized_value = quantized_value.to(dtype)

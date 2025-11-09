@@ -24,7 +24,7 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
     QuantizationStrategy,
     QuantizationType,
-    round_to_quantized_type,
+    round_to_quantized_type_dtype,
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.utils import deprecated
@@ -108,7 +108,9 @@ def calculate_qparams(
 
     # 3. Conditionally round the scale to the quantized dtype, if scale_dtype is set
     if quantization_args.scale_dtype is not None:
-        scales = round_to_quantized_type(scales, dtype=quantization_args.scale_dtype)
+        scales = round_to_quantized_type_dtype(
+            scales, dtype=quantization_args.scale_dtype
+        )
 
     # 4. Update any 0s with small values to
     # prevent div by 0
@@ -124,7 +126,9 @@ def calculate_qparams(
     )
 
     # 5. Round the zp to zp_dtype
-    zero_points = round_to_quantized_type(zero_points, dtype=quantization_args.zp_dtype)
+    zero_points = round_to_quantized_type_dtype(
+        zero_points, dtype=quantization_args.zp_dtype
+    )
 
     if scales.ndim == 0:
         scales = scales.reshape(1)

@@ -31,7 +31,8 @@ __all__ = [
     "QuantizationType",
     "QuantizationStrategy",
     "QuantizationArgs",
-    "round_to_quantized_type",
+    "round_to_quantized_type_args",
+    "round_to_quantized_type_dtype",
     "ActivationOrdering",
     "DynamicType",
 ]
@@ -392,47 +393,57 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     model_config = ConfigDict(extra="forbid")
 
 
-def _round_dtype(tensor: torch.Tensor, dtype: torch.dtype):
-    if torch.is_floating_point(torch.tensor([], dtype=dtype)):
-        finfo = torch.finfo(dtype)
-        return torch.clamp(tensor, finfo.min, finfo.max).to(dtype)
-    else:
-        iinfo = torch.iinfo(dtype)
-        return torch.round(torch.clamp(tensor, iinfo.min, iinfo.max))
-
-
-def _round_args(tensor: torch.Tensor, args: QuantizationArgs):
-    if args.type == QuantizationType.FLOAT:
-        if args.num_bits == 8:
-            return tensor.to(FP8_E4M3_DATA.dtype)
-        elif args.num_bits == 4:
-            return FP4_E2M1_DATA.cast_to_fp4(tensor)
-        else:
-            raise NotImplementedError("Only num_bits in (4, 8) are supported")
-    elif args.type == QuantizationType.INT:
-        return torch.round(tensor)
-    else:
-        raise ValueError(f"Invalid quantization type {args.type}")
-
-
-def round_to_quantized_type(
-    tensor: torch.Tensor,
-    args: Optional[QuantizationArgs] = None,
-    dtype: Optional[torch.dtype] = None,
+def round_to_quantized_type_dtype(
+    tensor: torch.Tensor, dtype: torch.dtype
 ) -> torch.Tensor:
     """
-    Rounds each element of the input tensor to the nearest quantized representation,
-    keeping to original dtype. This can be done given QuantizationArgs or dtype
+    Rounds an input tensor to the nearest quantized representation given a dtype.
+    The original dtype is kept post-rounding.
 
     :param tensor: tensor to round
-    :param args: QuantizationArgs to pull appropriate dtype from
     :param dtype: dtype to use for rounding
     :return: rounded tensor
     """
     original_dtype = tensor.dtype
-    if dtype is not None:
-        rounded = _round_dtype(tensor=tensor, dtype=dtype)
-    elif args is not None:
-        rounded = _round_args(tensor=tensor, args=args)
+    if torch.is_floating_point(torch.tensor([], dtype=dtype)):
+        finfo = torch.finfo(dtype)
+        rounded = torch.clamp(tensor, finfo.min, finfo.max).to(dtype)
+    else:
+        iinfo = torch.iinfo(dtype)
+        rounded = torch.round(torch.clamp(tensor, iinfo.min, iinfo.max))
+
+    return rounded.to(original_dtype)
+
+
+def round_to_quantized_type_args(
+    tensor: torch.Tensor,
+    args: QuantizationArgs,
+    min: torch.Tensor,
+    max: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Rounds an input tensor to the nearest quantized representation given
+    qunatization args. The original dtype is kept post-rounding.
+
+    :param tensor: tensor to round
+    :param args: quantization args to use for rounding
+    :param min: min value to use for clamping
+    :param max: max value to use for clamping
+    :return: rounded tensor
+    """
+
+    original_dtype = tensor.dtype
+    tensor = torch.clamp(tensor, min, max)
+    if args.type == QuantizationType.FLOAT:
+        if args.num_bits == 8:
+            rounded = tensor.to(FP8_E4M3_DATA.dtype)
+        elif args.num_bits == 4:
+            rounded = FP4_E2M1_DATA.cast_to_fp4(tensor)
+        else:
+            raise NotImplementedError("Only num_bits in (4, 8) are supported")
+    elif args.type == QuantizationType.INT:
+        rounded = torch.round(tensor)
+    else:
+        raise ValueError(f"Invalid quantization type {args.type}")
 
     return rounded.to(original_dtype)
