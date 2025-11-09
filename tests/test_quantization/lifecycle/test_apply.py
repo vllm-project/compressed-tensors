@@ -22,7 +22,6 @@ import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_METHOD,
-    FP8_E4M3_DATA,
     QuantizationArgs,
     QuantizationConfig,
     QuantizationScheme,
@@ -157,7 +156,7 @@ def test_apply_quantization_config_tinyllama():
                         num_bits=8,
                         type="float",
                         strategy="tensor",
-                        scale_dtype=FP8_E4M3_DATA.dtype,
+                        scale_dtype=torch.float8_e4m3fn,
                         zp_dtype=torch.float,
                     ),
                 )
@@ -171,7 +170,7 @@ def test_apply_quantization_config_tinyllama():
                         num_bits=8,
                         type="float",
                         strategy="tensor",
-                        scale_dtype=FP8_E4M3_DATA.dtype,
+                        scale_dtype=torch.float8_e4m3fn,
                         zp_dtype=torch.float,
                     ),
                 )
@@ -188,7 +187,7 @@ def test_apply_quantization_config_tinyllama():
                 num_bits=8,
                 type="float",
                 strategy="tensor",
-                scale_dtype=FP8_E4M3_DATA.dtype,
+                scale_dtype=torch.float8_e4m3fn,
                 zp_dtype=torch.float,
             ),
         ),
@@ -200,7 +199,7 @@ def test_apply_quantization_config_tinyllama():
                         num_bits=8,
                         type="float",
                         strategy="tensor",
-                        scale_dtype=FP8_E4M3_DATA.dtype,
+                        scale_dtype=torch.float8_e4m3fn,
                         zp_dtype=torch.float,
                     ),
                 )
@@ -209,7 +208,7 @@ def test_apply_quantization_config_tinyllama():
                 num_bits=8,
                 type="float",
                 strategy="tensor",
-                scale_dtype=FP8_E4M3_DATA.dtype,
+                scale_dtype=torch.float8_e4m3fn,
                 zp_dtype=torch.float,
             ),
         ),
@@ -473,7 +472,7 @@ def test_apply_kv_cache():
         num_bits=8,
         type="float",
         strategy="tensor",
-        scale_dtype=FP8_E4M3_DATA.dtype,
+        scale_dtype=torch.float8_e4m3fn,
         zp_dtype=torch.float,
     )
     config = QuantizationConfig(config_groups={}, kv_cache_scheme=args)
@@ -499,7 +498,7 @@ def test_apply_attention():
             num_bits=8,
             type="float",
             strategy="tensor",
-            scale_dtype=FP8_E4M3_DATA.dtype,
+            scale_dtype=torch.float8_e4m3fn,
             zp_dtype=torch.float,
         ),
     )

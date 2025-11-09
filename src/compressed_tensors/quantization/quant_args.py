@@ -14,7 +14,7 @@
 
 import warnings
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 import torch
 from compressed_tensors.utils import Aliasable
@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 
-class INT4_DATA(torch.iinfo):
+class INT4_DATA(torch.iinfo if TYPE_CHECKING else object):
     bits = 4
     min = -8
     max = 7
@@ -63,7 +63,7 @@ class INT4_DATA(torch.iinfo):
         return x * sign
 
 
-class FP4_E2M1_DATA(torch.finfo):
+class FP4_E2M1_DATA(torch.finfo if TYPE_CHECKING else object):
     bits = 4
     min = -6.0
     max = 6.0
@@ -377,7 +377,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         if zp_dtype is None:
             # support legacy nvfp4 configs
             if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
-                zp_dtype = FP8_E4M3_DATA.dtype
+                zp_dtype = torch.float8_e4m3fn
             # default to quantized dtype
             else:
                 zp_dtype = model.pytorch_dtype()

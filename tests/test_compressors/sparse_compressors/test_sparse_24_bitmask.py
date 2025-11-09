@@ -16,7 +16,6 @@
 import pytest
 import torch
 from compressed_tensors import Sparse24BitMaskTensor
-from compressed_tensors.quantization import FP8_E4M3_DATA
 from compressed_tensors.utils import combine_shards, shard_tensor
 from tests.testing_utils import generate_pruned_semi_structured_mat, requires_gpu
 
@@ -47,7 +46,7 @@ def shard_validation():
 
 def validate_compression(dense_matrix, decompressed_tensor):
     """Validate that the decompressed tensor matches the original dense matrix."""
-    if decompressed_tensor.dtype == FP8_E4M3_DATA.dtype:
+    if decompressed_tensor.dtype == torch.float8_e4m3fn:
         decompressed_tensor = decompressed_tensor.to("cuda")
     dense_matrix = dense_matrix.to(decompressed_tensor.device)
     assert dense_matrix.dtype == decompressed_tensor.dtype, "Dtype mismatch"
@@ -146,7 +145,7 @@ def test_bitmask_compress_decompress_sharded(
 
 
 # GPU-Specific Tests for FP8_DTYPE
-@pytest.mark.parametrize("dtype", [FP8_E4M3_DATA.dtype])
+@pytest.mark.parametrize("dtype", [torch.float8_e4m3fn])
 @requires_gpu
 def test_bitmask_compress_decompress_fp8(dense_matrix_fixture, dtype):
     test_bitmask_compress_decompress(dense_matrix_fixture, dtype)
@@ -156,7 +155,7 @@ def test_bitmask_compress_decompress_fp8(dense_matrix_fixture, dtype):
     "dtype, M, K, shard_sizes, shard_dim, expected_shapes",
     [
         (
-            FP8_E4M3_DATA.dtype,
+            torch.float8_e4m3fn,
             2560,
             2048,
             [2048, 256, 256],
@@ -168,7 +167,7 @@ def test_bitmask_compress_decompress_fp8(dense_matrix_fixture, dtype):
             ],
         ),
         (
-            FP8_E4M3_DATA.dtype,
+            torch.float8_e4m3fn,
             2048,
             2048,
             [1024, 1024],

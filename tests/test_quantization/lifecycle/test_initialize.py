@@ -18,7 +18,6 @@ import math
 import pytest
 import torch
 from compressed_tensors.quantization import (
-    FP8_E4M3_DATA,
     ActivationOrdering,
     QuantizationArgs,
     QuantizationScheme,
@@ -160,8 +159,8 @@ def test_initialize_module_for_quantization_offloaded(
                 group_size=16,
                 type="float",
                 num_bits=4,
-                scale_dtype=FP8_E4M3_DATA.dtype,
-                zp_dtype=FP8_E4M3_DATA.dtype,
+                scale_dtype=torch.float8_e4m3fn,
+                zp_dtype=torch.float8_e4m3fn,
             ),
             None,
         ),
@@ -171,8 +170,8 @@ def test_initialize_module_for_quantization_offloaded(
                 group_size=16,
                 type="float",
                 num_bits=4,
-                scale_dtype=FP8_E4M3_DATA.dtype,
-                zp_dtype=FP8_E4M3_DATA.dtype,
+                scale_dtype=torch.float8_e4m3fn,
+                zp_dtype=torch.float8_e4m3fn,
             ),
             QuantizationArgs(
                 strategy="tensor_group",
@@ -180,8 +179,8 @@ def test_initialize_module_for_quantization_offloaded(
                 type="float",
                 num_bits=4,
                 dynamic="local",
-                scale_dtype=FP8_E4M3_DATA.dtype,
-                zp_dtype=FP8_E4M3_DATA.dtype,
+                scale_dtype=torch.float8_e4m3fn,
+                zp_dtype=torch.float8_e4m3fn,
             ),
         ),
         (

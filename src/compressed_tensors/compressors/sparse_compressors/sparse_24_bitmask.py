@@ -19,7 +19,6 @@ import torch
 from compressed_tensors.compressors.base import BaseCompressor
 from compressed_tensors.compressors.sparse_compressors.base import BaseSparseCompressor
 from compressed_tensors.config import CompressionFormat, SparsityStructure
-from compressed_tensors.quantization import FP8_E4M3_DATA
 from compressed_tensors.utils import merge_names, pack_bitmasks, unpack_bitmasks
 from torch import Tensor
 
@@ -189,11 +188,11 @@ def sparse24_bitmask_compress(
 
     bytemasks = get_24_bytemasks(tensor=tensor)
 
-    if tensor.dtype == FP8_E4M3_DATA.dtype:
+    if tensor.dtype == torch.float8_e4m3fn:
         # acces raw bytes of the tensor
         tensor_view = tensor.view(torch.int8)
         values = tensor_view[bytemasks]
-        values = values.view(FP8_E4M3_DATA.dtype)
+        values = values.view(torch.float8_e4m3fn)
     else:
         values = tensor[bytemasks]
 
@@ -224,7 +223,7 @@ def sparse24_bitmask_decompress(
     return decompressed_tensor
 
 
-def get_24_bytemasks(tensor):
+def get_24_bytemasks(tensor: torch.Tensor) -> torch.Tensor:
     """
     Generate a 2:4 sparsity mask for the given tensor.
 
@@ -241,7 +240,7 @@ def get_24_bytemasks(tensor):
                         multiple of 4.
     """
     original_dtype = tensor.dtype
-    if tensor.dtype == FP8_E4M3_DATA.dtype:
+    if tensor.dtype == torch.float8_e4m3fn:
         tensor = tensor.view(torch.int8)
     original_shape = tensor.shape
     num_elements = tensor.numel()

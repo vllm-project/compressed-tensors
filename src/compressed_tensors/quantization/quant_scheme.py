@@ -16,9 +16,9 @@ import warnings
 from copy import deepcopy
 from typing import List, Optional
 
+import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import (
-    FP8_E4M3_DATA,
     DynamicType,
     QuantizationArgs,
     QuantizationStrategy,
@@ -161,8 +161,8 @@ NVFP4A16 = dict(
         symmetric=True,
         dynamic=False,
         group_size=16,
-        scale_dtype=FP8_E4M3_DATA.dtype,
-        zp_dtype=FP8_E4M3_DATA.dtype,
+        scale_dtype=torch.float8_e4m3fn,
+        zp_dtype=torch.float8_e4m3fn,
     )
 )
 
@@ -176,8 +176,8 @@ NVFP4 = dict(
         dynamic=False,
         group_size=16,
         observer="static_minmax",
-        scale_dtype=FP8_E4M3_DATA.dtype,
-        zp_dtype=FP8_E4M3_DATA.dtype,
+        scale_dtype=torch.float8_e4m3fn,
+        zp_dtype=torch.float8_e4m3fn,
     ),
     input_activations=QuantizationArgs(
         num_bits=4,
@@ -187,8 +187,8 @@ NVFP4 = dict(
         dynamic=DynamicType.LOCAL,
         group_size=16,
         observer="static_minmax",
-        scale_dtype=FP8_E4M3_DATA.dtype,
-        zp_dtype=FP8_E4M3_DATA.dtype,
+        scale_dtype=torch.float8_e4m3fn,
+        zp_dtype=torch.float8_e4m3fn,
     ),
 )
 
