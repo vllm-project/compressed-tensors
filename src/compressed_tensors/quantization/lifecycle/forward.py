@@ -461,7 +461,7 @@ def _quantize(
     if zero_point is not None:
         scaled += zero_point.to(x.dtype)
 
-    x = round_to_quantized_type(x, args.pytorch_dtype())
+    x = round_to_quantized_type(x, args.quantized_info())
 
     if dtype is not None:
         x = x.to(dtype)

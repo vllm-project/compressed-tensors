@@ -16,13 +16,10 @@ import logging
 import math
 from typing import Generator, Optional, Tuple
 
-from functools import cache
-
 import torch
 from compressed_tensors.quantization.quant_args import (
     FP4_E2M1_DATA,
     FP8_E4M3_DATA,
-    FloatArgs,
     QuantizationArgs,
     QuantizationStrategy,
     QuantizationType,
@@ -46,7 +43,6 @@ __all__ = [
     "iter_named_leaf_modules",
     "iter_named_quantizable_modules",
     "compute_dynamic_scales_and_zp",
-    "calculate_range",
     "calculate_qparams",
     "generate_gparam",
     "strategy_cdiv",
@@ -81,10 +77,10 @@ def calculate_qparams(
     # 0.0 must always be representable within the quantized range
     min_vals = torch.min(min_vals, torch.zeros_like(min_vals))
     max_vals = torch.max(max_vals, torch.zeros_like(max_vals))
-
     device = min_vals.device
 
-    bit_min, bit_max = calculate_range(args.num_bits, args.type, device)
+    quant_info = _get_dtype_info(quantization_args.quantized_info())
+    bit_min, bit_max = quant_info.min, quant_info.max
     bit_range = bit_max - bit_min
 
     # 1. Generate scale and zero-point
@@ -108,26 +104,17 @@ def calculate_qparams(
     if global_scale is not None:
         scales = global_scale * scales
 
-    # 3. Conditionally round the scale to the quantized dtype, if scale_dtype is set
-    if quantization_args.scale_dtype is not None:
-        scales = round_to_quantized_type(scales, quantization_args.scale_dtype)
+    # 3. Quantize scales and zero points
+    assert quantization_args.scale_dtype is not None  # set during lifecycle initialize
+    scales_info = _get_dtype_info(quantization_args.scale_dtype)
+    scales = round_to_quantized_type(scales, scales_info)
+    scales = torch.where(scales == 0, scales_info.eps, scales)  # prevent div by 0
 
-    # 4. Update any 0s with small values to
-    # prevent div by 0
-    eps = _get_dtype_eps(
-        dtype=quantization_args.scale_dtype
-        if quantization_args.scale_dtype is not None
-        else scales.dtype
-    )
-    scales = torch.where(
-        scales == 0,
-        torch.tensor(eps, dtype=scales.dtype, device=device),
-        scales,
-    )
+    assert quantization_args.zp_dtype is not None  # set during qargs initialize
+    zp_info = _get_dtype_info(quantization_args.zp_dtype)
+    zero_points = round_to_quantized_type(zero_points, zp_info)
 
-    # 5. Round the zp to zp_dtype
-    zero_points = round_to_quantized_type(zero_points, quantization_args.zp_dtype)
-
+    # 4. Unsqueeze scalars
     if scales.ndim == 0:
         scales = scales.reshape(1)
         zero_points = zero_points.reshape(1)
@@ -192,27 +179,6 @@ def compute_dynamic_scales_and_zp(
         max_val = torch.amax(value, dim=reduce_dims, keepdims=keep_dims)
 
     return calculate_qparams(min_val, max_val, args, global_scale=global_scale)
-
-
-@cache
-def calculate_range(qdtype: torch.dtype | FloatArgs) -> tuple[float, float]:
-    """
-    Calculated the effective quantization range for the given Quantization Args
-
-    :param quantization_args: quantization args to get range of
-    :param device: device to store the range to
-    :return: tuple endpoints for the given quantization range
-    """
-    if isinstance(qdtype, FloatArgs):
-        return (qdtype.min, qdtype.max)
-    
-    elif torch.is_floating_point(torch.tensor([], dtype=qdtype)):
-        finfo = torch.finfo(qdtype)
-        return (finfo.min, finfo.max)
-
-    else:
-        iinfo = torch.iinfo(qdtype)
-        return (iinfo.min, iinfo.max)
 
 
 def is_module_quantized(module: Module) -> bool:
@@ -395,8 +361,8 @@ def is_kv_cache_quant_scheme(scheme: QuantizationScheme) -> bool:
 def generate_gparam(
     updated_min_val: torch.Tensor,
     updated_max_val: torch.Tensor,
-    scale_data: Optional[FloatArgs] = FP8_E4M3_DATA,
-    quant_data: Optional[FloatArgs] = FP4_E2M1_DATA,
+    scale_data: Optional[torch.finfo | torch.iinfo] = FP8_E4M3_DATA,
+    quant_data: Optional[torch.finfo | torch.iinfo] = FP4_E2M1_DATA,
     dtype: Optional[torch.dtype] = torch.float32,
 ):
     """
@@ -438,12 +404,15 @@ def strategy_cdiv(
     return dividend
 
 
-def _get_dtype_eps(dtype: torch.dtype) -> float:
-    if dtype == FP8_E4M3_DATA.dtype:
-        return 0.125
-    elif dtype == FP4_E2M1_DATA.dtype:
-        return 0.25
-    elif torch.is_floating_point(torch.tensor([], dtype=dtype)):
-        return torch.finfo(dtype).eps
+def _get_dtype_info(dtype: torch.dtype | str) -> torch.finfo | torch.iinfo:
+    if isinstance(dtype, str):
+        if dtype == FP4_E2M1_DATA.dtype:
+            return FP4_E2M1_DATA
+
+        raise ValueError(f"Could not get dtype info of string {dtype}")
+
+    elif dtype.is_floating_point:
+        return torch.finfo(dtype)
+
     else:
-        return 1
+        return torch.iinfo(dtype)
