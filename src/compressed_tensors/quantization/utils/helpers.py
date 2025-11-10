@@ -127,7 +127,7 @@ def calculate_qparams(
 
     # 5. Round the zp to zp_dtype
     zero_points = round_to_quantized_type_dtype(
-        zero_points, dtype=quantization_args.zp_dtype
+        zero_points, dtype=quantization_args.zp_dtype, cast_to_original_dtype=False
     )
 
     if scales.ndim == 0:
