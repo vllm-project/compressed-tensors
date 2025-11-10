@@ -200,7 +200,9 @@ class BaseCompressor(RegistryMixin, ABC):
                 # Delete the old parameter and register the updated one
                 delete_offload_parameter(module, param_name)
                 offload_device = get_offloaded_device(module)
-                param = torch.nn.Parameter(compressed_data[param_name], requires_grad=False)
+                param = torch.nn.Parameter(
+                    compressed_data[param_name], requires_grad=False
+                )
                 register_offload_parameter(module, param_name, param, offload_device)
 
         return result
