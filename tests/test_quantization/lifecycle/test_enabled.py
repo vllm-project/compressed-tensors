@@ -26,8 +26,8 @@ from torch.nn import Linear
 
 
 def test_quantization_enabled_disabled():
-    inp = torch.randn(16, dtype=torch.bfloat16)
-    model = Linear(16, 16, dtype=torch.bfloat16)
+    inp = torch.randn(16)
+    model = Linear(16, 16)
     quantized_model = deepcopy(model)
     apply_quantization_config(
         model=quantized_model,
