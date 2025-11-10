@@ -259,7 +259,7 @@ def initialize_qparams(
 
     # 3. Initializes scale/zp for the module
     init_scale = Parameter(
-        torch.empty(expected_shape, dtype=quantization_args.scale_dtype, device=device),
+        torch.empty(expected_shape, dtype=scale_dtype, device=device),
         requires_grad=False,
     )
     register_offload_parameter(module, f"{base_name}_scale", init_scale)
