@@ -12,7 +12,7 @@ on:
 
 jobs:
   python-tests:
-    runs-on: gcp-k8s-vllm-l4-solo
+    runs-on: ibm-wdc-k8s-vllm-h100-solo
     env:
         HF_TOKEN: ${{ secrets.HF_RED_HAT_READ_ONLY }}
     steps:
