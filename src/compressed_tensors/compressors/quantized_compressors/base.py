@@ -18,7 +18,7 @@ from typing import Any, Dict, Generator, Tuple, Union
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.quantization import QuantizationScheme, QuantizationStrategy
+from compressed_tensors.quantization import QuantizationScheme
 from compressed_tensors.utils import (
     get_nested_mappings_from_state_dict,
     get_nested_weight_mappings,
@@ -143,8 +143,6 @@ class BaseQuantizationCompressor(BaseCompressor):
     def _skip_zp(
         self, name: str, names_to_scheme: Dict[str, QuantizationScheme]
     ) -> bool:
-        from compressed_tensors.compressors import PackedQuantizationCompressor
-
         module_name, zp_name = name.rsplit(".", 1) if "." in name else ("", name)
         scheme = names_to_scheme[module_name]
 
