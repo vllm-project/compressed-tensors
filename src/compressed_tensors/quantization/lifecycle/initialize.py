@@ -249,15 +249,13 @@ def initialize_qparams(
 
     # 2. Identify quantization scale and zp dtype
     scale_dtype = observed_dtype
-    if quantization_args.scale_dtype is None:
-        if scale_dtype not in [
-            torch.float16,
-            torch.bfloat16,
-            torch.float32,
-            torch.float64,
-        ]:
-            scale_dtype = torch.float16
-        quantization_args.scale_dtype = scale_dtype
+    if scale_dtype not in [
+        torch.float16,
+        torch.bfloat16,
+        torch.float32,
+        torch.float64,
+    ]:
+        scale_dtype = torch.float16
 
     # 3. Initializes scale/zp for the module
     init_scale = Parameter(

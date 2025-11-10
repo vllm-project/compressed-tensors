@@ -20,7 +20,14 @@ import torch
 from compressed_tensors.utils import Aliasable
 from compressed_tensors.utils.helpers import deprecated
 from compressed_tensors.utils.type import TorchDtype
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 
 __all__ = [
@@ -192,6 +199,12 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             "Observers constructor excluding quantization range or symmetry"
         ),
     )
+
+    @field_serializer("zp_dtype")
+    def serialize_dtype(self, dtype: torch.dtype):
+        if self.symmetric:
+            return None
+        return str(dtype)
 
     @field_validator("type", mode="before")
     def validate_type(cls, value) -> QuantizationType:
