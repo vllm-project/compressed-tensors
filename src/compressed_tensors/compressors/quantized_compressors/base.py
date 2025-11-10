@@ -155,17 +155,7 @@ class BaseQuantizationCompressor(BaseCompressor):
         if zp_name == "output_zero_point":
             args = scheme.output_activations
 
-        symmetric = args.symmetric
-        packable_strategies = [
-            QuantizationStrategy.GROUP.value,
-            QuantizationStrategy.CHANNEL.value,
-        ]
-        packed = (
-            isinstance(self, PackedQuantizationCompressor)
-            and args.strategy in packable_strategies
-        )
-
-        return symmetric or packed
+        return args.symmetric
 
     def decompress(
         self,

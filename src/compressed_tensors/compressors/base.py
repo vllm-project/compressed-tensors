@@ -20,6 +20,11 @@ from compressed_tensors.config import SparsityCompressionConfig
 from compressed_tensors.quantization import QuantizationArgs, QuantizationConfig
 from compressed_tensors.registry import RegistryMixin
 from compressed_tensors.utils import has_offloaded_params
+from compressed_tensors.utils.offload import (
+    delete_offload_parameter,
+    get_offloaded_device,
+    register_offload_parameter,
+)
 from torch import Tensor
 from torch.nn import Module
 
@@ -185,9 +190,20 @@ class BaseCompressor(RegistryMixin, ABC):
         for name, parameter in module.named_parameters():
             compressed_data[name] = parameter
 
-        return self.decompress_weight(
+        result = self.decompress_weight(
             compressed_data=compressed_data, quantization_args=quantization_args
         ).to(device)
+
+        # Update module's parameters if they were unpacked/upcast during decompression
+        for param_name in ["weight_zero_point", "weight_scale"]:
+            if param_name in compressed_data and hasattr(module, param_name):
+                # Delete the old parameter and register the updated one
+                delete_offload_parameter(module, param_name)
+                offload_device = get_offloaded_device(module)
+                param = torch.nn.Parameter(compressed_data[param_name], requires_grad=False)
+                register_offload_parameter(module, param_name, param, offload_device)
+
+        return result
 
     def decompress_weight(
         self, compressed_data: Dict[str, Tensor], **kwargs
