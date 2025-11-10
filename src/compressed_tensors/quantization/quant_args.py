@@ -427,7 +427,7 @@ def round_to_quantized_type_dtype(
         rounded = torch.clamp(tensor, finfo.min, finfo.max).to(dtype)
     else:
         iinfo = torch.iinfo(dtype)
-        rounded = torch.round(torch.clamp(tensor, iinfo.min, iinfo.max))
+        rounded = torch.round(torch.clamp(tensor, iinfo.min, iinfo.max)).to(dtype)
 
     if cast_to_original_dtype:
         return rounded.to(original_dtype)
