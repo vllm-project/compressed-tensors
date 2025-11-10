@@ -50,7 +50,6 @@ class RandomMatrixFactory(TransformFactory):
         :param module: parent module that transform will be applied to
         :param args: defines how the transform will be applied to the module
         """
-        assert hasattr(module, "weight")
         size = get_transform_size(module, args.location, self.scheme.head_dim)
         device = get_offloaded_device(module)
         precision = self.scheme.precision if args.is_online() else torch.float64
@@ -68,8 +67,8 @@ class RandomMatrixFactory(TransformFactory):
             (size, size),
             generator=self.generator,
             dtype=precision,
-            device=device,
-        )
+            device=self.generator.device,
+        ).to(device)
         return Parameter(data, requires_grad=self.scheme.requires_grad)
 
     def _create_inverse(self, weight: Parameter) -> Parameter:

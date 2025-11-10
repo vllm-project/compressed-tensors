@@ -210,7 +210,7 @@ def test_initialize_quantization_parameters(weights, input_activations):
                 assert hasattr(layer, "weight_global_scale")
                 assert layer.weight_global_scale.dtype == torch.float32
                 assert layer.weight_global_scale.numel() == 1
-                assert layer.weight_scale.dtype == FP8_E4M3_DATA.dtype
+                assert layer.weight_scale.dtype == layer.weight.dtype
             elif q_type == "input_activations":
                 assert hasattr(layer, "input_global_scale")
                 assert layer.input_global_scale.dtype == torch.float32

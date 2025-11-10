@@ -24,6 +24,7 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
     QuantizationStrategy,
     QuantizationType,
+    round_to_quantized_type_dtype,
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils.mxfp4_utils import (
@@ -87,42 +88,10 @@ def calculate_qparams(
     bit_min, bit_max = calculate_range(quantization_args, device)
     bit_range = bit_max - bit_min
 
+    # 1. Generate scale and zero-point
     if quantization_args.symmetric:
         max_val_pos = torch.max(torch.abs(min_vals), torch.abs(max_vals))
-        #scales = max_val_pos / (float(bit_range) / 2)
-
-        if global_scale is not None:
-            # Conditionally scale the generated local scale by a global_scale
-            scales = global_scale * scales
-
-        scales = maybe_convert_to_mxfp4_scales(args=quantization_args, scales=max_val_pos)
-        if quantization_args.scale_dtype is not None:
-            if torch.is_floating_point(
-                torch.empty((), dtype=quantization_args.scale_dtype)
-            ):
-                info = torch.finfo(quantization_args.scale_dtype)
-            else:
-                info = torch.iinfo(quantization_args.scale_dtype)
-
-            scales = torch.clamp(
-                scales,
-                min=info.min,
-                max=info.max,
-            )
-            scales = scales.to(quantization_args.scale_dtype)
-
-        # Clamp any potential 0s
-        if scales.dtype == FP8_E4M3_DATA.dtype:
-            # torch.clamp not supported for FP8
-            # use the next largest fp8 value from 0
-            scales = torch.where(
-                scales == 0,
-                torch.tensor(0.125, dtype=FP8_E4M3_DATA.dtype, device=device),
-                scales,
-            )
-        #else:
-        #    scales = torch.clamp(scales, min=torch.finfo(torch.float32).eps)
-
+        scales = max_val_pos / (float(bit_range) / 2)
         zero_points = torch.zeros(scales.shape, device=device, dtype=min_vals.dtype)
     else:
         if (
@@ -133,15 +102,36 @@ def calculate_qparams(
                 "Asymmetric Quantization is not supported for FP4"
             )
         scales = (max_vals - min_vals) / float(bit_range)
-        scales = torch.clamp(scales, min=torch.finfo(torch.float32).eps)
         zero_points = bit_min - (min_vals / scales)
         zero_points = torch.clamp(zero_points, bit_min, bit_max)
 
-    # match zero-points to quantized type
-    # if casting to int, use round instead of truncate
-    if quantization_args.type == QuantizationType.INT:
-        zero_points = torch.round(zero_points)
-    zero_points = zero_points.to(quantization_args.zp_dtype)
+    # 2. Conditionally scale the generated local scale by a global_scale
+    if global_scale is not None:
+        scales = global_scale * scales
+
+    # 3. Conditionally round the scale to the quantized dtype, if scale_dtype is set
+    if quantization_args.scale_dtype is not None:
+        scales = round_to_quantized_type_dtype(
+            scales, dtype=quantization_args.scale_dtype
+        )
+
+    # 4. Update any 0s with small values to
+    # prevent div by 0
+    eps = _get_dtype_eps(
+        dtype=quantization_args.scale_dtype
+        if quantization_args.scale_dtype is not None
+        else scales.dtype
+    )
+    scales = torch.where(
+        scales == 0,
+        torch.tensor(eps, dtype=scales.dtype, device=device),
+        scales,
+    )
+
+    # 5. Round the zp to zp_dtype
+    zero_points = round_to_quantized_type_dtype(
+        zero_points, dtype=quantization_args.zp_dtype, cast_to_original_dtype=False
+    )
 
     if scales.ndim == 0:
         scales = scales.reshape(1)
@@ -459,3 +449,14 @@ def strategy_cdiv(
             logger.bind(log_once=True).warning(message)
 
     return dividend
+
+
+def _get_dtype_eps(dtype: torch.dtype) -> float:
+    if dtype == FP8_E4M3_DATA.dtype:
+        return 0.125
+    elif dtype == FP4_E2M1_DATA.dtype:
+        return 0.25
+    elif torch.is_floating_point(torch.tensor([], dtype=dtype)):
+        return torch.finfo(dtype).eps
+    else:
+        return 1
