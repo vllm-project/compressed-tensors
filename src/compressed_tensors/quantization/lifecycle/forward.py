@@ -28,7 +28,6 @@ from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils import (
     calculate_range,
     compute_dynamic_scales_and_zp,
-    maybe_convert_from_mxfp4_scale,
 )
 from torch.nn import Module
 
