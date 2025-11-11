@@ -469,7 +469,6 @@ def _quantize(
     if global_scale is not None:
         scale = scale / global_scale
 
-    scale = maybe_convert_from_mxfp4_scale(args=args, scale=scale)
     scaled = x / scale
 
     if zero_point is not None:
