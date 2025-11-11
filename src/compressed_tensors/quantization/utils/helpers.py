@@ -28,6 +28,7 @@ from compressed_tensors.quantization.quant_args import (
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils.mxfp4_utils import (
+    maybe_convert_from_mxfp4_scale,
     maybe_convert_to_mxfp4_scales,
 )
 from compressed_tensors.utils import deprecated
@@ -91,7 +92,8 @@ def calculate_qparams(
     # 1. Generate scale and zero-point
     if quantization_args.symmetric:
         max_val_pos = torch.max(torch.abs(min_vals), torch.abs(max_vals))
-        scales = max_val_pos / (float(bit_range) / 2)
+        # scales = max_val_pos / (float(bit_range) / 2)
+        scales = maybe_convert_to_mxfp4_scales(max_val_pos)
         zero_points = torch.zeros(scales.shape, device=device, dtype=min_vals.dtype)
     else:
         if (
@@ -114,6 +116,9 @@ def calculate_qparams(
         scales = round_to_quantized_type_dtype(
             scales, dtype=quantization_args.scale_dtype
         )
+
+    # Optionally remove exponent
+    scales = maybe_convert_from_mxfp4_scale(quantization_args, scales)
 
     # 4. Update any 0s with small values to
     # prevent div by 0

@@ -43,7 +43,6 @@ def maybe_convert_from_mxfp4_scale(
     """
     is_mxfp4 = args.num_bits == 4 and args.type == "float" and args.group_size == 32
     if is_mxfp4:
-        assert scale.dtype == torch.uint8
         scale_exp = scale.to(torch.int32) - 127
         scale = 2.00 ** (scale_exp.to(torch.float))
         return scale.to(dtype)

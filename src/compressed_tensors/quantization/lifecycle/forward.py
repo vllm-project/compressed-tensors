@@ -256,7 +256,6 @@ def _process_quantization(
                 scale=sb,
                 zero_point=zb,
                 global_scale=global_scale,
-                args=args,
             )
         # restore original shape
         output = x_blocks.transpose(1, 2).reshape(original_shape)
@@ -323,7 +322,6 @@ def _process_quantization(
                 scale=scale.unsqueeze(-1),
                 zero_point=zero_point.unsqueeze(-1) if zero_point is not None else None,
                 global_scale=global_scale,
-                args=args,
             )
 
         output = output.flatten(start_dim=-2)
@@ -351,7 +349,6 @@ def _process_quantization(
                 scale=scale,
                 zero_point=zero_point,
                 global_scale=global_scale,
-                args=args,
             )
 
     return output
@@ -493,7 +490,6 @@ def _quantize(
 def _dequantize(
     x_q: torch.Tensor,
     scale: torch.Tensor,
-    args: QuantizationArgs,
     zero_point: torch.Tensor = None,
     dtype: Optional[torch.dtype] = None,
     global_scale: Optional[torch.Tensor] = None,
@@ -504,7 +500,6 @@ def _dequantize(
     if global_scale is not None:
         scale = scale / global_scale
 
-    scale = maybe_convert_from_mxfp4_scale(args=args, scale=scale)
     dequant_value = x_q.to(scale.dtype)
 
     if zero_point is not None:
