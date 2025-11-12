@@ -26,7 +26,7 @@ from compressed_tensors.quantization.lifecycle.forward import dequantize, quanti
 from torch import Tensor
 
 
-__all__ = ["pack_fp4_to_uint8", "unpack_fp4_from_uint8"]
+__all__ = ["pack_fp4_to_uint8", "unpack_fp4_from_uint8", "NVFP4PackedCompressor"]
 
 FLOAT_TO_E2M1 = [
     0.0,
@@ -103,6 +103,7 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         if device is not None:
             weight_packed = weight_packed.to(device)
         compressed_dict["weight_packed"] = weight_packed
+        compressed_dict["weight_scale"] = scale.to(quantization_args.scale_dtype)
         return compressed_dict
 
     def decompress_weight(
@@ -111,8 +112,8 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         quantization_args: Optional[QuantizationArgs] = None,
     ) -> torch.Tensor:
         weight = compressed_data["weight_packed"]
-        scale = compressed_data["weight_scale"]
         global_scale = compressed_data["weight_global_scale"]
+        scale = compressed_data["weight_scale"]
         m, n = weight.shape
         # TODO: use a user provided dequant dtype
         unpacked = unpack_fp4_from_uint8(weight, m, n * 2)
@@ -121,6 +122,15 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         )
 
         return decompressed_weight
+
+
+@BaseCompressor.register(name=CompressionFormat.mxfp4_pack_quantized.value)
+class MXFP4PackedCompressor(NVFP4PackedCompressor):
+    """
+    Alias for mxfp4 quantized models
+    """
+
+    pass
 
 
 @torch.compile(fullgraph=True, dynamic=True)

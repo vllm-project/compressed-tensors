@@ -19,18 +19,27 @@ from typing import Any, Dict, List, Optional, Union
 import torch
 from compressed_tensors.utils import Aliasable
 from compressed_tensors.utils.helpers import deprecated
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from compressed_tensors.utils.type import TorchDtype
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 
 __all__ = [
-    "FP8_DTYPE",
     "FP8_E4M3_DATA",
     "FP4_E2M1_DATA",
+    "BFLOAT16_DATA",
     "FloatArgs",
     "QuantizationType",
     "QuantizationStrategy",
     "QuantizationArgs",
-    "round_to_quantized_type",
+    "round_to_quantized_type_args",
+    "round_to_quantized_type_dtype",
     "ActivationOrdering",
     "DynamicType",
 ]
@@ -39,9 +48,9 @@ __all__ = [
 class FloatArgs:
     exponent: int
     mantissa: int
-    bits: int
-    max: float
-    min: float
+    bits: Optional[int] = None
+    max: Optional[float] = None
+    min: Optional[float] = None
     dtype: Optional[torch.dtype] = None
 
 
@@ -77,8 +86,9 @@ class FP8_E4M3_DATA(FloatArgs):
     dtype = torch.float8_e4m3fn
 
 
-# TODO: Remove soon in favour of a more descriptive FloatArgs
-FP8_DTYPE = torch.float8_e4m3fn
+class BFLOAT16_DATA(FloatArgs):
+    exponent = 8
+    mantissa = 7
 
 
 class QuantizationType(str, Enum):
@@ -173,6 +183,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     block_structure: Optional[List[int]] = None
     dynamic: Union[DynamicType, bool] = False
     actorder: Union[ActivationOrdering, bool, None] = None
+    scale_dtype: Optional[TorchDtype] = None
+    zp_dtype: Optional[TorchDtype] = None
     observer: Optional[str] = Field(
         default=None,
         description=(
@@ -187,6 +199,12 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             "Observers constructor excluding quantization range or symmetry"
         ),
     )
+
+    @field_serializer("zp_dtype")
+    def serialize_dtype(self, dtype: torch.dtype):
+        if self.symmetric:
+            return None
+        return str(dtype)
 
     @field_validator("type", mode="before")
     def validate_type(cls, value) -> QuantizationType:
@@ -265,6 +283,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         dynamic = model.dynamic
         observer = model.observer
         dynamic = model.dynamic
+        zp_dtype = model.zp_dtype
 
         # infer strategy
         if strategy is None:
@@ -287,7 +306,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             )
 
         # validate group strategy
-        if strategy == QuantizationStrategy.GROUP:
+        if strategy in (QuantizationStrategy.GROUP, QuantizationStrategy.TENSOR_GROUP):
             if group_size is None or group_size <= 0:
                 raise ValueError(
                     f"strategy {strategy} requires group_size to be "
@@ -352,9 +371,16 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             # default to minmax for non-dynamic cases
             observer = "minmax"
 
+        if zp_dtype is None:
+            if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
+                zp_dtype = FP8_E4M3_DATA.dtype
+            else:
+                zp_dtype = model.pytorch_dtype()
+
         # write back modified values
         model.strategy = strategy
         model.observer = observer
+        model.zp_dtype = zp_dtype
         return model
 
     def pytorch_dtype(self) -> torch.dtype:
@@ -380,18 +406,56 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     model_config = ConfigDict(extra="forbid")
 
 
-def round_to_quantized_type(
-    tensor: torch.Tensor, args: QuantizationArgs
+def round_to_quantized_type_dtype(
+    tensor: torch.Tensor,
+    dtype: torch.dtype,
+    cast_to_original_dtype: Optional[bool] = True,
 ) -> torch.Tensor:
     """
-    Rounds each element of the input tensor to the nearest quantized representation,
-    keeping to original dtype
+    Rounds an input tensor to the nearest quantized representation given a dtype.
+    The original dtype is kept post-rounding.
 
     :param tensor: tensor to round
-    :param args: QuantizationArgs to pull appropriate dtype from
+    :param dtype: dtype to use for rounding
+    :param cast_to_original_dtype: whether or not we cast the rounded tensor to
+        the original dtype
     :return: rounded tensor
     """
     original_dtype = tensor.dtype
+    if torch.is_floating_point(torch.tensor([], dtype=dtype)):
+        finfo = torch.finfo(dtype)
+        rounded = torch.clamp(tensor, finfo.min, finfo.max).to(dtype)
+    else:
+        iinfo = torch.iinfo(dtype)
+        rounded = torch.round(torch.clamp(tensor, iinfo.min, iinfo.max)).to(dtype)
+
+    if cast_to_original_dtype:
+        return rounded.to(original_dtype)
+    return rounded
+
+
+def round_to_quantized_type_args(
+    tensor: torch.Tensor,
+    args: QuantizationArgs,
+    min: torch.Tensor,
+    max: torch.Tensor,
+    cast_to_original_dtype: Optional[bool] = True,
+) -> torch.Tensor:
+    """
+    Rounds an input tensor to the nearest quantized representation given
+    qunatization args. The original dtype is kept post-rounding.
+
+    :param tensor: tensor to round
+    :param args: quantization args to use for rounding
+    :param min: min value to use for clamping
+    :param max: max value to use for clamping
+    :param cast_to_original_dtype: whether or not we cast the rounded tensor to
+        the original dtype
+    :return: rounded tensor
+    """
+
+    original_dtype = tensor.dtype
+    tensor = torch.clamp(tensor, min, max)
     if args.type == QuantizationType.FLOAT:
         if args.num_bits == 8:
             rounded = tensor.to(FP8_E4M3_DATA.dtype)
@@ -404,4 +468,6 @@ def round_to_quantized_type(
     else:
         raise ValueError(f"Invalid quantization type {args.type}")
 
-    return rounded.to(original_dtype)
+    if cast_to_original_dtype:
+        return rounded.to(original_dtype)
+    return rounded

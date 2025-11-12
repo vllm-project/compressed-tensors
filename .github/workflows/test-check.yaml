@@ -12,10 +12,9 @@ on:
 
 jobs:
   python-tests:
-    runs-on: k8s-util
+    runs-on: ibm-wdc-k8s-vllm-h100-solo
     env:
-        HF_HOME: /model-cache
-        HF_TOKEN: ${{ secrets.NM_HF_TOKEN_READ_ONLY }}
+        HF_TOKEN: ${{ secrets.HF_RED_HAT_READ_ONLY }}
     steps:
         - uses: actions/setup-python@v5
           with:
@@ -32,5 +31,20 @@ jobs:
           run: pip3 install --upgrade pip setuptools
         - name: "⚙️ Install dependencies"
           run: pip3 install .[dev,accelerate]
+        - name: clean up
+          run: |
+            echo "cleaning up disk space as GHA runner has limited disk size."
+            python3 -m pip cache purge
+            sudo rm -rf /usr/local/.ghcup
+            sudo rm -rf /opt/hostedtoolcache/CodeQL
+            sudo rm -rf /usr/local/lib/android/sdk/ndk
+            sudo rm -rf /usr/share/dotnet
+            sudo rm -rf /opt/ghc
+            sudo rm -rf /usr/local/share/boost
+            if [[ "$(cat /etc/issue)" =~ Ubuntu ]]; then
+              sudo apt-get clean
+            fi
+            df -h
+          shell: bash
         - name: "🔬 Running tests"
           run: make test

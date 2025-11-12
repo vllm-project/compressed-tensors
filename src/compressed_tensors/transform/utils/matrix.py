@@ -34,6 +34,8 @@ def get_transform_size(
     :param head_dim: size of head when transform is applied to mha
     :return: size of matrix
     """
+    size = None
+
     if isinstance(module, torch.nn.Linear):
         if location in (TransformLocation.INPUT, TransformLocation.WEIGHT_INPUT):
             size = module.in_features
@@ -44,11 +46,13 @@ def get_transform_size(
             size = module.num_embeddings
         else:
             size = module.embedding_dim
-    else:
-        raise NotImplementedError(f"Transforms on {type(module)} are not supported")
+    elif head_dim is None:
+        raise NotImplementedError(
+            f"Transforms on {type(module)} are not supported without head_dim"
+        )
 
     if head_dim is not None:
-        if size % head_dim != 0:
+        if size is not None and size % head_dim != 0:
             raise ValueError(
                 f"{head_dim} must divide {size} for {type(module)} at {location}"
             )
@@ -105,11 +109,11 @@ def apply_transform_weight(
 
     assert transform_weight.shape[0] == transform_weight.shape[1]
 
-    if module_type == torch.nn.Linear:
-        if location == TransformLocation.INPUT:
-            return _multihead_matmul(value, transform_weight)
+    if TransformLocation(location).is_online():
+        return _multihead_matmul(value, transform_weight)
 
-        elif location == TransformLocation.WEIGHT_INPUT:
+    if module_type == torch.nn.Linear:
+        if location == TransformLocation.WEIGHT_INPUT:
             # equivalent to (transform_weight @ value.T).T
             return _multihead_matmul(value, transform_weight.T)
 
@@ -117,24 +121,12 @@ def apply_transform_weight(
             # equivalent to (value.T @ transform_weight).T
             return _multihead_matmul(transform_weight.T, value)
 
-        elif location == TransformLocation.OUTPUT:
-            return _multihead_matmul(value, transform_weight)
-
     # similar derivation to torch.nn.Linear, but `y = (x W)`
     elif module_type == torch.nn.Embedding:
-        if location == TransformLocation.INPUT:
-            return _multihead_matmul(value, transform_weight)
-
-        elif location == TransformLocation.WEIGHT_INPUT:
-            return _multihead_matmul(
-                transform_weight,
-                value,
-            )
+        if location == TransformLocation.WEIGHT_INPUT:
+            return _multihead_matmul(transform_weight, value)
 
         elif location == TransformLocation.WEIGHT_OUTPUT:
-            return _multihead_matmul(value, transform_weight)
-
-        elif location == TransformLocation.OUTPUT:
             return _multihead_matmul(value, transform_weight)
 
     raise NotImplementedError(

@@ -22,6 +22,7 @@ import torch.nn as nn
 from compressed_tensors.compressors import ModelCompressor
 from compressed_tensors.config import CompressionFormat, SparsityCompressionConfig
 from compressed_tensors.quantization import (
+    FP8_E4M3_DATA,
     QuantizationArgs,
     QuantizationConfig,
     QuantizationScheme,
@@ -425,8 +426,18 @@ def test_multiple_quant_compressors():
         format=CompressionFormat.float_quantized.value,
     )
 
-    input_activations = QuantizationArgs(num_bits=4, type="float")
-    weights = QuantizationArgs(num_bits=4, type="float")
+    input_activations = QuantizationArgs(
+        num_bits=4,
+        type="float",
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=FP8_E4M3_DATA.dtype,
+    )
+    weights = QuantizationArgs(
+        num_bits=4,
+        type="float",
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=FP8_E4M3_DATA.dtype,
+    )
 
     scheme_nvfp4 = QuantizationScheme(
         targets=["Linear"],

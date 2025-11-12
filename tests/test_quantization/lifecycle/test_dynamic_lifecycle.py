@@ -79,7 +79,7 @@ def _test_layer_dynamic_quantization_status(
 def get_tinyllama_model():
     return AutoModelForCausalLM.from_pretrained(
         "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T",
-        torch_dtype="auto",
+        torch_dtype=torch.bfloat16,
     )
 
 

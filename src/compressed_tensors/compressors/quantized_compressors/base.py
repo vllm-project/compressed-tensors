@@ -90,7 +90,6 @@ class BaseQuantizationCompressor(BaseCompressor):
         desc = "Compressing with quantization"
         for name in tqdm(uncompressed_names, desc=desc, disable=(not show_progress)):
             value = model_state[name]
-
             # compress weights
             if name.endswith("weight"):
                 prefix = name.removesuffix("weight")
@@ -129,9 +128,17 @@ class BaseQuantizationCompressor(BaseCompressor):
                 if name.endswith("zero_point") and self._skip_zp(name, names_to_scheme):
                     continue
 
+                if name.endswith("weight_scale") and self._skip_scale():
+                    continue
+
                 compressed_dict[name] = value.to(compression_device)
 
         return compressed_dict
+
+    def _skip_scale(self):
+        from compressed_tensors.compressors import NVFP4PackedCompressor
+
+        return isinstance(self, NVFP4PackedCompressor)
 
     def _skip_zp(
         self, name: str, names_to_scheme: Dict[str, QuantizationScheme]

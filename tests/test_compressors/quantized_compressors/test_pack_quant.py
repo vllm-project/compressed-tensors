@@ -15,6 +15,7 @@
 
 import math
 import shutil
+import tempfile
 from collections import OrderedDict
 
 import pytest
@@ -170,12 +171,13 @@ def test_reload_match(tmp_path, num_bits):
     )
     save_file(compressed_state_dict, tmp_path / "model.safetensors")
 
-    reconstructed_dense_gen = compressor.decompress(
-        tmp_path, names_to_scheme=quantized_modules_to_scheme
-    )
     reconstructed_dense = {}
-    for name, value in reconstructed_dense_gen:
-        reconstructed_dense[name] = value
+    with tempfile.TemporaryDirectory():
+        reconstructed_dense_gen = compressor.decompress(
+            tmp_path, names_to_scheme=quantized_modules_to_scheme
+        )
+        for name, value in reconstructed_dense_gen:
+            reconstructed_dense[name] = value
 
     fake_quant_dummy = fake_quantize(
         dense_state_dict["dummy.weight"],
@@ -473,3 +475,91 @@ def test_unpack_from_int32(num_bits, values, expected_tensor):
     unpacked_tensor = unpack_from_int32(values, num_bits, expected_tensor.shape)
     assert torch.equal(unpacked_tensor, unpacked_tensor)
     assert unpacked_tensor.dtype == unpacked_tensor.dtype
+
+
+@pytest.mark.parametrize(
+    "strategy,group_size",
+    [
+        (QuantizationStrategy.GROUP, 128),
+        (QuantizationStrategy.CHANNEL, None),
+    ],
+)
+def test_asymmetric_zero_point_decompression(strategy, group_size, tmp_path):
+    """
+    Test that zero-point packing and unpacking works correctly for asymmetric
+    quantization with GROUP and CHANNEL strategies.
+    """
+    shape = (512, 1024)
+
+    if strategy == QuantizationStrategy.CHANNEL:
+        expected_zp_shape = (shape[0], 1)
+    elif strategy == QuantizationStrategy.GROUP:
+        num_groups = shape[1] // group_size
+        expected_zp_shape = (shape[0], max(num_groups, 1))
+
+    dense_state_dict = {
+        "dummy.weight": torch.randn(shape),
+        "dummy.weight_scale": torch.rand(expected_zp_shape).to(torch.float32),
+        "dummy.weight_zero_point": torch.randint(-8, 8, expected_zp_shape).to(
+            torch.int8
+        ),
+    }
+
+    quant_config = get_dummy_quant_config(
+        num_bits=4, strategy=strategy.value, symmetric=False, group_size=group_size
+    )
+
+    compressor = PackedQuantizationCompressor(config=quant_config)
+    quantized_modules_to_scheme = {"dummy": quant_config.config_groups["group_1"]}
+    compressed_state_dict = compressor.compress(
+        dense_state_dict.copy(), names_to_scheme=quantized_modules_to_scheme
+    )
+
+    assert "dummy.weight_zero_point" in compressed_state_dict
+    assert compressed_state_dict["dummy.weight_zero_point"].dtype == torch.int32
+
+    save_file(compressed_state_dict, tmp_path / "model.safetensors")
+
+    reconstructed_dense_gen = compressor.decompress(
+        tmp_path, names_to_scheme=quantized_modules_to_scheme
+    )
+    reconstructed_dense = {}
+    for name, value in reconstructed_dense_gen:
+        reconstructed_dense[name] = value
+
+    assert "dummy" in reconstructed_dense
+    assert "weight" in reconstructed_dense["dummy"]
+
+    assert reconstructed_dense["dummy"]["weight"].shape == shape
+
+    shutil.rmtree(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "num_bits,strategy",
+    [
+        (4, QuantizationStrategy.GROUP),
+        (4, QuantizationStrategy.CHANNEL),
+        (8, QuantizationStrategy.GROUP),
+        (8, QuantizationStrategy.CHANNEL),
+    ],
+)
+def test_zero_point_pack_unpack_consistency(num_bits, strategy):
+    """
+    Test that packing and unpacking zero-points preserves values correctly.
+    """
+    if strategy == QuantizationStrategy.GROUP:
+        shape = (512, 8)
+    else:
+        shape = (512, 1)
+
+    max_val = (1 << (num_bits - 1)) - 1
+    min_val = -(1 << (num_bits - 1))
+    original_zp = torch.randint(min_val, max_val + 1, shape).to(torch.int8)
+
+    packed_zp = pack_to_int32(original_zp, num_bits, packed_dim=0)
+
+    unpacked_zp = unpack_from_int32(packed_zp, num_bits, shape, packed_dim=0)
+
+    assert torch.equal(original_zp, unpacked_zp)
+    assert unpacked_zp.dtype == torch.int8

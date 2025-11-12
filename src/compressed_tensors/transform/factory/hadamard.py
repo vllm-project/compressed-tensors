@@ -51,7 +51,6 @@ class HadamardFactory(TransformFactory):
         :param module: parent module that transform will be applied to
         :param args: defines how the transform will be applied to the module
         """
-        assert hasattr(module, "weight")
         size = get_transform_size(module, args.location, self.scheme.head_dim)
         exec_device = get_execution_device(module)
         device = get_offloaded_device(module)

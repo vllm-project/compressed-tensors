@@ -32,7 +32,7 @@ def test_lifecyle(mock_per_tensor_calibration, create_quantization_scheme):
         targets=["*"],
     )
 
-    layer = Linear(4, 4)
+    layer = Linear(4, 4, dtype=torch.bfloat16)
     layer.weight.data *= 100
 
     # updated layer keys check

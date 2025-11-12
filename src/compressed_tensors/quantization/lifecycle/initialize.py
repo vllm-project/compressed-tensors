@@ -17,11 +17,15 @@ import logging
 from typing import Optional, Tuple, Union
 
 import torch
+from compressed_tensors.modeling import (
+    IMPL_ATTR,
+    KV_CACHE_ATTR,
+    QuantizedAttentionImpl,
+    QuantizedKVCache,
+)
 from compressed_tensors.quantization import (
-    FP8_E4M3_DATA,
     ActivationOrdering,
     DynamicType,
-    KVCacheScaleType,
     QuantizationArgs,
     QuantizationMetadata,
     QuantizationScheme,
@@ -31,14 +35,13 @@ from compressed_tensors.quantization import (
 from compressed_tensors.quantization.lifecycle.forward import (
     wrap_module_forward_quantized,
 )
-from compressed_tensors.quantization.utils import (
-    is_fp4,
-    is_kv_cache_quant_scheme,
-    strategy_cdiv,
-)
+from compressed_tensors.quantization.utils import strategy_cdiv
 from compressed_tensors.utils import (
     disable_hf_hook,
     get_execution_device,
+    get_head_dim,
+    get_num_attn_heads,
+    get_num_kv_heads,
     register_offload_parameter,
 )
 from torch.nn import Module, Parameter
@@ -48,6 +51,7 @@ __all__ = [
     "initialize_module_for_quantization",
     "is_attention_module",
     "initialize_qparams",
+    "initialize_attn_qparams",
 ]
 
 
@@ -81,7 +85,7 @@ def initialize_module_for_quantization(
 
     if is_attention_module(module):
         # quantized actions based on calltime status
-        _initialize_attn_scales(module)
+        initialize_attn_qparams(module, scheme, force_zero_point)
 
     else:
         if not isinstance(module, torch.nn.Linear):
@@ -120,8 +124,7 @@ def initialize_module_for_quantization(
                 force_zero_point=force_zero_point,
             )
 
-        output_is_kv_cache = is_kv_cache_quant_scheme(scheme)
-        if scheme.output_activations is not None and not output_is_kv_cache:
+        if scheme.output_activations is not None:
             initialize_qparams(
                 module,
                 "output",
@@ -131,13 +134,13 @@ def initialize_module_for_quantization(
                 force_zero_point=force_zero_point,
             )
 
-        module.quantization_scheme = scheme
-        module.quantization_status = QuantizationStatus.INITIALIZED
-
         with disable_hf_hook(module):
             # wrap forward call of module to perform
             # quantized actions based on calltime status
             wrap_module_forward_quantized(module, scheme)
+
+    module.quantization_scheme = scheme
+    module.quantization_status = QuantizationStatus.INITIALIZED
 
 
 def is_attention_module(module: Module):
@@ -246,20 +249,13 @@ def initialize_qparams(
 
     # 2. Identify quantization scale and zp dtype
     scale_dtype = observed_dtype
-
-    if is_fp4(quantization_args=quantization_args):
-        scale_dtype = zp_dtype = FP8_E4M3_DATA.dtype
-    else:
-        # TODO: consider erroring out in the future as if the dtype if not one of these,
-        # there is likely bug
-        if scale_dtype not in [
-            torch.float16,
-            torch.bfloat16,
-            torch.float32,
-            torch.float64,
-        ]:
-            scale_dtype = torch.bfloat16
-        zp_dtype = quantization_args.pytorch_dtype()
+    if scale_dtype not in [
+        torch.float16,
+        torch.bfloat16,
+        torch.float32,
+        torch.float64,
+    ]:
+        scale_dtype = torch.float16
 
     # 3. Initializes scale/zp for the module
     init_scale = Parameter(
@@ -270,29 +266,82 @@ def initialize_qparams(
 
     if force_zero_point or not quantization_args.symmetric:
         init_zero_point = Parameter(
-            torch.zeros(expected_shape, device=device, dtype=zp_dtype),
+            torch.zeros(
+                expected_shape, device=device, dtype=quantization_args.zp_dtype
+            ),
             requires_grad=False,
         )
         register_offload_parameter(module, f"{base_name}_zero_point", init_zero_point)
 
 
-def _initialize_attn_scales(module: Module) -> None:
-    """Initlaize k_scale, v_scale for  self_attn"""
+def initialize_attn_qparams(
+    module: Module, scheme: QuantizationScheme, force_zero_point: bool
+):
+    """Initlaize k_scale, v_scale for self_attn"""
 
-    expected_shape = 1  # per tensor
+    impl: Optional[QuantizedAttentionImpl] = getattr(module, IMPL_ATTR, None)
+    kv_cache: Optional[QuantizedKVCache] = getattr(module, KV_CACHE_ATTR, None)
 
-    param = next(module.parameters())
-    scale_dtype = param.dtype
-    device = param.device
+    if impl is None and kv_cache is None:
+        raise ValueError(
+            f"Attention module has quantization scheme but no {IMPL_ATTR} "
+            f"or {KV_CACHE_ATTR} attributes. Please ensure that these "
+            "attributes are initialized using `apply_quantization_config`."
+        )
 
-    init_scale = Parameter(
-        torch.empty(expected_shape, dtype=scale_dtype, device=device),
-        requires_grad=False,
-    )
-    register_offload_parameter(module, KVCacheScaleType.KEY.value, init_scale)
+    _validate_attention_scheme(scheme)
 
-    init_scale = Parameter(
-        torch.empty(expected_shape, dtype=scale_dtype, device=device),
-        requires_grad=False,
-    )
-    register_offload_parameter(module, KVCacheScaleType.VALUE.value, init_scale)
+    # extract shapes from config
+    config = kv_cache.config
+    num_attn_heads = get_num_attn_heads(config)
+    num_kv_heads = get_num_kv_heads(config)
+    head_dim = get_head_dim(config)
+
+    # (batch_size, num_heads, slen, head_dim)
+    q_observed_shape = (num_attn_heads, None, head_dim)
+    kv_observed_shape = (num_kv_heads, None, head_dim)
+    observed_dtype = next(module.parameters()).dtype
+
+    if impl is not None:
+        initialize_qparams(
+            module,
+            "q",
+            scheme.input_activations,
+            observed_shape=q_observed_shape,
+            observed_dtype=observed_dtype,
+            force_zero_point=force_zero_point,
+        )
+
+    if kv_cache is not None:
+        initialize_qparams(
+            module,
+            "k",
+            scheme.input_activations,
+            observed_shape=kv_observed_shape,
+            observed_dtype=observed_dtype,
+            force_zero_point=force_zero_point,
+        )
+        initialize_qparams(
+            module,
+            "v",
+            scheme.input_activations,
+            observed_shape=kv_observed_shape,
+            observed_dtype=observed_dtype,
+            force_zero_point=force_zero_point,
+        )
+
+
+def _validate_attention_scheme(scheme: QuantizationScheme):
+    if scheme.weights is not None:
+        raise ValueError(
+            "Cannot apply weight quantization to attention. "
+            "Instead, target the (q|k|v)_proj submodule layers of attention"
+        )
+
+    if scheme.input_activations is None:
+        raise ValueError(
+            "Cannot apply attention quantization without specifying input activations"
+        )
+
+    if scheme.output_activations is not None:
+        raise ValueError("Cannot apply output quantization to attention")

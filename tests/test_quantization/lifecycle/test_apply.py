@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import re
+import shutil
 from typing import Optional
 from unittest.mock import MagicMock
 
@@ -21,6 +22,7 @@ import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_METHOD,
+    FP8_E4M3_DATA,
     QuantizationArgs,
     QuantizationConfig,
     QuantizationScheme,
@@ -32,6 +34,16 @@ from compressed_tensors.quantization.lifecycle import apply_quantization_config
 from compressed_tensors.utils import is_match, match_named_modules
 from tests.testing_utils import requires_accelerate
 from transformers import AutoModelForCausalLM
+
+
+@pytest.fixture(scope="module", autouse=True)
+def cleanup_model_cache():
+    """Clean up the test model cache directory after all tests complete."""
+    yield
+    try:
+        shutil.rmtree("test-apply-model-cache", ignore_errors=True)
+    except Exception:
+        pass
 
 
 @pytest.fixture
@@ -55,6 +67,7 @@ def llama_stories_model():
     return AutoModelForCausalLM.from_pretrained(
         "Xenova/llama2.c-stories15M",
         torch_dtype="auto",
+        cache_dir="test-apply-model-cache",
     )
 
 
@@ -87,7 +100,9 @@ def test_target_prioritization(mock_frozen):
     }
 
     model = AutoModelForCausalLM.from_pretrained(
-        "HuggingFaceM4/tiny-random-LlamaForCausalLM", torch_dtype="auto"
+        "HuggingFaceM4/tiny-random-LlamaForCausalLM",
+        torch_dtype="auto",
+        cache_dir="test-apply-model-cache",
     )
     model.eval()
 
@@ -129,6 +144,84 @@ def test_apply_quantization_config_tinyllama():
                 weights=quant_scheme.weights is not None,
                 expected_status=QuantizationStatus.INITIALIZED,
             )
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        QuantizationConfig(
+            config_groups={
+                "linear": QuantizationScheme(
+                    targets=["Linear"],
+                    input_activations=QuantizationArgs(
+                        num_bits=8,
+                        type="float",
+                        strategy="tensor",
+                        scale_dtype=FP8_E4M3_DATA.dtype,
+                        zp_dtype=torch.float,
+                    ),
+                )
+            }
+        ),
+        QuantizationConfig(
+            config_groups={
+                "linear": QuantizationScheme(
+                    targets=["Linear"],
+                    input_activations=QuantizationArgs(
+                        num_bits=8,
+                        type="float",
+                        strategy="tensor",
+                        scale_dtype=FP8_E4M3_DATA.dtype,
+                        zp_dtype=torch.float,
+                    ),
+                )
+            },
+            ignore=[
+                "model.layers.0.self_attn.q_proj",
+                "model.layers.1.self_attn.k_proj",
+                "model.layers.2.self_attn.v_proj",
+            ],
+        ),
+        QuantizationConfig(
+            config_groups={},
+            kv_cache_scheme=QuantizationArgs(
+                num_bits=8,
+                type="float",
+                strategy="tensor",
+                scale_dtype=FP8_E4M3_DATA.dtype,
+                zp_dtype=torch.float,
+            ),
+        ),
+        QuantizationConfig(
+            config_groups={
+                "attention": QuantizationScheme(
+                    targets=["LlamaAttention"],
+                    input_activations=QuantizationArgs(
+                        num_bits=8,
+                        type="float",
+                        strategy="tensor",
+                        scale_dtype=FP8_E4M3_DATA.dtype,
+                        zp_dtype=torch.float,
+                    ),
+                )
+            },
+            kv_cache_scheme=QuantizationArgs(
+                num_bits=8,
+                type="float",
+                strategy="tensor",
+                scale_dtype=FP8_E4M3_DATA.dtype,
+                zp_dtype=torch.float,
+            ),
+        ),
+    ],
+)
+def test_from_pretrained(config: QuantizationConfig):
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+    apply_quantization_config(model, config)
+    _config = QuantizationConfig.from_pretrained(model)
+    assert list(_config.config_groups.values()) == list(config.config_groups.values())
+    assert _config.kv_cache_scheme == config.kv_cache_scheme
+    assert _config.ignore == config.ignore
 
 
 def test_serialize_config_tinyllama():
@@ -185,6 +278,7 @@ def get_tinyllama_model():
     return AutoModelForCausalLM.from_pretrained(
         "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T",
         torch_dtype="auto",
+        cache_dir="test-apply-model-cache",
     )
 
 
@@ -366,3 +460,55 @@ def test_multi_apply_quantization_config():
                 weight_zero_point is not None
                 and weight_zero_point.shape == torch.Size([1])
             )
+
+
+@requires_accelerate()
+def test_apply_kv_cache():
+    from accelerate import init_empty_weights
+
+    with init_empty_weights():
+        model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    args = QuantizationArgs(
+        num_bits=8,
+        type="float",
+        strategy="tensor",
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=torch.float,
+    )
+    config = QuantizationConfig(config_groups={}, kv_cache_scheme=args)
+
+    apply_quantization_config(model, config)
+
+    for layer in model.model.layers:
+        assert getattr(layer.self_attn, "quantization_scheme").input_activations == args
+        assert hasattr(layer.self_attn, "k_scale")
+        assert hasattr(layer.self_attn, "v_scale")
+
+
+@requires_accelerate()
+def test_apply_attention():
+    from accelerate import init_empty_weights
+
+    with init_empty_weights():
+        model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+
+    scheme = QuantizationScheme(
+        targets=["LlamaAttention"],
+        input_activations=QuantizationArgs(
+            num_bits=8,
+            type="float",
+            strategy="tensor",
+            scale_dtype=FP8_E4M3_DATA.dtype,
+            zp_dtype=torch.float,
+        ),
+    )
+    config = QuantizationConfig(config_groups={"attention": scheme})
+
+    apply_quantization_config(model, config)
+
+    for layer in model.model.layers:
+        assert getattr(layer.self_attn, "quantization_scheme") == scheme
+        assert hasattr(layer.self_attn, "q_scale")
+        assert hasattr(layer.self_attn, "k_scale")
+        assert hasattr(layer.self_attn, "v_scale")
