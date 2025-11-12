@@ -17,3 +17,4 @@ from .base import *
 from .naive_quantized import *
 from .nvfp4_quantized import *
 from .pack_quantized import *
+from .int4_quantized import *
