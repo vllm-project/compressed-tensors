@@ -44,6 +44,7 @@ __all__ = [
     "pack_bitmasks",
     "unpack_bitmasks",
     "patch_attr",
+    "patch_attrs",
     "ParameterizedDefaultDict",
     "get_num_attn_heads",
     "get_num_kv_heads",
@@ -366,6 +367,39 @@ def patch_attr(base: object, attr: str, value: Any):
             setattr(base, attr, original_value)
         else:
             delattr(base, attr)
+
+
+@contextlib.contextmanager
+def patch_attrs(bases: list[object], attr: str, values: list[Any]):
+    """
+    Patch attribute for a list of objects with list of values.
+    Original values are restored upon exit
+
+    :param bases: objects which has the attribute to patch
+    :param attr: name of the the attribute to patch
+    :param values: used to replace original values. Must be same
+        length as bases
+
+    Usage:
+    >>> from types import SimpleNamespace
+    >>> obj = SimpleNamespace()
+    >>> with patch_attr(obj, "attribute", "value"):
+    ...     assert obj.attribute == "value"
+    >>> assert not hasattr(obj, "attribute")
+    """
+    _sentinel = object()
+    original_values = [getattr(base, attr, _sentinel) for base in bases]
+
+    for base, value in zip(bases, values):
+        setattr(base, attr, value)
+    try:
+        yield
+    finally:
+        for base, original_value in zip(bases, original_values):
+            if original_value is not _sentinel:
+                setattr(base, attr, original_value)
+            else:
+                delattr(base, attr)
 
 
 class ParameterizedDefaultDict(dict):
