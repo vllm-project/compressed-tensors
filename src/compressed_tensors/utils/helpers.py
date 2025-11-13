@@ -372,6 +372,7 @@ def patch_attr(base: object, attr: str, value: Any):
 @contextlib.contextmanager
 def patch_attrs(bases: list[object], attr: str, values: list[Any]):
     """
+    Same as `patch_attr` but for a list of objects to patch
     Patch attribute for a list of objects with list of values.
     Original values are restored upon exit
 
@@ -383,9 +384,11 @@ def patch_attrs(bases: list[object], attr: str, values: list[Any]):
     Usage:
     >>> from types import SimpleNamespace
     >>> obj = SimpleNamespace()
-    >>> with patch_attr(obj, "attribute", "value"):
-    ...     assert obj.attribute == "value"
-    >>> assert not hasattr(obj, "attribute")
+    >>> with patch_attr([obj1, obj2], "attribute", ["value1", "value2"]):
+    ...     assert obj1.attribute == "value1"
+    ...     assert obj2.attribute == "value2"
+    >>> assert not hasattr(obj1, "attribute")
+    >>> assert not hasattr(obj2, "attribute")
     """
     _sentinel = object()
     original_values = [getattr(base, attr, _sentinel) for base in bases]
