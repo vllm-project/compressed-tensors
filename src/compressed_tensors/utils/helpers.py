@@ -370,7 +370,7 @@ def patch_attr(base: object, attr: str, value: Any):
 
 
 @contextlib.contextmanager
-def patch_attrs(bases: list[object], attr: str, values: list[Any]):
+def patch_attrs(bases: Iterable[Any], attr: str, values: Iterable[Any]):
     """
     Same as `patch_attr` but for a list of objects to patch
     Patch attribute for a list of objects with list of values.
