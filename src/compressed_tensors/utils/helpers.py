@@ -383,7 +383,8 @@ def patch_attrs(bases: list[object], attr: str, values: list[Any]):
 
     Usage:
     >>> from types import SimpleNamespace
-    >>> obj = SimpleNamespace()
+    >>> obj1 = SimpleNamespace()
+    >>> obj2 = SimpleNamespace()
     >>> with patch_attr([obj1, obj2], "attribute", ["value1", "value2"]):
     ...     assert obj1.attribute == "value1"
     ...     assert obj2.attribute == "value2"
