@@ -126,11 +126,6 @@ class Int4PackedQuantizationCompressor(BaseQuantizationCompressor):
         :param device: optional device to move compressed output to
         :return: dictionary of compressed weight data
         """
-        if global_scale is not None:
-            raise ValueError(
-                "global_scale is not supported for the PackQuantizationCompressor"
-            )
-
         compressed_dict = {}
         if can_quantize(weight, quantization_args):
             quantized_weight = quantize(
