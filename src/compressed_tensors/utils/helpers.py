@@ -16,7 +16,17 @@ import contextlib
 import warnings
 from functools import wraps
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    TypeVar,
+)
 
 import numpy
 import torch
@@ -391,19 +401,10 @@ def patch_attrs(bases: Iterable[Any], attr: str, values: Iterable[Any]):
     >>> assert not hasattr(obj1, "attribute")
     >>> assert not hasattr(obj2, "attribute")
     """
-    _sentinel = object()
-    original_values = [getattr(base, attr, _sentinel) for base in bases]
-
-    for base, value in zip(bases, values):
-        setattr(base, attr, value)
-    try:
+    with contextlib.ExitStack() as stack:
+        for base, value in zip(bases, values):
+            stack.enter_context(patch_attr(base, attr, value))
         yield
-    finally:
-        for base, original_value in zip(bases, original_values):
-            if original_value is not _sentinel:
-                setattr(base, attr, original_value)
-            else:
-                delattr(base, attr)
 
 
 class ParameterizedDefaultDict(dict):
