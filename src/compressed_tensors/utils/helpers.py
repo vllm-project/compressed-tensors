@@ -16,7 +16,17 @@ import contextlib
 import warnings
 from functools import wraps
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    TypeVar,
+)
 
 import numpy
 import torch
@@ -44,6 +54,7 @@ __all__ = [
     "pack_bitmasks",
     "unpack_bitmasks",
     "patch_attr",
+    "patch_attrs",
     "ParameterizedDefaultDict",
     "get_num_attn_heads",
     "get_num_kv_heads",
@@ -366,6 +377,34 @@ def patch_attr(base: object, attr: str, value: Any):
             setattr(base, attr, original_value)
         else:
             delattr(base, attr)
+
+
+@contextlib.contextmanager
+def patch_attrs(bases: Iterable[Any], attr: str, values: Iterable[Any]):
+    """
+    Same as `patch_attr` but for a list of objects to patch
+    Patch attribute for a list of objects with list of values.
+    Original values are restored upon exit
+
+    :param bases: objects which has the attribute to patch
+    :param attr: name of the the attribute to patch
+    :param values: used to replace original values. Must be same
+        length as bases
+
+    Usage:
+    >>> from types import SimpleNamespace
+    >>> obj1 = SimpleNamespace()
+    >>> obj2 = SimpleNamespace()
+    >>> with patch_attr([obj1, obj2], "attribute", ["value1", "value2"]):
+    ...     assert obj1.attribute == "value1"
+    ...     assert obj2.attribute == "value2"
+    >>> assert not hasattr(obj1, "attribute")
+    >>> assert not hasattr(obj2, "attribute")
+    """
+    with contextlib.ExitStack() as stack:
+        for base, value in zip(bases, values):
+            stack.enter_context(patch_attr(base, attr, value))
+        yield
 
 
 class ParameterizedDefaultDict(dict):
