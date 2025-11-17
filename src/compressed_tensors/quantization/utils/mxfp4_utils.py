@@ -21,17 +21,21 @@ from compressed_tensors.quantization.quant_args import (
 
 
 __all__ = [
-    "maybe_convert_from_mxfp4_scale",
+    "maybe_convert_from_mxfp4_exp",
     "generate_mxfp4_scales",
     "round_to_power_2",
-    "maybe_convert_to_mxfp4_scales",
+    "should_generatre_mxfp4_scales",
 ]
 
 # Reference: https://github.com/vllm-project/vllm/blob/main/tests/quantization/reference_mxfp4.py # noqa: E501
 
 
-def maybe_convert_from_mxfp4_scale(
-    args: QuantizationArgs, scale: torch.Tensor, dtype: torch.dtype = torch.bfloat16
+def should_generatre_mxfp4_scales(args: QuantizationArgs):
+    return args.num_bits == 4 and args.type == "float" and args.group_size == 32
+
+
+def maybe_convert_from_mxfp4_exp(
+    args: QuantizationArgs, scale: torch.Tensor
 ) -> torch.Tensor:
     """
     Converts mxfp4 scales. Scales are powers of 2, with the
@@ -41,28 +45,12 @@ def maybe_convert_from_mxfp4_scale(
     :param scale: uint8 exponent scale
     :param dtype: dense dtype
     """
-    is_mxfp4 = args.num_bits == 4 and args.type == "float" and args.group_size == 32
-    if is_mxfp4:
+    original_dtype = scale.dtype
+    if should_generatre_mxfp4_scales(args):
         scale_exp = scale.to(torch.int32) - 127
         scale = 2.00 ** (scale_exp.to(torch.float))
-        return scale.to(dtype)
+        return scale.to(original_dtype)
     return scale
-
-
-def maybe_convert_to_mxfp4_scales(
-    args: QuantizationArgs, scales: torch.Tensor
-) -> torch.Tensor:
-    """
-    Conver the scales to be mxfp4 compatible scales, if quant args are FP4 with group_size 32.
-    If not, return original scales
-
-    :param args: quantization args
-    :param scales: scales to update
-    """
-    is_mxfp4 = args.num_bits == 4 and args.type == "float" and args.group_size == 32
-    if is_mxfp4:
-        return generate_mxfp4_scales(x=scales)
-    return scales
 
 
 def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
@@ -99,28 +87,17 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
     return block_max_uint.to(torch.uint16).view(torch.bfloat16)
 
 
-def generate_mxfp4_scales(x: torch.Tensor, clamp: bool = False) -> torch.Tensor:
+def generate_mxfp4_scales(x: torch.Tensor) -> torch.Tensor:
     """
     Generate mxfp4 scales. The scales require the following steps
     1. Round to the closest power of 2
     2. Convert to exponent
-    3. Optionally, store in uint8
 
     Called when calculating qparams using observers.
 
     :param x: tensor to round to closest power of 2
-    :returns uint8 scales as exponents
+    :returns scales as exponents
     """
     # Round to closest power of 2
     scale_power_2 = round_to_power_2(x)
-    # Convert to exponent
-    scale_exp = 127 + torch.floor(torch.log2(scale_power_2)).to(torch.int32) - 2
-    # Clamp and store in uint8, as expected by mxfp4
-    if clamp:
-        scale_exp = torch.clamp(
-            scale_exp,
-            max=torch.iinfo(torch.uint8).max,
-            min=torch.iinfo(torch.uint8).min,
-        )
-        return scale_exp.to(torch.uint8)
-    return scale_exp
+    return 127 + torch.floor(torch.log2(scale_power_2)) - 2

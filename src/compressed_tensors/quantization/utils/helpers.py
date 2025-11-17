@@ -28,8 +28,9 @@ from compressed_tensors.quantization.quant_args import (
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils.mxfp4_utils import (
-    maybe_convert_from_mxfp4_scale,
-    maybe_convert_to_mxfp4_scales,
+    generate_mxfp4_scales,
+    maybe_convert_from_mxfp4_exp,
+    should_generatre_mxfp4_scales,
 )
 from compressed_tensors.utils import deprecated
 from loguru import logger
@@ -92,8 +93,10 @@ def calculate_qparams(
     # 1. Generate scale and zero-point
     if quantization_args.symmetric:
         max_val_pos = torch.max(torch.abs(min_vals), torch.abs(max_vals))
-        # scales = max_val_pos / (float(bit_range) / 2)
-        scales = maybe_convert_to_mxfp4_scales(max_val_pos)
+        if should_generatre_mxfp4_scales(args=quantization_args):
+            scales = generate_mxfp4_scales(x=max_val_pos)
+        else:
+            scales = max_val_pos / (float(bit_range) / 2)
         zero_points = torch.zeros(scales.shape, device=device, dtype=min_vals.dtype)
     else:
         if (
@@ -117,10 +120,10 @@ def calculate_qparams(
             scales, dtype=quantization_args.scale_dtype
         )
 
-    # Optionally remove exponent
-    scales = maybe_convert_from_mxfp4_scale(quantization_args, scales)
+    # 4. Optionally remove exponent
+    scales = maybe_convert_from_mxfp4_exp(quantization_args, scales)
 
-    # 4. Update any 0s with small values to
+    # 5. Update any 0s with small values to
     # prevent div by 0
     eps = _get_dtype_eps(
         dtype=quantization_args.scale_dtype
@@ -133,7 +136,7 @@ def calculate_qparams(
         scales,
     )
 
-    # 5. Round the zp to zp_dtype
+    # 6. Round the zp to zp_dtype
     zero_points = round_to_quantized_type_dtype(
         zero_points, dtype=quantization_args.zp_dtype, cast_to_original_dtype=False
     )
