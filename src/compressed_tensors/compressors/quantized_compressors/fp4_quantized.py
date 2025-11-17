@@ -149,6 +149,13 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
         scale_exp = 127 + torch.floor(torch.log2(scale)).to(torch.int32) - 2
         return scale_exp.to(quantization_args.scale_dtype)
 
+    def decompress_weight(
+        self,
+        compressed_data: Dict[str, Tensor],
+        quantization_args: Optional[QuantizationArgs] = None,
+    ) -> torch.Tensor:
+        raise NotImplementedError("MXFP4 Decompression is currently not supported")
+
 
 @torch.compile(fullgraph=True, dynamic=True)
 def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
