@@ -124,9 +124,21 @@ class BaseQuantizationCompressor(BaseCompressor):
                     compressed_dict[prefix + key] = value.to(compression_device)
 
             else:
-                # omit saving zero points for symmetric or packed quantization
-                if name.endswith("zero_point") and self._skip_zp(name, names_to_scheme):
-                    continue
+                # omit saving zero points for symmetric quantization
+                if name.endswith("weight_zero_point"):
+                    module_path = name.rsplit(".", 1)[0]
+                    if (
+                        module_path in names_to_scheme
+                        and names_to_scheme[module_path].weights.symmetric
+                    ):
+                        continue
+                    # Call compress_zp if available (for PackedQuantizationCompressor)
+                    if module_path in names_to_scheme and hasattr(self, "compress_zp"):
+                        value = self.compress_zp(
+                            value, names_to_scheme[module_path].weights
+                        )
+                        if value is None:
+                            continue
 
                 if name.endswith("weight_scale") and self._skip_scale():
                     continue
@@ -139,21 +151,6 @@ class BaseQuantizationCompressor(BaseCompressor):
         from compressed_tensors.compressors import NVFP4PackedCompressor
 
         return isinstance(self, NVFP4PackedCompressor)
-
-    def _skip_zp(
-        self, name: str, names_to_scheme: Dict[str, QuantizationScheme]
-    ) -> bool:
-        module_name, zp_name = name.rsplit(".", 1) if "." in name else ("", name)
-        scheme = names_to_scheme[module_name]
-
-        if zp_name == "weight_zero_point":
-            args = scheme.weights
-        if zp_name == "input_zero_point":
-            args = scheme.input_activations
-        if zp_name == "output_zero_point":
-            args = scheme.output_activations
-
-        return args.symmetric
 
     def decompress(
         self,

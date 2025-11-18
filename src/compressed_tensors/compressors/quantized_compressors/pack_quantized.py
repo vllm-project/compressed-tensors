@@ -184,6 +184,22 @@ class PackedQuantizationCompressor(BaseQuantizationCompressor):
 
         return decompressed_weight
 
+    def compress_zp(
+        self, zero_point: Tensor, quantization_args: Optional[QuantizationArgs] = None
+    ) -> Optional[Tensor]:
+        if zero_point is None or quantization_args.symmetric:
+            return None
+        if zero_point.dtype == torch.int32:
+            return zero_point
+        if quantization_args.strategy in [
+            QuantizationStrategy.GROUP.value,
+            QuantizationStrategy.CHANNEL.value,
+        ]:
+            return pack_to_int32(
+                zero_point, quantization_args.num_bits, packed_dim=0
+            ).contiguous()
+        return zero_point
+
 
 def pack_to_int32(
     value: torch.Tensor,
