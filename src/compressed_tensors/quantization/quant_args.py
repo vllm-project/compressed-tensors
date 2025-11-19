@@ -84,6 +84,7 @@ class FP8_E4M3_DATA(FloatArgs):
     max = torch.finfo(torch.float8_e4m3fn).max
     min = torch.finfo(torch.float8_e4m3fn).min
     dtype = torch.float8_e4m3fn
+    eps = 0.125
 
 
 class BFLOAT16_DATA(FloatArgs):
