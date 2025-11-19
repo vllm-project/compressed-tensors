@@ -457,7 +457,21 @@ class TestMatchModulesSet:
         targets = ["layer1", "nonexistent_module"]
 
         with pytest.raises(ValueError, match="Unable to match targets into set"):
-            list(match_modules_set(model, targets))
+            list(match_modules_set(model, targets, return_unmatched=False))
+
+    def test_incomplete_set_return(self):
+        """Test error when unable to complete a set"""
+        model = DummyModel()
+        targets = ["layer1", "nonexistent_module"]
+
+        try:
+            while True:
+                next(match_modules_set(model, targets, return_unmatched=True))
+        except StopIteration as exception:
+            assert exception.value == {
+                "layer1": model.layer1,
+                "nonexistent_module": None,
+            }
 
     def test_duplicate_match_error(self):
         """Test error when same target matches multiple times before set completion"""
