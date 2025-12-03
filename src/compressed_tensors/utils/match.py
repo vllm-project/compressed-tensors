@@ -264,7 +264,7 @@ def match_modules_set(
     # C) ran out of modules, we will always yield the final remaining set
     #    when we we've iterated through all the modules in the model.
     #    (yield final set then exit.)
-    # Note: its possible to iterate through all the modules in the model
+    # Note: it's possible to iterate through all the modules in the model
     #       while not having a full matched set if the user specified a
     #       bad matching, in that case something has gone wrong and we
     #       error
