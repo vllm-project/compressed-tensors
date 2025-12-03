@@ -80,6 +80,45 @@ class DummyModel(nn.Module):
             )
 
 
+class DummyMoEModel(nn.Module):
+    """Test MoE model for unit tests. Weights are initialized on meta device"""
+
+    def __init__(self, num_layers=2, num_experts=4):
+        try:
+            from accelerate import init_empty_weights
+        except ImportError:
+            pytest.skip("Skipping weight init requires accelerate")
+
+        super().__init__()
+        with init_empty_weights():
+            self.layers = nn.ModuleList(
+                [
+                    nn.ModuleDict(
+                        {
+                            "post_attention_layernorm": nn.LayerNorm(30),
+                            "mlp": nn.ModuleDict(
+                                {
+                                    "experts": nn.ModuleList(
+                                        [
+                                            nn.ModuleDict(
+                                                {
+                                                    "gate_proj": nn.Linear(30, 60),
+                                                    "up_proj": nn.Linear(30, 60),
+                                                    "down_proj": nn.Linear(60, 30),
+                                                }
+                                            )
+                                            for _ in range(num_experts)
+                                        ]
+                                    ),
+                                }
+                            ),
+                        }
+                    )
+                    for _ in range(num_layers)
+                ]
+            )    
+
+
 class TestMatchName:
     """Test cases for _match_name function"""
 
@@ -486,6 +525,70 @@ class TestMatchModulesSet:
         for module_set in matches:
             assert len(module_set) == 3
             assert all(isinstance(*m, nn.Linear) for m in module_set)
+
+    def test_moe_module_match(self):
+        """Test matching MoE modules with multiple experts per layer"""
+        model = DummyMoEModel(num_layers=2, num_experts=4)
+
+        # Test matching expert projections - each expert becomes its own set
+        # because the parent context differs between experts
+        targets = [
+            "re:.*gate_proj$",
+            "re:.*up_proj$",
+        ]
+
+        matches = list(match_modules_set(model, targets))
+
+        # Should have 8 sets (2 layers * 4 experts)
+        assert len(matches) == 8
+
+        # Each set should have 2 target lists (gate_proj, up_proj)
+        for expert_group in matches:
+            assert len(expert_group) == 2
+            gate_modules, up_modules = expert_group
+
+            # Each target should have matched 1 module (single expert)
+            assert len(gate_modules) == 1
+            assert len(up_modules) == 1
+
+            # All modules should be Linear layers
+            assert isinstance(gate_modules[0], nn.Linear)
+            assert isinstance(up_modules[0], nn.Linear)
+
+    def test_moe_with_layernorm_match(self):
+        """
+        Test matching MoE modules with their corresponding layer norms.
+        Including a layer-level module (layernorm) groups all experts in that layer together.
+        """
+        model = DummyMoEModel(num_layers=2, num_experts=3)
+
+        # Match layer norm with expert projections - the layernorm is at layer level,
+        # so it establishes a common parent context for all experts in that layer
+        targets = [
+            "re:.*post_attention_layernorm$",
+            "re:.*gate_proj$",
+            "re:.*up_proj$",
+        ]
+
+        matches = list(match_modules_set(model, targets))
+
+        # Should have 2 layer groups (one per layer)
+        assert len(matches) == 2
+
+        for layer_group in matches:
+            assert len(layer_group) == 3
+            norm_modules, gate_modules, up_modules = layer_group
+
+            # LayerNorm should have 1 module (single per layer)
+            assert len(norm_modules) == 1
+            assert isinstance(norm_modules[0], nn.LayerNorm)
+
+            # Each projection should have 3 experts (all experts in the layer)
+            assert len(gate_modules) == 3
+            assert len(up_modules) == 3
+            assert all(isinstance(m, nn.Linear) for m in gate_modules)
+            assert all(isinstance(m, nn.Linear) for m in up_modules)
+
 
     def test_module_set_ordering(self):
         """Test that module sets maintain target ordering"""
