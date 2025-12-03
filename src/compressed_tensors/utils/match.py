@@ -159,7 +159,7 @@ def match_targets(
     return matched_targets
 
 
-def get_lowest_common_module_name(names: list[str | None]) -> str:
+def get_lowest_common_module_name(names: Iterable[str | None]) -> str:
     """
     Given a list of names, returns the lowest-scope common name, ignoring Nones.
 
