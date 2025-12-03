@@ -209,7 +209,7 @@ def match_modules_set(
 
     E.g. the following targets would yield modules belonging to the following layers:
     ```python3
-    match_modules_set(model, ["re:*q_proj", "re:*k_proj", "re:*v_proj"]) == (
+    match_modules_set(model, ["q_proj", "k_proj", "v_proj"]) == (
         [
             [`layers.0.self_attn.q_proj`],
             [`layers.0.self_attn.k_proj`],
@@ -235,29 +235,36 @@ def match_modules_set(
     per target per group, E.g.
 
     ```python3
-    match_modules_set(model, ["re:*up_proj", "down_proj"]) == (
+
+    targets = [
+        "post_attention_layernorm", 
+        "up_proj", 
+        "down_proj"
+    ]
+    match_modules_set(model, targets) == (
         [
+            [layers.0.post_attention_layernorm],
             [
-                `layers.0.mlp.experts.0.up`, 
+                `layers.0.mlp.experts.0.up`,
                 ...
                 `layers.0.mlp.experts.127.up_proj`
-            ]
-            ...
+            ],
             [
-                `layers.0.mlp.experts.0.down_proj`, 
+                `layers.0.mlp.experts.0.down_proj`,
                 ...
                 `layers.0.mlp.experts.127.down_proj`
             ]
         ], # <- first yield
         ...
         [
+            [layers.0.post_attention_layernorm],
             [
-                `layers.32.mlp.experts.0.up_proj`, 
+                `layers.32.mlp.experts.0.up_proj`,
                 ...
                 `layers.32.mlp.experts.127.up_proj`
-            ]
+            ],
             [
-                `layers.32.mlp.experts.0.down_proj`, 
+                `layers.32.mlp.experts.0.down_proj`,
                 ...
                 `layers.32.mlp.experts.127.down_proj`
             ]
@@ -265,22 +272,12 @@ def match_modules_set(
     )
     ```
 
-    Note: if you only have one target i.e. match_modules_set(model, ["re:*up_proj")
-    it will yield one expert at a time rather than grouping experts by layer
-    This occurs because each single match fills all targets and the next expert 
-    will change the parent context. Thus for single targets include another layer
-    to stabilize the parent context i.e. match_modules_set(model, ["re:*up_proj", "re:*experts")
-        
     :param model: model containing modules to match against
     :param targets: target strings, potentially containing "re:" prefixes
     :param ignore: targets to ignore, potentially containing "re:" prefixes
     """
     targets = targets or []
     ignore = ignore or []
-
-    # Early return for empty targets
-    if not targets:
-        return
 
     # as we iterate through modules and try to match them with targets,
     # the algorithm can be in 2 possible states:
@@ -325,14 +322,13 @@ def match_modules_set(
                 unmatched_targets -= {target}
                 # target has now been matched (this does no-op if not in set)
 
-    # code for (C)
-    if not unmatched_targets:
-        yield [matches[target] for target in targets]
+    # never found anything
+    if unmatched_targets == set(targets): 
         return
 
-    # If no matches were found at all (e.g., all modules are internal),
-    # just return without yielding or raising an error
-    if unmatched_targets == set(targets):
+    # code for (C)
+    if not unmatched_targets: # have a full matching
+        yield [matches[target] for target in targets]
         return
 
     raise ValueError(

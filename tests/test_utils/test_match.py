@@ -84,39 +84,33 @@ class DummyMoEModel(nn.Module):
     """Test MoE model for unit tests. Weights are initialized on meta device"""
 
     def __init__(self, num_layers=2, num_experts=4):
-        try:
-            from accelerate import init_empty_weights
-        except ImportError:
-            pytest.skip("Skipping weight init requires accelerate")
-
         super().__init__()
-        with init_empty_weights():
-            self.layers = nn.ModuleList(
-                [
-                    nn.ModuleDict(
-                        {
-                            "post_attention_layernorm": nn.LayerNorm(30),
-                            "mlp": nn.ModuleDict(
-                                {
-                                    "experts": nn.ModuleList(
-                                        [
-                                            nn.ModuleDict(
-                                                {
-                                                    "gate_proj": nn.Linear(30, 60),
-                                                    "up_proj": nn.Linear(30, 60),
-                                                    "down_proj": nn.Linear(60, 30),
-                                                }
-                                            )
-                                            for _ in range(num_experts)
-                                        ]
-                                    ),
-                                }
-                            ),
-                        }
-                    )
-                    for _ in range(num_layers)
-                ]
-            )    
+        self.layers = nn.ModuleList(
+            [
+                nn.ModuleDict(
+                    {
+                        "post_attention_layernorm": nn.LayerNorm(3),
+                        "mlp": nn.ModuleDict(
+                            {
+                                "experts": nn.ModuleList(
+                                    [
+                                        nn.ModuleDict(
+                                            {
+                                                "gate_proj": nn.Linear(3, 6),
+                                                "up_proj": nn.Linear(3, 6),
+                                                "down_proj": nn.Linear(6, 3),
+                                            }
+                                        )
+                                        for _ in range(num_experts)
+                                    ]
+                                ),
+                            }
+                        ),
+                    }
+                )
+                for _ in range(num_layers)
+            ]
+        )
 
 
 class TestMatchName:
@@ -558,7 +552,8 @@ class TestMatchModulesSet:
     def test_moe_with_layernorm_match(self):
         """
         Test matching MoE modules with their corresponding layer norms.
-        Including a layer-level module (layernorm) groups all experts in that layer together.
+        Including a layer-level module (layernorm) groups all experts in
+        that layer together.
         """
         model = DummyMoEModel(num_layers=2, num_experts=3)
 
@@ -588,7 +583,6 @@ class TestMatchModulesSet:
             assert len(up_modules) == 3
             assert all(isinstance(m, nn.Linear) for m in gate_modules)
             assert all(isinstance(m, nn.Linear) for m in up_modules)
-
 
     def test_module_set_ordering(self):
         """Test that module sets maintain target ordering"""
@@ -623,7 +617,7 @@ class TestMatchModulesSet:
         model = DummyModel()
         matches = list(match_modules_set(model, []))
         # Should yield one empty set for each module traversed?
-        # with empty targets, we expect no matches
+        # Actually, with empty targets, we expect no matches
         assert len(matches) == 0
 
     def test_module_set_with_ignore(self):
