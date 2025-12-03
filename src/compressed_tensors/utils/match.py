@@ -284,7 +284,7 @@ def match_modules_set(
                     parent_context = None
                     unmatched_targets = len(targets)
 
-                # add match to mathes dict and do bookkeeping
+                # add match to matches dict and do bookkeeping
                 unmatched_targets -= len(matches[target]) == 0
                 matches[target].append(module)
                 parent_context = new_parent_context
