@@ -190,6 +190,7 @@ def match_modules_set(
     model: torch.nn.Module,
     targets: Optional[Iterable[str]],
     ignore: Optional[Iterable[str]] = None,
+    error_on_module_rematch: bool = True,
 ) -> Generator[List[List[torch.nn.Module]]]:
     """
     Yields modules grouped by parent context.
@@ -276,6 +277,8 @@ def match_modules_set(
     :param model: model containing modules to match against
     :param targets: target strings, potentially containing "re:" prefixes
     :param ignore: targets to ignore, potentially containing "re:" prefixes
+    :param error_on_module_rematch: if True, errors when a module gets
+      matched to multiple targets, if False, no error. (Defaults to True)
     """
     targets = targets or []
     ignore = ignore or []
@@ -324,11 +327,11 @@ def match_modules_set(
                 unmatched_targets -= {target}
                 matched_targets_for_cur_module += {target}
 
-        if len(matched_targets_for_cur_module) > 1:
-            _LOGGER.warning(
-                f"found multiple matching targets for module: {name} which matched to "
-                f"targets: {matched_targets_for_cur_module}. "
-                " this can result in unexpected behavior if not intended"
+        if len(matched_targets_for_cur_module) > 1 and error_on_module_rematch:
+            raise ValueError(
+                f"module: {name} was matched with multiple targets: "
+                f"{matched_targets_for_cur_module} which is unexpected "
+                "disable this check by setting `error_on_module_rematch = False`"
             )
 
     # never found anything
