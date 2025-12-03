@@ -161,7 +161,7 @@ def match_targets(
 
 def get_lowest_common_module_name(names: list[str | None]) -> str:
     """
-    Given a list of names, returns the lowest-scope common name ignoring None's.
+    Given a list of names, returns the lowest-scope common name, ignoring Nones.
 
     Implementation is a small alteration of os.path.commonprefix
     https://docs.python.org/3/library/os.path.html#os.path.commonprefix
