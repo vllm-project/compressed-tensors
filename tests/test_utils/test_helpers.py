@@ -21,6 +21,7 @@ from compressed_tensors import (
     ParameterizedDefaultDict,
     load_compressed,
     patch_attr,
+    patch_attrs,
     save_compressed,
     save_compressed_model,
 )
@@ -174,6 +175,23 @@ def test_patch_attr():
         assert obj.attribute == "patched"
         obj.attribute = "modified"
     assert not hasattr(obj, "attribute")
+
+
+def test_patch_attrs():
+    num_objs = 4
+    objs = [SimpleNamespace() for _ in range(num_objs)]
+    for idx, obj in enumerate(objs):
+        if idx % 2 == 0:
+            obj.attribute = f"original_{idx}"
+    with patch_attrs(objs, "attribute", [f"patched_{idx}" for idx in range(num_objs)]):
+        for idx, obj in enumerate(objs):
+            assert obj.attribute == f"patched_{idx}"
+            obj.attribute = "modified"
+    for idx, obj in enumerate(objs):
+        if idx % 2 == 0:
+            assert obj.attribute == f"original_{idx}"
+        else:
+            assert not hasattr(obj, "attribute")
 
 
 def test_parameterized_default_dict():
