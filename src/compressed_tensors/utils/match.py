@@ -31,7 +31,7 @@ __all__ = [
     "match_named_parameters",
     "match_targets",
     "match_modules_set",
-    "get_lowest_common_module_name",
+    "get_lowest_common_ancestor_name",
     "is_match",
     "is_narrow_match",
 ]
@@ -160,7 +160,7 @@ def match_targets(
     return matched_targets
 
 
-def get_lowest_common_module_name(names: list[str | None]) -> str:
+def get_lowest_common_ancestor_name(names: list[str | None]) -> str:
     """
     Given a list of names, returns the lowest-scope common name ignoring Nones.
 
@@ -307,7 +307,7 @@ def match_modules_set(
     for name, module in model.named_modules():
         for target in targets:
             if is_match(name, module, target, ignore):
-                new_parent_context = get_lowest_common_module_name(
+                new_parent_context = get_lowest_common_ancestor_name(
                     [name, parent_context]
                 )
 

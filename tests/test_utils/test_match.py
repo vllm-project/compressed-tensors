@@ -20,7 +20,7 @@ import torch.nn as nn
 # Assuming the module is named "module_matching" - adjust import as needed
 from compressed_tensors.utils import (
     InternalModule,
-    get_lowest_common_module_name,
+    get_lowest_common_ancestor_name,
     is_match,
     is_narrow_match,
     match_modules_set,
@@ -447,10 +447,10 @@ class TestMatchNamedParameters:
 
 
 class TestGetLowestCommonModuleName:
-    """Test cases for get_lowest_common_module_name function"""
+    """Test cases for get_lowest_common_ancestor_name function"""
 
     def test_multiple_modules(self):
-        assert "abc" == get_lowest_common_module_name(
+        assert "abc" == get_lowest_common_ancestor_name(
             [
                 "abc.a",
                 "abc.b",
@@ -459,14 +459,14 @@ class TestGetLowestCommonModuleName:
         )
 
     def test_single_module(self):
-        assert "abc.abc" == get_lowest_common_module_name(
+        assert "abc.abc" == get_lowest_common_ancestor_name(
             [
                 "abc.abc",
             ]
         )
 
     def test_substring_modules(self):
-        assert "abc" == get_lowest_common_module_name(
+        assert "abc" == get_lowest_common_ancestor_name(
             [
                 "abc.abc",
                 "abc.ab",
@@ -474,7 +474,7 @@ class TestGetLowestCommonModuleName:
         )
 
     def test_parent_and_child_modules(self):
-        assert "abc.abc" == get_lowest_common_module_name(
+        assert "abc.abc" == get_lowest_common_ancestor_name(
             [
                 "abc.abc.ab",
                 "abc.abc",
@@ -482,7 +482,7 @@ class TestGetLowestCommonModuleName:
         )
 
     def test_root(self):
-        assert "" == get_lowest_common_module_name(
+        assert "" == get_lowest_common_ancestor_name(
             [
                 "abc.abc",
                 "b.abc",
@@ -490,7 +490,7 @@ class TestGetLowestCommonModuleName:
         )
 
     def test_ignore_none(self):
-        assert "abc.abc" == get_lowest_common_module_name(
+        assert "abc.abc" == get_lowest_common_ancestor_name(
             [
                 "abc.abc",
                 None,
