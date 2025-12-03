@@ -190,7 +190,7 @@ def match_modules_set(
     model: torch.nn.Module,
     targets: Optional[Iterable[str]],
     ignore: Optional[Iterable[str]] = None,
-) -> Generator[Iterable[Iterable[torch.nn.Module]]]:
+) -> Generator[List[List[torch.nn.Module]]]:
     """
     Yields modules grouped by parent context.
 
@@ -216,9 +216,9 @@ def match_modules_set(
             [`layers.0.self_attn.v_proj`],
         ],
         [
-            `layers.1.self_attn.q_proj`,
-            `layers.1.self_attn.k_proj`,
-            `layers.1.self_attn.v_proj`,
+            [`layers.1.self_attn.q_proj`],
+            [`layers.1.self_attn.k_proj`],
+            [`layers.1.self_attn.v_proj`],
         ],
         ...
     )
@@ -305,6 +305,7 @@ def match_modules_set(
     unmatched_targets = set(targets)
 
     for name, module in model.named_modules():
+        matched_targets_for_cur_module = {}
         for target in targets:
             if is_match(name, module, target, ignore):
                 new_parent_context = get_lowest_common_ancestor_name(
@@ -321,7 +322,14 @@ def match_modules_set(
                 matches[target].append(module)
                 parent_context = new_parent_context
                 unmatched_targets -= {target}
-                # target has now been matched (this does no-op if not in set)
+                matched_targets_for_cur_module += {target}
+
+        if len(matched_targets_for_cur_module) > 1:
+            _LOGGER.warning(
+                f"found multiple matching targets for module: {name} which matched to "
+                f"targets: {matched_targets_for_cur_module}. "
+                " this can result in unexpected behavior if not intended"
+            )
 
     # never found anything
     if unmatched_targets == set(targets):
