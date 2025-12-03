@@ -308,7 +308,7 @@ def match_modules_set(
     unmatched_targets = set(targets)
 
     for name, module in model.named_modules():
-        matched_targets_for_cur_module = {}
+        matched_targets_for_cur_module = set()
         for target in targets:
             if is_match(name, module, target, ignore):
                 new_parent_context = get_lowest_common_ancestor_name(
@@ -325,7 +325,7 @@ def match_modules_set(
                 matches[target].append(module)
                 parent_context = new_parent_context
                 unmatched_targets -= {target}
-                matched_targets_for_cur_module += {target}
+                matched_targets_for_cur_module |= {target}
 
         if len(matched_targets_for_cur_module) > 1 and error_on_module_rematch:
             raise ValueError(
