@@ -237,8 +237,8 @@ def match_modules_set(
     ```python3
 
     targets = [
-        "post_attention_layernorm", 
-        "up_proj", 
+        "post_attention_layernorm",
+        "up_proj",
         "down_proj"
     ]
     match_modules_set(model, targets) == (
@@ -324,11 +324,11 @@ def match_modules_set(
                 # target has now been matched (this does no-op if not in set)
 
     # never found anything
-    if unmatched_targets == set(targets): 
+    if unmatched_targets == set(targets):
         return
 
     # code for (C)
-    if not unmatched_targets: # have a full matching
+    if not unmatched_targets:  # have a full matching
         yield [matches[target] for target in targets]
         return
 
