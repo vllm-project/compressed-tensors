@@ -215,12 +215,12 @@ def match_modules_set(
             [`layers.0.self_attn.k_proj`],
             [`layers.0.self_attn.v_proj`],
         ],
-        ...
         [
-            `layers.32.self_attn.q_proj`,
-            `layers.32.self_attn.k_proj`,
-            `layers.32.self_attn.v_proj`,
+            `layers.1.self_attn.q_proj`,
+            `layers.1.self_attn.k_proj`,
+            `layers.1.self_attn.v_proj`,
         ],
+        ...
     )
     ```
 
@@ -245,30 +245,31 @@ def match_modules_set(
         [
             [layers.0.post_attention_layernorm],
             [
-                `layers.0.mlp.experts.0.up`,
+                `layers.0.mlp.experts.0.up_proj`,
+                `layers.0.mlp.experts.1.up_proj`,
                 ...
-                `layers.0.mlp.experts.127.up_proj`
             ],
             [
                 `layers.0.mlp.experts.0.down_proj`,
+                `layers.0.mlp.experts.1.down_proj`,
                 ...
-                `layers.0.mlp.experts.127.down_proj`
+
             ]
         ], # <- first yield
-        ...
         [
-            [layers.0.post_attention_layernorm],
+            [layers.1.post_attention_layernorm],
             [
-                `layers.32.mlp.experts.0.up_proj`,
+                `layers.1.mlp.experts.0.up_proj`,
+                `layers.1.mlp.experts.1.up_proj`,
                 ...
-                `layers.32.mlp.experts.127.up_proj`
             ],
             [
-                `layers.32.mlp.experts.0.down_proj`,
+                `layers.1.mlp.experts.0.down_proj`,
+                `layers.1.mlp.experts.1.down_proj`,
                 ...
-                `layers.32.mlp.experts.127.down_proj`
             ]
         ],
+        ...
     )
     ```
 
