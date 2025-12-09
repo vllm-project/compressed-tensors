@@ -214,7 +214,6 @@ def test_composability(tmp_path, sparsity_config, quantization_config):
                 "linear.row_offsets",
                 "linear.shape",
                 "linear.weight_scale",
-                "linear.weight_zero_point",
             },
         )
     ],

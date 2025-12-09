@@ -111,17 +111,7 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
         if device is not None:
             quantized_weight = quantized_weight.to(device)
 
-        compressed_dict = {"weight": quantized_weight}
-
-        # Include scale, zero_point, and g_idx if they exist
-        if scale is not None:
-            compressed_dict["weight_scale"] = scale
-        if zero_point is not None:
-            compressed_dict["weight_zero_point"] = zero_point
-        if g_idx is not None:
-            compressed_dict["weight_g_idx"] = g_idx
-
-        return compressed_dict
+        return {"weight": quantized_weight}
 
     def decompress_weight(
         self,

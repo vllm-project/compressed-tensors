@@ -81,8 +81,11 @@ def test_quant_format(strategy, symmetric, group_size, sc, zp):
         dense_state_dict, names_to_scheme=quantized_modules_to_scheme
     )
 
-    # state_dict params should be the same (zero_point included even for symmetric)
-    assert len(dense_state_dict) == len(compressed_state_dict)
+    # state_dict params should be the same, minus the zero_point if symmetric
+    if symmetric:
+        assert len(dense_state_dict) == len(compressed_state_dict) + 1
+    else:
+        assert len(dense_state_dict) == len(compressed_state_dict)
 
     # check compressed to int8
     assert compressed_state_dict["dummy.weight"].dtype == torch.int8
