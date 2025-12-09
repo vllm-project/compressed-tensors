@@ -114,6 +114,7 @@ def test_end_to_end_asymmetric_quantization(
     # Verify compression created zero-point parameters
     assert hasattr(model.layer1, "weight_zero_point")
     assert hasattr(model.layer2, "weight_zero_point")
+    # For asymmetric GROUP/CHANNEL quantization, zero_point should be packed to int32
     assert model.layer1.weight_zero_point.dtype == torch.int32
     assert model.layer2.weight_zero_point.dtype == torch.int32
 

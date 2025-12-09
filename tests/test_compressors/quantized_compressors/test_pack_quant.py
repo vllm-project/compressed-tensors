@@ -88,9 +88,8 @@ def test_quant_format(shape):
         dense_state_dict, names_to_scheme=quantized_modules_to_scheme
     )
 
-    # compressed state_dict adds one entry for shape
-    # but removes the zero points since we are symmetric
-    assert len(dense_state_dict) == len(compressed_state_dict)
+    # compressed state_dict adds one entry for shape and keeps zero_point
+    assert len(dense_state_dict) + 1 == len(compressed_state_dict)
 
     # check compressed and packed
     assert compressed_state_dict["dummy.weight_packed"].dtype == torch.int32
