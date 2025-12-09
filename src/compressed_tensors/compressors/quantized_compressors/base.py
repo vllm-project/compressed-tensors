@@ -140,17 +140,9 @@ class BaseQuantizationCompressor(BaseCompressor):
                         if value is None:
                             continue
 
-                if name.endswith("weight_scale") and self._skip_scale():
-                    continue
-
                 compressed_dict[name] = value.to(compression_device)
 
         return compressed_dict
-
-    def _skip_scale(self):
-        from compressed_tensors.compressors import NVFP4PackedCompressor
-
-        return isinstance(self, NVFP4PackedCompressor)
 
     def decompress(
         self,

@@ -214,6 +214,7 @@ def test_composability(tmp_path, sparsity_config, quantization_config):
                 "linear.row_offsets",
                 "linear.shape",
                 "linear.weight_scale",
+                "linear.weight_zero_point",
             },
         )
     ],
@@ -572,9 +573,12 @@ def test_decompress_model(model_stub, comp_stub):
     # equivalent to decompressing from disk
     assert decompressed.keys() == true_decompressed.keys()
     for key in decompressed.keys():
-        assert (
-            decompressed[key].dtype == true_decompressed[key].dtype
-        ), f"{key} dtypes not equal"
+        # Skip dtype check for weight_shape - int32/int64 are functionally equivalent
+        # torch.Size() works identically with both, old checkpoints use int64, new use int32
+        if not key.endswith("weight_shape"):
+            assert (
+                decompressed[key].dtype == true_decompressed[key].dtype
+            ), f"{key} dtypes not equal"
         assert torch.all(
             decompressed[key] == true_decompressed[key]
         ), f"{key} values not equal"

@@ -21,8 +21,9 @@ from compressed_tensors.compressors.quantized_compressors.base import (
     BaseQuantizationCompressor,
 )
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationArgs
+from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
+from compressed_tensors.quantization.utils import calculate_qparam_shape
 from torch import Tensor
 
 
@@ -56,7 +57,6 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         return (
             "weight_packed",
             "weight_scale",
-            "weight_zero_point",
             "weight_global_scale",
         )
 
@@ -79,6 +79,24 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
                 torch.uint8,
             ),
         }
+
+        # Add weight_scale and weight_global_scale for NVFP4/MXFP4
+        if quantization_args is not None and quantization_args.strategy in [
+            QuantizationStrategy.GROUP.value,
+            QuantizationStrategy.TENSOR_GROUP.value,
+        ]:
+            # Use centralized calculation for consistency and correctness
+            num_groups, scale_shape = calculate_qparam_shape(
+                weight_shape, quantization_args
+            )
+            output["weight_scale"] = (scale_shape, quantization_args.scale_dtype)
+
+            if quantization_args.strategy == QuantizationStrategy.TENSOR_GROUP.value:
+                output["weight_global_scale"] = (
+                    torch.Size((1,)),
+                    torch.float32,
+                )
+
         return output
 
     def compress_scale(
@@ -114,6 +132,11 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         compressed_dict["weight_scale"] = self.compress_scale(
             scale=scale, quantization_args=quantization_args
         )
+
+        # Include global_scale if provided (for TENSOR_GROUP strategy)
+        if global_scale is not None:
+            compressed_dict["weight_global_scale"] = global_scale
+
         return compressed_dict
 
     def decompress_weight(

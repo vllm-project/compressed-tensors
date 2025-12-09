@@ -53,6 +53,7 @@ __all__ = [
     "calculate_qparams",
     "generate_gparam",
     "strategy_cdiv",
+    "calculate_qparam_shape",
 ]
 
 # target the self_attn layer
@@ -457,6 +458,50 @@ def strategy_cdiv(
             logger.bind(log_once=True).warning(message)
 
     return dividend
+
+
+def calculate_qparam_shape(
+    weight_shape: torch.Size,
+    quantization_args: QuantizationArgs,
+) -> Tuple[int, torch.Size]:
+    """
+    Calculate the number of groups and scale/zero_point shape for quantization.
+
+    This centralizes the logic for determining quantization parameter shapes,
+    ensuring consistency with initialize_qparams and avoiding floor division bugs.
+
+    :param weight_shape: shape of the weight tensor to be quantized
+    :param quantization_args: quantization configuration
+    :return: tuple of (num_groups, expected_shape) where:
+        - num_groups: number of quantization groups
+        - expected_shape: shape for scale/zero_point tensors (weight_shape[0], num_groups)
+    """
+    strategy = quantization_args.strategy
+
+    if strategy == QuantizationStrategy.TENSOR:
+        num_groups = 1
+        expected_shape = torch.Size((1,))
+
+    elif strategy == QuantizationStrategy.CHANNEL:
+        num_groups = 1
+        expected_shape = torch.Size((weight_shape[0], 1))
+
+    elif strategy in (QuantizationStrategy.GROUP, QuantizationStrategy.TENSOR_GROUP):
+        group_size = quantization_args.group_size
+        if group_size is None:
+            raise ValueError(f"{strategy} quantization requires group_size to be set")
+
+        # Use strategy_cdiv for proper ceiling division and validation
+        num_groups = strategy_cdiv(weight_shape[-1], group_size, strategy)
+        expected_shape = torch.Size((weight_shape[0], num_groups))
+
+    else:
+        raise ValueError(
+            f"Unsupported quantization strategy: {strategy}. "
+            f"Supported strategies: TENSOR, CHANNEL, GROUP, TENSOR_GROUP"
+        )
+
+    return num_groups, expected_shape
 
 
 def _get_dtype_eps(dtype: torch.dtype) -> float:
