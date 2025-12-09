@@ -20,6 +20,7 @@ import torch.nn as nn
 # Assuming the module is named "module_matching" - adjust import as needed
 from compressed_tensors.utils import (
     InternalModule,
+    get_lowest_common_ancestor_name,
     is_match,
     is_narrow_match,
     match_modules_set,
@@ -77,6 +78,39 @@ class DummyModel(nn.Module):
                     )
                 }
             )
+
+
+class DummyMoEModel(nn.Module):
+    """Test MoE model for unit tests. Weights are initialized on meta device"""
+
+    def __init__(self, num_layers=2, num_experts=4):
+        super().__init__()
+        self.layers = nn.ModuleList(
+            [
+                nn.ModuleDict(
+                    {
+                        "post_attention_layernorm": nn.LayerNorm(3),
+                        "mlp": nn.ModuleDict(
+                            {
+                                "experts": nn.ModuleList(
+                                    [
+                                        nn.ModuleDict(
+                                            {
+                                                "gate_proj": nn.Linear(3, 6),
+                                                "up_proj": nn.Linear(3, 6),
+                                                "down_proj": nn.Linear(6, 3),
+                                            }
+                                        )
+                                        for _ in range(num_experts)
+                                    ]
+                                ),
+                            }
+                        ),
+                    }
+                )
+                for _ in range(num_layers)
+            ]
+        )
 
 
 class TestMatchName:
@@ -412,6 +446,58 @@ class TestMatchNamedParameters:
         assert len(matches) == 0
 
 
+class TestGetLowestCommonModuleName:
+    """Test cases for get_lowest_common_ancestor_name function"""
+
+    def test_multiple_modules(self):
+        assert "abc" == get_lowest_common_ancestor_name(
+            [
+                "abc.a",
+                "abc.b",
+                "abc.c",
+            ]
+        )
+
+    def test_single_module(self):
+        assert "abc.abc" == get_lowest_common_ancestor_name(
+            [
+                "abc.abc",
+            ]
+        )
+
+    def test_substring_modules(self):
+        assert "abc" == get_lowest_common_ancestor_name(
+            [
+                "abc.abc",
+                "abc.ab",
+            ]
+        )
+
+    def test_parent_and_child_modules(self):
+        assert "abc.abc" == get_lowest_common_ancestor_name(
+            [
+                "abc.abc.ab",
+                "abc.abc",
+            ]
+        )
+
+    def test_root(self):
+        assert "" == get_lowest_common_ancestor_name(
+            [
+                "abc.abc",
+                "b.abc",
+            ]
+        )
+
+    def test_ignore_none(self):
+        assert "abc.abc" == get_lowest_common_ancestor_name(
+            [
+                "abc.abc",
+                None,
+            ]
+        )
+
+
 class TestMatchModulesSet:
     """Test cases for match_modules_set function"""
 
@@ -432,7 +518,71 @@ class TestMatchModulesSet:
         # Each set should have 3 modules
         for module_set in matches:
             assert len(module_set) == 3
-            assert all(isinstance(m, nn.Linear) for m in module_set)
+            assert all(isinstance(*m, nn.Linear) for m in module_set)
+
+    def test_moe_module_match(self):
+        """Test matching MoE modules with multiple experts per layer"""
+        model = DummyMoEModel(num_layers=2, num_experts=4)
+
+        # Test matching expert projections - each expert becomes its own set
+        # because the parent context differs between experts
+        targets = [
+            "re:.*gate_proj$",
+            "re:.*up_proj$",
+        ]
+
+        matches = list(match_modules_set(model, targets))
+
+        # Should have 8 sets (2 layers * 4 experts)
+        assert len(matches) == 8
+
+        # Each set should have 2 target lists (gate_proj, up_proj)
+        for expert_group in matches:
+            assert len(expert_group) == 2
+            gate_modules, up_modules = expert_group
+
+            # Each target should have matched 1 module (single expert)
+            assert len(gate_modules) == 1
+            assert len(up_modules) == 1
+
+            # All modules should be Linear layers
+            assert isinstance(gate_modules[0], nn.Linear)
+            assert isinstance(up_modules[0], nn.Linear)
+
+    def test_moe_with_layernorm_match(self):
+        """
+        Test matching MoE modules with their corresponding layer norms.
+        Including a layer-level module (layernorm) groups all experts in
+        that layer together.
+        """
+        model = DummyMoEModel(num_layers=2, num_experts=3)
+
+        # Match layer norm with expert projections - the layernorm is at layer level,
+        # so it establishes a common parent context for all experts in that layer
+        targets = [
+            "re:.*post_attention_layernorm$",
+            "re:.*gate_proj$",
+            "re:.*up_proj$",
+        ]
+
+        matches = list(match_modules_set(model, targets))
+
+        # Should have 2 layer groups (one per layer)
+        assert len(matches) == 2
+
+        for layer_group in matches:
+            assert len(layer_group) == 3
+            norm_modules, gate_modules, up_modules = layer_group
+
+            # LayerNorm should have 1 module (single per layer)
+            assert len(norm_modules) == 1
+            assert isinstance(norm_modules[0], nn.LayerNorm)
+
+            # Each projection should have 3 experts (all experts in the layer)
+            assert len(gate_modules) == 3
+            assert len(up_modules) == 3
+            assert all(isinstance(m, nn.Linear) for m in gate_modules)
+            assert all(isinstance(m, nn.Linear) for m in up_modules)
 
     def test_module_set_ordering(self):
         """Test that module sets maintain target ordering"""
@@ -448,6 +598,7 @@ class TestMatchModulesSet:
         for module_set in matches:
             # Check that modules are returned in target order (v, q, k)
             v_proj, q_proj, k_proj = module_set
+            v_proj, q_proj, k_proj = *v_proj, *q_proj, *k_proj
             # We can't easily check the exact modules, but can check they're all Linear
             assert all(isinstance(m, nn.Linear) for m in [v_proj, q_proj, k_proj])
 
@@ -456,18 +607,8 @@ class TestMatchModulesSet:
         model = DummyModel()
         targets = ["layer1", "nonexistent_module"]
 
-        with pytest.raises(ValueError, match="Unable to match targets into set"):
-            list(match_modules_set(model, targets))
-
-    def test_duplicate_match_error(self):
-        """Test error when same target matches multiple times before set completion"""
-        model = DummyModel()
-        # This should cause the same target to match multiple times
-        # before we can complete a set
-        targets = ["Linear", "Linear"]  # Two identical targets
-
         with pytest.raises(
-            ValueError, match="Matched a .* twice before completing set"
+            ValueError, match="Found a final incomplete set with matches found for keys"
         ):
             list(match_modules_set(model, targets))
 
