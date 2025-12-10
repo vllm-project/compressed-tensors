@@ -35,7 +35,7 @@ from compressed_tensors.quantization import (
 from compressed_tensors.quantization.lifecycle.forward import (
     wrap_module_forward_quantized,
 )
-from compressed_tensors.quantization.utils import strategy_cdiv
+from compressed_tensors.quantization.utils import calculate_qparam_shape, strategy_cdiv
 from compressed_tensors.utils import (
     disable_hf_hook,
     get_execution_device,
@@ -215,9 +215,10 @@ def initialize_qparams(
         if len(observed_shape) < 1:
             raise ValueError("Group quant requires at least 1 observed dimension")
 
-        group_size = quantization_args.group_size
-        num_groups = strategy_cdiv(observed_shape[-1], group_size, strategy)
-        expected_shape = (*observed_shape[:-1], num_groups)
+        # Use shared calculation to avoid floor division bugs
+        _, expected_shape = calculate_qparam_shape(
+            torch.Size(observed_shape), quantization_args
+        )
 
         # initialize activation ordering if applicable
         if actorder == ActivationOrdering.GROUP:

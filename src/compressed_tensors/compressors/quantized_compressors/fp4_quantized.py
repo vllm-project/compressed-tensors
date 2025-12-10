@@ -21,9 +21,8 @@ from compressed_tensors.compressors.quantized_compressors.base import (
     BaseQuantizationCompressor,
 )
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy
+from compressed_tensors.quantization import QuantizationArgs
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from compressed_tensors.quantization.utils import calculate_qparam_shape
 from torch import Tensor
 
 
@@ -73,31 +72,12 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         :param quantization_args: quantization parameters for the weight
         :return: dictionary mapping compressed parameter names to shape and dtype
         """
-        output = {
+        return {
             "weight_packed": (
                 torch.Size((weight_shape[0], weight_shape[1] // 2)),
                 torch.uint8,
             ),
         }
-
-        # Add weight_scale and weight_global_scale for NVFP4/MXFP4
-        if quantization_args is not None and quantization_args.strategy in [
-            QuantizationStrategy.GROUP.value,
-            QuantizationStrategy.TENSOR_GROUP.value,
-        ]:
-            # Use centralized calculation for consistency and correctness
-            num_groups, scale_shape = calculate_qparam_shape(
-                weight_shape, quantization_args
-            )
-            output["weight_scale"] = (scale_shape, quantization_args.scale_dtype)
-
-            if quantization_args.strategy == QuantizationStrategy.TENSOR_GROUP.value:
-                output["weight_global_scale"] = (
-                    torch.Size((1,)),
-                    torch.float32,
-                )
-
-        return output
 
     def compress_scale(
         self,
