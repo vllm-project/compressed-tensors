@@ -338,10 +338,10 @@ class ModelCompressor:
 
             self.quantization_compressor = {}
             for format in self.compression_formats:
-                self.quantization_compressor[format] = (
-                    BaseCompressor.load_from_registry(
-                        format, config=quantization_config
-                    )
+                self.quantization_compressor[
+                    format
+                ] = BaseCompressor.load_from_registry(
+                    format, config=quantization_config
                 )
 
     def get_missing_module_keys(self, model: Module) -> List[str]:
