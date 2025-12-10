@@ -127,9 +127,11 @@ def calculate_qparams(
     # 5. Update any 0s with small values to
     # prevent div by 0
     eps = _get_dtype_eps(
-        dtype=quantization_args.scale_dtype
-        if quantization_args.scale_dtype is not None
-        else scales.dtype
+        dtype=(
+            quantization_args.scale_dtype
+            if quantization_args.scale_dtype is not None
+            else scales.dtype
+        )
     )
     scales = torch.where(
         scales == 0,
