@@ -476,7 +476,8 @@ def calculate_qparam_shape(
     :param quantization_args: quantization configuration
     :return: tuple of (num_groups, expected_shape) where:
         - num_groups: number of quantization groups
-        - expected_shape: shape for scale/zero_point tensors (weight_shape[0], num_groups)
+        - expected_shape: shape for scale/zero_point tensors
+          (weight_shape[0], num_groups)
     """
     strategy = quantization_args.strategy
 
