@@ -190,6 +190,10 @@ class BaseCompressor(RegistryMixin, ABC):
         for name, parameter in module.named_parameters():
             compressed_data[name] = parameter
 
+        # NOTE: decompress_weight may modify compressed_data dict in-place
+        # This is subtle but allows us to update the module's qparams with
+        # the unpacked values.
+        # TODO: Consider refactoring to return modified qparams explicitly
         result = self.decompress_weight(
             compressed_data=compressed_data, quantization_args=quantization_args
         ).to(device)
