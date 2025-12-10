@@ -85,7 +85,7 @@ class BaseQuantizationCompressor(BaseCompressor):
         """
         uncompressed_names = list(model_state.keys())
         compressed_dict = {}
-        compressed_prefixes = set()
+        compressed_param_names = set()
 
         # compress values
         desc = "Compressing with quantization"
@@ -120,24 +120,15 @@ class BaseQuantizationCompressor(BaseCompressor):
                     device=compression_device,
                 )
 
-                compressed_prefixes.add(prefix)
-
-                # update state dict
+                # update state dict and track which params were added
                 for key, value in compressed_values.items():
-                    compressed_dict[prefix + key] = value.to(compression_device)
+                    full_name = prefix + key
+                    compressed_dict[full_name] = value.to(compression_device)
+                    compressed_param_names.add(full_name)
 
             else:
                 # Skip qparams already added by compress_weight
-                is_duplicate = any(
-                    name.endswith(s) and name.removesuffix(s) in compressed_prefixes
-                    for s in [
-                        "weight_scale",
-                        "weight_zero_point",
-                        "weight_global_scale",
-                        "weight_g_idx",
-                    ]
-                )
-                if is_duplicate:
+                if name in compressed_param_names:
                     continue
 
                 # omit saving zero points for symmetric quantization
