@@ -198,27 +198,27 @@ def initialize_qparams(
         return
 
     # 1. Infer expected scale/zp shape
-    if strategy == QuantizationStrategy.TENSOR:
-        expected_shape = (1,)
-
-    elif strategy == QuantizationStrategy.TOKEN:
+    if strategy == QuantizationStrategy.TOKEN:
         raise ValueError("Cannot perform static token quantization")
 
-    elif strategy == QuantizationStrategy.CHANNEL:
-        if len(observed_shape) < 2:
+    elif strategy in (
+        QuantizationStrategy.TENSOR,
+        QuantizationStrategy.CHANNEL,
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        # Validate shape requirements
+        if strategy == QuantizationStrategy.CHANNEL and len(observed_shape) < 2:
             raise ValueError("Channel quant requires at least 2 observed dimensions")
-
-        expected_shape = (observed_shape[-2], 1)
-
-    elif strategy in (QuantizationStrategy.GROUP, QuantizationStrategy.TENSOR_GROUP):
-        assert quantization_args.group_size is not None
-        if len(observed_shape) < 1:
-            raise ValueError("Group quant requires at least 1 observed dimension")
+        if strategy in (QuantizationStrategy.GROUP, QuantizationStrategy.TENSOR_GROUP):
+            assert quantization_args.group_size is not None
+            if len(observed_shape) < 1:
+                raise ValueError("Group quant requires at least 1 observed dimension")
 
         # Use shared calculation to avoid floor division bugs
-        _, expected_shape = calculate_qparam_shape(
-            torch.Size(observed_shape), quantization_args
-        )
+        # Note: observed_shape may contain None for dynamic dimensions (e.g., sequence length)
+        # but calculate_qparam_shape only accesses specific indices that are concrete
+        _, expected_shape = calculate_qparam_shape(observed_shape, quantization_args)
 
         # initialize activation ordering if applicable
         if actorder == ActivationOrdering.GROUP:

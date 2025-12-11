@@ -127,11 +127,9 @@ def calculate_qparams(
     # 5. Update any 0s with small values to
     # prevent div by 0
     eps = _get_dtype_eps(
-        dtype=(
-            quantization_args.scale_dtype
-            if quantization_args.scale_dtype is not None
-            else scales.dtype
-        )
+        dtype=quantization_args.scale_dtype
+        if quantization_args.scale_dtype is not None
+        else scales.dtype
     )
     scales = torch.where(
         scales == 0,
@@ -483,20 +481,19 @@ def calculate_qparam_shape(
 
     if strategy == QuantizationStrategy.TENSOR:
         num_groups = 1
-        expected_shape = torch.Size((1,))
+        expected_shape = (1,)
 
     elif strategy == QuantizationStrategy.CHANNEL:
         num_groups = 1
-        expected_shape = torch.Size((weight_shape[0], 1))
+        expected_shape = (weight_shape[0], 1)
 
     elif strategy in (QuantizationStrategy.GROUP, QuantizationStrategy.TENSOR_GROUP):
         group_size = quantization_args.group_size
         if group_size is None:
             raise ValueError(f"{strategy} quantization requires group_size to be set")
 
-        # Use strategy_cdiv for proper ceiling division and validation
         num_groups = strategy_cdiv(weight_shape[-1], group_size, strategy)
-        expected_shape = torch.Size((weight_shape[0], num_groups))
+        expected_shape = (weight_shape[0], num_groups)
 
     else:
         raise ValueError(
