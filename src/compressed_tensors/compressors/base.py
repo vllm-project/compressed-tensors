@@ -190,6 +190,10 @@ class BaseCompressor(RegistryMixin, ABC):
         for name, parameter in module.named_parameters():
             compressed_data[name] = parameter
 
+        # Save references to original parameters before decompression
+        original_scale = compressed_data.get("weight_scale")
+        original_zp = compressed_data.get("weight_zero_point")
+
         # NOTE: decompress_weight may modify compressed_data dict in-place
         # This is subtle but allows us to update the module's qparams with
         # the unpacked values.
@@ -198,9 +202,15 @@ class BaseCompressor(RegistryMixin, ABC):
             compressed_data=compressed_data, quantization_args=quantization_args
         ).to(device)
 
-        # Update module's parameters if they were unpacked/upcast during decompression
-        for param_name in ["weight_zero_point", "weight_scale"]:
-            if param_name in compressed_data and hasattr(module, param_name):
+        # Update module's parameters only if they were actually modified during decompression
+        for param_name, original_param in [
+            ("weight_scale", original_scale),
+            ("weight_zero_point", original_zp),
+        ]:
+            if (
+                param_name in compressed_data
+                and compressed_data[param_name] is not original_param
+            ):
                 # Delete the old parameter and register the updated one
                 delete_offload_parameter(module, param_name)
                 offload_device = get_offloaded_device(module)

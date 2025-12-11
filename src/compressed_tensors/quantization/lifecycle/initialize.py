@@ -215,9 +215,7 @@ def initialize_qparams(
             if len(observed_shape) < 1:
                 raise ValueError("Group quant requires at least 1 observed dimension")
 
-        # Use shared calculation to avoid floor division bugs
-        # Note: observed_shape may contain None for dynamic dimensions (e.g., sequence length)
-        # but calculate_qparam_shape only accesses specific indices that are concrete
+        # Use unified helper to calculate expected shape
         _, expected_shape = calculate_qparam_shape(observed_shape, quantization_args)
 
         # initialize activation ordering if applicable
