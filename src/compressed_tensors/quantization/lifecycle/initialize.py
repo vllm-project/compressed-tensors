@@ -35,7 +35,7 @@ from compressed_tensors.quantization import (
 from compressed_tensors.quantization.lifecycle.forward import (
     wrap_module_forward_quantized,
 )
-from compressed_tensors.quantization.utils import calculate_qparam_shape, strategy_cdiv
+from compressed_tensors.quantization.utils import strategy_cdiv
 from compressed_tensors.utils import (
     disable_hf_hook,
     get_execution_device,
@@ -198,25 +198,26 @@ def initialize_qparams(
         return
 
     # 1. Infer expected scale/zp shape
-    if strategy == QuantizationStrategy.TOKEN:
+    if strategy == QuantizationStrategy.TENSOR:
+        expected_shape = (1,)
+
+    elif strategy == QuantizationStrategy.TOKEN:
         raise ValueError("Cannot perform static token quantization")
 
-    elif strategy in (
-        QuantizationStrategy.TENSOR,
-        QuantizationStrategy.CHANNEL,
-        QuantizationStrategy.GROUP,
-        QuantizationStrategy.TENSOR_GROUP,
-    ):
-        # Validate shape requirements
-        if strategy == QuantizationStrategy.CHANNEL and len(observed_shape) < 2:
+    elif strategy == QuantizationStrategy.CHANNEL:
+        if len(observed_shape) < 2:
             raise ValueError("Channel quant requires at least 2 observed dimensions")
-        if strategy in (QuantizationStrategy.GROUP, QuantizationStrategy.TENSOR_GROUP):
-            assert quantization_args.group_size is not None
-            if len(observed_shape) < 1:
-                raise ValueError("Group quant requires at least 1 observed dimension")
 
-        # Use unified helper to calculate expected shape
-        _, expected_shape = calculate_qparam_shape(observed_shape, quantization_args)
+        expected_shape = (observed_shape[-2], 1)
+
+    elif strategy in (QuantizationStrategy.GROUP, QuantizationStrategy.TENSOR_GROUP):
+        assert quantization_args.group_size is not None
+        if len(observed_shape) < 1:
+            raise ValueError("Group quant requires at least 1 observed dimension")
+
+        group_size = quantization_args.group_size
+        num_groups = strategy_cdiv(observed_shape[-1], group_size, strategy)
+        expected_shape = (*observed_shape[:-1], num_groups)
 
         # initialize activation ordering if applicable
         if actorder == ActivationOrdering.GROUP:

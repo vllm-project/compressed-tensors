@@ -22,7 +22,7 @@ from compressed_tensors.compressors.quantized_compressors.base import (
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from compressed_tensors.quantization.utils import calculate_qparam_shape, can_quantize
+from compressed_tensors.quantization.utils import can_quantize
 from torch import Tensor
 
 
@@ -64,7 +64,6 @@ class PackedQuantizationCompressor(BaseQuantizationCompressor):
         """
         pack_factor = 32 // quantization_args.num_bits
         packed_size = math.ceil(weight_shape[1] / pack_factor)
-        packed_size_zp = math.ceil(weight_shape[0] / pack_factor)
         output = {
             "weight_packed": (torch.Size((weight_shape[0], packed_size)), torch.int32),
             "weight_shape": (torch.Size((2,)), torch.int32),
@@ -75,17 +74,20 @@ class PackedQuantizationCompressor(BaseQuantizationCompressor):
             QuantizationStrategy.GROUP.value,
             QuantizationStrategy.CHANNEL.value,
         ]:
-            # Use centralized calculation for consistency and correctness
-            num_groups, scale_shape = calculate_qparam_shape(
-                weight_shape, quantization_args
+            scale_cols = (
+                1
+                if quantization_args.strategy == QuantizationStrategy.CHANNEL.value
+                else math.ceil(weight_shape[1] / quantization_args.group_size)
             )
-            output["weight_scale"] = (scale_shape, quantization_args.scale_dtype)
+            output["weight_scale"] = (
+                torch.Size((weight_shape[0], scale_cols)),
+                quantization_args.scale_dtype,
+            )
 
             # Add weight_zero_point for asymmetric quantization
-            # Zero point has same num_groups as scale, but with packed rows
             if not quantization_args.symmetric:
                 output["weight_zero_point"] = (
-                    torch.Size((packed_size_zp, num_groups)),
+                    torch.Size((math.ceil(weight_shape[0] / pack_factor), scale_cols)),
                     torch.int32,
                 )
 
@@ -201,9 +203,7 @@ class PackedQuantizationCompressor(BaseQuantizationCompressor):
             QuantizationStrategy.GROUP.value,
             QuantizationStrategy.CHANNEL.value,
         ]:
-            return pack_to_int32(
-                zero_point, quantization_args.num_bits, packed_dim=0
-            ).contiguous()
+            return pack_to_int32(zero_point, quantization_args.num_bits, packed_dim=0)
         return zero_point
 
 
