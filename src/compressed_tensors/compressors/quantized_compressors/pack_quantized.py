@@ -74,11 +74,12 @@ class PackedQuantizationCompressor(BaseQuantizationCompressor):
             QuantizationStrategy.GROUP.value,
             QuantizationStrategy.CHANNEL.value,
         ]:
-            scale_cols = (
-                1
-                if quantization_args.strategy == QuantizationStrategy.CHANNEL.value
-                else math.ceil(weight_shape[1] / quantization_args.group_size)
+            shape_factor = (
+                quantization_args.group_size
+                if quantization_args.strategy == QuantizationStrategy.GROUP.value
+                else weight_shape[-1]
             )
+            scale_cols = math.ceil(weight_shape[-1] / shape_factor)
             output["weight_scale"] = (
                 torch.Size((weight_shape[0], scale_cols)),
                 quantization_args.scale_dtype,
