@@ -131,7 +131,8 @@ class BaseQuantizationCompressor(BaseCompressor):
                 if name in compressed_param_names:
                     continue
 
-                # omit saving zero points for symmetric quantization
+                # for symmetric quantization, omit zero_point
+                # manually because it wasn't handled in compress_weight
                 if name.endswith("weight_zero_point"):
                     module_path = name.rsplit(".", 1)[0]
                     if (

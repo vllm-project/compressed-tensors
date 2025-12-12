@@ -118,7 +118,6 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
                 "NVFP4 quantization requires global_scale (TENSOR_GROUP strategy). "
                 "Use TENSOR_GROUP strategy instead of GROUP for FP4 quantization."
             )
-        compressed_dict["weight_global_scale"] = global_scale
 
         return compressed_dict
 
