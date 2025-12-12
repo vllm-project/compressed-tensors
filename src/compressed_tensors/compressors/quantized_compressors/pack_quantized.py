@@ -250,6 +250,9 @@ def pack_to_int32(
     if packed_dim == 0:
         value = value.transpose(0, 1)
 
+    # Ensure contiguous memory for .view() operation
+    value = value.contiguous()
+
     rows, cols = value.shape
     padded_cols = math.ceil(cols / pack_factor) * pack_factor
     pad_len = padded_cols - cols

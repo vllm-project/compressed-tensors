@@ -202,7 +202,7 @@ class BaseCompressor(RegistryMixin, ABC):
             compressed_data=compressed_data, quantization_args=quantization_args
         ).to(device)
 
-        # Update module's parameters only if they were actually modified during decompression
+        # Update module's parameters only if they were modified
         for param_name, original_param in [
             ("weight_scale", original_scale),
             ("weight_zero_point", original_zp),

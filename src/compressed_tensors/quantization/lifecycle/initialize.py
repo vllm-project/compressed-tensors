@@ -256,6 +256,10 @@ def initialize_qparams(
     ]:
         scale_dtype = torch.float16
 
+    # Set scale_dtype in quantization_args so calculate_qparams can use it
+    if quantization_args.scale_dtype is None:
+        quantization_args.scale_dtype = scale_dtype
+
     # 3. Initializes scale/zp for the module
     init_scale = Parameter(
         torch.empty(expected_shape, dtype=scale_dtype, device=device),
