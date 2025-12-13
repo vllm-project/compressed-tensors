@@ -36,8 +36,8 @@ ALL_FORMAT_NAMES = [
 
 
 class BaseCompressor(RegistryMixin, ABC):
-    @abstractmethod
     @staticmethod
+    @abstractmethod
     def match_scheme(scheme: QuantizationScheme) -> bool:
         raise NotImplementedError()
 

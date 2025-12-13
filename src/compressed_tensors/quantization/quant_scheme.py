@@ -55,10 +55,10 @@ class QuantizationScheme(BaseModel):
     sparsity_structure: SparsityStructure = SparsityStructure.UNSTRUCTURED
     format: Optional[CompressionFormat] = None
 
-    @field_validator("input_activations", "output_activations", mode="after")
-    def validate_activations(self, args: Optional[QuantizationArgs]):
+    @field_validator("input_activations", "output_activations")
+    def validate_activations(cls, args: Optional[QuantizationArgs]):
         if args is None:
-            return
+            return None
 
         if args.strategy in (QuantizationStrategy.CHANNEL, QuantizationStrategy.BLOCK):
             raise NotImplementedError(
@@ -73,32 +73,14 @@ class QuantizationScheme(BaseModel):
         if args.actorder is not None:
             raise ValueError("Cannot apply GPTQ actorder to activations")
 
-    @field_validator("weights", mode="after")
-    def validate_weights(self, args: Optional[QuantizationArgs]):
+        return args
+
+    @field_validator("weights")
+    def validate_weights(cls, args: Optional[QuantizationArgs]):
         if args.dynamic is not False:
             raise ValueError("Cannot apply dynamic quantization to weights")
 
-    @field_validator("format", mode="after")
-    def validate_format(self, format):
-        from compressed_tensors.compressors import ALL_FORMAT_NAMES, BaseCompressor
-
-        if format is None:
-            for name in ALL_FORMAT_NAMES:
-                compressor = BaseCompressor.get_value_from_registry(name)
-                if compressor.match_scheme(self):
-                    self.format = compressor.format
-            else:
-                # TODO: logger.warning("")
-                print(
-                    f"Unable to infer compression format for scheme {self}."
-                    "Your model may not have an associated kernel in vLLM"
-                )
-                self.format = CompressionFormat.dense.value
-
-        elif format == CompressionFormat.mixed_precision.value:
-            raise ValueError(
-                "mixed-precision cannot be set as a format for a QuantizationScheme"
-            )
+        return args
 
     @model_validator(mode="after")
     def validate_model_after(model: "QuantizationScheme") -> "QuantizationScheme":
@@ -122,7 +104,24 @@ class QuantizationScheme(BaseModel):
                 stacklevel=2,
             )
 
+        if model.format is None:
+            model.format = model.infer_format()
         return model
+
+    def infer_format(self) -> CompressionFormat:
+        from compressed_tensors.compressors import ALL_FORMAT_NAMES, BaseCompressor
+
+        for name in ALL_FORMAT_NAMES:
+            compressor = BaseCompressor.get_value_from_registry(name)
+            if compressor.match_scheme(self):
+                return compressor.format
+        else:
+            # TODO: logger.warning("")
+            print(
+                f"Unable to infer compression format for scheme {self}."
+                "Your model may not have an associated kernel in vLLM"
+            )
+            return CompressionFormat.dense.value
 
     """
 Pre-Set Quantization Scheme Args
