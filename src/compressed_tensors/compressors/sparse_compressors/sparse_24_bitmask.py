@@ -17,10 +17,16 @@ from typing import Dict, List, Tuple, Union
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.compressors.sparse_compressors.base import BaseSparseCompressor
-from compressed_tensors.config import CompressionFormat, SparsityStructure
-from compressed_tensors.quantization import FP8_E4M3_DATA
-from compressed_tensors.utils import merge_names, pack_bitmasks, unpack_bitmasks
+from compressed_tensors.config import CompressionFormat
+from compressed_tensors.quantization import QuantizationScheme
+from compressed_tensors.utils import (
+    align_module_device,
+    delete_offload_parameter,
+    merge_names,
+    pack_bitmasks,
+    register_offload_parameter,
+    unpack_bitmasks,
+)
 from torch import Tensor
 
 
@@ -34,37 +40,50 @@ __all__ = [
 
 
 @BaseCompressor.register(name=CompressionFormat.sparse_24_bitmask.value)
-class Sparse24BitMaskCompressor(BaseSparseCompressor):
+class Sparse24BitMaskCompressor(BaseCompressor):
     """
     Compression for sparse models using bitmasks. Non-zero weights are stored in a 2d
     values tensor, with their locations stored in a 2d bitmask
     """
 
+    @staticmethod
+    def match_scheme(scheme: QuantizationScheme) -> bool:
+        return scheme.format == CompressionFormat.sparse_24_bitmask
+
+    @classmethod
+    def compress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        assert hasattr(module, "weight")
+        assert hasattr(module, "weight_scale")
+
+        with align_module_device(module):
+            bitmask_tensor = Sparse24BitMaskTensor.from_dense(module.weight).dict("")
+            for key, value in bitmask_tensor.items():
+                value = torch.nn.Parameter(value, requires_grad=False)
+                register_offload_parameter(module, key, value)
+
+            delete_offload_parameter(module, "weight")
+
+    @classmethod
+    def decompress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        assert hasattr(module, "shape")
+        assert hasattr(module, "compressed")
+        assert hasattr(module, "bitmask")
+
+        with align_module_device(module):
+            weight = Sparse24BitMaskTensor.from_compressed_data(
+                shape=module.shape,
+                compressed=module.compressed,
+                bitmask=module.bitmask,
+            ).decompress()
+
+            delete_offload_parameter(module, "shape")
+            delete_offload_parameter(module, "compressed")
+            delete_offload_parameter(module, "bitmask")
+            register_offload_parameter(module, "weight", weight)
+
     @property
-    def compression_param_names(self) -> Tuple[str]:
-        """
-        Returns a tuple of compression parameter names introduced by
-        the compressor during compression
-        """
-        return (
-            "shape",
-            "compressed",
-            "bitmask",
-        )
-
-    def compress_weight(self, name, value):
-        bitmask_tensor = Sparse24BitMaskTensor.from_dense(
-            value, self.config.sparsity_structure
-        )
-        return bitmask_tensor.dict(
-            name_prefix=name,
-            device="meta" if value.is_meta else "cpu",
-        )
-
-    def decompress_weight(self, weight_data):
-        data = Sparse24BitMaskTensor.from_compressed_data(**weight_data)
-        decompressed = data.decompress()
-        return decompressed
+    def format(self) -> CompressionFormat:
+        return CompressionFormat.sparse_24_bitmask
 
 
 @dataclass
@@ -83,23 +102,13 @@ class Sparse24BitMaskTensor:
     bitmask: Tensor
 
     @staticmethod
-    def from_dense(
-        tensor: Tensor,
-        sparsity_structure: Union[SparsityStructure, str] = SparsityStructure.TWO_FOUR,
-    ) -> "Sparse24BitMaskTensor":
+    def from_dense(tensor: Tensor) -> "Sparse24BitMaskTensor":
         """
         :param tensor: dense tensor to compress
         :return: instantiated compressed tensor
         """
         shape = list(tensor.shape)
-        if tensor.is_meta:
-            compressed, bitmask = sparse24_bitmask_compress(
-                tensor, sparsity_structure=sparsity_structure
-            )
-        else:
-            compressed, bitmask = sparse24_bitmask_compress(
-                tensor.cpu(), sparsity_structure=sparsity_structure
-            )
+        compressed, bitmask = sparse24_bitmask_compress(tensor)
         return Sparse24BitMaskTensor(
             shape=shape,
             compressed=compressed,
@@ -140,7 +149,7 @@ class Sparse24BitMaskTensor:
 
         return sizeof_tensor(self.compressed) + sizeof_tensor(self.bitmask)
 
-    def dict(self, name_prefix: str, device: str = "cpu") -> Dict[str, Tensor]:
+    def dict(self, name_prefix: str) -> Dict[str, Tensor]:
         """
         :param name_prefix: name of original tensor to store compressed weight as
         :return: dict of compressed data for the stored weight
@@ -148,21 +157,16 @@ class Sparse24BitMaskTensor:
         if name_prefix.endswith(".weight"):
             name_prefix = name_prefix[: -len(".weight")]
         return {
-            merge_names(name_prefix, "shape"): torch.tensor(
-                self.shape, device=device
-            ).reshape(-1, 1),
-            merge_names(name_prefix, "compressed"): self.compressed.to(device),
-            merge_names(name_prefix, "bitmask"): self.bitmask.to(device),
+            merge_names(name_prefix, "shape"): torch.tensor(self.shape).reshape(-1, 1),
+            merge_names(name_prefix, "compressed"): self.compressed,
+            merge_names(name_prefix, "bitmask"): self.bitmask,
         }
 
     def __repr__(self) -> str:
         return f"BitMaskTensor(shape={self.shape}, compressed=True)"
 
 
-def sparse24_bitmask_compress(
-    tensor: Tensor,
-    sparsity_structure: Union[SparsityStructure, str] = SparsityStructure.TWO_FOUR,
-) -> Tuple[Tensor, Tensor, Tensor]:
+def sparse24_bitmask_compress(tensor: Tensor) -> Tuple[Tensor, Tensor]:
     """
     Compresses a dense tensor using bitmask compression
 
@@ -172,9 +176,6 @@ def sparse24_bitmask_compress(
     :return: tuple of compressed data representing tensor
     """
     assert len(tensor.shape) == 2, "Only 2D tensors are supported"
-    assert (
-        SparsityStructure(sparsity_structure) == SparsityStructure.TWO_FOUR
-    ), "Only 2:4 sparsity is supported"
 
     if tensor.is_meta:
         num_rows, num_cols = tensor.shape
@@ -189,11 +190,11 @@ def sparse24_bitmask_compress(
 
     bytemasks = get_24_bytemasks(tensor=tensor)
 
-    if tensor.dtype == FP8_E4M3_DATA.dtype:
+    if tensor.dtype == torch.float8_e4m3fn:
         # acces raw bytes of the tensor
         tensor_view = tensor.view(torch.int8)
         values = tensor_view[bytemasks]
-        values = values.view(FP8_E4M3_DATA.dtype)
+        values = values.view(torch.float8_e4m3fn)
     else:
         values = tensor[bytemasks]
 
@@ -224,7 +225,7 @@ def sparse24_bitmask_decompress(
     return decompressed_tensor
 
 
-def get_24_bytemasks(tensor):
+def get_24_bytemasks(tensor: Tensor) -> Tensor:
     """
     Generate a 2:4 sparsity mask for the given tensor.
 
@@ -241,7 +242,7 @@ def get_24_bytemasks(tensor):
                         multiple of 4.
     """
     original_dtype = tensor.dtype
-    if tensor.dtype == FP8_E4M3_DATA.dtype:
+    if tensor.dtype == torch.float8_e4m3fn:
         tensor = tensor.view(torch.int8)
     original_shape = tensor.shape
     num_elements = tensor.numel()

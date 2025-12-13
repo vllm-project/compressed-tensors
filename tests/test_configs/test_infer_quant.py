@@ -12,54 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections import OrderedDict
-
 import pytest
-import torch
-from compressed_tensors.config.format import (
-    infer_and_set_per_module_quantization_format,
-)
 from compressed_tensors.quantization import preset_name_to_scheme
 
 
 @pytest.mark.parametrize(
-    "preset,sparsity_structure,expected_format",
+    "preset,expected_format",
     [
-        ["W8A8", "unstructured", "int-quantized"],
-        ["W8A16", "unstructured", "pack-quantized"],
-        ["W8A16", "2:4", "marlin-24"],
-        ["W4A16", "unstructured", "pack-quantized"],
-        ["W4A16", "2:4", "marlin-24"],
-        ["FP8", "unstructured", "float-quantized"],
+        ["W8A8", "int-quantized"],
+        ["W8A16", "pack-quantized"],
+        ["W4A16", "pack-quantized"],
+        ["FP8", "float-quantized"],
     ],
 )
-def test_infer_quant_format(preset, sparsity_structure, expected_format):
+def test_infer_quant_format(preset, expected_format):
     quant_scheme = preset_name_to_scheme(preset, targets=["Linear"])
-
-    dummy_model = torch.nn.Sequential(
-        OrderedDict(
-            [
-                ("fc1", torch.nn.Linear(8, 16, bias=True)),
-                ("fc2", torch.nn.Linear(16, 32, bias=True)),
-                (
-                    "block1",
-                    torch.nn.Sequential(
-                        OrderedDict(
-                            [
-                                ("fc1", torch.nn.Linear(32, 16, bias=True)),
-                                ("fc2", torch.nn.Linear(16, 8, bias=True)),
-                            ]
-                        )
-                    ),
-                ),
-            ]
-        )
-    )
-
-    for _, module in dummy_model.named_modules():
-        module.quantization_scheme = quant_scheme
-
-    inferred_format = infer_and_set_per_module_quantization_format(
-        dummy_model, sparsity_structure=sparsity_structure
-    )
-    assert inferred_format[0] == expected_format
+    assert quant_scheme.format == expected_format

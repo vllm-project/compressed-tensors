@@ -12,18 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Optional, Tuple
-
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.compressors.quantized_compressors.base import (
-    BaseQuantizationCompressor,
-)
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationArgs
-from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from compressed_tensors.quantization.utils import can_quantize
-from torch import Tensor
+from compressed_tensors.quantization import QuantizationScheme, QuantizationType
+from compressed_tensors.quantization.lifecycle.compressed import (
+    dequantize_weight,
+    quantize_weight,
+)
+from compressed_tensors.utils import (
+    align_module_device,
+    delete_offload_parameter,
+    register_offload_parameter,
+)
 
 
 __all__ = [
@@ -34,106 +35,44 @@ __all__ = [
 
 
 @BaseCompressor.register(name=CompressionFormat.naive_quantized.value)
-class NaiveQuantizationCompressor(BaseQuantizationCompressor):
+class NaiveQuantizationCompressor(BaseCompressor):
     """
     Implements naive compression for quantized models. Weight of each
     quantized layer is converted from its original float type to the closest Pytorch
     type to the type specified by the layer's QuantizationArgs.
     """
 
-    @property
-    def compression_param_names(self) -> Tuple[str]:
-        """
-        Returns a tuple of compression parameter names introduced by
-        the compressor during compression
-        """
+    @staticmethod
+    def match_scheme(scheme: QuantizationScheme) -> bool:
         return (
-            "weight",
-            "weight_scale",
-            "weight_zero_point",
-            "weight_g_idx",
+            scheme.input_activations is None
+            and scheme.weights is not None
+            and scheme.output_activations is None
         )
 
-    def compression_param_info(
-        self,
-        weight_shape: torch.Size,
-        quantization_args: Optional[QuantizationArgs] = None,
-    ) -> Dict[str, Tuple[torch.Size, torch.dtype]]:
-        """
-        Creates a dictionary of expected shapes and dtypes for each compression
-            parameter used by the compressor
+    @classmethod
+    def compress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        assert hasattr(module, "weight")
+        assert hasattr(module, "weight_scale")
 
-        :param weight_shape: uncompressed weight shape
-        :param quantization_args: quantization parameters for the weight
-        :return: dictionary mapping compressed parameter names to shape and dtype
-        """
-        dtype = quantization_args.pytorch_dtype()
-        return {"weight": (weight_shape, dtype)}
+        with align_module_device(module):
+            weight = quantize_weight(module, module.weight)
+            weight = torch.nn.Parameter(weight, requires_grad=False)
 
-    def compress_weight(
-        self,
-        weight: Tensor,
-        scale: Tensor,
-        quantization_args: QuantizationArgs,
-        zero_point: Optional[Tensor] = None,
-        g_idx: Optional[torch.Tensor] = None,
-        device: Optional[torch.device] = None,
-        global_scale: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Compresses a single uncompressed weight
+            delete_offload_parameter(module, "weight")
+            register_offload_parameter(module, "weight", weight)
 
-        :param weight: uncompressed weight tensor
-        :param scale: quantization scale for weight
-        :param quantization_args: quantization parameters for weight
-        :param zero_point: quantization zero point for weight
-        :param g_idx: optional mapping from column index to group index
-        :param device: optional device to move compressed output to
-        :return: dictionary of compressed weight data
-        """
-        if global_scale is not None:
-            raise ValueError(
-                "global_scale is not supported for the NaiveQuantizationCompressor"
-            )
+    @classmethod
+    def decompress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        with align_module_device(module):
+            weight = dequantize_weight(module, module.weight)
 
-        if can_quantize(weight, quantization_args):
-            quantized_weight = quantize(
-                x=weight,
-                scale=scale,
-                zero_point=zero_point,
-                g_idx=g_idx,
-                args=quantization_args,
-                dtype=quantization_args.pytorch_dtype(),
-            )
-        else:
-            quantized_weight = weight
+            delete_offload_parameter(module, "weight")
+            register_offload_parameter(module, "weight", weight)
 
-        if device is not None:
-            quantized_weight = quantized_weight.to(device)
-
-        return {"weight": quantized_weight}
-
-    def decompress_weight(
-        self,
-        compressed_data: Dict[str, Tensor],
-        quantization_args: Optional[QuantizationArgs] = None,
-    ) -> torch.Tensor:
-        """
-        Decompresses a single compressed weight
-
-        :param compressed_data: dictionary of data needed for decompression
-        :param quantization_args: quantization parameters for the weight
-        :return: tensor of the decompressed weight
-        """
-        weight = compressed_data["weight"]
-        scale = compressed_data["weight_scale"]
-        zero_point = compressed_data.get("weight_zero_point", None)
-        g_idx = compressed_data.get("weight_g_idx", None)
-        decompressed_weight = dequantize(
-            x_q=weight, scale=scale, zero_point=zero_point, g_idx=g_idx
-        )
-
-        return decompressed_weight
+    @property
+    def format(self) -> CompressionFormat:
+        return CompressionFormat.naive_quantized
 
 
 @BaseCompressor.register(name=CompressionFormat.int_quantized.value)
@@ -142,13 +81,35 @@ class IntQuantizationCompressor(NaiveQuantizationCompressor):
     Alias for integer quantized models
     """
 
-    pass
+    @staticmethod
+    def match_scheme(scheme: QuantizationScheme) -> bool:
+        return (
+            scheme.input_activations is None
+            and scheme.weights is not None
+            and scheme.weights.type == QuantizationType.INT
+            and scheme.output_activations is None
+        )
+
+    @property
+    def format(self) -> CompressionFormat:
+        return CompressionFormat.int_quantized
 
 
 @BaseCompressor.register(name=CompressionFormat.float_quantized.value)
 class FloatQuantizationCompressor(NaiveQuantizationCompressor):
     """
-    Alias for fp quantized models
+    Alias for floating point quantized models
     """
 
-    pass
+    @staticmethod
+    def match_scheme(scheme: QuantizationScheme) -> bool:
+        return (
+            scheme.input_activations is None
+            and scheme.weights is not None
+            and scheme.weights.type == QuantizationType.FLOAT
+            and scheme.output_activations is None
+        )
+
+    @property
+    def format(self) -> CompressionFormat:
+        return CompressionFormat.float_quantized

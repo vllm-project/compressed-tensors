@@ -372,6 +372,7 @@ def get_torch_bit_depth(value: torch.Tensor) -> int:
     return bit_depth
 
 
+@deprecated()
 def can_quantize(value: torch.Tensor, quant_args: "QuantizationArgs") -> bool:  # noqa
     """
     Checks if value can be quantized by quant_args.

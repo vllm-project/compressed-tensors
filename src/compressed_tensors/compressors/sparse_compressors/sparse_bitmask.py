@@ -16,10 +16,16 @@ from typing import Dict, List, Tuple, Union
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.compressors.sparse_compressors.base import BaseSparseCompressor
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import FP8_E4M3_DATA
-from compressed_tensors.utils import merge_names, pack_bitmasks, unpack_bitmasks
+from compressed_tensors.quantization import QuantizationScheme
+from compressed_tensors.utils import (
+    align_module_device,
+    delete_offload_parameter,
+    merge_names,
+    pack_bitmasks,
+    register_offload_parameter,
+    unpack_bitmasks,
+)
 from torch import Tensor
 
 
@@ -32,29 +38,51 @@ __all__ = [
 
 
 @BaseCompressor.register(name=CompressionFormat.sparse_bitmask.value)
-class BitmaskCompressor(BaseSparseCompressor):
+class BitmaskCompressor(BaseCompressor):
     """
     Compression for sparse models using bitmasks. Non-zero weights are stored in a 1d
     values tensor, with their locations stored in a 2d bitmask
     """
 
+    @staticmethod
+    def match_scheme(scheme: QuantizationScheme) -> bool:
+        # any module can be sparse
+        return True
+
+    @classmethod
+    def compress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        assert hasattr(module, "weight")
+        assert hasattr(module, "weight_scale")
+
+        with align_module_device(module):
+            bitmask_tensor = BitmaskTensor.from_dense(module.weight).dict("")
+            for key, value in bitmask_tensor.items():
+                value = torch.nn.Parameter(value, requires_grad=False)
+                register_offload_parameter(module, key, value)
+
+            delete_offload_parameter(module, "weight")
+
+    @classmethod
+    def decompress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        assert hasattr(module, "shape")
+        assert hasattr(module, "compressed")
+        assert hasattr(module, "bitmask")
+
+        with align_module_device(module):
+            weight = BitmaskTensor.from_compressed_data(
+                shape=module.shape,
+                compressed=module.compressed,
+                bitmask=module.bitmask,
+            ).decompress()
+
+            delete_offload_parameter(module, "shape")
+            delete_offload_parameter(module, "compressed")
+            delete_offload_parameter(module, "bitmask")
+            register_offload_parameter(module, "weight", weight)
+
     @property
-    def compression_param_names(self) -> Tuple[str]:
-        """
-        Returns a tuple of compression parameter names introduced by
-        the compressor during compression
-        """
-        return ("shape", "compressed", "bitmask", "row_offsets")
-
-    def compress_weight(self, name, value):
-        bitmask_tensor = BitmaskTensor.from_dense(value)
-        bitmask_dict = bitmask_tensor.dict(name_prefix=name, device="cpu")
-        return bitmask_dict
-
-    def decompress_weight(self, weight_data):
-        data = BitmaskTensor(**weight_data)
-        decompressed = data.decompress()
-        return decompressed
+    def format(self) -> CompressionFormat:
+        return CompressionFormat.sparse_bitmask
 
 
 class BitmaskTensor:
@@ -138,11 +166,11 @@ def bitmask_compress(tensor: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
     bytemasks = tensor != 0
     row_counts = bytemasks.sum(dim=-1)
     row_offsets = torch.cumsum(row_counts, 0) - row_counts
-    if tensor.dtype == FP8_E4M3_DATA.dtype:
+    if tensor.dtype == torch.float8_e4m3fn:
         # acces raw bytes of the tensor
         tensor_view = tensor.view(torch.int8)
         values = tensor_view[bytemasks]
-        values = values.view(FP8_E4M3_DATA.dtype)
+        values = values.view(torch.float8_e4m3fn)
     else:
         values = tensor[bytemasks]
     bitmasks_packed = pack_bitmasks(bytemasks)

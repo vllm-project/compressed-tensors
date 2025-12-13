@@ -199,6 +199,13 @@ class RegistryMixin:
         """
         return registered_aliases(cls)
 
+    @classmethod
+    def registered_values(cls: type[T]) -> list[T]:
+        """
+        :return: list of all registered values
+        """
+        return registered_values(cls)
+
 
 def register(
     parent_class: type,
@@ -283,6 +290,14 @@ def registered_names(parent_class: type) -> List[str]:
     :return: all names registered to the given class
     """
     return list(_REGISTRY[parent_class].keys())
+
+
+def registered_values(parent_class: type) -> List[str]:
+    """
+    :param parent_class: class to look up the registry of
+    :return: all values registered to the given class
+    """
+    return list(_REGISTRY[parent_class].values())
 
 
 def registered_aliases(parent_class: type) -> List[str]:

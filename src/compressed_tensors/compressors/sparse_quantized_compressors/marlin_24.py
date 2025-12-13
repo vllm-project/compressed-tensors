@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-from typing import Dict, Generator, Tuple
 
 import numpy as np
 import torch
@@ -24,16 +23,16 @@ from compressed_tensors.quantization import (
     QuantizationScheme,
     QuantizationStrategy,
 )
-from compressed_tensors.quantization.lifecycle.forward import quantize
+from compressed_tensors.quantization.lifecycle.compressed import quantize_weight
 from compressed_tensors.utils import (
+    align_module_device,
+    delete_offload_parameter,
     get_permutations_24,
-    is_quantization_param,
-    merge_names,
+    getattr_chain,
+    register_offload_parameter,
     sparse_semi_structured_from_dense_cutlass,
-    tensor_follows_mask_structure,
 )
 from torch import Tensor
-from tqdm import tqdm
 
 
 _LOGGER: logging.Logger = logging.getLogger(__name__)
@@ -47,160 +46,63 @@ class Marlin24Compressor(BaseCompressor):
     """
 
     @staticmethod
-    def validate_quant_compatability(
-        names_to_scheme: Dict[str, QuantizationScheme],
-    ) -> bool:
-        """
-        Checks if every quantized module in the model is compatible with Marlin24
-        compression. Quantization must be channel or group strategy with group_size
-        of 128. Only symmetric quantization is supported
-
-        :param names_to_scheme: dictionary of mapping module names to their
-            quantization schemes
-        :return: True if all modules are compatible with Marlin24 compression, raises
-            a ValueError otherwise
-        """
-        for name, scheme in names_to_scheme.items():
-            quant_args = scheme.weights
-            if quant_args is None:
-                raise ValueError(
-                    "Marlin24 Compressor is only valid for weight quantization schemes"
-                )
-
-            strategy = quant_args.strategy
-            group_size = quant_args.group_size
-            symmetric = quant_args.symmetric
-            if (
-                strategy is not QuantizationStrategy.GROUP.value
-                and strategy is not QuantizationStrategy.CHANNEL.value
-            ):
-                raise ValueError(
-                    f"Marlin24 Compressor is only valid for group and channel "
-                    f"quantization strategies, got {strategy} in {name}"
-                )
-
-            if group_size is not None and group_size != 128:
-                raise ValueError(
-                    f"Marlin24 Compressor is only valid for group size 128, "
-                    f"got {group_size} in {name}"
-                )
-
-            if not symmetric:
-                raise ValueError(
-                    f"Marlin24 Compressor is only valid for symmetric quantzation, "
-                    f"got symmetric={symmetric} in {name}"
-                )
-
-        return True
-
-    @staticmethod
-    def validate_sparsity_structure(name: str, weight: Tensor) -> bool:
-        """
-        Checks if a tensor fits the required 2:4 sparsity structure
-
-        :param name: name of the tensor to check
-        :param weight: tensor to check for sparsity structure
-        :return: True if all rows match the 2:4 sparsity structure, raises
-            ValueError otherwise
-        """
-
-        if not tensor_follows_mask_structure(weight):
-            raise ValueError(
-                "Marlin24 Compressor is only compatible with weights that have "
-                f"a 2:4 sparsity structure. Found segments in {name} "
-                "that do not match the expected structure."
-            )
-
-        return True
-
-    @property
-    def compression_param_names(self) -> Tuple[str]:
-        """
-        Returns a tuple of compression parameter names introduced by
-        the compressor during compression
-        """
-        return ("weight_packed", "scale_packed", "meta")
-
-    def compress(
-        self,
-        model_state: Dict[str, Tensor],
-        names_to_scheme: Dict[str, QuantizationScheme],
-        show_progress: bool = False,
-        **kwargs,
-    ) -> Dict[str, Tensor]:
-        """
-        Compresses a quantized state_dict with 2:4 sparsity structure for inference
-        with the Marlin24 kernel
-
-        :param model_state: state dict of uncompressed model
-        :param names_to_scheme: quantization scheme for each quantized weight, needed
-            for quantize function to calculate bit depth
-        :param show_progress: whether to show tqdm progress
-        :return: compressed state dict
-        """
-        self.validate_quant_compatability(names_to_scheme)
-
-        compressed_dict = {}
-        weight_suffix = ".weight"
-        _LOGGER.debug(
-            f"Compressing model with {len(model_state)} parameterized layers..."
+    def match_scheme(scheme: QuantizationScheme) -> bool:
+        return (
+            scheme.weights is not None
+            and scheme.weights.strategy
+            in (QuantizationStrategy.GROUP, QuantizationStrategy.CHANNEL)
+            and scheme.weights.group_size == 128
+            and scheme.weights.symmetric
+            and scheme.format == CompressionFormat.marlin_24
         )
 
-        for name, value in tqdm(
-            model_state.items(), desc="Compressing model", disable=(not show_progress)
-        ):
-            if name.endswith(weight_suffix):
-                prefix = name[: -(len(weight_suffix))]
-                scale = model_state.get(merge_names(prefix, "weight_scale"), None)
-                zp = model_state.get(merge_names(prefix, "weight_zero_point"), None)
-                if scale is not None:  # weight is quantized, compress it
+    @classmethod
+    def compress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        assert hasattr(module, "weight")
+        assert hasattr(module, "weight_scale")
+        args: QuantizationArgs = getattr_chain(module, "quantization_scheme.weights")
 
-                    # Marlin24 kernel requires float16 inputs
-                    scale = scale.to(torch.float16)
-                    value = value.to(torch.float16)
+        with align_module_device(module):
+            # Marlin24 kernel requires float16 inputs
+            value = module.weight.to(torch.float16)
+            scale = module.weight_scale.to(torch.float16)
 
-                    # quantize weight, keeping it as a float16 for now
-                    quant_args = names_to_scheme[prefix].weights
-                    value = quantize(
-                        x=value, scale=scale, zero_point=zp, args=quant_args
-                    )
+            # quantize weight, keeping it as a float16 for now
+            value = quantize_weight(module, value)
 
-                    # compress based on sparsity structure
-                    self.validate_sparsity_structure(prefix, value)
-                    value, meta = compress_weight_24(value)
-                    meta = meta.cpu()
+            # compress based on sparsity structure
+            value, meta = compress_weight_24(value)
+            meta = meta.cpu()
 
-                    # Marlin24 kernel expects input dim first
-                    value = value.t().contiguous().cpu()
-                    scale = scale.t().contiguous().cpu()
-                    og_weight_shape = value.shape
+            # TODO: why does this have to be on CPU?
+            # Marlin24 kernel expects input dim first
+            value = value.t().contiguous().cpu()
+            scale = scale.t().contiguous().cpu()
+            og_weight_shape = value.shape
 
-                    # Marlin24 kernel expects unsigned values, shift zero-point
-                    value += (1 << quant_args.num_bits) // 2
+            # Marlin24 kernel expects unsigned values, shift zero-point
+            value += (1 << args.num_bits) // 2
 
-                    # pack quantized weight and scale
-                    value = pack_weight_24(value, quant_args)
-                    packed_scale = pack_scales_24(scale, quant_args, og_weight_shape)
-                    meta = meta.resize_(meta.shape[1] // 2, meta.shape[0] * 2)
+            # pack quantized weight and scale
+            value = pack_weight_24(value, args)
+            packed_scale = pack_scales_24(scale, args, og_weight_shape)
+            meta = meta.resize_(meta.shape[1] // 2, meta.shape[0] * 2)
 
-                    # save compressed values
-                    compressed_dict[merge_names(prefix, "scale_packed")] = packed_scale
-                    compressed_dict[merge_names(prefix, "weight_packed")] = value
-                    compressed_dict[merge_names(prefix, "meta")] = meta
-                    continue
+            # save compressed values
+            delete_offload_parameter(module, "weight")
+            register_offload_parameter(module, "weight_packed", value)
+            register_offload_parameter(module, "scale_packed", packed_scale)
+            register_offload_parameter(module, "meta", meta)
 
-            if not is_quantization_param(name):
-                # export unquantized parameters without modifying
-                compressed_dict[name] = value.to("cpu")
-
-        return compressed_dict
-
-    def decompress(
-        self, path_to_model_or_tensors: str, device: str = "cpu", **kwargs
-    ) -> Generator[Tuple[str, Tensor], None, None]:
+    @classmethod
+    def decompress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
         raise NotImplementedError(
             "Decompression is not implemented for the Marlin24 Compressor."
         )
+
+    @property
+    def format(self) -> CompressionFormat:
+        return CompressionFormat.marlin_24
 
 
 def compress_weight_24(weight: Tensor):
@@ -229,7 +131,7 @@ def pack_weight_24(
     weight: Tensor,
     quantization_args: QuantizationArgs,
     tile: int = 16,
-) -> torch.Tensor:
+) -> Tensor:
     size_k = weight.shape[0]
     size_n = weight.shape[1]
     num_bits = quantization_args.num_bits
@@ -251,8 +153,8 @@ def pack_weight_24(
 
 
 def pack_scales_24(
-    scales: torch.Tensor, quantization_args: QuantizationArgs, w_shape: torch.Size
-) -> torch.Tensor:
+    scales: Tensor, quantization_args: QuantizationArgs, w_shape: torch.Size
+) -> Tensor:
     size_k = w_shape[0]
     size_n = w_shape[1]
     num_bits = quantization_args.num_bits

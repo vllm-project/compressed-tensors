@@ -12,18 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-from typing import Dict, Optional, Tuple
-
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.compressors.quantized_compressors.base import (
-    BaseQuantizationCompressor,
-)
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationArgs
-from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from torch import Tensor
+from compressed_tensors.quantization import (
+    QuantizationScheme,
+    QuantizationStrategy,
+    QuantizationType,
+)
+from compressed_tensors.quantization.lifecycle.compressed import (
+    dequantize_weight,
+    quantize_weight,
+)
+from compressed_tensors.utils import (
+    align_module_device,
+    delete_offload_parameter,
+    register_offload_parameter,
+)
 
 
 __all__ = ["pack_fp4_to_uint8", "unpack_fp4_from_uint8", "NVFP4PackedCompressor"]
@@ -41,130 +46,83 @@ FLOAT_TO_E2M1 = [
 
 
 @BaseCompressor.register(name=CompressionFormat.nvfp4_pack_quantized.value)
-class NVFP4PackedCompressor(BaseQuantizationCompressor):
+class NVFP4PackedCompressor(BaseCompressor):
     """
     Implements compression of FP4 values. Weights of each quantized layer
     are packed into uint8. Only supports symmetric weight compression for now.
     """
 
-    @property
-    def compression_param_names(self) -> Tuple[str]:
-        """
-        Returns a tuple of compression parameter names introduced by
-        the compressor during compression
-        """
+    @staticmethod
+    def match_scheme(scheme: QuantizationScheme) -> bool:
         return (
-            "weight_packed",
-            "weight_scale",
-            "weight_global_scale",
+            scheme.weights is not None
+            and scheme.weights.type == QuantizationType.FLOAT
+            and scheme.weights.num_bits == 4
+            and scheme.weights.strategy == QuantizationStrategy.TENSOR_GROUP
+            and scheme.weights.group_size == 16
+            and scheme.weights.scale_dtype == torch.float8_e4m3fn
         )
 
-    def compression_param_info(
-        self,
-        weight_shape: torch.Size,
-        quantization_args: Optional[QuantizationArgs] = None,
-    ) -> Dict[str, Tuple[torch.Size, torch.dtype]]:
-        """
-        Creates a dictionary of expected shapes and dtypes for each compression
-            parameter used by the compressor
+    @classmethod
+    def compress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        assert hasattr(module, "weight")
+        assert hasattr(module, "weight_scale")
 
-        :param weight_shape: uncompressed weight shape
-        :param quantization_args: quantization parameters for the weight
-        :return: dictionary mapping compressed parameter names to shape and dtype
-        """
-        return {
-            "weight_packed": (
-                torch.Size((weight_shape[0], weight_shape[1] // 2)),
-                torch.uint8,
-            ),
-        }
+        with align_module_device(module):
+            weight = quantize_weight(module, module.weight)
+            weight = pack_fp4_to_uint8(weight)
+            weight = torch.nn.Parameter(weight, requires_grad=False)
+            delete_offload_parameter(module, "weight")
+            register_offload_parameter(module, "weight_packed", weight)
 
-    def compress_scale(
-        self,
-        scale: Tensor,
-        quantization_args: QuantizationArgs,
-    ) -> Dict[str, torch.Tensor]:
-        assert quantization_args.scale_dtype is not None
-        return scale.to(quantization_args.scale_dtype)
+            weight_scale = cls._compress_scale(module.weight_scale)
+            weight_scale = torch.nn.Parameter(weight_scale, requires_grad=False)
+            register_offload_parameter(module, "weight_scale", weight_scale)
 
-    def compress_weight(
-        self,
-        weight: Tensor,
-        scale: Tensor,
-        global_scale: Tensor,
-        quantization_args: QuantizationArgs,
-        device: Optional[torch.device] = None,
-        zero_point: Optional[torch.Tensor] = None,
-        g_idx: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
-        quantized_weight = quantize(
-            x=weight,
-            scale=scale,
-            global_scale=global_scale,
-            zero_point=zero_point,
-            args=quantization_args,
-        )
-        compressed_dict = {}
-        weight_packed = pack_fp4_to_uint8(quantized_weight)
-        if device is not None:
-            weight_packed = weight_packed.to(device)
-        compressed_dict["weight_packed"] = weight_packed
-        compressed_dict["weight_scale"] = self.compress_scale(
-            scale=scale, quantization_args=quantization_args
-        )
+    @classmethod
+    def decompress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        # original dtype information is destroyed during compression
+        original_dtype = torch.bfloat16
 
-        if global_scale is None:
-            raise ValueError(
-                "NVFP4 quantization requires global_scale (TENSOR_GROUP strategy). "
-                "Use TENSOR_GROUP strategy instead of GROUP for FP4 quantization."
-            )
+        with align_module_device(module):
+            weight_scale = module.weight_scale.to(original_dtype)
+            weight_scale = torch.nn.Parameter(weight_scale, requires_grad=False)
+            register_offload_parameter(module, "weight_scale", weight_scale)
 
-        return compressed_dict
+            weight = unpack_fp4_from_uint8(module.weight_packed, dtype=original_dtype)
+            weight = dequantize_weight(module, weight)
+            delete_offload_parameter(module, "weight_packed")
+            register_offload_parameter(module, "weight", weight)
 
-    def decompress_weight(
-        self,
-        compressed_data: Dict[str, Tensor],
-        quantization_args: Optional[QuantizationArgs] = None,
-    ) -> torch.Tensor:
-        weight = compressed_data["weight_packed"]
-        global_scale = compressed_data["weight_global_scale"]
-        scale = compressed_data["weight_scale"]
-        m, n = weight.shape
-        # TODO: use a user provided dequant dtype
-        unpacked = unpack_fp4_from_uint8(weight, m, n * 2)
+    @staticmethod
+    def _compress_scale(scale: torch.Tensor) -> torch.Tensor:
+        return scale.to(torch.float8_e4m3fn)
 
-        # cast scale dtype to match unpacked dtype for dequantization
-        if scale.dtype != unpacked.dtype:
-            scale = scale.to(unpacked.dtype)
-            compressed_data["weight_scale"] = scale
-
-        decompressed_weight = dequantize(
-            x_q=unpacked, scale=scale, global_scale=global_scale, dtype=unpacked.dtype
-        )
-
-        return decompressed_weight
+    @property
+    def format(self) -> CompressionFormat:
+        return CompressionFormat.nvfp4_pack_quantized
 
 
 @BaseCompressor.register(name=CompressionFormat.mxfp4_pack_quantized.value)
 class MXFP4PackedCompressor(NVFP4PackedCompressor):
-    """
-    Alias for mxfp4 quantized models
-    """
+    @staticmethod
+    def match_scheme(scheme: QuantizationScheme) -> bool:
+        return (
+            scheme.weights is not None
+            and scheme.weights.type == QuantizationType.FLOAT
+            and scheme.weights.num_bits == 4
+            and scheme.weights.strategy == QuantizationStrategy.TENSOR_GROUP
+            and scheme.weights.group_size == 32
+            and scheme.weights.scale_dtype == torch.float8_e4m3fn
+        )
 
-    def compress_scale(
-        self,
-        scale: Tensor,
-        quantization_args: QuantizationArgs,
-    ) -> Dict[str, torch.Tensor]:
-        assert quantization_args.scale_dtype is not None
+    @staticmethod
+    def _compress_scale(scale: torch.Tensor) -> torch.Tensor:
         scale_exp = 127 + torch.floor(torch.log2(scale)).to(torch.int32) - 2
-        return scale_exp.to(quantization_args.scale_dtype)
+        return scale_exp.to(torch.float8_e4m3fn)
 
-    def decompress_weight(
-        self,
-        compressed_data: Dict[str, Tensor],
-        quantization_args: Optional[QuantizationArgs] = None,
-    ) -> torch.Tensor:
+    @classmethod
+    def decompress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
         raise NotImplementedError("MXFP4 Decompression is currently not supported")
 
 
@@ -222,7 +180,7 @@ kE2M1ToFloat = torch.tensor(
 # reference: : https://github.com/vllm-project/vllm/pull/16362
 @torch.compile(fullgraph=True, dynamic=True)
 def unpack_fp4_from_uint8(
-    a: torch.Tensor, m: int, n: int, dtype: Optional[torch.dtype] = torch.bfloat16
+    a: torch.Tensor, dtype: torch.dtype = torch.bfloat16
 ) -> torch.Tensor:
     """
     Unpacks uint8 values into fp4. Each uint8 consists of two fp4 values
@@ -235,6 +193,7 @@ def unpack_fp4_from_uint8(
     :param n: original dim 1 size of the unpacked tensor
     :param dtype: dense dtype to cast the unpacked tensor to
     """
+    m, n_div_2 = a.shape[0]
     assert a.dtype == torch.uint8
 
     # Vectorized nibble processing
@@ -254,4 +213,4 @@ def unpack_fp4_from_uint8(
     values = kE2M1[abs_vals] * torch.where(signs, -1.0, 1.0)
 
     # Reshape to final form
-    return values.reshape(m, n).to(dtype=dtype)
+    return values.reshape(m, n_div_2 * 2).to(dtype=dtype)

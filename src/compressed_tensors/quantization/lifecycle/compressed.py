@@ -12,24 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-import logging
-
 import torch
-from compressed_tensors.quantization.lifecycle.forward import quantize
+from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 from compressed_tensors.quantization.quant_config import QuantizationStatus
-from torch.nn import Module
+from torch.nn import Linear
 
 
 __all__ = [
     "compress_quantized_weights",
+    "quantize_weight",
+    "dequantize_weight",
 ]
 
 
-_LOGGER = logging.getLogger(__name__)
-
-
-def compress_quantized_weights(module: Module):
+def compress_quantized_weights(module: Linear):
     """
     Quantizes the module weight representation to use fewer bits in memory
 
@@ -38,35 +34,32 @@ def compress_quantized_weights(module: Module):
     :param module: module to compress to quantized representation
     """
     scheme = getattr(module, "quantization_scheme", None)
-    if not scheme or not scheme.weights:
-        # no quantization scheme or weights not quantized, nothing to do
-        return
-
     status = getattr(module, "quantization_status", None)
-    if status is QuantizationStatus.COMPRESSED:
-        # module is already compressed, nothing to do
+    if not scheme or not scheme.weights or status >= QuantizationStatus.COMPRESSED:
         return
 
-    weight = getattr(module, "weight", None)
-    scale = getattr(module, "weight_scale", None)
-    zero_point = getattr(module, "weight_zero_point", None)
-    g_idx = getattr(module, "weight_g_idx", None)
+    module.weight.requires_grad = False
+    module.weight.data = quantize_weight(module, module.weight)
+    module.quantization_status = QuantizationStatus.COMPRESSED
 
-    if weight is None or scale is None:
-        # no weight, scale, or ZP, nothing to do
 
-        # mark as compressed here to maintain consistent status throughout the model
-        module.quantization_status = QuantizationStatus.COMPRESSED
-        return
-
-    module.weight.requires_grad = False  # cannot use auto grad after compression
-    module.weight.data = quantize(
-        x=weight,
-        scale=scale,
-        zero_point=zero_point,
-        g_idx=g_idx,
-        args=scheme.weights,
-        dtype=torch.int8,
+def quantize_weight(module: Linear, weight: torch.Tensor) -> torch.Tensor:
+    return quantize(
+        weight,
+        weight_scale=module.weight_scale,
+        zero_point=module.weight_zero_point,
+        args=module.quantization_scheme.args,
+        g_idx=getattr(module, "weight_g_idx", None),
+        global_scale=getattr(module, "global_scale", None),
     )
 
-    module.quantization_status = QuantizationStatus.COMPRESSED
+
+def dequantize_weight(module: Linear, weight: torch.Tensor) -> torch.Tensor:
+    return dequantize(
+        weight,
+        weight_scale=module.weight_scale,
+        zero_point=module.weight_zero_point,
+        args=module.quantization_scheme.args,
+        g_idx=getattr(module, "weight_g_idx", None),
+        global_scale=getattr(module, "global_scale", None),
+    )

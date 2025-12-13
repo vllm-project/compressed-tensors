@@ -12,200 +12,110 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import math
-from typing import Dict, Literal, Optional, Tuple, Union
+from typing import Literal, Union
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.compressors.quantized_compressors.base import (
-    BaseQuantizationCompressor,
-)
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy
-from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from compressed_tensors.quantization.utils import can_quantize
-from torch import Tensor
+from compressed_tensors.quantization import (
+    QuantizationArgs,
+    QuantizationScheme,
+    QuantizationStrategy,
+    QuantizationType,
+)
+from compressed_tensors.quantization.lifecycle.compressed import (
+    dequantize_weight,
+    quantize_weight,
+)
+from compressed_tensors.utils import (
+    align_module_device,
+    delete_offload_parameter,
+    getattr_chain,
+    register_offload_parameter,
+)
 
 
 __all__ = ["PackedQuantizationCompressor", "pack_to_int32", "unpack_from_int32"]
 
 
 @BaseCompressor.register(name=CompressionFormat.pack_quantized.value)
-class PackedQuantizationCompressor(BaseQuantizationCompressor):
+class PackedQuantizationCompressor(BaseCompressor):
     """
     Compresses a quantized model by packing every eight 4-bit weights into an int32
     """
 
-    @property
-    def compression_param_names(self) -> Tuple[str]:
-        """
-        Returns a tuple of compression parameter names introduced by
-        the compressor during compression
-        """
+    @staticmethod
+    def match_scheme(scheme: QuantizationScheme) -> bool:
         return (
-            "weight_packed",
-            "weight_scale",
-            "weight_zero_point",
-            "weight_g_idx",
-            "weight_shape",
+            scheme.input_activations is None
+            and scheme.weights is not None
+            and scheme.weights.type == QuantizationType.INT
+            and scheme.weights.num_bits in (4, 8)
+            and scheme.weights.strategy != QuantizationStrategy.TENSOR_GROUP
+            and scheme.output_activations is None
         )
 
-    def compression_param_info(
-        self,
-        weight_shape: torch.Size,
-        quantization_args: Optional[QuantizationArgs] = None,
-    ) -> Dict[str, Tuple[torch.Size, torch.dtype]]:
-        """
-        Creates a dictionary of expected shapes and dtypes for each compression
-            parameter used by the compressor
+    @classmethod
+    def compress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        assert hasattr(module, "weight")
+        assert hasattr(module, "weight_scale")
+        assert hasattr(module, "weight_zero_point")
+        args: QuantizationArgs = getattr_chain(module, "quantization_scheme.weights")
 
-        :param weight_shape: uncompressed weight shape
-        :param quantization_args: quantization parameters for the weight
-        :return: dictionary mapping compressed parameter names to shape and dtype
-        """
-        pack_factor = 32 // quantization_args.num_bits
-        packed_size = math.ceil(weight_shape[1] / pack_factor)
-        output = {
-            "weight_packed": (torch.Size((weight_shape[0], packed_size)), torch.int32),
-            "weight_shape": (torch.Size((2,)), torch.int32),
-        }
+        with align_module_device(module):
+            weight_shape = torch.tensor(module.weight.shape)
+            weight_shape = torch.nn.Parameter(weight_shape, requires_grad=False)
+            register_offload_parameter(module, "weight_shape", weight_shape)
 
-        # Add weight_scale - always needed for quantization
-        if quantization_args.strategy in [
-            QuantizationStrategy.GROUP.value,
-            QuantizationStrategy.CHANNEL.value,
-        ]:
-            shape_factor = (
-                quantization_args.group_size
-                if quantization_args.strategy == QuantizationStrategy.GROUP.value
-                else weight_shape[-1]
-            )
-            scale_cols = math.ceil(weight_shape[-1] / shape_factor)
-            output["weight_scale"] = (
-                torch.Size((weight_shape[0], scale_cols)),
-                quantization_args.scale_dtype,
-            )
+            weight = quantize_weight(module, module.weight)
+            weight = pack_to_int32(weight, args.num_bits)
+            weight = torch.nn.Parameter(weight, requires_grad=False)
+            delete_offload_parameter(module, "weight")
+            register_offload_parameter(module, "weight_packed", weight)
 
-            # Add weight_zero_point for asymmetric quantization
-            if not quantization_args.symmetric:
-                output["weight_zero_point"] = (
-                    torch.Size((math.ceil(weight_shape[0] / pack_factor), scale_cols)),
-                    torch.int32,
+            if not args.symmetric and args.strategy in (
+                QuantizationStrategy.GROUP.value,
+                QuantizationStrategy.CHANNEL.value,
+            ):
+                zero_point = pack_to_int32(
+                    module.weight_zero_point, args.num_bits, packed_dim=0
                 )
+                delete_offload_parameter(module, "weight_zero_point")
+                register_offload_parameter(module, "weight_zero_point", zero_point)
 
-        return output
+    @classmethod
+    def decompress_module(cls, module: torch.nn.Linear) -> torch.nn.Linear:
+        assert hasattr(module, "weight_packed")
+        assert hasattr(module, "weight_shape")
+        assert hasattr(module, "weight_scale")
+        args: QuantizationArgs = getattr_chain(module, "quantization_scheme.weights")
 
-    def compress_weight(
-        self,
-        weight: Tensor,
-        scale: Tensor,
-        quantization_args: QuantizationArgs,
-        zero_point: Optional[Tensor] = None,
-        g_idx: Optional[torch.Tensor] = None,
-        device: Optional[torch.device] = None,
-        global_scale: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Compresses a single uncompressed weight
+        with align_module_device(module):
+            weight_shape = torch.Size(module.weight_shape)
+            delete_offload_parameter(module, "weight_shape")
 
-        :param weight: uncompressed weight tensor
-        :param scale: quantization scale for weight
-        :param quantization_args: quantization parameters for weight
-        :param zero_point: quantization zero point for weight
-        :param g_idx: optional mapping from column index to group index
-        :param device: optional device to move compressed output to
-        :return: dictionary of compressed weight data
-        """
-        if global_scale is not None:
-            raise ValueError(
-                "global_scale is not supported for the PackQuantizationCompressor"
+            weight = unpack_from_int32(
+                module.weight_packed, args.num_bits, weight_shape
             )
+            weight = dequantize_weight(module, weight)
+            weight = torch.nn.Parameter(weight, requires_grad=False)
+            delete_offload_parameter(module, "weight_packed")
+            register_offload_parameter(module, "weight", weight)
 
-        compressed_dict = {}
-        if can_quantize(weight, quantization_args):
-            quantized_weight = quantize(
-                x=weight,
-                scale=scale,
-                zero_point=zero_point,
-                g_idx=g_idx,
-                args=quantization_args,
-                dtype=torch.int8,
-            )
-        else:
-            quantized_weight = weight
+            if not args.symmetric and args.strategy in (
+                QuantizationStrategy.GROUP.value,
+                QuantizationStrategy.CHANNEL.value,
+            ):
+                assert hasattr(module, "weight_zero_point")
+                zero_point = pack_to_int32(
+                    module.weight_zero_point, args.num_bits, packed_dim=0
+                )
+                delete_offload_parameter(module, "weight_zero_point")
+                register_offload_parameter(module, "weight_zero_point", zero_point)
 
-        packed_weight = pack_to_int32(quantized_weight, quantization_args.num_bits)
-
-        weight_shape = torch.tensor(weight.shape)
-        if device is not None:
-            packed_weight = packed_weight.to(device)
-            weight_shape = weight_shape.to(device)
-
-        compressed_dict["weight_shape"] = weight_shape
-        compressed_dict["weight_packed"] = packed_weight
-
-        if not quantization_args.symmetric and quantization_args.strategy in [
-            QuantizationStrategy.GROUP.value,
-            QuantizationStrategy.CHANNEL.value,
-        ]:
-            packed_zp = pack_to_int32(
-                zero_point, quantization_args.num_bits, packed_dim=0
-            )
-            compressed_dict["weight_zero_point"] = packed_zp.contiguous()
-        return compressed_dict
-
-    def decompress_weight(
-        self,
-        compressed_data: Dict[str, Tensor],
-        quantization_args: Optional[QuantizationArgs] = None,
-    ) -> torch.Tensor:
-        """
-        Decompresses a single compressed weight
-
-        :param compressed_data: dictionary of data needed for decompression
-        :param quantization_args: quantization parameters for the weight
-        :return: tensor of the decompressed weight
-        """
-        weight = compressed_data["weight_packed"]
-        scale = compressed_data["weight_scale"]
-        zero_point = compressed_data.get("weight_zero_point", None)
-        g_idx = compressed_data.get("weight_g_idx", None)
-        original_shape = torch.Size(compressed_data["weight_shape"])
-        num_bits = quantization_args.num_bits
-        unpacked = unpack_from_int32(weight, num_bits, original_shape)
-
-        if not quantization_args.symmetric and quantization_args.strategy in [
-            QuantizationStrategy.GROUP.value,
-            QuantizationStrategy.CHANNEL.value,
-        ]:
-            assert (
-                zero_point is not None
-            ), "Asymmetric quantization requires zero-point values"
-            original_zp_shape = (original_shape[0], scale.shape[-1])
-            zero_point = unpack_from_int32(
-                zero_point, num_bits, original_zp_shape, packed_dim=0
-            )
-            # Update the compressed_data dict with the unpacked zero_point
-            compressed_data["weight_zero_point"] = zero_point
-
-        decompressed_weight = dequantize(
-            x_q=unpacked, scale=scale, zero_point=zero_point, g_idx=g_idx
-        )
-
-        return decompressed_weight
-
-    def compress_zp(
-        self, zero_point: Tensor, quantization_args: Optional[QuantizationArgs] = None
-    ) -> Optional[Tensor]:
-        if zero_point is None or quantization_args.symmetric:
-            return None
-        if zero_point.dtype == torch.int32:
-            return zero_point
-        if quantization_args.strategy in [
-            QuantizationStrategy.GROUP.value,
-            QuantizationStrategy.CHANNEL.value,
-        ]:
-            return pack_to_int32(zero_point, quantization_args.num_bits, packed_dim=0)
-        return zero_point
+    @property
+    def format(self) -> CompressionFormat:
+        return CompressionFormat.pack_quantized
 
 
 def pack_to_int32(
@@ -334,4 +244,4 @@ def unpack_from_int32(
     offset = pow(2, num_bits) // 2
     unpacked = (unpacked - offset).to(torch.int8)
 
-    return unpacked
+    return unpacked.contiguous()

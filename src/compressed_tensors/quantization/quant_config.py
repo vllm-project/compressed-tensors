@@ -242,18 +242,18 @@ class QuantizationConfig(BaseModel):
             group_name = "group_" + str(idx)
             config_groups[group_name] = scheme
 
-        # infer format
         if format is None:
-            if model_status == QuantizationStatus.COMPRESSED:
-                format = CompressionFormat.int_quantized.value
-            else:
+            # infer format
+            formats = set(scheme.format for scheme in quantization_schemes)
+            if len(formats) == 0:
                 format = CompressionFormat.dense.value
-        elif isinstance(format, list):
-            format = (
-                CompressionFormat.mixed_precision.value
-                if len(format) > 1
-                else format[0]
-            )
+            elif len(formats) == 1:
+                format = list(formats)[0]
+            else:
+                format = CompressionFormat.mixed_precision.value
+        else:
+            # suppport format override
+            pass
 
         return QuantizationConfig(
             config_groups=config_groups,
