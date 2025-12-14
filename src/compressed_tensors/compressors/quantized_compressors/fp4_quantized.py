@@ -56,6 +56,7 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         return (
             "weight_packed",
             "weight_scale",
+            "weight_zero_point",
             "weight_global_scale",
         )
 
@@ -72,12 +73,13 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         :param quantization_args: quantization parameters for the weight
         :return: dictionary mapping compressed parameter names to shape and dtype
         """
-        return {
+        output = {
             "weight_packed": (
                 torch.Size((weight_shape[0], weight_shape[1] // 2)),
                 torch.uint8,
             ),
         }
+        return output
 
     def compress_scale(
         self,
@@ -112,13 +114,6 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         compressed_dict["weight_scale"] = self.compress_scale(
             scale=scale, quantization_args=quantization_args
         )
-
-        if global_scale is None:
-            raise ValueError(
-                "NVFP4 quantization requires global_scale (TENSOR_GROUP strategy). "
-                "Use TENSOR_GROUP strategy instead of GROUP for FP4 quantization."
-            )
-
         return compressed_dict
 
     def decompress_weight(
@@ -132,12 +127,6 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         m, n = weight.shape
         # TODO: use a user provided dequant dtype
         unpacked = unpack_fp4_from_uint8(weight, m, n * 2)
-
-        # cast scale dtype to match unpacked dtype for dequantization
-        if scale.dtype != unpacked.dtype:
-            scale = scale.to(unpacked.dtype)
-            compressed_data["weight_scale"] = scale
-
         decompressed_weight = dequantize(
             x_q=unpacked, scale=scale, global_scale=global_scale, dtype=unpacked.dtype
         )

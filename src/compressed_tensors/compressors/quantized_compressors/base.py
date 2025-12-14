@@ -18,7 +18,7 @@ from typing import Any, Dict, Generator, Tuple, Union
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.quantization import QuantizationScheme
+from compressed_tensors.quantization import QuantizationScheme, QuantizationStrategy
 from compressed_tensors.utils import (
     get_nested_mappings_from_state_dict,
     get_nested_weight_mappings,
@@ -85,7 +85,6 @@ class BaseQuantizationCompressor(BaseCompressor):
         """
         uncompressed_names = list(model_state.keys())
         compressed_dict = {}
-        compressed_param_names = set()
 
         # compress values
         desc = "Compressing with quantization"
@@ -120,37 +119,53 @@ class BaseQuantizationCompressor(BaseCompressor):
                     device=compression_device,
                 )
 
-                # update state dict and track which params were added
+                # update state dict
                 for key, value in compressed_values.items():
-                    full_name = prefix + key
-                    compressed_dict[full_name] = value.to(compression_device)
-                    compressed_param_names.add(full_name)
+                    compressed_dict[prefix + key] = value.to(compression_device)
 
             else:
-                # Skip qparams already added by compress_weight
-                if name in compressed_param_names:
+                # omit saving zero points for symmetric or packed quantization
+                if name.endswith("zero_point") and self._skip_zp(name, names_to_scheme):
                     continue
 
-                # for symmetric quantization, omit zero_point
-                # manually because it wasn't handled in compress_weight
-                if name.endswith("weight_zero_point"):
-                    module_path = name.rsplit(".", 1)[0]
-                    if (
-                        module_path in names_to_scheme
-                        and names_to_scheme[module_path].weights.symmetric
-                    ):
-                        continue
-                    # Call compress_zp if available (for PackedQuantizationCompressor)
-                    if module_path in names_to_scheme and hasattr(self, "compress_zp"):
-                        value = self.compress_zp(
-                            value, names_to_scheme[module_path].weights
-                        )
-                        if value is None:
-                            continue
+                if name.endswith("weight_scale") and self._skip_scale():
+                    continue
 
                 compressed_dict[name] = value.to(compression_device)
 
         return compressed_dict
+
+    def _skip_scale(self):
+        from compressed_tensors.compressors import NVFP4PackedCompressor
+
+        return isinstance(self, NVFP4PackedCompressor)
+
+    def _skip_zp(
+        self, name: str, names_to_scheme: Dict[str, QuantizationScheme]
+    ) -> bool:
+        from compressed_tensors.compressors import PackedQuantizationCompressor
+
+        module_name, zp_name = name.rsplit(".", 1) if "." in name else ("", name)
+        scheme = names_to_scheme[module_name]
+
+        if zp_name == "weight_zero_point":
+            args = scheme.weights
+        if zp_name == "input_zero_point":
+            args = scheme.input_activations
+        if zp_name == "output_zero_point":
+            args = scheme.output_activations
+
+        symmetric = args.symmetric
+        packable_strategies = [
+            QuantizationStrategy.GROUP.value,
+            QuantizationStrategy.CHANNEL.value,
+        ]
+        packed = (
+            isinstance(self, PackedQuantizationCompressor)
+            and args.strategy in packable_strategies
+        )
+
+        return symmetric or packed
 
     def decompress(
         self,

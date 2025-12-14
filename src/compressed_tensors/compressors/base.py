@@ -20,11 +20,6 @@ from compressed_tensors.config import SparsityCompressionConfig
 from compressed_tensors.quantization import QuantizationArgs, QuantizationConfig
 from compressed_tensors.registry import RegistryMixin
 from compressed_tensors.utils import has_offloaded_params
-from compressed_tensors.utils.offload import (
-    delete_offload_parameter,
-    get_offloaded_device,
-    register_offload_parameter,
-)
 from torch import Tensor
 from torch.nn import Module
 
@@ -190,36 +185,9 @@ class BaseCompressor(RegistryMixin, ABC):
         for name, parameter in module.named_parameters():
             compressed_data[name] = parameter
 
-        # Save references to original parameters before decompression
-        original_scale = compressed_data.get("weight_scale")
-        original_zp = compressed_data.get("weight_zero_point")
-
-        # NOTE: decompress_weight may modify compressed_data dict in-place
-        # This is subtle but allows us to update the module's qparams with
-        # the unpacked values.
-        # TODO: Consider refactoring to return modified qparams explicitly
-        result = self.decompress_weight(
+        return self.decompress_weight(
             compressed_data=compressed_data, quantization_args=quantization_args
         ).to(device)
-
-        # Update module's parameters only if they were modified
-        for param_name, original_param in [
-            ("weight_scale", original_scale),
-            ("weight_zero_point", original_zp),
-        ]:
-            if (
-                param_name in compressed_data
-                and compressed_data[param_name] is not original_param
-            ):
-                # Delete the old parameter and register the updated one
-                delete_offload_parameter(module, param_name)
-                offload_device = get_offloaded_device(module)
-                param = torch.nn.Parameter(
-                    compressed_data[param_name], requires_grad=False
-                )
-                register_offload_parameter(module, param_name, param, offload_device)
-
-        return result
 
     def decompress_weight(
         self, compressed_data: Dict[str, Tensor], **kwargs
