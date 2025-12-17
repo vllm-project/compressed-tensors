@@ -81,5 +81,7 @@ def _update_transforms_tied_weights(model: torch.nn.Module):
             transform_tied_weights_keys[key] = keys[0]
 
     # 3. update tied weights attributes
+    if not hasattr(model, "_tied_weights_keys"):
+        model._tied_weights_keys = {}
     model._tied_weights_keys.update(transform_tied_weights_keys)
     model.all_tied_weights_keys = model._tied_weights_keys
