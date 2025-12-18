@@ -19,7 +19,7 @@ import torch
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.dispatch import dispatch_model
 from compressed_tensors.offload.module import OffloadedModule
-from compressed_tensors.offload.utils import get_module_device
+from compressed_tensors.offload.utils import get_module_device, move_module_tensor
 from compressed_tensors.utils.helpers import patch_attr
 
 
@@ -154,25 +154,17 @@ def align_module_device(
                 yield
 
         else:
-            from accelerate.utils import set_module_tensor_to_device
+            original_device = {}
+            for name, param in module.named_parameters(recurse=False):
+                original_device[name] = param.device
+                move_module_tensor(module, name, execution_device)
 
-            devices = {
-                name: param.device
-                for name, param in module.named_parameters(recurse=False)
-            }
             try:
-                for name in devices:
-                    set_module_tensor_to_device(module, name, execution_device)
                 yield
             finally:
-                for name, device in devices.items():
-                    set_module_tensor_to_device(module, name, device)
-            # with contextlib.ExitStack() as stack:
-            #     for name, param in module.named_parameters(recurse=False):
-            #         data = param.to(execution_device)
-            #         param = torch.nn.Parameter(data, requires_grad=False)
-            #         stack.enter_context(patch_attr(module, name, param))
-            #     yield
+                for name, param in module.named_parameters(recurse=False):
+                    device = original_device[name]
+                    move_module_tensor(module, name, device)
 
 
 @contextlib.contextmanager

@@ -19,7 +19,7 @@ import torch
 from loguru import logger
 
 
-__all__ = ["send_tensors", "get_module_device"]
+__all__ = ["send_tensors", "get_module_device", "move_module_tensor"]
 
 T = TypeVar("T")
 
@@ -55,3 +55,13 @@ def get_module_device(module: torch.nn.Module) -> torch.device:
             f"Unable to get execution device of {module}, falling back to CPU"
         )
         return torch.device("cpu")
+
+
+def move_module_tensor(
+    module: torch.nn.Module,
+    name: str,
+    device: int | str | torch.device,
+):
+    param = module._parameters[name]
+    new_param = param.__class__(param.to(device), requires_grad=param.requires_grad)
+    module._parameters[name] = new_param
