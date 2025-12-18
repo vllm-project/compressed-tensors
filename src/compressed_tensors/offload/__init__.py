@@ -109,7 +109,6 @@ def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.M
 def disable_offloading():
     """
     Keep modules onloaded and disable offloading until this context exits.
-    Affects modules which have been hooked with accelerate's `AlignDevicesHook`
     """
     with contextlib.ExitStack() as stack:
         for cache in OffloadCache.instances():
