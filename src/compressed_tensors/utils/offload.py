@@ -12,18 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Utilities associated with offloading functionality provided by `accelerate`.
+Utilities associated with offloading functionality
 
 | ------------------------------------------------------------------------------------------------------ | # noqa: E501
 | Operation  | Without offloading support             | With offloading support                          | # noqa: E501
 | ---------- | -------------------------------------- | ------------------------------------------------ | # noqa: E501
-| Add        | module.register_parameter(name, param) | register_offload_parameter(module, name, param)  | # noqa: E501
-| Check      | N/A                                    | has_offloaded_params(module)                     | # noqa: E501
-| Onload     | N/A                                    | with align_module_device(module)                 | # noqa: E501
 | Update     | module.name.data.copy_(new_data)       | update_offload_parameter(module, name, new_data) | # noqa: E501
-| Delete     | del module.name                        | delete_offload_parameter(module, name)           | # noqa: E501
-| Add Module | module.register_module(name, child)    | register_offload_module(name, child)             | # noqa: E501
-| Del Module | del module.name                        | delete_offload_module(module, name)              | # noqa: E501
 | ------------------------------------------------------------------------------------------------------ | # noqa: E501
 """
 
