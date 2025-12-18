@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 from typing import Any, TypeVar
 
 import torch
@@ -103,7 +104,7 @@ class OffloadedModule(torch.nn.Module):
         )
 
         if self._no_split:
-            with self._cache.disable_offloading():
+            with self.disable_offloading():
                 return self._module.__call__.__func__(self, *args, **kwargs)
         else:
             return self._module.__call__.__func__(self, *args, **kwargs)
@@ -115,10 +116,20 @@ class OffloadedModule(torch.nn.Module):
         )
 
         if self._no_split:
-            with self._cache.disable_offloading():
+            with self.disable_offloading():
                 return self._module.forward.__func__(self, *args, **kwargs)
         else:
             return self._module.forward.__func__(self, *args, **kwargs)
+
+    @contextlib.contextmanager
+    def disable_offloading(self):
+        with self._cache.disable_offloading():
+            yield
+
+    @contextlib.contextmanager
+    def disable_onloading(self):
+        with self._cache.disable_onloading():
+            yield
 
     @classmethod
     def from_module(
