@@ -19,6 +19,7 @@ import torch
 from compressed_tensors.offload.cache import DeviceCache
 from compressed_tensors.offload.dispatch import (  # noqa: F401
     dispatch_model,
+    offload_model,
     remove_dispatch,
 )
 from compressed_tensors.offload.module import OffloadedModule
@@ -27,8 +28,10 @@ from compressed_tensors.utils.helpers import patch_attr
 
 
 __all__ = [
+    "offload_model",
     "dispatch_model",
-    "remove_dispatch" "disable_onloading",
+    "remove_dispatch",
+    "disable_onloading",
     "disable_offloading",
     "update_offload_parameter",
     "get_execution_device",

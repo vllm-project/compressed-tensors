@@ -81,21 +81,36 @@ def dispatch_model(
     hint_batch_size: int = 1,
     hint_batch_seq_len: int = 1,
     hint_extra_memory: int = 0,
+    hint_model_dtype: Optional[torch.dtype] = None,
     no_split_modules: Container[str] = tuple(),
 ) -> ModelType:
+    # remove previous dispatches
+    model = remove_dispatch(model)
+
     # infer no_split_modules
     if len(no_split_modules) <= 0 and isinstance(model, PreTrainedModel):
         no_split_modules = getattr(model, "_no_split_modules", tuple())
 
+    # infer dtype
+    if hint_model_dtype is None:
+        hint_model_dtype = getattr(model, "dtype", torch.bfloat16)
+
     # estimate memory requirement
     if isinstance(model, PreTrainedModel):
         hidden_dim: int = getattr_chain(model, "_config.hidden_dim", 0)
-        hint_extra_memory += hint_batch_size * hint_batch_seq_len * hidden_dim
+        hint_extra_memory += (
+            hint_batch_size
+            * hint_batch_seq_len
+            * hidden_dim
+            * hint_model_dtype.itemsize
+        )
 
+    # collect devices
     devices: list[DeviceMemory] = get_device_memory(hint_extra_memory)
     if len(devices) <= 0:
         raise MemoryError("Did not find any devices to dispatch model to")
 
+    # estimate model size
     _, model_size = module_nbytes(model)
     if model_size > sum((device.memory for device in devices), 0):
         raise MemoryError(
@@ -194,7 +209,7 @@ def module_to(
     if recurse:
         return module.to(device)
     else:
-        for name, _ in module.named_parameters(recurse=False, remove_duplicates=False):
+        for name in chain(module._parameters.keys(), module._buffers.keys()):
             move_module_tensor(module, name, device)
         return module
 
