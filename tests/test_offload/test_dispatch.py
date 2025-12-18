@@ -41,9 +41,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 #     assert torch.allclose(logits_after, logits_before)
 
 
-def test_dispatch_model():
-    model = AutoModelForCausalLM.from_pretrained(
-        "meta-llama/Llama-3.2-1B-Instruct"
-    ).eval()
-    model = dispatch_model(model)
-    breakpoint()
+# def test_dispatch_model():
+#     model = AutoModelForCausalLM.from_pretrained(
+#         "meta-llama/Llama-3.2-1B-Instruct"
+#     ).eval()
+#     model = dispatch_model(model)
+#     breakpoint()

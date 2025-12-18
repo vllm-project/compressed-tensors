@@ -57,13 +57,11 @@ class OffloadedModule(torch.nn.Module):
         if name in OffloadedModule._direct_attributes:
             return object.__getattribute__(self, name)
 
-        elif name in self._module._parameters:
-            value = self._module._parameters[name]
+        if (value := self._module._parameters.get(name, None)) is not None:
+            return self._cache[value]
 
-            if value is not None:
-                return self._cache[value]
-            else:
-                return None
+        if (value := self._module._buffers.get(name, None)) is not None:
+            return self._cache[value]
 
         else:
             return getattr(self._module, name)
@@ -75,6 +73,9 @@ class OffloadedModule(torch.nn.Module):
         elif isinstance(value, torch.nn.Parameter):
             self.register_parameter(name, value)
 
+        elif isinstance(value, torch.nn.Buffer):
+            self.register_buffer(name, value)
+
         else:
             setattr(self._module, name, value)
 
@@ -82,11 +83,11 @@ class OffloadedModule(torch.nn.Module):
         if name in OffloadedModule._direct_attributes:
             return object.__delattr__(self, name)
 
-        elif name in self._module._parameters:
-            old_value = self._module._parameters[name]
+        if (old_value := self._module._parameters.get(name, None)) is not None:
+            del self._cache[old_value]
 
-            if old_value is not None:
-                del self._cache[old_value]
+        if (old_value := self._module._buffers.get(name, None)) is not None:
+            del self._cache[old_value]
 
         delattr(self._module, name)
 
@@ -94,11 +95,7 @@ class OffloadedModule(torch.nn.Module):
         if isinstance(param, torch.nn.Parameter):
             param = self._cache.offload(param)
 
-        if name in self._module._parameters:
-            old_value = self._module._parameters[name]
-
-            if old_value is not None:
-                del self._cache[old_value]
+        delattr(self, name)
 
         self._module.register_parameter(name, param)
 

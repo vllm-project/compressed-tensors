@@ -86,7 +86,7 @@ class DeviceCache(OffloadCache):
 
     def offload(self, value: torch.Tensor) -> torch.Tensor:
         # return original tensor if onloading is disabled
-        # to allow for direct parameter assignment
+        # to allow for direct parameter/buffer assignment
         if self.onloading_disabled:
             return value
 

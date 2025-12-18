@@ -66,6 +66,12 @@ def move_module_tensor(
     name: str,
     device: int | str | torch.device,
 ):
-    param = module._parameters[name]
-    new_param = param.__class__(param.to(device), requires_grad=param.requires_grad)
-    module._parameters[name] = new_param
+    if name in module._parameters:
+        param = module._parameters[name]
+        new_param = param.__class__(param.to(device), requires_grad=param.requires_grad)
+        module._parameters[name] = new_param
+
+    if name in module._buffers:
+        param = module._buffers[name]
+        new_buff = param.__class__(param.to(device), requires_grad=param.requires_grad)
+        module._buffers[name] = new_buff

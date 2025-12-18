@@ -23,6 +23,8 @@ from compressed_tensors.offload.utils import move_module_tensor
 from compressed_tensors.utils import getattr_chain
 from transformers import PreTrainedModel
 
+from loguru import logger
+
 
 __all__ = ["offload_model", "dispatch_model", "remove_dispatch"]
 
@@ -92,6 +94,9 @@ def dispatch_model(
         hint_extra_memory += hint_batch_size * hint_batch_seq_len * hidden_dim
 
     devices: list[DeviceMemory] = get_device_memory(hint_extra_memory)
+    if len(devices) <= 0:
+        raise MemoryError("Did not find any devices to dispatch model to")
+
     _, model_size = module_nbytes(model)
     if model_size > sum((device.memory for device in devices), 0):
         raise MemoryError(
@@ -99,10 +104,22 @@ def dispatch_model(
             f"bytes to devices:\n{devices}"
         )
 
+    # allocate a fallback cache if we ever run out of memory
+    cache = OffloadCache.from_devices(devices[0].device, torch.device("cpu"))
+
     # assign modules to devices
     def dfs(module: torch.nn.Module) -> torch.nn.Module:
         no_split = module.__class__.__name__ in no_split_modules
         direct_size, total_size = module_nbytes(module)
+
+        # no devices left
+        if total_size > 0 and len(devices) <= 0:
+            logger.warning(
+                "Could not dispatch module of size "
+                f"{total_size if no_split else direct_size} bytes. "
+                "Resorting to CPU offloading."
+            )
+            return OffloadedModule.from_module(module, cache, no_split=no_split)
 
         # can fit entire module
         if total_size <= devices[0].memory:
@@ -112,8 +129,6 @@ def dispatch_model(
         else:
             # cannot split, try with next device
             if no_split or direct_size > devices[0].memory:
-                assert len(devices) <= 0, "OOM for dispatch model"
-
                 devices.pop(0)
                 return dfs(module)
 
@@ -123,7 +138,7 @@ def dispatch_model(
                 devices[0].memory -= direct_size
                 module = module_to(module, devices[0].device, recurse=False)
 
-                for name, child in module.named_children():
+                for name, child in module.named_children(recurse=False):
                     module.add_module(name, dfs(child))
 
                 return module
@@ -141,7 +156,6 @@ def get_device_memory(hint_extra_memory: int) -> list[DeviceMemory]:
         return []
 
     devices: list[DeviceMemory] = []
-    breakpoint()
     for idx in range(torch.cuda.device_count()):
         props = torch.cuda.get_device_properties(idx)
         devices.append(
@@ -165,7 +179,7 @@ def module_to(
     if recurse:
         return module.to(device)
     else:
-        for name, _ in module.named_parameters(recurse=False):
+        for name, _ in module.named_parameters(recurse=False, remove_duplicates=False):
             move_module_tensor(module, name, device)
         return module
 
