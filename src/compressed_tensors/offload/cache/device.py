@@ -90,7 +90,13 @@ class DeviceCache(OffloadCache):
         if self.onloading_disabled:
             return value
 
-        return send_tensors(value, device=self.offload_device, copy=True)
+        # allow for offload device override
+        if self.offload_device is not None:
+            offload_device = self.offload_device
+        else:
+            offload_device = value.device
+
+        return send_tensors(value, device=offload_device, copy=True)
 
     @contextlib.contextmanager
     def disable_offloading(self):

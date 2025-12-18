@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import fields, is_dataclass
-from typing import TypeVar
+from typing import Optional, TypeVar
 
 import torch
 from loguru import logger
@@ -46,10 +46,14 @@ def send_tensors(value: T, *args, **kwargs) -> T:
             return value
 
 
-def get_module_device(module: torch.nn.Module) -> torch.device:
+def get_module_device(
+    module: torch.nn.Module, default: Optional[torch.device] = None
+) -> torch.device:
     tensor = next(module.parameters(), next(module.buffers(), None))
     if tensor is not None:
         return tensor.device
+    elif default is not None:
+        return default
     else:
         logger.warning(
             f"Unable to get execution device of {module}, falling back to CPU"

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Literal, Optional
 
 import torch
 from compressed_tensors.utils.global_access import GlobalAccess
@@ -26,6 +26,19 @@ class OffloadCache(GlobalAccess, ABC):
     """
 
     onload_device: torch.device | str
+
+    @classmethod
+    def from_devices(
+        cls,
+        onload_device: torch.device | str,
+        offload_device: Optional[torch.device | str | Literal["disk"]] = None,
+    ):
+        from compressed_tensors.offload.cache.device import DeviceCache
+
+        if offload_device == "disk":
+            raise NotImplementedError("Disk offloading has not been implemented yet")
+        else:
+            return DeviceCache(onload_device, offload_device)
 
     @abstractmethod
     def __getitem__(self, key: torch.Tensor) -> torch.Tensor:
