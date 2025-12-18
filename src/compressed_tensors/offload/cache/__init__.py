@@ -15,4 +15,3 @@
 
 from .base import OffloadCache
 from .device import DeviceCache
-from .disk import DiskCache
