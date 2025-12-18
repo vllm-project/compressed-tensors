@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections import namedtuple
 from collections.abc import Container
+from itertools import chain
 from typing import Literal, NamedTuple, Optional, TypeVar
 
 import torch
@@ -21,9 +21,8 @@ from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.module import OffloadedModule
 from compressed_tensors.offload.utils import move_module_tensor
 from compressed_tensors.utils import getattr_chain
-from transformers import PreTrainedModel
-
 from loguru import logger
+from transformers import PreTrainedModel
 
 
 __all__ = ["offload_model", "dispatch_model", "remove_dispatch"]
@@ -168,8 +167,24 @@ def get_device_memory(hint_extra_memory: int) -> list[DeviceMemory]:
 
 
 def module_nbytes(module: torch.nn.Module) -> tuple[int, int]:
-    direct = sum((param.nbytes for param in module.parameters(recurse=False)), 0)
-    total = sum((param.nbytes for param in module.parameters(recurse=True)), 0)
+    direct = sum(
+        (
+            param.nbytes
+            for param in chain(
+                module.parameters(recurse=False), module.buffers(recurse=False)
+            )
+        ),
+        0,
+    )
+    total = sum(
+        (
+            param.nbytes
+            for param in chain(
+                module.parameters(recurse=True), module.buffers(recurse=True)
+            )
+        ),
+        0,
+    )
     return direct, total
 
 
