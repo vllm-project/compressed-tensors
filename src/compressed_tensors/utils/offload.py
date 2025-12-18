@@ -85,8 +85,6 @@ __all__ = [
     "disable_offloading",
     "remove_dispatch",
     "cast_to_device",
-    "offload_to_weights_map",
-    "delete_from_weights_map",
 ]
 
 

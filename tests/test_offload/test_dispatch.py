@@ -14,7 +14,6 @@
 
 import pytest
 import torch
-
 from compressed_tensors.offload.dispatch import dispatch_model
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM, AutoTokenizer

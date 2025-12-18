@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, TypeVar
-from dataclasses import is_dataclass, fields
+from dataclasses import fields, is_dataclass
+from typing import TypeVar
 
 import torch
+from loguru import logger
 
-__all__ = ["send_tensors"]
+
+__all__ = ["send_tensors", "get_module_device"]
 
 T = TypeVar("T")
+
 
 def send_tensors(value: T, *args, **kwargs) -> T:
     match value:
@@ -41,3 +44,14 @@ def send_tensors(value: T, *args, **kwargs) -> T:
             return value
         case _:
             return value
+
+
+def get_module_device(module: torch.nn.Module) -> torch.device:
+    tensor = next(module.parameters(), next(module.buffers(), None))
+    if tensor is not None:
+        return tensor.device
+    else:
+        logger.warning(
+            f"Unable to get execution device of {module}, falling back to CPU"
+        )
+        return torch.device("cpu")

@@ -16,7 +16,6 @@ from contextlib import contextmanager
 from typing import Any
 
 import torch
-
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.utils import send_tensors
 
@@ -130,9 +129,6 @@ class OffloadedModule(torch.nn.Module):
         with self._cache.disable_onloading(self):
             yield
 
-    def execution_device(self) -> torch.device | str:
-        return self._cache.onload_device
-
     @classmethod
     def from_module(
         cls,
@@ -150,7 +146,9 @@ class OffloadedModule(torch.nn.Module):
 
 
 def make_offload_module_subclass(parent_cls: type) -> type:
-    subclass = type(f"Offloaded{parent_cls.__name__}", (OffloadedModule, parent_cls), {})
+    subclass = type(
+        f"Offloaded{parent_cls.__name__}", (OffloadedModule, parent_cls), {}
+    )
     subclass.__name__ = parent_cls.__name__
 
     assert issubclass(subclass, parent_cls)

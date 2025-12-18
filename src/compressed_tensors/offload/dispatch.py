@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import warnings
 from collections.abc import Container
-from contextlib import nullcontext
 from typing import TypeVar
 
 import torch
@@ -57,27 +55,3 @@ def dispatch_model(
         memo[module] = offloaded_module
 
     return model
-
-
-def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Tensor):
-    with (
-        module.disable_onloading()
-        if isinstance(module, OffloadedModule)
-        else nullcontext()
-    ):
-        getattr(module, name).copy_(data)
-
-
-def get_execution_device(module: torch.nn.Module) -> torch.device | str:
-    if isinstance(module, OffloadedModule):
-        return module.execution_device()
-
-    else:
-        first_param = next(module.parameters(), None)
-        if first_param is not None:
-            return first_param.device
-
-        warnings.warn(
-            f"Unable to get execution device of {module}, falling back to CPU"
-        )
-        return torch.device("cpu")

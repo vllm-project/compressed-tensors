@@ -17,9 +17,8 @@ from typing import Any
 from weakref import WeakValueDictionary
 
 import torch
-
-from compressed_tensors.offload.utils import send_tensors
 from compressed_tensors.offload.cache.base import OffloadCache
+from compressed_tensors.offload.utils import send_tensors
 
 
 class DeviceCache(OffloadCache):

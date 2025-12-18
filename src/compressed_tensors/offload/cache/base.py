@@ -15,9 +15,10 @@
 from abc import abstractmethod
 
 import torch
+from compressed_tensors.utils.global_access import GlobalAccess
 
 
-class OffloadCache:
+class OffloadCache(GlobalAccess):
     onload_device: torch.device | str
 
     @abstractmethod
