@@ -25,13 +25,15 @@ from compressed_tensors.transform import (
 )
 from compressed_tensors.utils import align_modules, offloaded_dispatch
 from tests.test_transform.conftest import TransformableModel
-from tests.testing_utils import requires_accelerate, requires_gpu
+from tests.testing_utils import requires_gpu
 
 
+@requires_gpu
 @pytest.mark.parametrize("type", ("hadamard", "random-hadamard"))
 @pytest.mark.parametrize("randomize", (True, False))
 @pytest.mark.parametrize("requires_grad", (True, False))
-def test_memory_sharing(type, randomize, requires_grad, offload=False):
+@pytest.mark.parametrize("offload", (True, False))
+def test_memory_sharing(type, randomize, requires_grad, offload):
     # load model (maybe with offloading)
     model = TransformableModel(2, 2, 4, 4, 8, 8)
     if offload:
@@ -79,14 +81,3 @@ def test_memory_sharing(type, randomize, requires_grad, offload=False):
         assert weight_to_count[size_to_weight[2]] == 3
         assert weight_to_count[size_to_weight[4]] == 4
         assert weight_to_count[size_to_weight[8]] == 3
-
-
-@requires_gpu
-@requires_accelerate()
-@pytest.mark.parametrize("type", ("hadamard", "random-hadamard"))
-@pytest.mark.parametrize("randomize", (True, False))
-def test_memory_sharing_offload(
-    type,
-    randomize,
-):
-    test_memory_sharing(type, randomize, requires_grad=False, offload=True)
