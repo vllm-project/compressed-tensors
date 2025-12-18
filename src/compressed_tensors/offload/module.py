@@ -75,6 +75,8 @@ class OffloadedModule(torch.nn.Module):
         if name in OffloadedModule._direct_attributes:
             return object.__setattr__(self, name, value)
 
+        # TODO: if it's a tensor, offload it first!
+
         elif name in self._offload_names:
             old_value = self._module._parameters[name]
 

@@ -12,25 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
 import torch
 from compressed_tensors.utils.global_access import GlobalAccess
 
 
-class OffloadCache(GlobalAccess):
+class OffloadCache(GlobalAccess, ABC):
+    """
+    Abstract base class for offload cache. Tensors put into the cache become offloaded,
+    while tensors retrieved from the cache are onloaded.
+    """
+
     onload_device: torch.device | str
 
     @abstractmethod
     def __getitem__(self, key: torch.Tensor) -> torch.Tensor:
+        """
+        :param key: offloaded tensor to be onloaded
+        :return: onloaded tensor
+        """
         raise NotImplementedError()
 
     @abstractmethod
     def __delitem__(self, key: torch.Tensor):
+        """
+        :param key: offloaded tensor to be removed from the cache
+        """
         raise NotImplementedError()
 
     @abstractmethod
     def __setitem__(self, key: torch.Tensor, value: torch.Tensor | None):
+        """
+        TODO
+        FYI cache cannot be responsible for offloading
+        unless maybe implement a new method
+
+        DeviceCache:
+        cpu_tensor = cache.offload(gpu_tensor)
+
+        DiskCache:
+        meta_tensor = cache.offload(gpu_tensor)
+        """
         raise NotImplementedError()
 
     @abstractmethod
