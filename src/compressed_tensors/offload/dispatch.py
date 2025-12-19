@@ -37,8 +37,15 @@ def offload_model(
     no_split_modules: Container[str] = tuple(),
 ) -> ModelType:
     """
-    Dispatch a model using offloading
+    Offload a model to the `offload_device`. During forward passes, model weights will
+    be onloaded to the `onload_device`
 
+    :param model: model to dispatch
+    :param onload_device: device to move weights to during forward pass
+    :param offload_device: device to offload weights to
+    :param no_split_modules: names of module classes which should not be split
+        across multiple devices
+    :return: dispatched model
     """
     if len(model._parameters) > 0:
         raise NotImplementedError(
@@ -80,10 +87,24 @@ def dispatch_model(
     model: ModelType,
     hint_batch_size: int = 1,
     hint_batch_seq_len: int = 1,
-    hint_extra_memory: int = 0,
     hint_model_dtype: Optional[torch.dtype] = None,
+    hint_extra_memory: int = 0,
     no_split_modules: Container[str] = tuple(),
 ) -> ModelType:
+    """
+    Dispatch a model autoregressive generation. This means that modules are dispatched
+    evenly across avaiable devices and kept onloaded if possible.
+
+    :param model: model to dispatch
+    :param hint_batch_size: reserve memory for batch size of inputs
+    :param hint_batch_seq_len: reserve memory for sequence of length of inputs
+    :param hint_model_dtype: reserve memory for model's dtype.
+        Will be inferred from model if none is provided
+    :param hint_extra_memory: extra memory reserved for model serving
+    :param no_split_modules: names of module classes which should not be split
+        across multiple devices
+    :return: dispatched model
+    """
     # remove previous dispatches
     model = remove_dispatch(model)
 
@@ -189,7 +210,7 @@ def remove_dispatch(module: torch.nn.Module) -> torch.nn.Module:
     :param module: module which may be dispatched with hf hooks
     :return: module without dispatch
     """
-    for name, submodule in module.named_modules():
+    for name, submodule in module.named_modules(remove_duplicate=False):
         if isinstance(submodule, OffloadedModule):
             if name == "":
                 module = submodule._module

@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import contextlib
+from functools import wraps
+from types import FunctionType
 from typing import Any, TypeVar
 
 import torch
@@ -159,5 +161,18 @@ def make_offload_module_subclass(parent_cls: type) -> type:
     )
     subclass.__name__ = parent_cls.__name__
 
+    subclass.forward = copy_function(subclass.forward)
+    subclass.forward = wraps(parent_cls.forward)(subclass.forward)
+
     assert issubclass(subclass, parent_cls)
     return subclass
+
+
+def copy_function(func):
+    return FunctionType(
+        func.__code__,
+        func.__globals__,
+        name=func.__name__,
+        argdefs=func.__defaults__,
+        closure=func.__closure__,
+    )

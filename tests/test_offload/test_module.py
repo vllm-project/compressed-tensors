@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import gc
+import inspect
 from weakref import ref
 
 import pytest
@@ -212,7 +213,6 @@ def test_register_parameter(
 @pytest.mark.parametrize("requires_grad", (True, False))
 def test_register_parameter_invalidates(
     linear: torch.nn.Linear | OffloadedModule,
-    cache,
     param_device,
     use_register_parameter,
     requires_grad,
@@ -236,3 +236,9 @@ def test_register_parameter_invalidates(
 
         # original weight is invalidated
         assert onloaded_weight not in linear._cache.keep_onloaded_values
+
+
+def test_forward_signature(linear: torch.nn.Linear | OffloadedModule):
+    assert inspect.signature(linear.forward) == inspect.signature(
+        linear._module.forward
+    )
