@@ -26,6 +26,7 @@ class OffloadCache(GlobalAccess, ABC):
     """
 
     onload_device: torch.device | str
+    offload_device: Optional[torch.device | str]
 
     @classmethod
     def from_devices(

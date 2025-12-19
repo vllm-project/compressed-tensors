@@ -25,7 +25,13 @@ from loguru import logger
 from transformers import PreTrainedModel
 
 
-__all__ = ["offload_model", "dispatch_model", "remove_dispatch", "get_device_memory"]
+__all__ = [
+    "offload_model",
+    "dispatch_model",
+    "remove_dispatch",
+    "get_device_memory",
+    "DeviceMemory",
+]
 
 ModelType = TypeVar("", bound=torch.nn.Module)
 
@@ -34,7 +40,7 @@ def offload_model(
     model: ModelType,
     onload_device: torch.device | str,
     offload_device: Optional[torch.device | str | Literal["disk"]] = None,
-    no_split_modules: Container[str] = tuple(),
+    no_split_modules: Optional[Container[str]] = None,
 ) -> ModelType:
     """
     Offload a model to the `offload_device`. During forward passes, model weights will
@@ -62,7 +68,7 @@ def offload_model(
         model = model.to(offload_device)
 
     # infer no_split_modules
-    if len(no_split_modules) <= 0 and isinstance(model, PreTrainedModel):
+    if no_split_modules is None:
         no_split_modules = getattr(model, "_no_split_modules", tuple())
 
     # each model shares a single shared cache because we have to
@@ -85,15 +91,17 @@ def offload_model(
 
 def dispatch_model(
     model: ModelType,
-    hint_batch_size: int = 1,
-    hint_batch_seq_len: int = 1,
+    hint_batch_size: int = 0,
+    hint_batch_seq_len: int = 0,
     hint_model_dtype: Optional[torch.dtype] = None,
     hint_extra_memory: int = 0,
-    no_split_modules: Container[str] = tuple(),
+    no_split_modules: Optional[Container[str]] = None,
 ) -> ModelType:
     """
     Dispatch a model autoregressive generation. This means that modules are dispatched
     evenly across avaiable devices and kept onloaded if possible.
+
+    Soft assumes that modules are called in order of `model.modules()`
 
     :param model: model to dispatch
     :param hint_batch_size: reserve memory for batch size of inputs
@@ -109,7 +117,7 @@ def dispatch_model(
     model = remove_dispatch(model)
 
     # infer no_split_modules
-    if len(no_split_modules) <= 0 and isinstance(model, PreTrainedModel):
+    if no_split_modules is None:
         no_split_modules = getattr(model, "_no_split_modules", tuple())
 
     # infer dtype
@@ -128,15 +136,16 @@ def dispatch_model(
 
     # collect devices
     devices: list[DeviceMemory] = get_device_memory(hint_extra_memory)
+    total_memory = sum((device.memory for device in devices), 0)
     if len(devices) <= 0:
         raise MemoryError("Did not find any devices to dispatch model to")
 
     # estimate model size
     _, model_size = module_nbytes(model)
     if model_size > sum((device.memory for device in devices), 0):
-        raise MemoryError(
-            f"Cannot dispatch model of size {model_size} "
-            f"bytes to devices:\n{devices}"
+        logger.warning(
+            f"Model has size {model_size} bytes, but only {total_memory} bytes"
+            "of device memory is available. Resorting to CPU offloading."
         )
 
     # allocate a fallback cache if we ever run out of memory
@@ -173,7 +182,7 @@ def dispatch_model(
                 devices[0].memory -= direct_size
                 module = module_to(module, devices[0].device, recurse=False)
 
-                for name, child in module.named_children(recurse=False):
+                for name, child in module.named_children():
                     module.add_module(name, dfs(child))
 
                 return module
@@ -187,7 +196,13 @@ class DeviceMemory:
     memory: int
 
 
-def get_device_memory(hint_extra_memory: int) -> list[DeviceMemory]:
+def get_device_memory(hint_extra_memory: int = 0) -> list[DeviceMemory]:
+    """
+    Get the total memory of all available cuda devices
+
+    :param hint_extra_memory: amount of memory to subtract from each device's total
+    :return: list of device memory dataclasses
+    """
     if not torch.cuda.is_available():
         return []
 

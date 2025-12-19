@@ -99,7 +99,7 @@ class OffloadedModule(torch.nn.Module):
             param = self._cache.offload(param)
 
         if (old_value := self._module._parameters.get(name, None)) is not None:
-            self._cache[old_value] = param
+            del self._cache[old_value]
 
         self._module.register_parameter(name, param)
 
@@ -108,7 +108,7 @@ class OffloadedModule(torch.nn.Module):
             tensor = self._cache.offload(tensor)
 
         if (old_value := self._module._buffers.get(name, None)) is not None:
-            self._cache[old_value] = tensor
+            del self._cache[old_value]
 
         self._module.register_buffer(name, tensor, *args, **kw)
 
