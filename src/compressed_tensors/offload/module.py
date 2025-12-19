@@ -38,6 +38,7 @@ class OffloadedModule(torch.nn.Module):
         "_cache",
         "_no_split",
         "register_parameter",
+        "register_buffer",
         "disable_offloading",
         "disable_onloading",
         # these functions should return wrapped modules :. are called with wrapped self
@@ -98,12 +99,18 @@ class OffloadedModule(torch.nn.Module):
             param = self._cache.offload(param)
 
         if (old_value := self._module._parameters.get(name, None)) is not None:
-            del self._cache[old_value]
-
-        if (old_value := self._module._buffers.get(name, None)) is not None:
-            del self._cache[old_value]
+            self._cache[old_value] = param
 
         self._module.register_parameter(name, param)
+
+    def register_buffer(self, name: str, tensor: torch.nn.Buffer | None, *args, **kw):
+        if isinstance(tensor, torch.nn.Buffer):
+            tensor = self._cache.offload(tensor)
+
+        if (old_value := self._module._buffers.get(name, None)) is not None:
+            self._cache[old_value] = tensor
+
+        self._module.register_buffer(name, tensor, *args, **kw)
 
     def __call__(self, *args, **kwargs):
         args, kwargs = (

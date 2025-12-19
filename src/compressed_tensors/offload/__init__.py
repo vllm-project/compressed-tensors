@@ -65,7 +65,7 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
     """
     if isinstance(module, OffloadedModule):
         with module.disable_onloading():
-            getattr(module, name).copy_(data)
+            module._cache[getattr(module, name)] = data
     else:
         getattr(module, name).copy_(data)
 

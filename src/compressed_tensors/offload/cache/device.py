@@ -75,6 +75,13 @@ class DeviceCache(OffloadCache):
 
         return onloaded_value
 
+    def __setitem__(self, key: torch.Tensor, value: torch.Tensor):
+        # invalidate onloaded values
+        del self[key]
+
+        # update data
+        key.copy_(value)
+
     def __delitem__(self, key: torch.Tensor):
         # remove any strong references to onloaded values
         if (

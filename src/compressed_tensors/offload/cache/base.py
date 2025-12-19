@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 import torch
 from compressed_tensors.utils.global_access import GlobalAccess
@@ -45,6 +45,14 @@ class OffloadCache(GlobalAccess, ABC):
         """
         :param key: offloaded tensor to be onloaded
         :return: onloaded tensor
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def __setitem__(self, key: torch.Tensor, value: torch.Tensor):
+        """
+        :param key: offloaded tensor whose value will be updated
+        :param value: value used to update
         """
         raise NotImplementedError()
 
@@ -87,9 +95,3 @@ class OffloadCache(GlobalAccess, ABC):
         inspect offloaded tensors and directly assign offloaded tensors without copying
         """
         raise NotImplementedError()
-
-    def __setitem__(self, key: torch.Tensor, value: Any):
-        raise ValueError(
-            "Cannot set item for OffloadCache. "
-            "Please use `OffloadCache.offload` instead"
-        )
