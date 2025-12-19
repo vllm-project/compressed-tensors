@@ -21,8 +21,8 @@ from compressed_tensors.utils.global_access import GlobalAccess
 
 class OffloadCache(GlobalAccess, ABC):
     """
-    Abstract base class for offload cache. Tensors are put into the cache via `offload`,
-    and tensors are retrieved from the cache via `__getitem__`.
+    Abstract base class for offload cache. Tensors are made ready for caching via
+    `offload`, updated via `__setitem__`, and retrieved via `__getitem__`.
     """
 
     onload_device: torch.device | str

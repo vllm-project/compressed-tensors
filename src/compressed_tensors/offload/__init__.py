@@ -36,10 +36,10 @@ __all__ = [
     "update_offload_parameter",
     "get_execution_device",
     "get_offloaded_device",
-    "align_modules",
     "register_offload_module",
-    "align_module_device",
     "unwrap_offload",
+    "align_modules",
+    "align_module_device",
 ]
 
 
@@ -96,6 +96,34 @@ def get_offloaded_device(module: torch.nn.Module) -> torch.device:
         return get_module_device(module)
 
 
+def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.Module):
+    """
+    Register a submodule with offloading if the parent module is offloaded
+
+    :param base: module to attach submodule to
+    :param name: name of submodule
+    :param module: submodule to attach
+    """
+    if isinstance(base, OffloadedModule):
+        offloaded = OffloadedModule.from_module(module, base._cache, no_split=False)
+        base.register_module(name, offloaded)
+
+
+@contextlib.contextmanager
+def unwrap_offload(module: torch.nn.Module) -> Iterator[torch.nn.Module]:
+    """
+    Context manager that returns the module without offload wrapping.
+    This can be used to modify the original module. The module is rewrapped upon exit
+
+    :param module: module that may be offloaded
+    :returns: module with offload wrapping removed
+    """
+    if isinstance(module, OffloadedModule):
+        yield module._module
+    else:
+        yield module
+
+
 """ Implemented for backwards compatibility """
 
 
@@ -115,19 +143,6 @@ def align_modules(
         for module in modules:
             stack.enter_context(align_module_device(module, execution_device))
         yield
-
-
-def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.Module):
-    """
-    Register a submodule with offloading if the parent module is offloaded
-
-    :param base: module to attach submodule to
-    :param name: name of submodule
-    :param module: submodule to attach
-    """
-    if isinstance(base, OffloadedModule):
-        offloaded = OffloadedModule.from_module(module, base._cache, no_split=False)
-        base.register_module(name, offloaded)
 
 
 @contextlib.contextmanager
@@ -161,18 +176,3 @@ def align_module_device(
                 for name, param in module.named_parameters(recurse=False):
                     device = original_device[name]
                     move_module_tensor(module, name, device)
-
-
-@contextlib.contextmanager
-def unwrap_offload(module: torch.nn.Module) -> Iterator[torch.nn.Module]:
-    """
-    Context manager that returns the module without offload wrapping.
-    This can be used to modify the original module. The module is rewrapped upon exit
-
-    :param module: module that may be offloaded
-    :returns: module with offload wrapping removed
-    """
-    if isinstance(module, OffloadedModule):
-        yield module._module
-    else:
-        yield module

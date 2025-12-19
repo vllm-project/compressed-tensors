@@ -46,6 +46,9 @@ def offload_model(
     Offload a model to the `offload_device`. During forward passes, model weights will
     be onloaded to the `onload_device`
 
+    Disclaimers:
+    * Shared modules are not preserved
+
     :param model: model to dispatch
     :param onload_device: device to move weights to during forward pass
     :param offload_device: device to offload weights to
@@ -101,7 +104,9 @@ def dispatch_model(
     Dispatch a model autoregressive generation. This means that modules are dispatched
     evenly across avaiable devices and kept onloaded if possible.
 
-    Soft assumes that modules are called in order of `model.modules()`
+    Disclaimers:
+    * Shared modules are not preserved
+    * Optimal runtime assumes that modules are called in order of `model.modules()`
 
     :param model: model to dispatch
     :param hint_batch_size: reserve memory for batch size of inputs
