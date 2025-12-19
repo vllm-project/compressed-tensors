@@ -74,17 +74,17 @@ def offload_model(
     # each model shares a single shared cache because we have to
     # coordinate the onloading of shared tensors within the model
     cache = OffloadCache.from_devices(onload_device, offload_device)
-    memo = dict()
     for name, module in model.named_modules(remove_duplicate=False):
         # exclude wrapping the root
         if name == "" or isinstance(module, torch.nn.ModuleList):
             continue
 
+        # create offloaded version of module
         no_split = module.__class__.__name__ in no_split_modules
-        offloaded_module = OffloadedModule.from_module(module, cache, no_split)
+        offloaded = OffloadedModule.from_module(module, cache, no_split)
 
-        model.set_submodule(name, offloaded_module)
-        memo[module] = offloaded_module
+        # replace in model
+        model.set_submodule(name, offloaded)
 
     return model
 
