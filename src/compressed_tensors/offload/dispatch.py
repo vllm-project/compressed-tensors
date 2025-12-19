@@ -19,7 +19,7 @@ from typing import Literal, Optional, TypeVar
 import torch
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.module import OffloadedModule
-from compressed_tensors.offload.utils import module_nbytes, module_to
+from compressed_tensors.offload.utils import module_size, module_to
 from compressed_tensors.utils import getattr_chain
 from loguru import logger
 from transformers import PreTrainedModel
@@ -146,7 +146,7 @@ def dispatch_model(
         raise MemoryError("Did not find any devices to dispatch model to")
 
     # estimate model size
-    _, model_size = module_nbytes(model)
+    _, model_size = module_size(model)
     if model_size > sum((device.memory for device in devices), 0):
         logger.warning(
             f"Model has size {model_size} bytes, but only {total_memory} bytes"
@@ -159,7 +159,7 @@ def dispatch_model(
     # assign modules to devices
     def dfs(module: torch.nn.Module) -> torch.nn.Module:
         no_split = module.__class__.__name__ in no_split_modules
-        direct_size, total_size = module_nbytes(module)
+        direct_size, total_size = module_size(module)
 
         # no devices left
         if total_size > 0 and len(devices) <= 0:

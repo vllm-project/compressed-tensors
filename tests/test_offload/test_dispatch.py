@@ -23,7 +23,7 @@ from compressed_tensors.offload.dispatch import (
     offload_model,
 )
 from compressed_tensors.offload.module import OffloadedModule
-from compressed_tensors.offload.utils import module_nbytes
+from compressed_tensors.offload.utils import module_size
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -66,7 +66,7 @@ def assert_module_offloaded(
     for name, submodule in module.named_modules():
         if isinstance(submodule, torch.nn.ModuleList):
             continue
-        if req_params and module_nbytes(submodule)[0] <= 0:
+        if req_params and module_size(submodule)[0] <= 0:
             continue
 
         assert isinstance(submodule, OffloadedModule), name
@@ -79,7 +79,7 @@ def assert_module_offloaded(
 def test_dispatch_full():
     model = Model()
     memory = get_device_memory()
-    if len(memory) < 1 or memory[0].memory < module_nbytes(model)[1]:
+    if len(memory) < 1 or memory[0].memory < module_size(model)[1]:
         pytest.skip("Cannot perform full dispatch test, not enough device memory")
 
     with patch("compressed_tensors.offload.dispatch.get_device_memory") as mock_fn:
@@ -96,13 +96,13 @@ def test_dispatch_two_devices():
     memory = get_device_memory()
     if (
         len(memory) < 2
-        or memory[0].memory < module_nbytes(model.decoder0)[1]
-        or memory[1].memory < module_nbytes(model)[1] - module_nbytes(model.decoder0)[1]
+        or memory[0].memory < module_size(model.decoder0)[1]
+        or memory[1].memory < module_size(model)[1] - module_size(model.decoder0)[1]
     ):
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
 
     # reduce memory of first device
-    memory[0].memory = module_nbytes(model.decoder0)[1]
+    memory[0].memory = module_size(model.decoder0)[1]
 
     with patch("compressed_tensors.offload.dispatch.get_device_memory") as mock_fn:
         mock_fn.return_value = deepcopy(memory)
@@ -121,13 +121,13 @@ def test_dispatch_no_split():
     first_linear = model.decoder0.linear0
     if (
         len(memory) < 2
-        or memory[0].memory < module_nbytes(first_linear)[1]
-        or memory[1].memory < module_nbytes(model)[1] - module_nbytes(first_linear)[1]
+        or memory[0].memory < module_size(first_linear)[1]
+        or memory[1].memory < module_size(model)[1] - module_size(first_linear)[1]
     ):
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
 
     # reduce memory of first device
-    memory[0].memory = module_nbytes(first_linear)[1]
+    memory[0].memory = module_size(first_linear)[1]
 
     with patch("compressed_tensors.offload.dispatch.get_device_memory") as mock_fn:
         mock_fn.return_value = deepcopy(memory)
@@ -145,13 +145,13 @@ def test_dispatch_split():
     first_linear = model.decoder0.linear0
     if (
         len(memory) < 2
-        or memory[0].memory < module_nbytes(first_linear)[1]
-        or memory[1].memory < module_nbytes(model)[1] - module_nbytes(first_linear)[1]
+        or memory[0].memory < module_size(first_linear)[1]
+        or memory[1].memory < module_size(model)[1] - module_size(first_linear)[1]
     ):
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
 
     # reduce memory of first device
-    memory[0].memory = module_nbytes(first_linear)[1]
+    memory[0].memory = module_size(first_linear)[1]
 
     with patch("compressed_tensors.offload.dispatch.get_device_memory") as mock_fn:
         mock_fn.return_value = deepcopy(memory)
@@ -170,13 +170,13 @@ def test_dispatch_offloaded():
     memory = get_device_memory()
     if (
         len(memory) < 2
-        or memory[0].memory < module_nbytes(model.decoder0)[1]
-        or memory[1].memory < module_nbytes(model)[1] - module_nbytes(model.decoder0)[1]
+        or memory[0].memory < module_size(model.decoder0)[1]
+        or memory[1].memory < module_size(model)[1] - module_size(model.decoder0)[1]
     ):
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
 
     # reduce memory of first device, remove second device
-    memory[0].memory = module_nbytes(model.decoder0)[1]
+    memory[0].memory = module_size(model.decoder0)[1]
     del memory[1]
 
     with patch("compressed_tensors.offload.dispatch.get_device_memory") as mock_fn:
