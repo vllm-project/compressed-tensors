@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from tests.testing_utils import requires_gpu
-from transformers import AutoModelForCausalLM
-
 from compressed_tensors.modeling import (
     IMPL_ATTR,
     KV_CACHE_ATTR,
@@ -22,10 +19,18 @@ from compressed_tensors.modeling import (
     QuantizedKVCache,
     register_query_hook,
 )
-from compressed_tensors.quantization.quant_args import QuantizationArgs, QuantizationStrategy
-from compressed_tensors.quantization.quant_config import QuantizationConfig, QuantizationStatus
-from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.lifecycle.apply import apply_quantization_config
+from compressed_tensors.quantization.quant_args import (
+    QuantizationArgs,
+    QuantizationStrategy,
+)
+from compressed_tensors.quantization.quant_config import (
+    QuantizationConfig,
+    QuantizationStatus,
+)
+from compressed_tensors.quantization.quant_scheme import QuantizationScheme
+from tests.testing_utils import requires_gpu
+from transformers import AutoModelForCausalLM
 
 
 @requires_gpu
@@ -51,7 +56,6 @@ def test_apply_config_detects_deepseekv3_attention_and_hooks():
         quantization_status=QuantizationStatus.INITIALIZED,
         kv_cache_scheme=None,
     )
-
     apply_quantization_config(model, config)
 
     # Validate q/k/v qparams initialized and hooks attached
@@ -92,5 +96,5 @@ def test_apply_config_detects_deepseekv3_attention_and_hooks():
         impl.register_forward_pre_hook(_k_pre_hook, with_kwargs=True)
         impl.register_forward_pre_hook(_v_pre_hook, with_kwargs=True)
 
-    outputs = model(**inputs, use_cache=True)
+    model(**inputs, use_cache=True)
     assert all(q_called) and all(k_called) and all(v_called)

@@ -151,6 +151,7 @@ def is_attention_module(module: Module):
         or hasattr(module, "kv_b_proj")
     )
 
+
 def initialize_qparams(
     module: Module,
     base_name: str,
