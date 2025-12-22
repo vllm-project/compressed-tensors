@@ -14,4 +14,4 @@
 # flake8: noqa
 
 from .base import OffloadCache
-from .device import DeviceCache
+from .cpu import CPUCache

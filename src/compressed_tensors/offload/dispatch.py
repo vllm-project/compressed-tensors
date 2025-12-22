@@ -76,7 +76,7 @@ def offload_model(
 
     # each model shares a single shared cache because we have to
     # coordinate the onloading of shared tensors within the model
-    cache = OffloadCache.from_devices(onload_device, offload_device)
+    cache = OffloadCache.from_devices(onload_device, torch.device("cpu"))
     for name, module in model.named_modules(remove_duplicate=False):
         # exclude wrapping the root
         if name == "" or isinstance(module, torch.nn.ModuleList):

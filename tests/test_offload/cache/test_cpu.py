@@ -17,7 +17,7 @@ from weakref import ref
 
 import pytest
 import torch
-from compressed_tensors.offload.cache.device import DeviceCache
+from compressed_tensors.offload.cache.cpu import CPUCache
 from tests.testing_utils import requires_gpu
 
 
@@ -27,12 +27,12 @@ OFFLOAD_DEVICE = torch.device("cpu")
 
 @pytest.fixture(scope="function")
 def cache():
-    return DeviceCache(ONLOAD_DEVICE, OFFLOAD_DEVICE)
+    return CPUCache(ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
 @requires_gpu
-def test_onloading(cache: DeviceCache):
+def test_onloading(cache: CPUCache):
     tensor = torch.ones(10)
     onloaded = cache[tensor]
 
@@ -42,7 +42,7 @@ def test_onloading(cache: DeviceCache):
 
 @pytest.mark.unit
 @requires_gpu
-def test_garbage_collect(cache: DeviceCache):
+def test_garbage_collect(cache: CPUCache):
     tensor = torch.ones(10)
     onloaded = cache[tensor]
 
@@ -54,7 +54,7 @@ def test_garbage_collect(cache: DeviceCache):
 
 @pytest.mark.unit
 @requires_gpu
-def test_offload(cache: DeviceCache):
+def test_offload(cache: CPUCache):
     tensor = torch.ones(10, device=ONLOAD_DEVICE)
     offloaded = cache.offload(tensor)
     assert offloaded.device == OFFLOAD_DEVICE
@@ -62,7 +62,7 @@ def test_offload(cache: DeviceCache):
 
 @pytest.mark.unit
 @requires_gpu
-def test_disable_offloading(cache: DeviceCache):
+def test_disable_offloading(cache: CPUCache):
     tensor = torch.ones(10)
 
     outside_onloaded = cache[tensor]
@@ -87,7 +87,7 @@ def test_disable_offloading(cache: DeviceCache):
 
 @pytest.mark.unit
 @requires_gpu
-def test_disable_onloading(cache: DeviceCache):
+def test_disable_onloading(cache: CPUCache):
     tensor = torch.ones(10)
 
     with cache.disable_onloading():
@@ -99,7 +99,7 @@ def test_disable_onloading(cache: DeviceCache):
 
 @pytest.mark.unit
 @requires_gpu
-def test_delete(cache: DeviceCache):
+def test_delete(cache: CPUCache):
     tensor = torch.ones(10)
     onloaded = cache[tensor]
     onloaded_ref = ref(onloaded)

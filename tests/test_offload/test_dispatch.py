@@ -205,7 +205,7 @@ def test_offload_and_dispatch_model(model_id):
     model = offload_model(model, "cuda:0", "cpu")
     offloaded_logits = model(**sample).logits
     for child in model.children():
-        assert_module_offloaded(child, "cuda:0", "cpu")
+        assert_module_offloaded(child, "cuda:0", torch.device("cpu"))
     assert torch.allclose(offloaded_logits, true_logits)
 
     model = dispatch_model(model)

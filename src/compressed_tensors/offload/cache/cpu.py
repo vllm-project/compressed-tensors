@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import contextlib
-from typing import Optional
 from weakref import WeakValueDictionary
 
 import torch
@@ -21,7 +20,7 @@ from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.utils import send_tensors
 
 
-class DeviceCache(OffloadCache):
+class CPUCache(OffloadCache):
     """
     The device cache handles the onloading of tensors from an offload device to
     an onload device.
@@ -34,13 +33,9 @@ class DeviceCache(OffloadCache):
     returning a tensor subclass which references on offloaded tensor.
     """
 
-    def __init__(
-        self,
-        onload_device: torch.device | str,
-        offload_device: Optional[torch.device | str] = None,
-    ):
+    def __init__(self, onload_device: torch.device | str):
         self.onload_device = onload_device
-        self.offload_device = offload_device
+        self.offload_device = torch.device("cpu")
 
         # flags for disabling
         self.onloading_disabled: bool = False
@@ -97,13 +92,7 @@ class DeviceCache(OffloadCache):
         if self.onloading_disabled:
             return value
 
-        # allow for offload device override
-        if self.offload_device is not None:
-            offload_device = self.offload_device
-        else:
-            offload_device = value.device
-
-        return send_tensors(value, device=offload_device, copy=True)
+        return send_tensors(value, device=self.offload_device, copy=True)
 
     @contextlib.contextmanager
     def disable_offloading(self):

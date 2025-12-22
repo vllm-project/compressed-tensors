@@ -18,7 +18,7 @@ from weakref import ref
 
 import pytest
 import torch
-from compressed_tensors.offload.cache.device import DeviceCache
+from compressed_tensors.offload.cache.cpu import CPUCache
 from compressed_tensors.offload.module import OffloadedModule
 from tests.testing_utils import requires_gpu
 
@@ -29,7 +29,7 @@ OFFLOAD_DEVICE = torch.device("cpu")
 
 @pytest.fixture(scope="function")
 def cache():
-    return DeviceCache(ONLOAD_DEVICE, OFFLOAD_DEVICE)
+    return CPUCache(ONLOAD_DEVICE)
 
 
 @pytest.fixture(scope="function")

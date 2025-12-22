@@ -16,6 +16,7 @@ from abc import ABC, abstractmethod
 from typing import Literal, Optional
 
 import torch
+import torch.distributed as dist
 from compressed_tensors.utils.global_access import GlobalAccess
 
 
@@ -33,13 +34,20 @@ class OffloadCache(GlobalAccess, ABC):
         cls,
         onload_device: torch.device | str,
         offload_device: Optional[torch.device | str | Literal["disk"]] = None,
+        distributed: Optional[bool] = None,
     ):
-        from compressed_tensors.offload.cache.device import DeviceCache
+        from compressed_tensors.offload.cache.cpu import CPUCache
 
-        if offload_device == "disk":
-            raise NotImplementedError("Disk offloading has not been implemented yet")
+        if distributed is None:
+            distributed = dist.is_available() and dist.is_initialized()
+
+        if offload_device == torch.device("cpu") and not distributed:
+            return CPUCache(onload_device)
         else:
-            return DeviceCache(onload_device, offload_device)
+            raise NotImplementedError(
+                f"Offload of type {offload_device} and "
+                f"distributed={distributed} has not been implemented"
+            )
 
     @abstractmethod
     def __getitem__(self, key: torch.Tensor) -> torch.Tensor:
