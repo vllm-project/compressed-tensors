@@ -46,12 +46,15 @@ class OffloadCache(GlobalAccess, ABC):
         distributed: Optional[bool] = None,
     ):
         from compressed_tensors.offload.cache.cpu import CPUCache
+        from compressed_tensors.offload.cache.distributed_cpu import DistributedCPUCache
 
         if distributed is None:
             distributed = dist.is_available() and dist.is_initialized()
 
         if offload_device == torch.device("cpu") and not distributed:
             return CPUCache(onload_device)
+        elif offload_device == torch.device("cpu") and distributed:
+            return DistributedCPUCache(onload_device)
         else:
             raise NotImplementedError(
                 f"Offload of type {offload_device} and "
