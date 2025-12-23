@@ -67,6 +67,7 @@ class OffloadCache(MutableMapping, ABC):
         """
         from compressed_tensors.offload.cache.cpu import CPUCache
         from compressed_tensors.offload.cache.device import DeviceCache
+        from compressed_tensors.offload.cache.dist_cpu import DistributedCPUCache
 
         device_type = torch.device(device).type if device != "disk" else "disk"
         distributed = dist.is_available() and dist.is_initialized()
@@ -74,6 +75,8 @@ class OffloadCache(MutableMapping, ABC):
         match (device_type, distributed):
             case ("cpu", False):
                 return CPUCache
+            case ("cpu", True):
+                return DistributedCPUCache
             case ("cuda", False):
                 return DeviceCache
             case _:
