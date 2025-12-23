@@ -32,7 +32,6 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle import apply_quantization_config
 from compressed_tensors.utils import is_match, match_named_modules
-from tests.testing_utils import requires_accelerate
 from transformers import AutoModelForCausalLM
 
 
@@ -322,7 +321,6 @@ def get_sample_tinyllama_quant_config(
     return QuantizationConfig.model_validate(config_dict)
 
 
-@requires_accelerate()
 @pytest.mark.parametrize(
     "target,should_raise_warning",
     [
@@ -462,12 +460,8 @@ def test_multi_apply_quantization_config():
             )
 
 
-@requires_accelerate()
 def test_apply_kv_cache():
-    from accelerate import init_empty_weights
-
-    with init_empty_weights():
-        model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
 
     args = QuantizationArgs(
         num_bits=8,
@@ -486,12 +480,8 @@ def test_apply_kv_cache():
         assert hasattr(layer.self_attn, "v_scale")
 
 
-@requires_accelerate()
 def test_apply_attention():
-    from accelerate import init_empty_weights
-
-    with init_empty_weights():
-        model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
+    model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
 
     scheme = QuantizationScheme(
         targets=["LlamaAttention"],
