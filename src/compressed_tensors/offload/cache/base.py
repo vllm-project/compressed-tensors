@@ -51,9 +51,8 @@ class OffloadCache(GlobalAccess, MutableMapping):
         self.onload_device = onload_device
         self.offload_device = torch.device("cpu")
 
-        # names -> offloaded tensors
-        self.module = None
-        self.offloaded_values: dict[tuple[torch.nn.Module, str], torch.Tensor] = dict()
+        # local names -> offloaded tensors
+        self.offloaded_values: dict[tuple[torch.nn.Module, str], torch.Tensor] = None
 
         # offloaded tensors -> onloaded tensors
         self.onload_values: WeakValueDictionary[
@@ -63,15 +62,20 @@ class OffloadCache(GlobalAccess, MutableMapping):
         # strong ref to values to disable offloading
         self.keep_onloaded_values: set[torch.Tensor] = set()
 
-    def curry_module(self, module: torch.nn.Module):
+    # TODO: make this into a factory pattern
+    def from_mapping(self, mapping: MutableMapping[str, torch.Tensor | None]):
         copy = self.__class__(onload_device=self.onload_device)
         copy.onload_device = self.onload_device
         copy.offload_device = self.offload_device
-        copy.offloaded_values = self.offloaded_values
+
+        # global: onloaded values
         copy.onload_values = self.onload_values
         copy.keep_onloaded_values = self.keep_onloaded_values
 
-        copy.module = module  # change prefix, shallow copy rest
+        # local: offloaded values
+        copy.offloaded_values = mapping
+        for name, tensor in copy.offloaded_values.items():
+            copy.offloaded_values[name] = self.offload(tensor)
 
         return copy
 
@@ -102,7 +106,7 @@ class OffloadCache(GlobalAccess, MutableMapping):
         :param key: offloaded tensor to be onloaded
         :return: onloaded tensor
         """
-        offloaded = self.offloaded_values[self.module, key]
+        offloaded = self.offloaded_values[key]
         if offloaded is None:
             return None
 
@@ -119,26 +123,17 @@ class OffloadCache(GlobalAccess, MutableMapping):
         return onloaded_value
     
     def __contains__(self, key) -> bool:
-        return (self.module, key) in self.offloaded_values
+        return key in self.offloaded_values
     
     def __iter__(self):
-        return iter([(module, key) for module, key in self.offloaded_values])
+        return iter(self.offloaded_values)
 
     def __len__(self):
         return len(self.offloaded_values)
 
     def __setitem__(self, key: str, value: torch.Tensor):
-        """
-        :param key: offloaded tensor whose value will be updated
-        :param value: value used to update
-        """
-        # update data
-        print("__setitem__")
-        self.offloaded_values[self.module, key] = value
+        self.offloaded_values[key] = value
 
     def __delitem__(self, key: str):
-        """
-        :param key: offloaded tensor to be removed from the cache
-        """
-        del self.offloaded_values[self.module, key]
+        del self.offloaded_values[key]
 

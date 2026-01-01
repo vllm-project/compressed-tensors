@@ -116,6 +116,7 @@ def module_size(module: torch.nn.Module) -> tuple[int, int]:
     :param module: module to check
     :return: tuple of size of direct module tensors and size of all module tensors
     """
+    # TODO: disable onloading while doing this
     tensors = chain(module.parameters(recurse=False), module.buffers(recurse=False))
     direct = sum((tensor.nbytes for tensor in tensors), 0)
 
