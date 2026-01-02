@@ -15,8 +15,7 @@
 import contextlib
 import inspect
 from functools import wraps
-from types import FunctionType
-from typing import Any, TypeVar
+from typing import Iterator, TypeVar
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
@@ -26,32 +25,69 @@ from compressed_tensors.offload.utils import send_tensors
 ModuleType = TypeVar("ModuleType", bound=torch.nn.Module)
 
 
-class OffloadedModule(torch.nn.Module):
-    @classmethod
-    def from_module(
-        cls,
-        module: ModuleType,
-        cache: OffloadCache,
-        no_split=False
-    ) -> ModuleType:
-        module.__dict__["_parameters"] = cache.from_mapping(module._parameters)
-        module.__dict__["_buffers"] = cache.from_mapping(module._buffers)
+def offload_module(
+    module: ModuleType,
+    cache: OffloadCache,
+    onload_device: torch.device | str,
+    no_split: bool = False,
+) -> ModuleType:
+    module.__dict__["_parameters"] = cache.from_mapping(
+        module._parameters, onload_device
+    )
+    module.__dict__["_buffers"] = cache.from_mapping(module._buffers, onload_device)
 
-        original_forward = module.forward
+    original_forward_func = module.forward.__func__
 
-        def forward(self, *args, **kwargs):
-            args, kwargs = (
-                send_tensors(args, device=self._parameters.onload_device),
-                send_tensors(kwargs, device=self._parameters.onload_device),
-            )
+    @wraps(original_forward_func)
+    def forward(self, *args, **kwargs):
+        args = send_tensors(args, device=onload_device)
+        kwargs = send_tensors(kwargs, device=onload_device)
 
-            if no_split:
-                #with self.disable_offloading():
-                return original_forward.__func__(self, *args, **kwargs)
-            else:
-                return original_forward.__func__(self, *args, **kwargs)
+        if no_split:
+            with cache.disable_offloading():
+                return original_forward_func(self, *args, **kwargs)
+        else:
+            return original_forward_func(self, *args, **kwargs)
 
-        module.forward = wraps(original_forward.__func__)(forward).__get__(module)
-        assert inspect.signature(module.forward) == inspect.signature(original_forward)
-        
-        return module
+    assert inspect.signature(forward) == inspect.signature(original_forward_func)
+    module.forward = forward.__get__(module)
+
+    return module
+
+
+def remove_module_offload(module: torch.nn.Module):
+    if isinstance(module._parameters, OffloadCache):
+        assert isinstance(module._buffers, OffloadCache)
+
+        module._parameters = {
+            name: module._parameters.onload(param)
+            for name, param in module._parameters.offloaded_values.items()
+        }
+        module._buffers = {
+            name: module._buffers.onload(param)
+            for name, param in module._buffers.offloaded_values.items()
+        }
+
+        original_forward_func = module.forward.__func__.__wrapped__
+        module.forward = original_forward_func.__get__(module)
+
+
+@contextlib.contextmanager
+def unwrap_offload(module: torch.nn.Module) -> Iterator[torch.nn.Module]:
+    """
+    Context manager that returns the module without offload wrapping.
+    This can be used to modify the original module. The module is rewrapped upon exit
+
+    :param module: module that may be offloaded
+    :returns: module with offload wrapping removed
+    """
+    parameters = module._parameters
+    buffers = module._buffers
+    forward = module.forward
+
+    remove_module_offload(module)
+    yield module
+
+    module._parameters = parameters
+    module._buffers = buffers
+    module.forward = forward

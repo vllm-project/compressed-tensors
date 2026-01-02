@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import ClassVar, Optional
+from weakref import WeakValueDictionary
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
@@ -29,18 +30,33 @@ class CPUCache(OffloadCache):
     parameters, use `compressed_tensors.offload::update_offload_parameter`
     """
 
-    offload_device: Optional[torch.device | str] = torch.device("cpu")
+    onload_device: ClassVar[torch.device | str]
+    offload_device = torch.device("cpu")
 
-    def onload(self, key: torch.Tensor) -> torch.Tensor:
+    # flags for disabling
+    offloading_disabled = False
+    onloading_disabled = False
+
+    # offloaded tensors -> onloaded tensors
+    onload_values = WeakValueDictionary()
+
+    # while offloading is disabled, keep a strong reference
+    keep_onloaded_values: ClassVar[set[torch.Tensor]] = set()
+
+    # populated by _parameters or _buffers
+    # names -> offloaded tensors
+    offloaded_values: dict[str, torch.Tensor]
+
+    def onload(self, offloaded: torch.Tensor) -> torch.Tensor:
         """
         Onload a tensor from cpu to device
 
         :param key: cpu tensor to onload
         :return: device tensor
         """
-        return send_tensors(key, device=self.onload_device, copy=False)
+        return send_tensors(offloaded, device=self.onload_device, copy=False)
 
-    def offload(self, value: torch.Tensor) -> torch.Tensor:
+    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
         """
         Offload a tensor from any device to cpu
 
@@ -49,7 +65,7 @@ class CPUCache(OffloadCache):
         """
         # return original tensor if onloading is disabled
         # to allow for direct parameter/buffer assignment
-        #if self.onloading_disabled:
+        # if self.onloading_disabled:
         #    return value
 
-        return send_tensors(value, device=self.offload_device, copy=False)
+        return send_tensors(tensor, device=self.offload_device, copy=False)

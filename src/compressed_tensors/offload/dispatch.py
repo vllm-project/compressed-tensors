@@ -18,7 +18,7 @@ from typing import Literal, Optional, TypeVar
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
-from compressed_tensors.offload.module import OffloadedModule
+from compressed_tensors.offload.module import offload_module, remove_module_offload
 from compressed_tensors.offload.utils import module_size, module_to
 from compressed_tensors.utils import getattr_chain
 from loguru import logger
@@ -56,17 +56,8 @@ def offload_model(
         across multiple devices
     :return: dispatched model
     """
-    if len(model._parameters) > 0:
-        raise NotImplementedError(
-            "Offloading is achieved by replacing modules which have direct parameters "
-            "with new modules which have been wrapped. However, replacing the root "
-            "can break functionality with previous implementation of `dispatch_model`. "
-            "Please either remove any direct parameters to the model root, or refactor "
-            "this function and its usages to use the new, wrapped root"
-        )
-
     # ensure model starts offloaded
-    model = remove_dispatch(model)
+    remove_dispatch(model)
     if offload_device not in (None, "disk"):
         model = model.to(offload_device)
 
@@ -76,7 +67,7 @@ def offload_model(
 
     # each model shares a single shared cache because we have to
     # coordinate the onloading of shared tensors within the model
-    cache = OffloadCache.from_devices(onload_device, torch.device("cpu"))
+    cache = OffloadCache.from_device(torch.device("cpu"))
     for name, module in model.named_modules(remove_duplicate=False):
         # exclude wrapping the root
         if name == "" or isinstance(module, torch.nn.ModuleList):
@@ -84,10 +75,7 @@ def offload_model(
 
         # create offloaded version of module
         no_split = module.__class__.__name__ in no_split_modules
-        offloaded = OffloadedModule.from_module(module, cache, no_split)
-
-        # replace in model
-        model.set_submodule(name, offloaded)
+        offload_module(module, cache, onload_device, no_split)
 
     return model
 
@@ -119,7 +107,7 @@ def dispatch_model(
     :return: dispatched model
     """
     # remove previous dispatches
-    model = remove_dispatch(model)
+    remove_dispatch(model)
 
     # infer no_split_modules
     if no_split_modules is None:
@@ -154,7 +142,8 @@ def dispatch_model(
         )
 
     # allocate a fallback cache if we ever run out of memory
-    cache = OffloadCache.from_devices(devices[0].device, torch.device("cpu"))
+    cache_onload_device = devices[0].device
+    cache = OffloadCache.from_device(torch.device("cpu"))
 
     # assign modules to devices
     def dfs(module: torch.nn.Module) -> torch.nn.Module:
@@ -168,7 +157,8 @@ def dispatch_model(
                 f"{total_size if no_split else direct_size} bytes. "
                 "Resorting to CPU offloading."
             )
-            return OffloadedModule.from_module(module, cache, no_split=no_split)
+            offload_module(module, cache, cache_onload_device, no_split)
+            return module
 
         # can fit entire module
         if total_size <= devices[0].memory:
@@ -226,15 +216,8 @@ def get_device_memory(hint_extra_memory: int = 0) -> list[DeviceMemory]:
 def remove_dispatch(module: torch.nn.Module) -> torch.nn.Module:
     """
     Remove any existing dispatches from module
-
-    :param module: module which may be dispatched with hf hooks
-    :return: module without dispatch
     """
     for name, submodule in module.named_modules(remove_duplicate=False):
-        if isinstance(submodule, OffloadedModule):
-            if name == "":
-                module = submodule._module
-            else:
-                module.set_submodule(name, submodule._module)
+        remove_module_offload(submodule)
 
     return module

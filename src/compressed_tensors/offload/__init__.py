@@ -16,13 +16,13 @@ import contextlib
 from typing import Iterable, Iterator, Optional
 
 import torch
-from compressed_tensors.offload.cache import CPUCache
+from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.dispatch import (  # noqa: F401
     dispatch_model,
     offload_model,
     remove_dispatch,
 )
-from compressed_tensors.offload.module import OffloadedModule
+from compressed_tensors.offload.module import offload_module, unwrap_offload
 from compressed_tensors.offload.utils import get_module_device, move_module_tensor
 from compressed_tensors.utils.helpers import patch_attr
 
@@ -49,8 +49,9 @@ def disable_offloading():
     Keep modules onloaded and disable offloading until this context exits.
     """
     with contextlib.ExitStack() as stack:
-        for cache in CPUCache.instances():
-            stack.enter_context(cache.disable_offloading())
+        for suclass in OffloadCache.__subclasses__():
+            for cache in suclass.instances():
+                stack.enter_context(cache.disable_offloading())
         yield
 
 
@@ -63,9 +64,10 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
     :param name: name of module parameter to update
     :param data: tensor to update parameter with
     """
-    if isinstance(module, OffloadedModule):
-        with module.disable_onloading():
-            module._cache[getattr(module, name)] = data
+    if isinstance(module._parameters, OffloadCache):
+        offloaded = module._parameters.offload(data)
+        with module._parameters.disable_onloading():
+            getattr(module, name).copy_(offloaded)
     else:
         getattr(module, name).copy_(data)
 
@@ -77,8 +79,8 @@ def get_execution_device(module: torch.nn.Module) -> torch.device | str:
     :param module: module to check, may be offloaded
     :return: onload device of module
     """
-    if isinstance(module, OffloadedModule):
-        return module._cache.onload_device
+    if isinstance(module._parameters, OffloadCache):
+        return module._parameters.onload_device
 
     else:
         return get_module_device(module)
@@ -89,10 +91,7 @@ def get_offloaded_device(module: torch.nn.Module) -> torch.device:
     :param module: module to check
     :return: device module is offloaded to onto after forward pass
     """
-    if isinstance(module, OffloadedModule):
-        with module.disable_onloading():
-            return get_module_device(module)
-    else:
+    with disable_onloading():
         return get_module_device(module)
 
 
@@ -104,24 +103,11 @@ def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.M
     :param name: name of submodule
     :param module: submodule to attach
     """
-    if isinstance(base, OffloadedModule):
-        offloaded = OffloadedModule.from_module(module, base._cache, no_split=False)
-        base.register_module(name, offloaded)
+    cache = base._parameters
+    if isinstance(cache, OffloadCache):
+        module = offload_module(module, cache, cache.offload_device, no_split=False)
 
-
-@contextlib.contextmanager
-def unwrap_offload(module: torch.nn.Module) -> Iterator[torch.nn.Module]:
-    """
-    Context manager that returns the module without offload wrapping.
-    This can be used to modify the original module. The module is rewrapped upon exit
-
-    :param module: module that may be offloaded
-    :returns: module with offload wrapping removed
-    """
-    if isinstance(module, OffloadedModule):
-        yield module._module
-    else:
-        yield module
+    base.register_module(name, module)
 
 
 """ Implemented for backwards compatibility """
@@ -156,23 +142,23 @@ def align_module_device(
     :param execution_device: If provided, overrides the module's execution device
         within the context. Otherwise, use hook execution device or pass
     """
-    with disable_offloading():
-        if execution_device is None:
+
+    if isinstance(module._parameters, OffloadCache):
+        assert isinstance(module._buffers, OffloadCache)
+        with patch_attr(
+            module._parameters, "onload_device", execution_device
+        ), patch_attr(module._buffers, "onload_device", execution_device):
             yield
 
-        elif isinstance(module, OffloadedModule):
-            with patch_attr(module, "execution_device", execution_device):
-                yield
+    else:
+        original_device = {}
+        for name, param in module.named_parameters(recurse=False):
+            original_device[name] = param.device
+            move_module_tensor(module, name, execution_device)
 
-        else:
-            original_device = {}
+        try:
+            yield
+        finally:
             for name, param in module.named_parameters(recurse=False):
-                original_device[name] = param.device
-                move_module_tensor(module, name, execution_device)
-
-            try:
-                yield
-            finally:
-                for name, param in module.named_parameters(recurse=False):
-                    device = original_device[name]
-                    move_module_tensor(module, name, device)
+                device = original_device[name]
+                move_module_tensor(module, name, device)

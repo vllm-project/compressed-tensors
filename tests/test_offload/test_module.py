@@ -19,7 +19,7 @@ from weakref import ref
 import pytest
 import torch
 from compressed_tensors.offload.cache.cpu import CPUCache
-from compressed_tensors.offload.module import OffloadedModule
+from compressed_tensors.offload.module import offload_module
 from tests.testing_utils import requires_gpu
 
 

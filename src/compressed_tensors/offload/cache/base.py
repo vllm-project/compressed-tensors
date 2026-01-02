@@ -13,89 +13,90 @@
 # limitations under the License.
 
 import contextlib
-from collections.abc import MutableMapping
+import inspect
 from abc import ABC, abstractmethod
-from typing import Literal, Optional
+from collections.abc import MutableMapping
+from functools import wraps
+from typing import ClassVar, Literal, Optional
 from weakref import WeakValueDictionary
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.offload.utils import send_tensors
 from compressed_tensors.utils.global_access import GlobalAccess
 
 
 class OffloadCache(GlobalAccess, MutableMapping):
     onload_device: torch.device | str
-    offload_device: Optional[torch.device | str]
+    offload_device: ClassVar[Optional[torch.device | str]]
+
+    # flags for disabling
+    offloading_disabled: ClassVar[bool]
+    onloading_disabled: ClassVar[bool]
+
+    # offloaded tensors -> onloaded tensors
+    onload_values: ClassVar[WeakValueDictionary[torch.Tensor, torch.Tensor]]
+
+    # while offloading is disabled, keep a strong reference
+    keep_onloaded_values: ClassVar[set[torch.Tensor]] = set()
+
+    # populated by _parameters or _buffers
+    # names -> offloaded tensors
+    offloaded_values: dict[str, torch.Tensor]
 
     @classmethod
-    def from_devices(
+    def from_device(
         cls,
-        onload_device: torch.device | str,
         offload_device: Optional[torch.device | str | Literal["disk"]] = None,
         distributed: Optional[bool] = None,
-    ):
+    ) -> type["OffloadCache"]:
         from compressed_tensors.offload.cache.cpu import CPUCache
 
         if distributed is None:
             distributed = dist.is_available() and dist.is_initialized()
 
         if offload_device == torch.device("cpu") and not distributed:
-            return CPUCache(onload_device)
+            return CPUCache
         else:
             raise NotImplementedError(
                 f"Offload of type {offload_device} and "
                 f"distributed={distributed} has not been implemented"
             )
 
+    @classmethod
+    def from_mapping(
+        cls,
+        mapping: MutableMapping[str, torch.Tensor | None],
+        onload_device: torch.device | str,
+    ):
+        instance = cls(onload_device=onload_device)
+        instance.offloaded_values = {
+            name: instance.offload(tensor) for name, tensor in mapping.items()
+        }
+
+        return instance
+
     def __init__(self, onload_device: torch.device | str):
         self.onload_device = onload_device
-        self.offload_device = torch.device("cpu")
-
-        # local names -> offloaded tensors
-        self.offloaded_values: dict[tuple[torch.nn.Module, str], torch.Tensor] = None
-
-        # offloaded tensors -> onloaded tensors
-        self.onload_values: WeakValueDictionary[
-            torch.Tensor, torch.Tensor
-        ] = WeakValueDictionary()
-
-        # strong ref to values to disable offloading
-        self.keep_onloaded_values: set[torch.Tensor] = set()
-
-    # TODO: make this into a factory pattern
-    def from_mapping(self, mapping: MutableMapping[str, torch.Tensor | None]):
-        copy = self.__class__(onload_device=self.onload_device)
-        copy.onload_device = self.onload_device
-        copy.offload_device = self.offload_device
-
-        # global: onloaded values
-        copy.onload_values = self.onload_values
-        copy.keep_onloaded_values = self.keep_onloaded_values
-
-        # local: offloaded values
-        copy.offloaded_values = mapping
-        for name, tensor in copy.offloaded_values.items():
-            copy.offloaded_values[name] = self.offload(tensor)
-
-        return copy
+        self.offloaded_values = dict()
 
     @abstractmethod
-    def onload(self, key: torch.Tensor) -> torch.Tensor:
+    def onload(self, offloaded: torch.Tensor) -> torch.Tensor:
         """
         Given an offloaded value, returns, onloaded version of that tensor
 
-        :param key: offloaded tensor
+        :param offloaded: offloaded tensor
         :return: onloaded tensor
         """
         # IMPL: return send_tensors(key, device=self.onload_device, copy=True)
         raise NotImplementedError()
 
     @abstractmethod
-    def offload(self, value: torch.Tensor) -> torch.Tensor:
+    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
         """
         Given an onloaded value, returns the offloaded version of that tensor
 
-        :param key: tensor to offload
+        :param tensor: tensor to offload
         :return: offloaded tensor
         """
         # IMPL: return send_tensors(value, device=self.offload_device, copy=True)
@@ -121,19 +122,68 @@ class OffloadCache(GlobalAccess, MutableMapping):
             onloaded_value = self.onload_values[offloaded]
 
         return onloaded_value
-    
+
+    def __setitem__(self, key: str, value: torch.Tensor):
+        """ """
+        # when onloading is disabled, parameters can be access and assigned directly
+        if self.onloading_disabled:
+            self.offloaded_values[key] = value
+            return
+
+        self.offloaded_values[key] = self.offload(value)
+
+    def __delitem__(self, key: str):
+        """ """
+        if key not in self.offloaded_values:
+            raise KeyError(key)
+
+        # if offloading is disabled, delete strong reference to onloaded value
+        offloaded = self.offloaded_values[key]
+        if (
+            offloaded in self.onload_values
+            and self.onload_values[offloaded] in self.offloaded_values
+        ):
+            del self.offloaded_values[self.onload_values[offloaded]]
+
+        del self.offloaded_values[key]
+
     def __contains__(self, key) -> bool:
         return key in self.offloaded_values
-    
+
     def __iter__(self):
         return iter(self.offloaded_values)
 
     def __len__(self):
         return len(self.offloaded_values)
 
-    def __setitem__(self, key: str, value: torch.Tensor):
-        self.offloaded_values[key] = value
+    @classmethod
+    @contextlib.contextmanager
+    def disable_offloading(cls):
+        """
+        Context to disable all offloading for offloaded modules which share this cache.
+        After a weight has been fetched once, that onloaded value is cached and
+        subsequent fetches will leverage the cache, reducing device movement
+        """
+        if not cls.offloading_disabled:
+            cls.offloading_disabled = True
+            cls.keep_onloaded_values.update(cls.onload_values.values())
+            yield
+            cls.offloading_disabled = False
+            cls.keep_onloaded_values.clear()
+        else:
+            yield
 
-    def __delitem__(self, key: str):
-        del self.offloaded_values[key]
-
+    @classmethod
+    @contextlib.contextmanager
+    def disable_onloading(cls):
+        """
+        Context to disable all onloading for offloaded modules which share this cache.
+        This is mostly used for debugging purposes, and allows the caller to directly
+        inspect offloaded tensors and directly assign offloaded tensors without copying
+        """
+        if not cls.onloading_disabled:
+            cls.onloading_disabled = True
+            yield
+            cls.onloading_disabled = False
+        else:
+            yield

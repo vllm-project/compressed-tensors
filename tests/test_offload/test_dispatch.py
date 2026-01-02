@@ -17,12 +17,12 @@ from unittest.mock import patch
 
 import pytest
 import torch
+from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.dispatch import (
     dispatch_model,
     get_device_memory,
     offload_model,
 )
-from compressed_tensors.offload.module import OffloadedModule
 from compressed_tensors.offload.utils import module_size
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -51,8 +51,8 @@ class Model(torch.nn.Module):
 
 
 def assert_module_on_device(module: torch.nn.Module, device: torch.device):
-    # for name, submodule in module.named_modules():
-    #     assert not isinstance(submodule, OffloadedModule), name
+    for name, submodule in module.named_modules():
+        assert not isinstance(submodule._parameters, OffloadCache), name
     for name, param in module.named_parameters():
         assert param.device == device, name
 
@@ -69,9 +69,9 @@ def assert_module_offloaded(
         if req_params and module_size(submodule)[0] <= 0:
             continue
 
-        # assert isinstance(submodule, OffloadedModule), name
-        # assert submodule._cache.onload_device == onload_device
-        # assert submodule._cache.offload_device == offload_device
+        assert isinstance(submodule._parameters, OffloadCache), name
+        assert submodule._parameters.onload_device == onload_device
+        assert submodule._parameters.offload_device == offload_device
 
 
 @pytest.mark.unit
