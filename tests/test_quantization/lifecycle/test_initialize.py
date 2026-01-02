@@ -17,7 +17,7 @@ import math
 
 import pytest
 import torch
-from compressed_tensors.offload import dispatch_model
+from compressed_tensors.offload import offload_model
 from compressed_tensors.quantization import (
     FP8_E4M3_DATA,
     ActivationOrdering,
@@ -120,7 +120,7 @@ def test_initialize_module_for_quantization(
 def test_initialize_module_for_quantization_offloaded(
     create_quantization_scheme, weights, input_activations, layer
 ):
-    dispatch_model(layer, "cuda:0")
+    offload_model(layer, "cuda:0")
 
     test_initialize_module_for_quantization(
         create_quantization_scheme,

@@ -16,7 +16,7 @@ import os
 
 import pytest
 import torch
-from compressed_tensors.offload import dispatch_model
+from compressed_tensors.offload import offload_model
 from compressed_tensors.transform import (
     TransformConfig,
     TransformScheme,
@@ -34,7 +34,7 @@ def test_serialization(type, randomize, model_apply, tmp_path, offload):
     # get model, maybe offload
     model, apply = model_apply
     if offload:
-        dispatch_model(model, torch.device("cuda"))
+        offload_model(model, torch.device("cuda"))
 
     # apply transforms to model
     config = TransformConfig(
@@ -49,7 +49,8 @@ def test_serialization(type, randomize, model_apply, tmp_path, offload):
     # check that saved values match model values
     # note that shared weights are only serialized once
     safetensors_path = os.path.join(model_path, "model.safetensors")
-    with safe_open(safetensors_path, framework="pt", device="cpu") as file:
+    device = "cuda:0" if offload else "cpu"
+    with safe_open(safetensors_path, framework="pt", device=device) as file:
         saved_keys = set(file.keys())
         assert {
             "fcs.0.weight",
@@ -61,9 +62,7 @@ def test_serialization(type, randomize, model_apply, tmp_path, offload):
         for key in saved_keys:
             param = model.get_parameter(key)
             saved_param = file.get_tensor(key)
-
-            if param.device.type != "meta":  # skip testing values in offload case
-                assert torch.equal(param, saved_param)
+            assert torch.equal(param, saved_param)
 
 
 @pytest.mark.skip("Requires transformers#40673")

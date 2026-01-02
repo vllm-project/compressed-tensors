@@ -29,9 +29,9 @@ from compressed_tensors.offload import (
     align_module_device,
     align_modules,
     disable_offloading,
-    dispatch_model,
     get_execution_device,
     get_offloaded_device,
+    offload_model,
     register_offload_module,
     remove_dispatch,
     update_offload_parameter,
@@ -143,7 +143,7 @@ def delete_offload_module(base: torch.nn.Module, name: str):
     delattr(base, name)
 
 
-@deprecated("compressed_tensors.offload::dispatch_model")
+@deprecated("compressed_tensors.offload::offload_model")
 def offloaded_dispatch(
     module: torch.nn.Module,
     execution_device: torch.device,
@@ -161,7 +161,7 @@ def offloaded_dispatch(
         raise ValueError(
             "Passing offload_device to offloaded_dispatch is no longer supported"
         )
-    dispatch_model(module, execution_device)
+    offload_model(module, execution_device)
 
 
 @deprecated("compressed_tensors.offload::align_module_device")
