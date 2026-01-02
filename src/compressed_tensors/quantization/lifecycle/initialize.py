@@ -23,7 +23,7 @@ from compressed_tensors.modeling import (
     QuantizedAttentionImpl,
     QuantizedKVCache,
 )
-from compressed_tensors.offload import unwrap_offload
+from compressed_tensors.offload import unwrap_offload_forward
 from compressed_tensors.quantization import (
     ActivationOrdering,
     DynamicType,
@@ -134,10 +134,10 @@ def initialize_module_for_quantization(
                 force_zero_point=force_zero_point,
             )
 
-        with unwrap_offload(module) as unwrapped_module:
+        with unwrap_offload_forward(module):
             # wrap forward call of module to perform
             # quantized actions based on calltime status
-            wrap_module_forward_quantized(unwrapped_module, scheme)
+            wrap_module_forward_quantized(module, scheme)
 
     module.quantization_scheme = scheme
     module.quantization_status = QuantizationStatus.INITIALIZED
