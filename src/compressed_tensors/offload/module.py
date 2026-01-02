@@ -14,37 +14,34 @@
 
 import contextlib
 from functools import wraps
-from typing import Iterator, TypeVar
+from typing import Iterator
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.utils import send_tensors
 
 
-ModuleType = TypeVar("ModuleType", bound=torch.nn.Module)
-
-
 def offload_module(
-    module: ModuleType,
-    cache: OffloadCache,
+    module: torch.nn.Module,
+    cache_cls: type[OffloadCache],
     onload_device: torch.device | str,
     no_split: bool = False,
-) -> ModuleType:
-    module.__dict__["_parameters"] = cache.from_mapping(
+):
+    module.__dict__["_parameters"] = cache_cls.from_mapping(
         module._parameters, onload_device
     )
-    module.__dict__["_buffers"] = cache.from_mapping(module._buffers, onload_device)
+    module.__dict__["_buffers"] = cache_cls.from_mapping(module._buffers, onload_device)
 
     original_forward_func = module.forward.__func__
 
     @wraps(original_forward_func)
     def forward(self, *args, **kwargs):
-        if not cache.onloading_disabled[0]:
+        if not cache_cls.onloading_disabled[0]:
             args = send_tensors(args, device=onload_device)
             kwargs = send_tensors(kwargs, device=onload_device)
 
         if no_split:
-            with cache.disable_offloading():
+            with cache_cls.disable_offloading():
                 return original_forward_func(self, *args, **kwargs)
         else:
             return original_forward_func(self, *args, **kwargs)

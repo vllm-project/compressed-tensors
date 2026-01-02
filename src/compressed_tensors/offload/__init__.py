@@ -77,9 +77,11 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
     :param data: tensor to update parameter with
     """
     if isinstance(module._parameters, OffloadCache):
-        offloaded = module._parameters.offload(data)
         with module._parameters.disable_onloading():
-            getattr(module, name).copy_(offloaded)
+            value = getattr(module, name)
+            value.copy_(module._parameters.offload(data))
+            setattr(module, name, value)
+
     else:
         getattr(module, name).copy_(data)
 
@@ -117,7 +119,7 @@ def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.M
     """
     cache = base._parameters
     if isinstance(cache, OffloadCache):
-        module = offload_module(module, cache, cache.offload_device, no_split=False)
+        offload_module(module, cache.__class__, cache.onload_device, no_split=False)
 
     base.register_module(name, module)
 
@@ -157,10 +159,11 @@ def align_module_device(
 
     if isinstance(module._parameters, OffloadCache):
         assert isinstance(module._buffers, OffloadCache)
-        with patch_attr(
-            module._parameters, "onload_device", execution_device
-        ), patch_attr(module._buffers, "onload_device", execution_device):
-            yield
+        with module._parameters.disable_offloading():
+            with patch_attr(
+                module._parameters, "onload_device", execution_device
+            ), patch_attr(module._buffers, "onload_device", execution_device):
+                yield
 
     else:
         original_device = {}

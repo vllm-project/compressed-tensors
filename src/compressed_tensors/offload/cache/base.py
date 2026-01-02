@@ -139,15 +139,17 @@ class OffloadCache(GlobalAccess, MutableMapping, ABC):
         if key not in self.offloaded_values:
             raise KeyError(key)
 
-        # if offloading is disabled, delete strong reference to onloaded value
         offloaded = self.offloaded_values[key]
-        if (
-            offloaded in self.onload_values
-            and self.onload_values[offloaded] in self.keep_onloaded_values
-        ):
-            self.keep_onloaded_values.remove(self.onload_values[offloaded])
-
         del self.offloaded_values[key]
+
+        # remove weakref
+        if offloaded in self.onload_values:
+            onloaded = self.onload_values[offloaded]
+            del self.onload_values[offloaded]
+
+            # remove strong ref
+            if onloaded in self.keep_onloaded_values:
+                self.keep_onloaded_values.remove(onloaded)
 
     def __contains__(self, key) -> bool:
         return key in self.offloaded_values

@@ -33,7 +33,7 @@ __all__ = [
     "DeviceMemory",
 ]
 
-ModelType = TypeVar("", bound=torch.nn.Module)
+ModelType = TypeVar("ModelType", bound=torch.nn.Module)
 
 
 def offload_model(
