@@ -22,7 +22,7 @@ from compressed_tensors.offload.dispatch import (  # noqa: F401
     offload_model,
     remove_dispatch,
 )
-from compressed_tensors.offload.module import offload_module, unwrap_offload
+from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
 from compressed_tensors.offload.utils import get_module_device, move_module_tensor
 from compressed_tensors.utils.helpers import patch_attr
 
@@ -37,7 +37,7 @@ __all__ = [
     "get_execution_device",
     "get_offloaded_device",
     "register_offload_module",
-    "unwrap_offload",
+    "unwrap_offload_forward",
     "align_modules",
     "align_module_device",
 ]

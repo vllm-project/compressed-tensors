@@ -33,6 +33,7 @@ def offload_module(
     module.__dict__["_buffers"] = cache_cls.from_mapping(module._buffers, onload_device)
 
     original_forward_func = module.forward.__func__
+    module._original_forward_func = original_forward_func
 
     @wraps(original_forward_func)
     def forward(self, *args, **kwargs):
@@ -42,9 +43,9 @@ def offload_module(
 
         if no_split:
             with cache_cls.disable_offloading():
-                return original_forward_func(self, *args, **kwargs)
+                return module._original_forward_func(self, *args, **kwargs)
         else:
-            return original_forward_func(self, *args, **kwargs)
+            return module._original_forward_func(self, *args, **kwargs)
 
     module.forward = forward.__get__(module)
 
@@ -69,7 +70,7 @@ def remove_module_offload(module: torch.nn.Module):
 
 
 @contextlib.contextmanager
-def unwrap_offload(module: torch.nn.Module) -> Iterator[torch.nn.Module]:
+def unwrap_offload_forward(module: torch.nn.Module) -> Iterator[torch.nn.Module]:
     """
     Context manager that returns the module without offload wrapping.
     This can be used to modify the original module. The module is rewrapped upon exit
@@ -77,13 +78,12 @@ def unwrap_offload(module: torch.nn.Module) -> Iterator[torch.nn.Module]:
     :param module: module that may be offloaded
     :returns: module with offload wrapping removed
     """
-    parameters = module._parameters
-    buffers = module._buffers
-    forward = module.forward
+    if hasattr(module, "_original_forward_func"):
+        offload_forward = module.forward
+        module.forward = module._original_forward_func.__get__(module)
+        yield
+        module._original_forward_func = module.forward.__func__
+        module.forward = offload_forward
 
-    remove_module_offload(module)
-    yield module
-
-    module._parameters = parameters
-    module._buffers = buffers
-    module.forward = forward
+    else:
+        yield
