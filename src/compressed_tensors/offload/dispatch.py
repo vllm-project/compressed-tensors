@@ -71,23 +71,25 @@ def offload_model(
 
 def dispatch_model(
     model: ModelType,
-    hint_batch_size: int = 0,
-    hint_batch_seq_len: int = 0,
+    hint_batch_size: int = 1,
+    hint_batch_seq_len: int = 2048,
     hint_model_dtype: Optional[torch.dtype] = None,
     hint_extra_memory: int = 0,
     no_split_modules: Optional[Container[str]] = None,
 ) -> ModelType:
     """
-    Dispatch a model autoregressive generation. This means that modules are dispatched
-    evenly across available devices and kept onloaded if possible.
+    Dispatch a model for autoregressive generation. This means that modules are
+    dispatched greedly across available devices and kept onloaded if possible.
 
     Disclaimers:
     * Shared modules are not preserved
     * Optimal runtime assumes that modules are called in order of `model.modules()`
 
     :param model: model to dispatch
-    :param hint_batch_size: reserve memory for batch size of inputs
-    :param hint_batch_seq_len: reserve memory for sequence of length of inputs
+    :param hint_batch_size: reserve memory for batch size of inputs.
+        Defaults to 1
+    :param hint_batch_seq_len: reserve memory for sequence of length of inputs.
+        Defaults to 2048
     :param hint_model_dtype: reserve memory for model's dtype.
         Will be inferred from model if none is provided
     :param hint_extra_memory: extra memory reserved for model serving
