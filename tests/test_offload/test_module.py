@@ -34,7 +34,7 @@ def cache():
 
 
 @pytest.fixture(scope="function")
-def linear(cache):
+def linear():
     return torch.nn.Linear(5, 5, bias=True, device=OFFLOAD_DEVICE)
 
 
