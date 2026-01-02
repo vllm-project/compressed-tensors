@@ -46,9 +46,6 @@ def offload_model(
     Offload a model to the `offload_device`. During forward passes, model weights will
     be onloaded to the `onload_device`
 
-    Disclaimers:
-    * Shared modules are not preserved
-
     :param model: model to dispatch
     :param onload_device: device to move weights to during forward pass
     :param offload_device: device to offload weights to
@@ -56,24 +53,16 @@ def offload_model(
         across multiple devices
     :return: dispatched model
     """
-    # ensure model starts offloaded
+    # remove any previous dispatches
     remove_dispatch(model)
-    if offload_device not in (None, "disk"):
-        model = model.to(offload_device)
 
     # infer no_split_modules
     if no_split_modules is None:
         no_split_modules = getattr(model, "_no_split_modules", tuple())
 
-    # each model shares a single shared cache because we have to
-    # coordinate the onloading of shared tensors within the model
-    cache_cls = OffloadCache.cls_from_device(torch.device("cpu"))
-    for name, module in model.named_modules(remove_duplicate=False):
-        # exclude wrapping the root
-        if name == "" or isinstance(module, torch.nn.ModuleList):
-            continue
-
-        # create offloaded version of module
+    # offload modules in place
+    cache_cls = OffloadCache.cls_from_device(offload_device)
+    for name, module in model.named_modules():
         no_split = module.__class__.__name__ in no_split_modules
         offload_module(module, cache_cls, onload_device, no_split)
 
@@ -90,7 +79,7 @@ def dispatch_model(
 ) -> ModelType:
     """
     Dispatch a model autoregressive generation. This means that modules are dispatched
-    evenly across avaiable devices and kept onloaded if possible.
+    evenly across available devices and kept onloaded if possible.
 
     Disclaimers:
     * Shared modules are not preserved

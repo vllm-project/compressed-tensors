@@ -47,6 +47,15 @@ __all__ = [
 def disable_offloading():
     """
     When offloading is disabled, onloaded tensors remain onloaded in memory until exit
+
+    ```
+    with OffloadCache.disable_offloading():
+        ... = cache["weight"]
+        ... = cache["weight"]  # cache hit
+        ... = cache["weight"]  # cache hit
+
+    # upon exit, all onloaded weights are released
+    ```
     """
     with OffloadCache.disable_offloading():
         yield
@@ -57,6 +66,13 @@ def disable_onloading():
     """
     When onloading is disabled, tensors are not offloaded on access, and assignments do
     not trigger offloading. This is mostly used to disable device movement for debugging
+
+    ```
+    with OffloadCache.disable_onloading():
+        tensor = ...
+        cache["weight"] = tensor   # assignments do not trigger onloading
+        cache["weight"] is tensor  # tensor remains offloaded
+    ```
     """
     with OffloadCache.disable_onloading():
         yield

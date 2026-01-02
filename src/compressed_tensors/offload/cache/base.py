@@ -43,28 +43,8 @@ class OffloadCache(GlobalAccess, MutableMapping, ABC):
     ```
 
     This class implements two contexts for more fine-grained control of device movement:
-    `OffloadCache.disable_offloading` and `OffloadCache.disable_onloading`.
-
-    When offloading is disabled, onloaded tensors remain onloaded in memory until exit
-
-    ```
-    with OffloadCache.disable_offloading():
-        ... = cache["weight"]
-        ... = cache["weight"]  # cache hit
-        ... = cache["weight"]  # cache hit
-
-    # upon exit, all onloaded weights are released
-    ```
-
-    When onloading is disabled, tensors are not offloaded on access, and assignments do
-    not trigger offloading. This is mostly used to disable device movement for debugging
-
-    ```
-    with OffloadCache.disable_onloading():
-        tensor = ...
-        cache["weight"] = tensor   # assignments do not trigger onloading
-        cache["weight"] is tensor  # tensor remains offloaded
-    ```
+    `OffloadCache.disable_offloading` and `OffloadCache.disable_onloading`. For more
+    info, see `compressed_tensors.offload::(disable_offloading|disable_onloading)`
     """
 
     onload_device: torch.device | str
@@ -77,7 +57,7 @@ class OffloadCache(GlobalAccess, MutableMapping, ABC):
     # names -> offloaded tensors (populated from _parameters or _buffers)
     offloaded_values: dict[str, Tensor]
 
-    # offloaded tensors -> onloaded tensors
+    # offloaded tensors -> onloaded tensors, weakrefs only
     onload_values: ClassVar[WeakValueDictionary[Tensor, Tensor]] = WeakValueDictionary()
 
     # while offloading is disabled, keep a strong reference to onloaded tensors
@@ -86,26 +66,28 @@ class OffloadCache(GlobalAccess, MutableMapping, ABC):
     @classmethod
     def cls_from_device(
         cls,
-        offload_device: Optional[torch.device | str | Literal["disk"]] = None,
+        device: Optional[torch.device | str | Literal["disk"]] = None,
     ) -> type["OffloadCache"]:
         """
         Get the subclass which implements offloading for the given `offload_device`.
         Use `torch.distributed` to detect if the environment is distributed
 
-        :param offload_device: device used to find subclass
+        :param device: offload device used to find subclass
         :return: subclass of `OffloadCache`
         """
         from compressed_tensors.offload.cache.cpu import CPUCache
 
+        device_type = torch.device(device).type if device != "disk" else "disk"
         distributed = dist.is_available() and dist.is_initialized()
 
-        if offload_device == torch.device("cpu") and not distributed:
-            return CPUCache
-        else:
-            raise NotImplementedError(
-                f"Offload of type {offload_device} and "
-                f"distributed={distributed} has not been implemented"
-            )
+        match (device_type, distributed):
+            case ("cpu", False):
+                return CPUCache
+            case _:
+                raise NotImplementedError(
+                    f"Offload of type {device} and "
+                    f"distributed={distributed} has not been implemented"
+                )
 
     @classmethod
     def from_mapping(

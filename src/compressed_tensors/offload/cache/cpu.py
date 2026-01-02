@@ -40,9 +40,4 @@ class CPUCache(OffloadCache):
         :param value: tensor on any device
         :return: tensor on cpu
         """
-        # return original tensor if onloading is disabled
-        # to allow for direct parameter/buffer assignment
-        # if self.onloading_disabled:
-        #    return value
-
         return send_tensors(tensor, device=self.offload_device, copy=False)
