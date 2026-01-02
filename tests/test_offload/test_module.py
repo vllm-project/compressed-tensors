@@ -113,14 +113,14 @@ def test_disable_onloading(linear: torch.nn.Linear, cache):
 
     with disable_onloading():
         weight = linear.weight
-        assert weight.data_ptr() == offloaded_weight.data_ptr()
+        assert weight is offloaded_weight
 
         # new parameter assignments are direct
         new_param = torch.nn.Parameter(torch.ones(5, device=ONLOAD_DEVICE))
         linear.new_param = new_param
         assert linear.new_param is new_param
 
-    assert weight.data_ptr() == offloaded_weight.data_ptr()
+    assert weight is offloaded_weight
 
 
 @pytest.mark.unit

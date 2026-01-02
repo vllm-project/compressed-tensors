@@ -43,7 +43,10 @@ def send_tensors(value: T, *args, **kwargs) -> T:
     match value:
         case torch.nn.Parameter():
             data = value.to(*args, **kwargs)
-            return torch.nn.Parameter(data, requires_grad=value.requires_grad)
+            # special case: avoid changing param pointer when possible
+            if data.data_ptr() == value.data_ptr():
+                return value
+            return value.__class__(data, requires_grad=value.requires_grad)
         case torch.Tensor():
             return value.to(*args, **kwargs)
         case list():
@@ -99,14 +102,10 @@ def move_module_tensor(
     :param device: new devices
     """
     if name in module._parameters:
-        param = module._parameters[name]
-        new_param = param.__class__(param.to(device), requires_grad=param.requires_grad)
-        module._parameters[name] = new_param
+        module._parameters[name] = send_tensors(module._parameters[name], device=device)
 
-    if name in module._buffers:
-        param = module._buffers[name]
-        new_buff = param.__class__(param.to(device), requires_grad=param.requires_grad)
-        module._buffers[name] = new_buff
+    elif name in module._buffers:
+        module._buffers[name] = send_tensors(module._buffers[name], device=device)
 
 
 def module_size(module: torch.nn.Module) -> tuple[int, int]:
