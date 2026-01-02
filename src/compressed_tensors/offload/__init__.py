@@ -46,24 +46,19 @@ __all__ = [
 @contextlib.contextmanager
 def disable_offloading():
     """
-    Keep modules onloaded and disable offloading until this context exits.
+    When offloading is disabled, onloaded tensors remain onloaded in memory until exit
     """
-    with contextlib.ExitStack() as stack:
-        for suclass in OffloadCache.__subclasses__():
-            for cache in suclass.instances():
-                stack.enter_context(cache.disable_offloading())
+    with OffloadCache.disable_offloading():
         yield
 
 
 @contextlib.contextmanager
 def disable_onloading():
     """
-    TODO
+    When onloading is disabled, tensors are not offloaded on access, and assignments do
+    not trigger offloading. This is mostly used to disable device movement for debugging
     """
-    with contextlib.ExitStack() as stack:
-        for suclass in OffloadCache.__subclasses__():
-            for cache in suclass.instances():
-                stack.enter_context(cache.disable_onloading())
+    with OffloadCache.disable_onloading():
         yield
 
 

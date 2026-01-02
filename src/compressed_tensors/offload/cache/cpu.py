@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import ClassVar
-from weakref import WeakValueDictionary
-
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.utils import send_tensors
@@ -23,21 +20,9 @@ from compressed_tensors.offload.utils import send_tensors
 class CPUCache(OffloadCache):
     """
     Handles offloading and onloading tensors from/to cpu memory
-
-    Note: This cache does not currently handle propagation of in-place
-    operations on the onloaded tensors. Future work could support this by
-    returning a tensor subclass which references on offloaded tensor. To update
-    parameters, use `compressed_tensors.offload::update_offload_parameter`
     """
 
-    onload_device: ClassVar[torch.device | str]
     offload_device = torch.device("cpu")
-
-    offloading_disabled = [False]
-    onloading_disabled = [False]
-
-    onload_values = WeakValueDictionary()
-    keep_onloaded_values = set()
 
     def onload(self, offloaded: torch.Tensor) -> torch.Tensor:
         """

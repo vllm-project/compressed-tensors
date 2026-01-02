@@ -14,7 +14,6 @@
 
 import contextlib
 from functools import wraps
-from typing import Iterator
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
@@ -27,10 +26,23 @@ def offload_module(
     onload_device: torch.device | str,
     no_split: bool = False,
 ):
-    module.__dict__["_parameters"] = cache_cls.from_mapping(
-        module._parameters, onload_device
-    )
-    module.__dict__["_buffers"] = cache_cls.from_mapping(module._buffers, onload_device)
+    """
+    Offload a module. Any existing parameters or buffers will be offloaded to the
+    offload device specified by the `cache`. Accessing module parameters or buffers will
+    cause them to be onloaded to the `onload_device`.
+
+    Calling `forward` will result in input tensors being moved to the `onload_device`,
+    and any onloaded parameters or buffers will remain onloaded for the duration of
+    the forward call if `no_split` is set to `True`.
+
+    :param module: module to offload
+    :param cache_cls: class used to construct offload caches
+    :param onload_device: device used to onload parameters and buffers
+    :param no_split: Whether to disable offloading during the forward call.
+        This flag is typically true for decoder layers
+    """
+    module._parameters = cache_cls.from_mapping(module._parameters, onload_device)
+    module._buffers = cache_cls.from_mapping(module._buffers, onload_device)
 
     original_forward_func = module.forward.__func__
     module._original_forward_func = original_forward_func
@@ -53,6 +65,9 @@ def offload_module(
 
 
 def remove_module_offload(module: torch.nn.Module):
+    """
+    Remove any offloading applied to the module
+    """
     if isinstance(module._parameters, OffloadCache):
         assert isinstance(module._buffers, OffloadCache)
 
@@ -70,13 +85,11 @@ def remove_module_offload(module: torch.nn.Module):
 
 
 @contextlib.contextmanager
-def unwrap_offload_forward(module: torch.nn.Module) -> Iterator[torch.nn.Module]:
+def unwrap_offload_forward(module: torch.nn.Module):
     """
-    Context manager that returns the module without offload wrapping.
-    This can be used to modify the original module. The module is rewrapped upon exit
-
-    :param module: module that may be offloaded
-    :returns: module with offload wrapping removed
+    Upon entering, module forward function is unwrapped. Upon exiting the offloading
+    wrapper is added again. Any modifications made to the forward function while within
+    the context will be reflected upon exiting.
     """
     if hasattr(module, "_original_forward_func"):
         offload_forward = module.forward

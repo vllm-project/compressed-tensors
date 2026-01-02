@@ -67,7 +67,7 @@ def offload_model(
 
     # each model shares a single shared cache because we have to
     # coordinate the onloading of shared tensors within the model
-    cache = OffloadCache.from_device(torch.device("cpu"))
+    cache_cls = OffloadCache.cls_from_device(torch.device("cpu"))
     for name, module in model.named_modules(remove_duplicate=False):
         # exclude wrapping the root
         if name == "" or isinstance(module, torch.nn.ModuleList):
@@ -75,7 +75,7 @@ def offload_model(
 
         # create offloaded version of module
         no_split = module.__class__.__name__ in no_split_modules
-        offload_module(module, cache, onload_device, no_split)
+        offload_module(module, cache_cls, onload_device, no_split)
 
     return model
 
@@ -143,7 +143,7 @@ def dispatch_model(
 
     # allocate a fallback cache if we ever run out of memory
     cache_onload_device = devices[0].device
-    cache = OffloadCache.from_device(torch.device("cpu"))
+    cache_cls = OffloadCache.cls_from_device(torch.device("cpu"))
 
     # assign modules to devices
     def dfs(module: torch.nn.Module) -> torch.nn.Module:
@@ -157,7 +157,7 @@ def dispatch_model(
                 f"{total_size if no_split else direct_size} bytes. "
                 "Resorting to CPU offloading."
             )
-            offload_module(module, cache, cache_onload_device, no_split)
+            offload_module(module, cache_cls, cache_onload_device, no_split)
             return module
 
         # can fit entire module
