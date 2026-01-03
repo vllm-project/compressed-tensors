@@ -20,11 +20,10 @@ from weakref import WeakValueDictionary
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.utils.global_access import GlobalAccess
 from torch import Tensor
 
 
-class OffloadCache(GlobalAccess, MutableMapping, ABC):
+class OffloadCache(MutableMapping, ABC):
     """
     Base class for offload caches. Subclasses must implement `offload` and `onload`.
     Instances have similar behavior to dicts, except that tensors are offloaded when

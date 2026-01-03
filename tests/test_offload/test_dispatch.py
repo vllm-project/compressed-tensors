@@ -192,7 +192,7 @@ def test_dispatch_offloaded():
 
 @pytest.mark.integration
 @requires_gpu
-@pytest.mark.parametrize("model_id", ["meta-llama/Llama-3.2-1B-Instruct"])
+@pytest.mark.parametrize("model_id", ["nm-testing/tinysmokellama-3.2"])
 @torch.inference_mode()
 def test_offload_and_dispatch_model(model_id):
     tokenizer = AutoTokenizer.from_pretrained(model_id)
