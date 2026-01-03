@@ -24,7 +24,7 @@ class CPUCache(OffloadCache):
 
     offload_device = torch.device("cpu")
 
-    def onload(self, offloaded: torch.Tensor) -> torch.Tensor:
+    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor:
         """
         Onload a tensor from cpu to device
 

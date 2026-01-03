@@ -16,11 +16,9 @@ import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import MutableMapping
 from typing import ClassVar, Literal, Optional
-from weakref import WeakValueDictionary
 
 import torch
 import torch.distributed as dist
-from torch import Tensor
 
 
 class OffloadCache(MutableMapping, ABC):
@@ -28,10 +26,6 @@ class OffloadCache(MutableMapping, ABC):
     Base class for offload caches. Subclasses must implement `offload` and `onload`.
     Instances have similar behavior to dicts, except that tensors are offloaded when
     assigned and onloaded when accessed.
-
-    This implementation utilizes a `WeakValueDictionary` to map from offloaded tensors
-    to onloaded tensors. This means that, so long as there is a reference to the
-    onloaded tensor, subsequent accesses will not incur device movement.
 
     Typical usage:
     ```
@@ -54,13 +48,10 @@ class OffloadCache(MutableMapping, ABC):
     onloading_disabled: ClassVar[list[bool]] = [False]
 
     # names -> offloaded tensors (populated from _parameters or _buffers)
-    offloaded_values: dict[str, Tensor]
+    offloaded_values: dict[str, torch.Tensor]
 
-    # offloaded tensors -> onloaded tensors, weakrefs only
-    onload_values: ClassVar[WeakValueDictionary[Tensor, Tensor]] = WeakValueDictionary()
-
-    # while offloading is disabled, keep a strong reference to onloaded tensors
-    keep_onloaded_values: ClassVar[set[Tensor]] = set()
+    # offloaded tensors -> onloaded tensors (only when offloading is disabled)
+    keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
 
     @classmethod
     def cls_from_device(
@@ -91,7 +82,7 @@ class OffloadCache(MutableMapping, ABC):
     @classmethod
     def from_mapping(
         cls,
-        mapping: MutableMapping[str, Tensor | None],
+        mapping: MutableMapping[str, torch.Tensor | None],
         onload_device: torch.device | str,
     ):
         """
@@ -114,7 +105,7 @@ class OffloadCache(MutableMapping, ABC):
         self.offloaded_values = dict()
 
     @abstractmethod
-    def onload(self, offloaded: Tensor) -> Tensor:
+    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor:
         """
         Given an offloaded tensor, returns that tensor after onloading
 
@@ -124,7 +115,7 @@ class OffloadCache(MutableMapping, ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def offload(self, tensor: Tensor | None) -> Tensor:
+    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
         """
         Given a tensor, returns that tensor after offloading
 
@@ -133,7 +124,7 @@ class OffloadCache(MutableMapping, ABC):
         """
         raise NotImplementedError()
 
-    def __getitem__(self, key: str) -> Tensor:
+    def __getitem__(self, key: str) -> torch.Tensor:
         """
         Onload a tensor
 
@@ -144,26 +135,25 @@ class OffloadCache(MutableMapping, ABC):
         :return: onloaded tensor
         """
         offloaded = self.offloaded_values[key]
+
+        # when onloading is disabled, offloaded tensors can be accessed directly
         if offloaded is None or self.onloading_disabled[0]:
             return offloaded
 
-        # onload value, potentially from cache
-        if offloaded not in self.onload_values:
+        # check for cache hit
+        if offloaded in self.keep_onloaded_values:
+            return self.keep_onloaded_values[offloaded]
 
-            # onload value from (cpu)
-            onloaded_value = self.onload(offloaded)
-            self.onload_values[offloaded] = onloaded_value
+        # onload value
+        onloaded = self.onload(offloaded)
 
-        else:
-            onloaded_value = self.onload_values[offloaded]
-
-        # keep a strong reference to keep in weakref dict
+        # when offloading is disabled, populate cache
         if self.offloading_disabled[0]:
-            self.keep_onloaded_values.add(onloaded_value)
+            self.keep_onloaded_values[offloaded] = onloaded
 
-        return onloaded_value
+        return onloaded
 
-    def __setitem__(self, key: str, value: Tensor | None):
+    def __setitem__(self, key: str, value: torch.Tensor | None):
         """
         Offload a tensor and add it to the cache.
 
@@ -190,20 +180,12 @@ class OffloadCache(MutableMapping, ABC):
 
         :param key: name of tensor to invalidate
         """
-        if key not in self.offloaded_values:
-            raise KeyError(key)
-
         offloaded = self.offloaded_values[key]
         del self.offloaded_values[key]
 
-        # remove weakref
-        if offloaded in self.onload_values:
-            onloaded = self.onload_values[offloaded]
-            del self.onload_values[offloaded]
-
-            # remove strong ref
-            if onloaded in self.keep_onloaded_values:
-                self.keep_onloaded_values.remove(onloaded)
+        # remove strong ref
+        if offloaded in self.keep_onloaded_values:
+            del self.keep_onloaded_values[offloaded]
 
     def __contains__(self, key) -> bool:
         return key in self.offloaded_values
@@ -224,7 +206,6 @@ class OffloadCache(MutableMapping, ABC):
         """
         if not cls.offloading_disabled[0]:
             cls.offloading_disabled[0] = True
-            cls.keep_onloaded_values.update(cls.onload_values.values())
             yield
             cls.offloading_disabled[0] = False
             cls.keep_onloaded_values.clear()

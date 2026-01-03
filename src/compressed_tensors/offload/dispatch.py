@@ -204,11 +204,17 @@ def get_device_memory(hint_extra_memory: int = 0) -> list[DeviceMemory]:
     return devices
 
 
-def remove_dispatch(module: torch.nn.Module) -> torch.nn.Module:
+def remove_dispatch(
+    module: torch.nn.Module, onload_tensors: bool = False
+) -> torch.nn.Module:
     """
     Remove any existing dispatches from module
+
+    :param onload_tensors: Whether to move tensors to the onloaded device, or keep them
+        on the offload device. Defaults to False.
+    :return: module with offloading functionality removed
     """
-    for name, submodule in module.named_modules(remove_duplicate=False):
-        remove_module_offload(submodule)
+    for submodule in module.modules():
+        remove_module_offload(submodule, onload_tensors)
 
     return module

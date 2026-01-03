@@ -58,8 +58,8 @@ def test_disable_offloading():
     cache2["weight"] = torch.tensor(1, device=OFFLOAD_DEVICE)
 
     with disable_offloading():
-        assert cache1["weight"] in cache1.keep_onloaded_values
-        assert cache2["weight"] in cache2.keep_onloaded_values
+        assert cache1["weight"] in cache1.keep_onloaded_values.values()
+        assert cache2["weight"] in cache2.keep_onloaded_values.values()
 
 
 @pytest.mark.unit

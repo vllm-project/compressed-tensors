@@ -64,19 +64,22 @@ def offload_module(
     return module
 
 
-def remove_module_offload(module: torch.nn.Module):
+def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False):
     """
     Remove any offloading applied to the module
+
+    :param onload_tensors: Whether to move tensors to the onloaded device, or keep them
+        on the offload device. Defaults to False.
     """
     if isinstance(module._parameters, OffloadCache):
         assert isinstance(module._buffers, OffloadCache)
 
         module._parameters = {
-            name: module._parameters.onload(param)
+            name: module._parameters.onload(param) if onload_tensors else param
             for name, param in module._parameters.offloaded_values.items()
         }
         module._buffers = {
-            name: module._buffers.onload(param)
+            name: module._buffers.onload(param) if onload_tensors else param
             for name, param in module._buffers.offloaded_values.items()
         }
 

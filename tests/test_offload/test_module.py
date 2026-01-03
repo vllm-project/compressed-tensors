@@ -97,7 +97,7 @@ def test_disable_offloading(offloaded_linear: torch.nn.Linear):
         del inside_onloaded
         gc.collect()
 
-        assert outside_onloaded_ref() is not None
+        assert outside_onloaded_ref() is None
         assert inside_onloaded_ref() is not None
 
     assert outside_onloaded_ref() is None
@@ -190,7 +190,7 @@ def test_register_parameter_invalidates(
     with disable_offloading():
         # original weight is kept onloaded
         onloaded_weight = offloaded_linear.weight
-        assert onloaded_weight in offloaded_linear._parameters.keep_onloaded_values
+        assert onloaded_weight in set(CPUCache.keep_onloaded_values.values())
 
         # add new param
         data = torch.ones(5, device=param_device)
@@ -205,7 +205,7 @@ def test_register_parameter_invalidates(
         assert torch.equal(offloaded_linear.weight.to(param_device), param)
 
         # original weight is invalidated
-        assert onloaded_weight not in offloaded_linear._parameters.keep_onloaded_values
+        assert onloaded_weight not in set(CPUCache.keep_onloaded_values.values())
 
 
 def test_forward_signature(linear: torch.nn.Linear, cache):

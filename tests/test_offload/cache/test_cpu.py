@@ -89,7 +89,7 @@ def test_disable_offloading(cache: CPUCache):
         del inside_onloaded
         gc.collect()
 
-        assert outside_onloaded_ref() is not None
+        assert outside_onloaded_ref() is None
         assert inside_onloaded_ref() is not None
 
     assert outside_onloaded_ref() is None
@@ -132,7 +132,6 @@ def test_shared_attributes(cache: CPUCache):
     assert cache.offload_device is CPUCache.offload_device
     assert cache.offloading_disabled is CPUCache.offloading_disabled
     assert cache.onloading_disabled is CPUCache.onloading_disabled
-    assert cache.onload_values is CPUCache.onload_values
     assert cache.keep_onloaded_values is CPUCache.keep_onloaded_values
 
     assert not hasattr(CPUCache, "onload_device")
