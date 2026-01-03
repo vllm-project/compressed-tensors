@@ -43,9 +43,9 @@ class OffloadCache(MutableMapping, ABC):
     onload_device: torch.device | str
     offload_device: ClassVar[Optional[torch.device | str]]
 
-    # mutable flags for disabling
-    offloading_disabled: ClassVar[list[bool]] = [False]
-    onloading_disabled: ClassVar[list[bool]] = [False]
+    # global flags for disabling
+    offloading_disabled: ClassVar[bool] = False
+    onloading_disabled: ClassVar[bool] = False
 
     # names -> offloaded tensors (populated from _parameters or _buffers)
     offloaded_values: dict[str, torch.Tensor]
@@ -137,7 +137,7 @@ class OffloadCache(MutableMapping, ABC):
         offloaded = self.offloaded_values[key]
 
         # when onloading is disabled, offloaded tensors can be accessed directly
-        if offloaded is None or self.onloading_disabled[0]:
+        if offloaded is None or self.onloading_disabled:
             return offloaded
 
         # check for cache hit
@@ -148,7 +148,7 @@ class OffloadCache(MutableMapping, ABC):
         onloaded = self.onload(offloaded)
 
         # when offloading is disabled, populate cache
-        if self.offloading_disabled[0]:
+        if self.offloading_disabled:
             self.keep_onloaded_values[offloaded] = onloaded
 
         return onloaded
@@ -167,7 +167,7 @@ class OffloadCache(MutableMapping, ABC):
             del self[key]
 
         # when onloading is disabled, parameters can be access and assigned directly
-        if self.onloading_disabled[0]:
+        if self.onloading_disabled:
             self.offloaded_values[key] = value
             return
 
@@ -204,11 +204,11 @@ class OffloadCache(MutableMapping, ABC):
         After a weight has been fetched once, that onloaded value is cached and
         subsequent fetches will leverage the cache, reducing device movement
         """
-        if not cls.offloading_disabled[0]:
-            cls.offloading_disabled[0] = True
+        if not OffloadCache.offloading_disabled:
+            OffloadCache.offloading_disabled = True
             yield
-            cls.offloading_disabled[0] = False
-            cls.keep_onloaded_values.clear()
+            OffloadCache.offloading_disabled = False
+            OffloadCache.keep_onloaded_values.clear()
         else:
             yield
 
@@ -220,9 +220,9 @@ class OffloadCache(MutableMapping, ABC):
         This is mostly used for debugging purposes, and allows the caller to directly
         inspect offloaded tensors and directly assign offloaded tensors without copying
         """
-        if not cls.onloading_disabled[0]:
-            cls.onloading_disabled[0] = True
+        if not OffloadCache.onloading_disabled:
+            OffloadCache.onloading_disabled = True
             yield
-            cls.onloading_disabled[0] = False
+            OffloadCache.onloading_disabled = False
         else:
             yield

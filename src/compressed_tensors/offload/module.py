@@ -49,7 +49,7 @@ def offload_module(
 
     @wraps(original_forward_func)
     def forward(self, *args, **kwargs):
-        if not cache_cls.onloading_disabled[0]:
+        if not cache_cls.onloading_disabled:
             args = send_tensors(args, device=onload_device)
             kwargs = send_tensors(kwargs, device=onload_device)
 
