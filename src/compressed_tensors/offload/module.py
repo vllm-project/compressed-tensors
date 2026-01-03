@@ -80,8 +80,8 @@ def remove_module_offload(module: torch.nn.Module):
             for name, param in module._buffers.offloaded_values.items()
         }
 
-        original_forward_func = module.forward.__func__.__wrapped__
-        module.forward = original_forward_func.__get__(module)
+        module.forward = module._original_forward_func.__get__(module)
+        del module._original_forward_func
 
 
 @contextlib.contextmanager
