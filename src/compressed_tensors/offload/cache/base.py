@@ -177,7 +177,7 @@ class OffloadCache(MutableMapping, ABC):
             del self[key]
 
         # when onloading is disabled, parameters can be access and assigned directly
-        if self.onloading_disabled:
+        if self.onloading_disabled[0]:
             self.offloaded_values[key] = value
             return
 
