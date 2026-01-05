@@ -41,7 +41,7 @@ class OffloadCache(MutableMapping, ABC):
     """
 
     onload_device: torch.device | str
-    offload_device: ClassVar[Optional[torch.device | str]]
+    offload_device: Optional[torch.device | str]
 
     # global flags for disabling
     offloading_disabled: ClassVar[bool] = False
@@ -66,6 +66,7 @@ class OffloadCache(MutableMapping, ABC):
         :return: subclass of `OffloadCache`
         """
         from compressed_tensors.offload.cache.cpu import CPUCache
+        from compressed_tensors.offload.cache.device import DeviceCache
 
         device_type = torch.device(device).type if device != "disk" else "disk"
         distributed = dist.is_available() and dist.is_initialized()
@@ -73,6 +74,8 @@ class OffloadCache(MutableMapping, ABC):
         match (device_type, distributed):
             case ("cpu", False):
                 return CPUCache
+            case ("cuda", False):
+                return DeviceCache
             case _:
                 raise NotImplementedError(
                     f"Offload of type {device} and "

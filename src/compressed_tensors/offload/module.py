@@ -22,8 +22,8 @@ from compressed_tensors.offload.utils import send_tensors
 
 def offload_module(
     module: torch.nn.Module,
-    cache_cls: type[OffloadCache],
     onload_device: torch.device | str,
+    offload_device: torch.device | str,
     no_split: bool = False,
 ):
     """
@@ -41,6 +41,7 @@ def offload_module(
     :param no_split: Whether to disable offloading during the forward call.
         This flag is typically true for decoder layers
     """
+    cache_cls = OffloadCache.cls_from_device(offload_device)
     module._parameters = cache_cls.from_mapping(module._parameters, onload_device)
     module._buffers = cache_cls.from_mapping(module._buffers, onload_device)
 
@@ -49,15 +50,15 @@ def offload_module(
 
     @wraps(original_forward_func)
     def forward(self, *args, **kwargs):
-        if not cache_cls.onloading_disabled:
+        if not OffloadCache.onloading_disabled:
             args = send_tensors(args, device=onload_device)
             kwargs = send_tensors(kwargs, device=onload_device)
 
         if no_split:
-            with cache_cls.disable_offloading():
-                return module._original_forward_func(self, *args, **kwargs)
+            with OffloadCache.disable_offloading():
+                return self._original_forward_func(self, *args, **kwargs)
         else:
-            return module._original_forward_func(self, *args, **kwargs)
+            return self._original_forward_func(self, *args, **kwargs)
 
     module.forward = forward.__get__(module)
 

@@ -44,7 +44,7 @@ def linear():
 
 @pytest.fixture(scope="function")
 def offloaded_linear(linear, cache):
-    offload_module(linear, cache, ONLOAD_DEVICE)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     return linear
 
 
@@ -83,7 +83,7 @@ def test_update_offload_parameter(linear: torch.nn.Linear, cache, offload):
     init_data = torch.tensor(0.0, device=OFFLOAD_DEVICE)
     linear.weight = torch.nn.Parameter(init_data, requires_grad=False)
     if offload:
-        offload_module(linear, cache, ONLOAD_DEVICE)
+        offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
 
     assert linear.weight == 0
 
@@ -109,7 +109,7 @@ def test_get_execution_device(linear: torch.nn.Linear, cache):
     assert get_execution_device(linear) == ONLOAD_DEVICE
 
     linear.to(OFFLOAD_DEVICE)
-    offload_module(linear, cache, ONLOAD_DEVICE)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     assert get_execution_device(linear) == ONLOAD_DEVICE
 
     with disable_onloading():
@@ -127,7 +127,7 @@ def test_get_offloaded_device(linear: torch.nn.Linear, cache):
     assert get_offloaded_device(linear) == ONLOAD_DEVICE
 
     linear.to(OFFLOAD_DEVICE)
-    offload_module(linear, cache, ONLOAD_DEVICE)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     assert get_offloaded_device(linear) == OFFLOAD_DEVICE
 
     with disable_onloading():
@@ -144,7 +144,7 @@ def register_offload_module(linear: torch.nn.Linear, cache):
     register_offload_module(linear, "sub1", sub1)
     assert linear.sub1 is sub1
 
-    offload_module(linear, cache, ONLOAD_DEVICE)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     sub2 = torch.nn.Linear(1, 1)
     register_offload_module(linear, "sub2", sub2)
     assert linear.sub2 is sub2
@@ -166,7 +166,7 @@ def test_align_modules(offloaded_linear: torch.nn.Linear):
 @pytest.mark.parametrize("offload", (True, False))
 def test_align_module_device(linear: torch.nn.Linear, cache, offload):
     if offload:
-        offload_module(linear, cache, ONLOAD_DEVICE)
+        offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     else:
         linear.to(ONLOAD_DEVICE)
 

@@ -40,7 +40,7 @@ def linear():
 
 @pytest.fixture(scope="function")
 def offloaded_linear(linear, cache):
-    offload_module(linear, cache, ONLOAD_DEVICE)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     return linear
 
 
@@ -55,7 +55,7 @@ def test_onloading(linear: torch.nn.Linear, cache):
     weight = linear.weight
     bias = linear.bias
 
-    offload_module(linear, cache, ONLOAD_DEVICE)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     onloaded_weight = linear.weight
     onloaded_bias = linear.bias
 
@@ -109,7 +109,7 @@ def test_disable_offloading(offloaded_linear: torch.nn.Linear):
 def test_disable_onloading(linear: torch.nn.Linear, cache):
     offloaded_weight = linear.weight
 
-    offload_module(linear, cache, ONLOAD_DEVICE)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
 
     with disable_onloading():
         weight = linear.weight
@@ -148,7 +148,7 @@ def test_forward_call(linear: torch.nn.Linear, cache, no_split):
 
     linear.forward = forward.__get__(linear)
 
-    offload_module(linear, cache, ONLOAD_DEVICE, no_split)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE, no_split)
 
     with torch.no_grad():
         input = torch.zeros(5, device=OFFLOAD_DEVICE)
@@ -211,5 +211,5 @@ def test_register_parameter_invalidates(
 def test_forward_signature(linear: torch.nn.Linear, cache):
     original_signature = inspect.signature(linear.forward)
 
-    offload_module(linear, cache, ONLOAD_DEVICE)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     assert inspect.signature(linear.forward) == original_signature

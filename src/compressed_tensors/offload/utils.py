@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Container
 from dataclasses import fields, is_dataclass
 from itertools import chain
 from typing import Optional, TypeVar
@@ -106,6 +107,37 @@ def move_module_tensor(
 
     elif name in module._buffers:
         module._buffers[name] = send_tensors(module._buffers[name], device=device)
+
+
+def get_module_sizes(
+    model: torch.nn.Module, no_split_modules: Container[str]
+) -> list[tuple[torch.nn.Module, int]]:
+    module_sizes = []
+
+    def dfs(module: torch.nn.Module):
+        tensors = chain(module.parameters(recurse=False), module.buffers(recurse=False))
+        direct = sum((tensor.nbytes for tensor in tensors), 0)
+
+        no_split = (
+            module.__class__.__name__ in no_split_modules
+            or direct > 0  # modules with direct parameters cannot be split
+        )
+
+        tensors = chain(
+            module.parameters(recurse=no_split), module.buffers(recurse=no_split)
+        )
+        module_size = sum((tensor.nbytes for tensor in tensors), 0)
+
+        if module_size > 0:
+            module_sizes.append((module, module_size))
+
+        if not no_split:
+            for child in module.children():
+                dfs(child)
+
+    dfs(model)
+
+    return module_sizes
 
 
 def module_size(module: torch.nn.Module) -> tuple[int, int]:

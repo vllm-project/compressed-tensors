@@ -28,16 +28,21 @@ from compressed_tensors.utils.helpers import patch_attr
 
 
 __all__ = [
+    # dispatch models
     "offload_model",
     "dispatch_model",
     "remove_dispatch",
+    # control movement
     "disable_onloading",
     "disable_offloading",
+    # manipulate parameters
     "update_offload_parameter",
     "get_execution_device",
     "get_offloaded_device",
     "register_offload_module",
+    # manipulate forward
     "unwrap_offload_forward",
+    # backwards compatibility: should be deprecated
     "align_modules",
     "align_module_device",
 ]
@@ -130,7 +135,9 @@ def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.M
     """
     cache = base._parameters
     if isinstance(cache, OffloadCache):
-        offload_module(module, cache.__class__, cache.onload_device, no_split=False)
+        offload_module(
+            module, cache.onload_device, cache.offload_device, no_split=False
+        )
 
     base.register_module(name, module)
 
