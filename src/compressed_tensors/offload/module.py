@@ -36,8 +36,8 @@ def offload_module(
     the forward call if `no_split` is set to `True`.
 
     :param module: module to offload
-    :param cache_cls: class used to construct offload caches
     :param onload_device: device used to onload parameters and buffers
+    :param offload_device: device used to offload parameters and buffers
     :param no_split: Whether to disable offloading during the forward call.
         This flag is typically true for decoder layers
     """
