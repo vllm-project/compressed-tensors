@@ -74,14 +74,18 @@ def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False)
     if isinstance(module._parameters, OffloadCache):
         assert isinstance(module._buffers, OffloadCache)
 
-        module._parameters = {
-            name: module._parameters.onload(param) if onload_tensors else param
-            for name, param in module._parameters.offloaded_values.items()
-        }
-        module._buffers = {
-            name: module._buffers.onload(param) if onload_tensors else param
-            for name, param in module._buffers.offloaded_values.items()
-        }
+        if onload_tensors:
+            module._parameters = {
+                name: module._parameters.onload(param)
+                for name, param in module._parameters.offloaded_values.items()
+            }
+            module._buffers = {
+                name: module._buffers.onload(param)
+                for name, param in module._buffers.offloaded_values.items()
+            }
+        else:
+            module._parameters = module._parameters.offloaded_values
+            module._buffers = module._buffers.offloaded_values
 
         module.forward = module._original_forward_func.__get__(module)
         del module._original_forward_func
