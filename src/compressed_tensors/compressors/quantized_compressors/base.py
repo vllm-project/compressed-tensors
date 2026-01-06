@@ -99,7 +99,6 @@ class BaseQuantizationCompressor(BaseCompressor):
                 g_idx = model_state.get(prefix + "weight_g_idx", None)
                 zp = model_state.get(prefix + "weight_zero_point", None)
                 global_scale = model_state.get(prefix + "weight_global_scale", None)
-
                 # is scale does not exist, then weight cannot be compressed
                 if scale is None:
                     compressed_dict[name] = value.to(compression_device)
@@ -128,6 +127,9 @@ class BaseQuantizationCompressor(BaseCompressor):
                 if name.endswith("zero_point") and self._skip_zp(
                     name, names_to_scheme, value
                 ):
+                    continue
+
+                if name.endswith("weight_scale") and self._skip_scale():
                     continue
 
                 compressed_dict[name] = value.to(compression_device)
@@ -168,6 +170,11 @@ class BaseQuantizationCompressor(BaseCompressor):
             return value.dtype != torch.int32
 
         return False
+
+    def _skip_scale(self):
+        from compressed_tensors.compressors import NVFP4PackedCompressor
+
+        return isinstance(self, NVFP4PackedCompressor)
 
     def decompress(
         self,
