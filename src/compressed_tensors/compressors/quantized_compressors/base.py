@@ -125,7 +125,9 @@ class BaseQuantizationCompressor(BaseCompressor):
 
             else:
                 # omit saving zero points for symmetric or packed quantization
-                if name.endswith("zero_point") and self._skip_zp(name, names_to_scheme, value):
+                if name.endswith("zero_point") and self._skip_zp(
+                    name, names_to_scheme, value
+                ):
                     continue
 
                 compressed_dict[name] = value.to(compression_device)
@@ -133,7 +135,10 @@ class BaseQuantizationCompressor(BaseCompressor):
         return compressed_dict
 
     def _skip_zp(
-        self, name: str, names_to_scheme: Dict[str, QuantizationScheme], value: torch.Tensor
+        self,
+        name: str,
+        names_to_scheme: Dict[str, QuantizationScheme],
+        value: torch.Tensor,
     ) -> bool:
         from compressed_tensors.compressors import PackedQuantizationCompressor
 
@@ -156,7 +161,10 @@ class BaseQuantizationCompressor(BaseCompressor):
             QuantizationStrategy.GROUP.value,
             QuantizationStrategy.CHANNEL.value,
         ]
-        if isinstance(self, PackedQuantizationCompressor) and args.strategy in packable_strategies:
+        if (
+            isinstance(self, PackedQuantizationCompressor)
+            and args.strategy in packable_strategies
+        ):
             return value.dtype != torch.int32
 
         return False

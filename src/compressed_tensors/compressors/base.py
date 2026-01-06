@@ -191,8 +191,14 @@ class BaseCompressor(RegistryMixin, ABC):
 
         # Update quantization parameters if they were modified during decompression
         # (e.g., zero_point unpacked from int32 to int8, or scale dtype converted for FP8)
-        if "weight_zero_point" in compressed_data and hasattr(module, "weight_zero_point"):
-            setattr(module, "weight_zero_point", compressed_data["weight_zero_point"].to(device))
+        if "weight_zero_point" in compressed_data and hasattr(
+            module, "weight_zero_point"
+        ):
+            setattr(
+                module,
+                "weight_zero_point",
+                compressed_data["weight_zero_point"].to(device),
+            )
         if "weight_scale" in compressed_data and hasattr(module, "weight_scale"):
             setattr(module, "weight_scale", compressed_data["weight_scale"].to(device))
 

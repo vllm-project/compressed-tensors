@@ -132,6 +132,7 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         if scale.dtype != global_scale.dtype:
             scale = scale.to(global_scale.dtype)
             from torch.nn import Parameter
+
             compressed_data["weight_scale"] = Parameter(scale, requires_grad=False)
 
         decompressed_weight = dequantize(
