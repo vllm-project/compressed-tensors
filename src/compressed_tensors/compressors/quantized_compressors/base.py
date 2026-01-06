@@ -125,23 +125,15 @@ class BaseQuantizationCompressor(BaseCompressor):
 
             else:
                 # omit saving zero points for symmetric or packed quantization
-                if name.endswith("zero_point") and self._skip_zp(name, names_to_scheme):
-                    continue
-
-                if name.endswith("weight_scale") and self._skip_scale():
+                if name.endswith("zero_point") and self._skip_zp(name, names_to_scheme, value):
                     continue
 
                 compressed_dict[name] = value.to(compression_device)
 
         return compressed_dict
 
-    def _skip_scale(self):
-        from compressed_tensors.compressors import NVFP4PackedCompressor
-
-        return isinstance(self, NVFP4PackedCompressor)
-
     def _skip_zp(
-        self, name: str, names_to_scheme: Dict[str, QuantizationScheme]
+        self, name: str, names_to_scheme: Dict[str, QuantizationScheme], value: torch.Tensor
     ) -> bool:
         from compressed_tensors.compressors import PackedQuantizationCompressor
 
@@ -155,17 +147,19 @@ class BaseQuantizationCompressor(BaseCompressor):
         if zp_name == "output_zero_point":
             args = scheme.output_activations
 
-        symmetric = args.symmetric
+        # Always skip for symmetric quantization
+        if args.symmetric:
+            return True
+
+        # For packed format: skip unpacked (int8) but keep packed (int32)
         packable_strategies = [
             QuantizationStrategy.GROUP.value,
             QuantizationStrategy.CHANNEL.value,
         ]
-        packed = (
-            isinstance(self, PackedQuantizationCompressor)
-            and args.strategy in packable_strategies
-        )
+        if isinstance(self, PackedQuantizationCompressor) and args.strategy in packable_strategies:
+            return value.dtype != torch.int32
 
-        return symmetric or packed
+        return False
 
     def decompress(
         self,

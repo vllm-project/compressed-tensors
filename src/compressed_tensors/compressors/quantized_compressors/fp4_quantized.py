@@ -127,6 +127,13 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         m, n = weight.shape
         # TODO: use a user provided dequant dtype
         unpacked = unpack_fp4_from_uint8(weight, m, n * 2)
+
+        # Cast scale to match global_scale dtype
+        if scale.dtype != global_scale.dtype:
+            scale = scale.to(global_scale.dtype)
+            from torch.nn import Parameter
+            compressed_data["weight_scale"] = Parameter(scale, requires_grad=False)
+
         decompressed_weight = dequantize(
             x_q=unpacked, scale=scale, global_scale=global_scale, dtype=unpacked.dtype
         )
