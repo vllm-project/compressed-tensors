@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from copy import deepcopy
 from unittest.mock import patch
 
 import pytest
@@ -77,129 +76,105 @@ def assert_module_offloaded(
         )
 
 
+def has_memory_requirements(device_memory: dict[torch.device, int]):
+    real_device_memory = get_device_memory()
+    for key, req in device_memory.items():
+        if key not in real_device_memory or real_device_memory[key] < req:
+            return False
+
+    return True
+
+
 @pytest.mark.unit
 @requires_gpu
 def test_dispatch_one_device():
     model = Model()
-    memory = get_device_memory()
-    if len(memory) < 1 or memory[0].memory < module_size(model)[1]:
+    device_memory = {torch.device("cuda:0"): module_size(model)}
+    if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform one device dispatch test, not enough device memory")
 
-    with patch("compressed_tensors.offload.dispatch.get_device_memory") as mock_fn:
-        mock_fn.return_value = deepcopy(memory[:1])
-
-        model = dispatch_model(model)
-        assert_module_on_device(model, memory[0].device)
+    dispatch_model(model, device_memory=device_memory)
+    assert_module_on_device(model, "cuda:0")
 
 
 @pytest.mark.unit
 @requires_gpu
 def test_dispatch_two_devices():
     model = Model()
-    memory = get_device_memory()
-    if (
-        len(memory) < 2
-        or memory[0].memory < module_size(model.decoder0)[1]
-        or memory[1].memory < module_size(model)[1] - module_size(model.decoder0)[1]
-    ):
+    device_memory = {
+        torch.device("cuda:0"): module_size(model.decoder0),
+        torch.device("cuda:1"): module_size(model) - module_size(model.decoder0),
+    }
+    if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
 
-    memory[0].memory = module_size(model.decoder0)[1]
-    memory[1].memory = module_size(model)[1] - module_size(model.decoder0)[1]
-    memory = memory[:2]
-
-    with patch("compressed_tensors.offload.dispatch.get_device_memory") as mock_fn:
-        mock_fn.return_value = memory
-
-        # first decoder on first device, rest on second device
-        model = dispatch_model(model)
-        assert_module_on_device(model.decoder0, memory[0].device)
-        assert_module_on_device(model.decoder1, memory[1].device)
+    # first decoder on first device, rest on second device
+    dispatch_model(model, device_memory=device_memory)
+    assert_module_on_device(model.decoder0, "cuda:0")
+    assert_module_on_device(model.decoder1, "cuda:1")
 
 
 @pytest.mark.unit
 @requires_gpu
 def test_dispatch_no_split():
     model = Model()
-    memory = get_device_memory()
-    first_linear = model.decoder0.linear0
-    if (
-        len(memory) < 2
-        or memory[0].memory < module_size(first_linear)[1]
-        or memory[1].memory < module_size(model)[1]
-    ):
+    device_memory = {
+        torch.device("cuda:0"): module_size(model.decoder0.linear0),
+        torch.device("cuda:1"): module_size(model),
+    }
+    if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform split dispatch test: not enough devices or mem")
 
-    # reduce memory of first device
-    memory[0].memory = module_size(first_linear)[1]
-    memory[1].memory = module_size(model)[1]
-    memory = memory[:2]
-
-    with patch("compressed_tensors.offload.dispatch.get_device_memory") as mock_fn:
-        mock_fn.return_value = memory
-
-        # first device is skipped: all ends up on second device
-        model = dispatch_model(model)
-        assert_module_on_device(model, memory[1].device)
+    # first device is skipped: all ends up on second device
+    dispatch_model(model, device_memory=device_memory)
+    assert_module_on_device(model, "cuda:1")
 
 
 @pytest.mark.unit
 @requires_gpu
 def test_dispatch_split():
     model = Model()
-    memory = get_device_memory()
     first_linear = model.decoder0.linear0
-    if (
-        len(memory) < 2
-        or memory[0].memory < module_size(first_linear)[1]
-        or memory[1].memory < module_size(model)[1] - module_size(first_linear)[1]
-    ):
+    device_memory = {
+        torch.device("cuda:0"): module_size(first_linear),
+        torch.device("cuda:1"): module_size(model) - module_size(first_linear),
+    }
+    if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
 
-    memory[0].memory = module_size(first_linear)[1]
-    memory[1].memory = module_size(model)[1] - module_size(first_linear)[1]
-    memory = memory[:2]
-
-    with patch("compressed_tensors.offload.dispatch.get_device_memory") as mock_fn:
-        mock_fn.return_value = memory
-
-        # first linear on first device, rest on second device
-        model = dispatch_model(model, no_split_modules=tuple())
-        assert_module_on_device(model.decoder0.linear0, memory[0].device)
-        assert_module_on_device(model.decoder0.linear1, memory[1].device)
-        assert_module_on_device(model.decoder1, memory[1].device)
+    # first linear on first device, rest on second device
+    dispatch_model(model, device_memory=device_memory, no_split_modules=tuple())
+    assert_module_on_device(model.decoder0.linear0, "cuda:0")
+    assert_module_on_device(model.decoder0.linear1, "cuda:1")
+    assert_module_on_device(model.decoder1, "cuda:1")
 
 
 @pytest.mark.unit
 @requires_gpu
 def test_dispatch_offloaded():
     model = Model()
-    memory = get_device_memory()
-    if len(memory) < 1 or memory[0].memory < 360:
+    device_memory = {
+        torch.device("cuda:0"): (
+            module_size(model.decoder0.linear0) + module_size(model.decoder1)
+        ),
+    }
+    if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform split dispatch test: not enough devices or mem")
 
-    memory[0].memory = 360  # fits three linear layers
-    memory = memory[:1]
-
-    with patch(
-        "compressed_tensors.offload.dispatch.get_device_memory"
-    ) as mock_mem, patch(
-        "compressed_tensors.offload.dispatch.get_module_sizes"
-    ) as mock_sizes:
-        mock_mem.return_value = deepcopy(memory)
+    with patch("compressed_tensors.offload.dispatch.get_module_sizes") as mock_sizes:
         # first two linears are disjoint, but not enough memory to fit decoder1
         mock_sizes.return_value = [
-            (model.decoder0.linear0, 120),
-            (model.decoder0.linear1, 120),
-            (model.decoder1, 240),
+            (model.decoder0.linear0, module_size(model.decoder0.linear0)),
+            (model.decoder0.linear1, module_size(model.decoder0.linear1)),
+            (model.decoder1, module_size(model.decoder1)),
         ]
 
         # first linear stays onloaded
         # second linear is popped off to fit offloaded decoder1
-        model = dispatch_model(model, no_split_modules=tuple())
-        assert_module_on_device(model.decoder0.linear0, memory[0].device)
-        assert_module_offloaded(model.decoder0.linear1, memory[0].device, "cpu")
-        assert_module_offloaded(model.decoder1, memory[0].device, "cpu")
+        dispatch_model(model, device_memory=device_memory, no_split_modules=tuple())
+        assert_module_on_device(model.decoder0.linear0, "cuda:0")
+        assert_module_offloaded(model.decoder0.linear1, "cuda:0", "cpu")
+        assert_module_offloaded(model.decoder1, "cuda:0", "cpu")
 
 
 @pytest.mark.integration
@@ -207,21 +182,34 @@ def test_dispatch_offloaded():
 @pytest.mark.parametrize("model_id", ["nm-testing/tinysmokellama-3.2"])
 @torch.inference_mode()
 def test_offload_and_dispatch_model(model_id):
+    model = AutoModelForCausalLM.from_pretrained(model_id).eval()
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModelForCausalLM.from_pretrained(model_id).to("cuda").eval()
 
+    device_memory = {torch.device("cuda:0"): module_size(model)}
+    if not has_memory_requirements(device_memory):
+        pytest.skip("Cannot perform split dispatch test: not enough devices or mem")
+
+    model.to("cuda:0")
     sample = tokenizer("Hello my name is", return_tensors="pt")
     sample = {k: v.to("cuda:0") for k, v in sample.items()}
     true_logits = model(**sample).logits
 
+    # offload entire model
     model = offload_model(model, "cuda:0", "cpu")
     offloaded_logits = model(**sample).logits
     for child in model.children():
         assert_module_offloaded(child, "cuda:0", torch.device("cpu"))
     assert torch.allclose(offloaded_logits, true_logits)
 
-    # model = dispatch_model(model)
-    # dispatched_logits = model(**sample).logits
-    # TODO: make test only one gpu, i guess
-    # assert_module_on_device(model, get_device_memory()[0].device)
-    # assert torch.allclose(dispatched_logits.to(true_logits.device), true_logits)
+    # dispatch model and fits
+    model = dispatch_model(model, device_memory=device_memory, hint_extra_memory=0)
+    dispatched_logits = model(**sample).logits
+    assert_module_on_device(model, "cuda:0")
+    assert torch.allclose(dispatched_logits, true_logits)
+
+    # dispatch model with offload
+    device_memory[torch.device("cuda:0")] = device_memory[torch.device("cuda:0")] // 2
+    model = dispatch_model(model, device_memory=device_memory, hint_extra_memory=0)
+    dispatched_logits = model(**sample).logits
+    assert_module_on_device(model, "cuda:0")
+    assert torch.allclose(dispatched_logits, true_logits)

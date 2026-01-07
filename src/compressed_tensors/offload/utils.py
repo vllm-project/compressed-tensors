@@ -150,12 +150,8 @@ def module_size(module: torch.nn.Module) -> tuple[int, int]:
     from compressed_tensors.offload import disable_offloading
 
     with disable_offloading():
-        tensors = chain(module.parameters(recurse=False), module.buffers(recurse=False))
-        direct = sum((tensor.nbytes for tensor in tensors), 0)
-
         tensors = chain(module.parameters(recurse=True), module.buffers(recurse=True))
-        total = sum((tensor.nbytes for tensor in tensors), 0)
-        return direct, total
+        return sum((tensor.nbytes for tensor in tensors), 0)
 
 
 def module_to(
