@@ -99,7 +99,7 @@ def move_module_tensor(
     Move a module's tensor to a new device
 
     :param module: module containing tensors to move
-    :param naem: name of tensor to move
+    :param name: name of tensor to move
     :param device: new devices
     """
     if name in module._parameters:
