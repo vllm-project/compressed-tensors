@@ -136,6 +136,11 @@ class BaseQuantizationCompressor(BaseCompressor):
 
         return compressed_dict
 
+    def _skip_scale(self):
+        from compressed_tensors.compressors import NVFP4PackedCompressor
+
+        return isinstance(self, NVFP4PackedCompressor)
+
     def _skip_zp(
         self,
         name: str,
@@ -170,11 +175,6 @@ class BaseQuantizationCompressor(BaseCompressor):
             return value.dtype != torch.int32
 
         return False
-
-    def _skip_scale(self):
-        from compressed_tensors.compressors import NVFP4PackedCompressor
-
-        return isinstance(self, NVFP4PackedCompressor)
 
     def decompress(
         self,
