@@ -19,7 +19,7 @@ import torch
 from compressed_tensors.config import SparsityCompressionConfig
 from compressed_tensors.quantization import QuantizationArgs, QuantizationConfig
 from compressed_tensors.registry import RegistryMixin
-from compressed_tensors.utils import has_offloaded_params
+from compressed_tensors.utils import has_offloaded_params, register_offload_parameter
 from torch import Tensor
 from torch.nn import Module
 
@@ -189,19 +189,9 @@ class BaseCompressor(RegistryMixin, ABC):
             compressed_data=compressed_data, quantization_args=quantization_args
         ).to(device)
 
-        # Update quantization parameters if they were modified during decompression
-        # (e.g., zero_point unpacked from int32 to int8, or scale dtype
-        # converted for FP8)
-        if "weight_zero_point" in compressed_data and hasattr(
-            module, "weight_zero_point"
-        ):
-            setattr(
-                module,
-                "weight_zero_point",
-                compressed_data["weight_zero_point"].to(device),
-            )
-        if "weight_scale" in compressed_data and hasattr(module, "weight_scale"):
-            setattr(module, "weight_scale", compressed_data["weight_scale"].to(device))
+        for name in ("weight_scale", "weight_zero_point"):
+            if hasattr(module, name):
+                register_offload_parameter(module, name, compressed_data[name])
 
         return decompressed_weight
 
