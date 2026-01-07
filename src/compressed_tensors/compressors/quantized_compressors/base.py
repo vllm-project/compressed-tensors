@@ -166,7 +166,6 @@ class BaseQuantizationCompressor(BaseCompressor):
         )
 
         return symmetric or packed
-    
 
     def decompress(
         self,
