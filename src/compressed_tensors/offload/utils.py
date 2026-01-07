@@ -110,26 +110,28 @@ def move_module_tensor(
 
 
 def get_module_sizes(
-    model: torch.nn.Module, no_split_modules: Container[str]
+    model: torch.nn.Module, no_split_modules: Container[str] = tuple()
 ) -> list[tuple[torch.nn.Module, int]]:
+    """
+    Returns a list of modules and their sizes. Only non-splittable modules are returned.
+    Non-splittable modules are modules specified by `no_split_modules` or modules with
+    direct parameters.
+
+    :param model: model to get sizes from
+    :param no_split_modules: module class names which cannot be split
+    :return: list of modules and their sizes
+    """
     module_sizes = []
 
     def dfs(module: torch.nn.Module):
-        tensors = chain(module.parameters(recurse=False), module.buffers(recurse=False))
-        direct = sum((tensor.nbytes for tensor in tensors), 0)
+        # modules with direct parameters cannot be split
+        # otherwise, submodules could return a device that is different than params
+        direct_size = module_size(module, recurse=False)
+        no_split = module.__class__.__name__ in no_split_modules or direct_size > 0
 
-        no_split = (
-            module.__class__.__name__ in no_split_modules
-            or direct > 0  # modules with direct parameters cannot be split
-        )
-
-        tensors = chain(
-            module.parameters(recurse=no_split), module.buffers(recurse=no_split)
-        )
-        module_size = sum((tensor.nbytes for tensor in tensors), 0)
-
-        if module_size > 0:
-            module_sizes.append((module, module_size))
+        total_size = module_size(module, recurse=no_split)
+        if total_size > 0:
+            module_sizes.append((module, total_size))
 
         if not no_split:
             for child in module.children():
@@ -140,17 +142,20 @@ def get_module_sizes(
     return module_sizes
 
 
-def module_size(module: torch.nn.Module) -> tuple[int, int]:
+def module_size(module: torch.nn.Module, recurse: bool = True) -> int:
     """
     Get the size of the module's parameters and buffers in bytes
 
     :param module: module to check
-    :return: tuple of size of direct module tensors and size of all module tensors
+    :param recurse: whether calculate recursive size, or only direct tensors
+    :return: total size of module parameters and buffers
     """
-    from compressed_tensors.offload import disable_offloading
+    from compressed_tensors.offload import disable_onloading
 
-    with disable_offloading():
-        tensors = chain(module.parameters(recurse=True), module.buffers(recurse=True))
+    with disable_onloading():
+        tensors = chain(
+            module.parameters(recurse=recurse), module.buffers(recurse=recurse)
+        )
         return sum((tensor.nbytes for tensor in tensors), 0)
 
 
