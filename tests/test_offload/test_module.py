@@ -143,7 +143,6 @@ def test_delete(offloaded_linear: torch.nn.Linear):
 def test_forward_call(linear: torch.nn.Linear, cache, no_split):
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         assert input.device == ONLOAD_DEVICE
-        assert self._parameters.offloading_disabled == no_split
         return torch.nn.functional.linear(input, linear.weight, linear.bias)
 
     linear.forward = forward.__get__(linear)

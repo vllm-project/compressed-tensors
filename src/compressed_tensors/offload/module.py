@@ -54,11 +54,7 @@ def offload_module(
             args = send_tensors(args, device=onload_device)
             kwargs = send_tensors(kwargs, device=onload_device)
 
-        if no_split:
-            with OffloadCache.disable_offloading():
-                return self._original_forward_func(self, *args, **kwargs)
-        else:
-            return self._original_forward_func(self, *args, **kwargs)
+        return self._original_forward_func(self, *args, **kwargs)
 
     module.forward = forward.__get__(module)
 
