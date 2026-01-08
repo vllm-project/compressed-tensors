@@ -38,10 +38,8 @@ from typing import Any, Literal, cast
 
 import torch
 import transformers
-from auto_round.export.export_to_awq.utils import (
-    reverse_awq_order,
-    unpack_awq,
-)
+from huggingface_hub import load_state_dict_from_file, snapshot_download
+
 from compressed_tensors import ModelCompressor
 from compressed_tensors.quantization import (
     QuantizationArgs,
@@ -51,7 +49,6 @@ from compressed_tensors.quantization import (
     QuantizationStrategy,
     QuantizationType,
 )
-from huggingface_hub import load_state_dict_from_file, snapshot_download
 
 
 def is_autoawq_model(model_path: Path, trust_remote_code: bool = False) -> bool:
@@ -87,6 +84,51 @@ def load_state_dict_from_model_dir(model_path: Path) -> dict[str, torch.Tensor]:
             )
         )
     return state_dict
+
+
+def unpack_awq(qweight: torch.Tensor, qzeros: torch.Tensor, bits: int):
+    """Copied from auto_round.export.export_to_awq.utils.unpack_awq"""
+    shifts = torch.arange(0, 32, bits, device=qzeros.device)
+
+    # unpacking columnwise
+    iweights = torch.bitwise_right_shift(qweight[:, :, None], shifts[None, None, :]).to(
+        torch.int8  # smallest dtype available
+    )
+    iweights = iweights.view(iweights.shape[0], -1)
+
+    # unpacking columnwise
+    if qzeros is not None:
+        izeros = torch.bitwise_right_shift(
+            qzeros[:, :, None], shifts[None, None, :]
+        ).to(
+            torch.int8  # smallest dtype available
+        )
+        izeros = izeros.view(izeros.shape[0], -1)
+    else:
+        izeros = qzeros
+
+    return iweights, izeros
+
+
+AWQ_REVERSE_ORDER = [0, 4, 1, 5, 2, 6, 3, 7]
+
+
+def reverse_awq_order(iweights: torch.Tensor, izeros: torch.Tensor, bits: int):
+    """Copied from auto_round.export.export_to_awq.utils.reverse_awq_order"""
+    reverse_order_tensor = torch.arange(
+        iweights.shape[-1],
+        dtype=torch.int32,
+        device=izeros.device,
+    )
+    reverse_order_tensor = reverse_order_tensor.view(-1, 32 // bits)
+    reverse_order_tensor = reverse_order_tensor[:, AWQ_REVERSE_ORDER]
+    reverse_order_tensor = reverse_order_tensor.view(-1)
+
+    if izeros is not None:
+        izeros = izeros[:, reverse_order_tensor]
+    iweights = iweights[:, reverse_order_tensor]
+
+    return iweights, izeros
 
 
 def dequantize_gemm(
