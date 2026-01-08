@@ -23,7 +23,7 @@ from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 from compressed_tensors.quantization.utils import can_quantize
-from torch import Tensor
+from torch import Parameter, Tensor
 
 
 __all__ = ["PackedQuantizationCompressor", "pack_to_int32", "unpack_from_int32"]
@@ -176,8 +176,6 @@ class PackedQuantizationCompressor(BaseQuantizationCompressor):
                 zero_point, num_bits, original_zp_shape, packed_dim=0
             )
             # Update the compressed_data dict with unpacked zero_point
-            from torch.nn import Parameter
-
             compressed_data["weight_zero_point"] = Parameter(
                 zero_point, requires_grad=False
             )
