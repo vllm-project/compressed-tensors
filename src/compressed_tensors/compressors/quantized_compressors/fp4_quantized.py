@@ -128,7 +128,7 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         # TODO: use a user provided dequant dtype
         unpacked = unpack_fp4_from_uint8(weight, m, n * 2)
 
-        # decompress scale - convert to match global_scale dtype for dequantization
+        # decompress scale if needed
         if scale.dtype != unpacked.dtype:
             scale = scale.to(unpacked.dtype)
             compressed_data["weight_scale"] = torch.nn.Parameter(
