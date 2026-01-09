@@ -43,41 +43,35 @@ class DummyModel(nn.Module):
     """Test model for unit tests. Weights are initialized on meta device"""
 
     def __init__(self):
-        try:
-            from accelerate import init_empty_weights
-        except ImportError:
-            pytest.skip("Skipping weight init requires accelerate")
-
         super().__init__()
-        with init_empty_weights():
-            self.layer1 = nn.Linear(10, 20)
-            self.layer2 = nn.Linear(20, 30)
-            self.norm = nn.LayerNorm(30)
-            self.attention = nn.MultiheadAttention(30, 2)
+        self.layer1 = nn.Linear(10, 20)
+        self.layer2 = nn.Linear(20, 30)
+        self.norm = nn.LayerNorm(30)
+        self.attention = nn.MultiheadAttention(30, 2)
 
-            # Create nested structure
-            self.transformer = nn.ModuleDict(
-                {
-                    "layers": nn.ModuleList(
-                        [
-                            nn.ModuleDict(
-                                {
-                                    "self_attn": nn.ModuleDict(
-                                        {
-                                            "q_proj": nn.Linear(30, 30),
-                                            "k_proj": nn.Linear(30, 30),
-                                            "v_proj": nn.Linear(30, 30),
-                                        }
-                                    ),
-                                    "norm": nn.LayerNorm(30),
-                                    "mlp": nn.Linear(30, 30),
-                                }
-                            )
-                            for _ in range(3)
-                        ]
-                    )
-                }
-            )
+        # Create nested structure
+        self.transformer = nn.ModuleDict(
+            {
+                "layers": nn.ModuleList(
+                    [
+                        nn.ModuleDict(
+                            {
+                                "self_attn": nn.ModuleDict(
+                                    {
+                                        "q_proj": nn.Linear(30, 30),
+                                        "k_proj": nn.Linear(30, 30),
+                                        "v_proj": nn.Linear(30, 30),
+                                    }
+                                ),
+                                "norm": nn.LayerNorm(30),
+                                "mlp": nn.Linear(30, 30),
+                            }
+                        )
+                        for _ in range(3)
+                    ]
+                )
+            }
+        )
 
 
 class DummyMoEModel(nn.Module):
