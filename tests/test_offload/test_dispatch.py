@@ -202,14 +202,14 @@ def test_offload_and_dispatch_model(model_id):
     assert torch.allclose(offloaded_logits, true_logits)
 
     # dispatch model and fits
-    model = dispatch_model(model, device_memory=device_memory, hint_extra_memory=0)
+    model = dispatch_model(model, device_memory=device_memory, extra_memory=0)
     dispatched_logits = model(**sample).logits
     assert_module_on_device(model, "cuda:0")
     assert torch.allclose(dispatched_logits, true_logits)
 
     # dispatch model with offload
     device_memory[torch.device("cuda:0")] = device_memory[torch.device("cuda:0")] // 2
-    model = dispatch_model(model, device_memory=device_memory, hint_extra_memory=0)
+    model = dispatch_model(model, device_memory=device_memory, extra_memory=0)
     dispatched_logits = model(**sample).logits
     assert_module_on_device(model, "cuda:0")
     assert torch.allclose(dispatched_logits, true_logits)

@@ -18,10 +18,10 @@ from typing import Callable, TypeVar
 T = TypeVar("T")
 
 
-__all__ = ["SearchFailure", "max_binary_search"]
+__all__ = ["SearchFailureError", "max_binary_search"]
 
 
-class SearchFailure(ValueError):
+class SearchFailureError(ValueError):
     pass
 
 
@@ -47,6 +47,6 @@ def max_binary_search(
             end = mid - 1
 
     if best_idx is None:
-        raise SearchFailure()
+        raise SearchFailureError()
 
     return best_idx, best_val

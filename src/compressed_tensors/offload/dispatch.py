@@ -21,7 +21,7 @@ import torch
 from compressed_tensors.offload.module import offload_module, remove_module_offload
 from compressed_tensors.offload.utils import get_module_sizes
 from compressed_tensors.utils import getattr_chain
-from compressed_tensors.utils.binary_search import SearchFailure, max_binary_search
+from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
 from loguru import logger
 from transformers import PreTrainedModel
 
@@ -61,7 +61,7 @@ def offload_model(
         no_split_modules = getattr(model, "_no_split_modules", tuple())
 
     # offload modules in place
-    for name, module in model.named_modules():
+    for module in model.modules():
         no_split = module.__class__.__name__ in no_split_modules
         offload_module(module, onload_device, offload_device, no_split)
 
@@ -71,17 +71,21 @@ def offload_model(
 def dispatch_model(
     model: ModelType,
     device_memory: Optional[dict[torch.device, int]] = None,
-    hint_extra_memory: Optional[int] = None,
+    extra_memory: Optional[int] = None,
     no_split_modules: Optional[Container[str]] = None,
 ) -> ModelType:
     """
     Dispatch a model for autoregressive generation. This means that modules are
-    dispatched evenly across available devices and kept onloaded if possible.
+    dispatched evenly across available devices and kept onloaded if possible. If
+    onloading the entire model is not possible, some modules may be offloaded.
 
     Disclaimers:
     * Optimal runtime assumes that modules are called in order of `model.modules()`
 
     :param model: model to dispatch
+    :param device_memory: optional dictionary mapping torch device to available memory.
+        If none is provided, all available devices will be used
+    :param extra_memory: the amount of memory to be reserved for activations
     :param no_split_modules: names of module classes which should not be split
         across multiple devices
     :return: dispatched model
@@ -94,16 +98,16 @@ def dispatch_model(
         no_split_modules = getattr(model, "_no_split_modules", tuple())
 
     # estimate activations memory requirement
-    if hint_extra_memory is None:
+    if extra_memory is None:
         if isinstance(model, PreTrainedModel):
-            hint_extra_memory = (
+            extra_memory = (
                 1  # batch_size
                 * 2048  # seq_len
                 * getattr_chain(model, "_config.hidden_dim", 256)
                 * getattr(model, "dtype", torch.bfloat16).itemsize
             )
         else:
-            hint_extra_memory = 0
+            extra_memory = 0
 
     # collect devices
     if device_memory is None:
@@ -122,14 +126,14 @@ def dispatch_model(
         extra_memory, (dispatch, _) = max_binary_search(
             fn=partial(_get_greedy_dispatch, sizes, device_memory),
             cond=(lambda result: len(result[0]) == len(sizes)),
-            start=hint_extra_memory,
+            start=extra_memory,
             end=max_extra_memory,
         )
 
     # fallback: create a cpu dispatch
-    except SearchFailure:
+    except SearchFailureError:
         dispatch, device_memory = _get_greedy_dispatch(
-            sizes, device_memory, hint_extra_memory
+            sizes, device_memory, extra_memory
         )
         assert len(dispatch) < len(sizes)
 
@@ -138,7 +142,7 @@ def dispatch_model(
         largest_offloaded_module = max(size for _, size in sizes[len(dispatch) :])
 
         # pop off modules until all offloaded modules can fit in last device
-        while largest_offloaded_module > device_memory[last_device]:
+        while largest_offloaded_module > device_memory[last_device] - extra_memory:
             if len(dispatch) <= 0:
                 raise ValueError(
                     f"Cannot fit no_split module of size {largest_offloaded_module} "

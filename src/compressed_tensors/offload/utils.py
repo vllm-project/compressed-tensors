@@ -26,7 +26,6 @@ __all__ = [
     "get_module_device",
     "move_module_tensor",
     "module_size",
-    "module_to",
 ]
 
 T = TypeVar("T")
@@ -157,22 +156,3 @@ def module_size(module: torch.nn.Module, recurse: bool = True) -> int:
             module.parameters(recurse=recurse), module.buffers(recurse=recurse)
         )
         return sum((tensor.nbytes for tensor in tensors), 0)
-
-
-def module_to(
-    module: torch.nn.Module, device: torch.device, recurse: bool = False
-) -> torch.nn.Module:
-    """
-    Move module tensors to new device
-
-    :param module: module containing tensors to move
-    :param device: device to move tensors to
-    :param reduce: whether to move all tensors or just direct tensors
-    :return: module with moved tensors
-    """
-    if recurse:
-        return module.to(device)
-    else:
-        for name in chain(module._parameters.keys(), module._buffers.keys()):
-            move_module_tensor(module, name, device)
-        return module
