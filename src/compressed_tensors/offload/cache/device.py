@@ -19,7 +19,8 @@ from compressed_tensors.offload.utils import send_tensors
 
 class DeviceCache(OffloadCache):
     """
-    Handles offloading and onloading tensors from/to cpu memory
+    Handles offloading and onloading tensors from/to device memory. Onloading
+    tensors is a no-op.
     """
 
     def __init__(self, onload_device: torch.device | str):
