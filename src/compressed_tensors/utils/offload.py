@@ -266,6 +266,13 @@ def delete_offload_parameter(module: torch.nn.Module, name: str):
         weights_map = module._hf_hook.weights_map
         delete_from_weights_map(weights_map, name)
 
+        del module._hf_hook.original_devices[name]
+        module._hf_hook.tied_params_names -= set(name)
+        if name in module._hf_hook.param_original_devices:
+            del module._hf_hook.param_original_devices[name]
+        if name in module._hf_hook.buffer_original_devices:
+            del module._hf_hook.param_original_devices[name]
+
 
 @check_accelerate(fallback=contextlib.nullcontext())
 @contextlib.contextmanager
