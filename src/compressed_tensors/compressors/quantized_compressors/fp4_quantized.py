@@ -151,7 +151,7 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
         quantization_args: QuantizationArgs,
     ) -> Dict[str, torch.Tensor]:
         assert quantization_args.scale_dtype is not None
-        scale_exp = 127 + torch.floor(torch.log2(scale)).to(torch.int32) - 2
+        scale_exp = 127 + torch.floor(torch.log2(scale)).to(torch.int32)
         return scale_exp.to(quantization_args.scale_dtype)
 
     def decompress_weight(
