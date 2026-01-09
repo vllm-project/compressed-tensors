@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional
+from typing import Optional
 
 import torch
 from compressed_tensors.transform import TransformArgs, TransformScheme
@@ -83,8 +83,6 @@ class HadamardFactory(TransformFactory):
 
 
 class HadamardTransform(TransformBase):
-    _dynamic_tied_weights_keys: List[str] = ["weight", "perm"]
-
     def __init__(
         self,
         weight: Parameter,
