@@ -25,6 +25,7 @@ from compressed_tensors.quantization.utils import (
     compute_dynamic_scales_and_zp,
     generate_gparam,
 )
+from compressed_tensors.quantization.utils.helpers import _clamp_scale_values
 
 
 @pytest.mark.parametrize(
@@ -105,3 +106,19 @@ def test_compute_dynamic_scales_and_zp_group(shape, group_size, exp_shape):
     scale, zp = compute_dynamic_scales_and_zp(value, args, module=torch.nn.Module())
     assert scale.shape == exp_shape
     assert zp.shape == exp_shape
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fp_dtype", [torch.bfloat16, torch.float32])
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32, torch.float8_e4m3fn])
+def test_clamp_scale_values(fp_dtype, dtype):
+    info = torch.finfo(dtype)
+    value = torch.tensor(
+        [1.0, -1.0, 0.0, torch.inf, -torch.inf, torch.nan], dtype=fp_dtype
+    )
+    exp = torch.tensor(
+        [1.0, -1.0, info.eps, info.max, info.min, info.eps], dtype=fp_dtype
+    )
+
+    clamped = _clamp_scale_values(value, dtype)
+    assert torch.equal(clamped, exp)
