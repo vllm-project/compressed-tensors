@@ -24,7 +24,6 @@ def offload_module(
     module: torch.nn.Module,
     onload_device: torch.device | str,
     offload_device: torch.device | str,
-    no_split: bool = False,
 ):
     """
     Offload a module. Any existing parameters or buffers will be offloaded to the
@@ -38,8 +37,6 @@ def offload_module(
     :param module: module to offload
     :param onload_device: device used to onload parameters and buffers
     :param offload_device: device used to offload parameters and buffers
-    :param no_split: Whether to disable offloading during the forward call.
-        This flag is typically true for decoder layers
     """
     cache_cls = OffloadCache.cls_from_device(offload_device)
     module._parameters = cache_cls.from_mapping(module._parameters, onload_device)

@@ -40,7 +40,6 @@ def offload_model(
     model: ModelType,
     onload_device: torch.device | str,
     offload_device: Optional[torch.device | str | Literal["disk"]] = None,
-    no_split_modules: Optional[Container[str]] = None,
 ) -> ModelType:
     """
     Offload a model to the `offload_device`. During forward passes, model weights will
@@ -49,21 +48,14 @@ def offload_model(
     :param model: model to dispatch
     :param onload_device: device to move weights to during forward pass
     :param offload_device: device to offload weights to
-    :param no_split_modules: names of module classes which should not be split
-        across multiple devices
     :return: dispatched model
     """
     # remove any previous dispatches
     remove_dispatch(model)
 
-    # infer no_split_modules
-    if no_split_modules is None:
-        no_split_modules = getattr(model, "_no_split_modules", tuple())
-
     # offload modules in place
     for module in model.modules():
-        no_split = module.__class__.__name__ in no_split_modules
-        offload_module(module, onload_device, offload_device, no_split)
+        offload_module(module, onload_device, offload_device)
 
     return model
 
@@ -165,7 +157,7 @@ def dispatch_model(
         assert len(dispatch) == len(sizes)
         for module, onload, offload in dispatch:
             for submodule in module.modules():
-                offload_module(submodule, onload, offload, no_split=True)
+                offload_module(submodule, onload, offload)
 
         logger.debug(f"Dispatched model with {extra_memory} bytes of extra memory")
         return model

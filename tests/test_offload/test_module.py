@@ -139,15 +139,14 @@ def test_delete(offloaded_linear: torch.nn.Linear):
 
 @pytest.mark.unit
 @requires_gpu
-@pytest.mark.parametrize("no_split", [True, False])
-def test_forward_call(linear: torch.nn.Linear, cache, no_split):
+def test_forward_call(linear: torch.nn.Linear, cache):
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         assert input.device == ONLOAD_DEVICE
         return torch.nn.functional.linear(input, linear.weight, linear.bias)
 
     linear.forward = forward.__get__(linear)
 
-    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE, no_split)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
 
     with torch.no_grad():
         input = torch.zeros(5, device=OFFLOAD_DEVICE)
