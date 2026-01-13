@@ -87,12 +87,6 @@ class CompressedLinear(Linear):
         # mark module as compressed
         module.quantization_status = QuantizationStatus.COMPRESSED
 
-        # handles case where forward is wrapped in new_forward by accelerate hooks
-        if hasattr(module, "_old_forward"):
-            module._old_forward = CompressedLinear.forward.__get__(
-                module, CompressedLinear
-            )
-
         return module
 
     def forward(self, input: Tensor) -> Tensor:

@@ -17,6 +17,7 @@ import math
 
 import pytest
 import torch
+from compressed_tensors.offload import offload_model
 from compressed_tensors.quantization import (
     FP8_E4M3_DATA,
     ActivationOrdering,
@@ -28,7 +29,7 @@ from compressed_tensors.quantization import (
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
 )
-from tests.testing_utils import requires_accelerate
+from tests.testing_utils import requires_gpu
 from torch.nn import Linear
 
 
@@ -98,7 +99,7 @@ def test_initialize_module_for_quantization(
     assert layer.quantization_status == QuantizationStatus.INITIALIZED
 
 
-@requires_accelerate()
+@requires_gpu
 @pytest.mark.parametrize(
     "weights,input_activations",
     [
@@ -119,9 +120,7 @@ def test_initialize_module_for_quantization(
 def test_initialize_module_for_quantization_offloaded(
     create_quantization_scheme, weights, input_activations, layer
 ):
-    from accelerate.hooks import attach_align_device_hook
-
-    attach_align_device_hook(layer, offload=True)
+    offload_model(layer, "cuda:0")
 
     test_initialize_module_for_quantization(
         create_quantization_scheme,
