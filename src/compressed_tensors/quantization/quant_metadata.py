@@ -14,7 +14,7 @@
 
 from enum import Enum
 
-from compressed_tensors.utils import delete_offload_parameter
+from compressed_tensors.utils import delete_offload_parameter, disable_hf_hook
 from torch.nn import Module
 
 
@@ -60,3 +60,26 @@ class QuantizationMetadata:
         for key in cls.all_qparam_names():
             if hasattr(module, key):
                 delete_offload_parameter(module, key)
+
+    @classmethod
+    def clear_quantization(cls, module: Module):
+        """
+        Remove all artifacts of quantization from module, non-recursively.
+        Artifacts include any qparams, quantization_scheme, or wrapped
+        forward method that might have been altered previously in lifecycle.
+
+        `quantization_status` and `quantization_enabled` are left unchanged.
+
+        :param module: Module to clear
+        """
+        with disable_hf_hook(module):
+            # Unwrap forward call
+            if hasattr(module.forward, "__wrapped__"):
+                module.forward = module.forward.__wrapped__.__get__(module)
+
+            # Clear any qparams
+            cls.clear_all_qparams(module)
+
+            # Clear quantization_scheme
+            if hasattr(module, "quantization_scheme"):
+                delattr(module, "quantization_scheme")

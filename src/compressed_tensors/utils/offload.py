@@ -255,7 +255,8 @@ def update_offload_parameter(
 
 def delete_offload_parameter(module: torch.nn.Module, name: str):
     """
-    Delete a parameter from a module which may be offloaded
+    Delete a parameter from a module which may be offloaded,
+    including any metadata in _hf_hook
 
     :param module: maybe offloaded module
     :param name: name of parameter being deleted
@@ -265,6 +266,14 @@ def delete_offload_parameter(module: torch.nn.Module, name: str):
     if has_offloaded_params(module):
         weights_map = module._hf_hook.weights_map
         delete_from_weights_map(weights_map, name)
+
+        module._hf_hook.tied_params_names -= set(name)
+        if name in module._hf_hook.original_devices:
+            del module._hf_hook.original_devices[name]
+        if name in module._hf_hook.param_original_devices:
+            del module._hf_hook.param_original_devices[name]
+        if name in module._hf_hook.buffer_original_devices:
+            del module._hf_hook.param_original_devices[name]
 
 
 @check_accelerate(fallback=contextlib.nullcontext())
