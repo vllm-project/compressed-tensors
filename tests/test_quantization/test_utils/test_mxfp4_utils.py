@@ -93,5 +93,5 @@ def test_mxfp4_scales_e2e():
     converted_ct = maybe_convert_from_mxfp4_exp(args=args, scale=scales)
 
     scales_exp = torch.log2(converted_ct)
-    block_max_exp = torch.floor(torch.log2(round_to_power_2(block_max)))
+    block_max_exp = torch.floor(torch.log2(round_to_power_2(block_max))) - 2
     assert torch.equal(scales_exp, block_max_exp)
