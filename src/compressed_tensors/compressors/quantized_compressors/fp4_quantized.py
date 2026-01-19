@@ -127,6 +127,11 @@ class NVFP4PackedCompressor(BaseQuantizationCompressor):
         m, n = weight.shape
         # TODO: use a user provided dequant dtype
         unpacked = unpack_fp4_from_uint8(weight, m, n * 2)
+
+        # decompress scale
+        scale = scale.to(unpacked.dtype)
+        compressed_data["weight_scale"] = torch.nn.Parameter(scale, requires_grad=False)
+
         decompressed_weight = dequantize(
             x_q=unpacked, scale=scale, global_scale=global_scale, dtype=unpacked.dtype
         )
@@ -146,7 +151,7 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
         quantization_args: QuantizationArgs,
     ) -> Dict[str, torch.Tensor]:
         assert quantization_args.scale_dtype is not None
-        scale_exp = 127 + torch.floor(torch.log2(scale)).to(torch.int32) - 2
+        scale_exp = 127 + torch.floor(torch.log2(scale)).to(torch.int32)
         return scale_exp.to(quantization_args.scale_dtype)
 
     def decompress_weight(

@@ -175,6 +175,10 @@ class PackedQuantizationCompressor(BaseQuantizationCompressor):
             zero_point = unpack_from_int32(
                 zero_point, num_bits, original_zp_shape, packed_dim=0
             )
+            # Update the compressed_data dict with unpacked zero_point
+            compressed_data["weight_zero_point"] = torch.nn.Parameter(
+                zero_point, requires_grad=False
+            )
 
         decompressed_weight = dequantize(
             x_q=unpacked, scale=scale, zero_point=zero_point, g_idx=g_idx

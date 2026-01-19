@@ -303,6 +303,26 @@ INT8_W4A8 = dict(
     ),
 )
 
+# 4 bit integer weights and 8 bit FP activations quantization
+W4AFP8 = dict(
+    weights=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.INT,
+        strategy=QuantizationStrategy.GROUP,
+        group_size=128,
+        symmetric=True,
+        dynamic=False,
+    ),
+    input_activations=QuantizationArgs(
+        num_bits=8,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TOKEN,
+        symmetric=True,
+        dynamic=True,
+        observer=None,
+    ),
+)
+
 # FP8 weights and FP8 activations quantization
 FP8 = dict(
     weights=QuantizationArgs(
@@ -374,6 +394,7 @@ PRESET_SCHEMES = {
     "W8A8": INT8_W8A8,
     "INT8": INT8_W8A8,  # alias for W8A8
     "W4A8": INT8_W4A8,
+    "W4AFP8": W4AFP8,
     # Float weight and activation schemes
     "FP8": FP8,
     "FP8_DYNAMIC": FP8_DYNAMIC,
