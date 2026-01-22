@@ -22,38 +22,35 @@ from compressed_tensors.offload.cache.cpu import CPUCache
 class DistributedCPUCache(CPUCache):
     """
     Handles offloading and onloading tensors from/to cpu memory shared across processes
-
-    Note: This cache does not currently handle propagation of in-place
-    operations on the onloaded tensors. Future work could support this by
-    returning a tensor subclass which references on offloaded tensor. To update
-    parameters, use `compressed_tensors.offload::update_offload_parameter`
     """
 
     offload_device: Optional[torch.device | str] = torch.device("cpu")
 
-    def offload(self, value: torch.Tensor) -> torch.Tensor:
-        # return original tensor if onloading is disabled
-        # to allow for direct parameter/buffer assignment
-        if self.onloading_disabled:
-            return value
+    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+        if tensor is None:
+            return None
 
         # slight runtime cost for views
-        value = value.contiguous()
+        tensor = tensor.contiguous()
 
         if dist.get_rank() == 0:
             # create shared memory cpu tensor
-            key = super().offload(value).share_memory_()
-            (handle, filename, nbytes) = key.untyped_storage()._share_filename_cpu_()
-            broadcast_object = [handle, filename, nbytes]
+            tensor = super().offload(tensor).share_memory_()
+            (handle, filename, nbytes) = tensor.untyped_storage()._share_filename_cpu_()
+            broadcast_obj = [handle, filename, nbytes]
         else:
-            broadcast_object = [None, None, None]
+            broadcast_obj = [None, None, None]
 
         # receive shared memory file handle
-        dist.broadcast_object_list(broadcast_object, src=0)
+        dist.broadcast_object_list(broadcast_obj, src=0)
 
         if dist.get_rank() != 0:
+            print(broadcast_obj)
             # reconstruct tensor from shared memory file handle
-            key = torch.empty_like(value, device=self.offload_device)
-            key.set_(torch.UntypedStorage._new_shared_filename_cpu(*broadcast_object))
+            tensor = torch.empty_like(tensor, device=self.offload_device)
+            tensor.set_(torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj))
 
-        return key
+        # ensure that rank 0 does not garbage collect before other ranks reconstruct
+        dist.barrier()
+
+        return tensor
