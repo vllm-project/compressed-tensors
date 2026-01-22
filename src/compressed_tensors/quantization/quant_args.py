@@ -365,7 +365,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                     observer = None
             else:
                 if dynamic == DynamicType.LOCAL:
-                    observer = "memoryless_minmax"
+                    observer = "minmax"
 
         elif observer is None:
             # default to minmax for non-dynamic cases
