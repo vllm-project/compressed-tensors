@@ -12,12 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import gc
-from weakref import ref
-
 import pytest
 import torch
 from compressed_tensors.offload.cache.dist_cpu import DistributedCPUCache
+from tests.test_offload.cache.helpers import (
+    _test_delete,
+    _test_disable_offloading,
+    _test_disable_onloading,
+    _test_garbage_collect,
+    _test_offload,
+    _test_onload,
+    _test_onloading,
+    _test_shared_attributes,
+)
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 
@@ -35,12 +42,7 @@ def cache():
 @requires_gpu
 @torchrun(target="tests.test_offload.cache.test_dist_cpu:test_onloading", world_size=2)
 def test_onloading():
-    cache = DistributedCPUCache(ONLOAD_DEVICE)
-    tensor = torch.ones(10)
-    onloaded = cache[tensor]
-
-    assert type(onloaded) is type(tensor)
-    assert torch.equal(onloaded.to(tensor.device), tensor)
+    _test_onloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
@@ -49,24 +51,21 @@ def test_onloading():
     target="tests.test_offload.cache.test_dist_cpu:test_garbage_collect", world_size=2
 )
 def test_garbage_collect():
-    cache = DistributedCPUCache(ONLOAD_DEVICE)
-    tensor = torch.ones(10)
-    onloaded = cache[tensor]
-
-    onloaded_ref = ref(onloaded)
-    del onloaded
-    gc.collect()
-    assert onloaded_ref() is None
+    _test_garbage_collect(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
 @requires_gpu
 @torchrun(target="tests.test_offload.cache.test_dist_cpu:test_offload", world_size=2)
 def test_offload():
-    cache = DistributedCPUCache(ONLOAD_DEVICE)
-    tensor = torch.ones(10, device=ONLOAD_DEVICE)
-    offloaded = cache.offload(tensor)
-    assert offloaded.device == OFFLOAD_DEVICE
+    _test_offload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+@torchrun(target="tests.test_offload.cache.test_dist_cpu:test_onload", world_size=2)
+def test_onload():
+    _test_onload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
@@ -76,27 +75,7 @@ def test_offload():
     world_size=2,
 )
 def test_disable_offloading():
-    cache = DistributedCPUCache(ONLOAD_DEVICE)
-    tensor = torch.ones(10)
-
-    outside_onloaded = cache[tensor]
-    outside_onloaded_ref = ref(outside_onloaded)
-    assert outside_onloaded.device == ONLOAD_DEVICE
-
-    with cache.disable_offloading():
-        inside_onloaded = cache[tensor]
-        inside_onloaded_ref = ref(inside_onloaded)
-        assert inside_onloaded.device == ONLOAD_DEVICE
-
-        del outside_onloaded
-        del inside_onloaded
-        gc.collect()
-
-        assert outside_onloaded_ref() is not None
-        assert inside_onloaded_ref() is not None
-
-    assert outside_onloaded_ref() is None
-    assert inside_onloaded_ref() is None
+    _test_disable_offloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
@@ -105,30 +84,17 @@ def test_disable_offloading():
     target="tests.test_offload.cache.test_dist_cpu:test_disable_onloading", world_size=2
 )
 def test_disable_onloading():
-    cache = DistributedCPUCache(ONLOAD_DEVICE)
-    tensor = torch.ones(10)
-
-    with cache.disable_onloading():
-        onloaded = cache[tensor]
-        assert onloaded is tensor
-
-    assert onloaded is tensor
+    _test_disable_onloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
 @requires_gpu
 @torchrun(target="tests.test_offload.cache.test_dist_cpu:test_delete", world_size=2)
 def test_delete():
-    cache = DistributedCPUCache(ONLOAD_DEVICE)
-    tensor = torch.ones(10)
-    onloaded = cache[tensor]
-    onloaded_ref = ref(onloaded)
+    _test_delete(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
-    with cache.disable_offloading():
-        del cache[tensor]
-        del onloaded
-        gc.collect()
 
-        assert onloaded_ref() is None
-
-    assert onloaded_ref() is None
+@pytest.mark.unit
+@requires_gpu
+def test_shared_attributes():
+    _test_shared_attributes(OFFLOAD_DEVICE, ONLOAD_DEVICE)
