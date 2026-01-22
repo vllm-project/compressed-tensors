@@ -178,9 +178,12 @@ def align_module_device(
     if isinstance(module._parameters, OffloadCache):
         assert isinstance(module._buffers, OffloadCache)
         with module._parameters.disable_offloading():
-            with patch_attr(
-                module._parameters, "onload_device", execution_device
-            ), patch_attr(module._buffers, "onload_device", execution_device):
+            if execution_device is not None:
+                with patch_attr(
+                    module._parameters, "onload_device", execution_device
+                ), patch_attr(module._buffers, "onload_device", execution_device):
+                    yield
+            else:
                 yield
 
     else:
