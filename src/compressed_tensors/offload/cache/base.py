@@ -16,6 +16,7 @@ import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import MutableMapping
 from typing import ClassVar, Literal, Optional
+from weakref import WeakValueDictionary
 
 import torch
 import torch.distributed as dist
@@ -50,7 +51,8 @@ class OffloadCache(MutableMapping, ABC):
     # names -> offloaded tensors (populated from _parameters or _buffers)
     offloaded_values: dict[str, torch.Tensor]
 
-    # offloaded tensors -> onloaded tensors (only when offloading is disabled)
+    # offloaded tensors -> onloaded tensors
+    onloaded_values: WeakValueDictionary[str, torch.Tensor] = WeakValueDictionary()
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
 
     @classmethod
@@ -144,11 +146,14 @@ class OffloadCache(MutableMapping, ABC):
             return offloaded
 
         # check for cache hit
-        if offloaded in self.keep_onloaded_values:
-            return self.keep_onloaded_values[offloaded]
+        if offloaded in self.onloaded_values:
+            return self.onloaded_values[offloaded]
 
         # onload value
         onloaded = self.onload(offloaded)
+
+        # populate cache
+        self.onloaded_values[offloaded] = onloaded
 
         # when offloading is disabled, populate cache
         if self.offloading_disabled:
@@ -186,7 +191,9 @@ class OffloadCache(MutableMapping, ABC):
         offloaded = self.offloaded_values[key]
         del self.offloaded_values[key]
 
-        # remove strong ref
+        # remove references to value
+        if offloaded in self.onloaded_values:
+            del self.onloaded_values[offloaded]
         if offloaded in self.keep_onloaded_values:
             del self.keep_onloaded_values[offloaded]
 
@@ -211,6 +218,7 @@ class OffloadCache(MutableMapping, ABC):
             OffloadCache.offloading_disabled = True
             yield
             OffloadCache.offloading_disabled = False
+            OffloadCache.onloaded_values.clear()
             OffloadCache.keep_onloaded_values.clear()
         else:
             yield

@@ -98,7 +98,7 @@ def test_disable_offloading(offloaded_linear: torch.nn.Linear):
         gc.collect()
 
         assert outside_onloaded_ref() is None
-        assert inside_onloaded_ref() is not None
+        assert inside_onloaded_ref() is None
 
     assert outside_onloaded_ref() is None
     assert inside_onloaded_ref() is None

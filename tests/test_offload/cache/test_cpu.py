@@ -90,7 +90,7 @@ def test_disable_offloading(cache: CPUCache):
         gc.collect()
 
         assert outside_onloaded_ref() is None
-        assert inside_onloaded_ref() is not None
+        assert inside_onloaded_ref() is None
 
     assert outside_onloaded_ref() is None
     assert inside_onloaded_ref() is None
