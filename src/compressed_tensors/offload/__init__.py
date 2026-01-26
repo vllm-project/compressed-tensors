@@ -135,9 +135,7 @@ def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.M
     """
     cache = base._parameters
     if isinstance(cache, OffloadCache):
-        offload_module(
-            module, cache.onload_device, cache.offload_device, no_split=False
-        )
+        offload_module(module, cache.onload_device, cache.offload_device)
 
     base.register_module(name, module)
 
