@@ -39,7 +39,7 @@ ModelType = TypeVar("ModelType", bound=torch.nn.Module)
 def offload_model(
     model: ModelType,
     onload_device: torch.device | str,
-    offload_device: Optional[torch.device | str | Literal["disk"]] = None,
+    offload_device: torch.device | str | Literal["disk"] = torch.device("cpu"),
 ) -> ModelType:
     """
     Offload a model to the `offload_device`. During forward passes, model weights will
