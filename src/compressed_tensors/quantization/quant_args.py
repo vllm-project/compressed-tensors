@@ -34,6 +34,7 @@ __all__ = [
     "FP8_E4M3_DATA",
     "FP4_E2M1_DATA",
     "BFLOAT16_DATA",
+    "FLOAT32_DATA",
     "FloatArgs",
     "QuantizationType",
     "QuantizationStrategy",
@@ -89,6 +90,11 @@ class FP8_E4M3_DATA(FloatArgs):
 class BFLOAT16_DATA(FloatArgs):
     exponent = 8
     mantissa = 7
+
+
+class FLOAT32_DATA(FloatArgs):
+    exponent = 8
+    mantissa = 23
 
 
 class QuantizationType(str, Enum):

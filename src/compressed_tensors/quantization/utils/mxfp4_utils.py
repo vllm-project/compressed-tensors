@@ -15,6 +15,7 @@
 import torch
 from compressed_tensors.quantization.quant_args import (
     BFLOAT16_DATA,
+    FLOAT32_DATA,
     FP4_E2M1_DATA,
     QuantizationArgs,
 )
@@ -70,21 +71,24 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
 
     :param x: tensor to round to closest power of 2
     """
-    assert x.dtype == torch.bfloat16
+    scale_dtype = x.dtype
+    if scale_dtype is torch.bloat16:
+        mantissa = BFLOAT16_DATA.mantissa
+        exponent = BFLOAT16_DATA.exponent
+    else:
+        mantissa = FLOAT32_DATA.mantissa
+        exponent = FLOAT32_DATA.exponent
+
     x = x.view(torch.uint16).to(torch.int32)
 
     # Find closest power of 2
-    BFLOAT16_VAL_TO_ADD = 1 << (BFLOAT16_DATA.mantissa - FP4_E2M1_DATA.mantissa - 1)
+    VAL_TO_ADD = 1 << (mantissa - FP4_E2M1_DATA.mantissa - 1)
     # Add value to push the value to the next exponent
-    BFLOAT16_SIGN_EXPONENT_MASK = (
-        (1 << (BFLOAT16_DATA.exponent + 1)) - 1
-    ) << BFLOAT16_DATA.mantissa
+    SIGN_EXPONENT_MASK = ((1 << (exponent + 1)) - 1) << mantissa
     # mask to only keep exponent - we conservatively round down
     # to better represent smaller numbers / prevent overflow
-    block_max_uint = torch.bitwise_and(
-        x + BFLOAT16_VAL_TO_ADD, BFLOAT16_SIGN_EXPONENT_MASK
-    )
-    return block_max_uint.to(torch.uint16).view(torch.bfloat16)
+    block_max_uint = torch.bitwise_and(x + VAL_TO_ADD, SIGN_EXPONENT_MASK)
+    return block_max_uint.to(torch.uint16).view(scale_dtype)
 
 
 def generate_mxfp4_scales(x: torch.Tensor) -> torch.Tensor:
