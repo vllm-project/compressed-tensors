@@ -88,7 +88,7 @@ def _setup_packages() -> List:
     )
 
 def _setup_install_requires() -> List:
-    return ["torch>=1.7.0,<=2.9.1", "transformers", "pydantic>=2.0", "loguru"]
+    return ["torch>=1.7.0,<=2.9.1", "transformers<5.0.0", "pydantic>=2.0", "loguru"]
 
 def _setup_extras() -> Dict:
     return {
