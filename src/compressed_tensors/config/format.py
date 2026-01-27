@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import warnings
 from typing import List, Optional
 
 import torch
@@ -68,6 +69,12 @@ def _get_quant_compression_format(
         ):
             # marlin24 kernel only applicable for channel/group quantization
             # Note: vLLM may only support group quant for marlin24
+            warnings.warn(
+                "The marlin24 format is deprecated and will be removed in a "
+                "future release. vLLM no longer supports marlin24 models.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return CompressionFormat.marlin_24
         return CompressionFormat.pack_quantized
 
