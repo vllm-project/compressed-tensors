@@ -14,7 +14,6 @@
 
 from functools import wraps
 from math import ceil
-from typing import Optional
 
 import torch
 from compressed_tensors.quantization.quant_args import (
@@ -47,9 +46,9 @@ def quantize(
     scale: torch.Tensor,
     zero_point: torch.Tensor,
     args: QuantizationArgs,
-    dtype: Optional[torch.dtype] = None,
-    g_idx: Optional[torch.Tensor] = None,
-    global_scale: Optional[torch.Tensor] = None,
+    dtype: torch.dtype | None = None,
+    g_idx: torch.Tensor | None = None,
+    global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Quantize the input tensor x using the QuantizationStrategy specified in args.
@@ -85,11 +84,11 @@ def quantize(
 def dequantize(
     x_q: torch.Tensor,
     scale: torch.Tensor,
-    zero_point: Optional[torch.Tensor] = None,
-    args: Optional[QuantizationArgs] = None,
-    dtype: Optional[torch.dtype] = None,
-    g_idx: Optional[torch.Tensor] = None,
-    global_scale: Optional[torch.Tensor] = None,
+    zero_point: torch.Tensor | None = None,
+    args: QuantizationArgs | None = None,
+    dtype: torch.dtype | None = None,
+    g_idx: torch.Tensor | None = None,
+    global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Dequantize a quantized input tensor x_q based on the strategy specified in args. If
@@ -159,8 +158,8 @@ def fake_quantize(
     scale: torch.Tensor,
     zero_point: torch.Tensor,
     args: QuantizationArgs,
-    g_idx: Optional[torch.Tensor] = None,
-    global_scale: Optional[torch.Tensor] = None,
+    g_idx: torch.Tensor | None = None,
+    global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Fake quantize the input tensor x by quantizing then dequantizing with
@@ -195,11 +194,11 @@ def _process_quantization(
     scale: torch.Tensor,
     zero_point: torch.Tensor,
     args: QuantizationArgs,
-    g_idx: Optional[torch.Tensor] = None,
-    dtype: Optional[torch.dtype] = None,
+    g_idx: torch.Tensor | None = None,
+    dtype: torch.dtype | None = None,
     do_quantize: bool = True,
     do_dequantize: bool = True,
-    global_scale: Optional[torch.Tensor] = None,
+    global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     q_min, q_max = calculate_range(args, x.device)
     group_size = args.group_size
@@ -457,8 +456,8 @@ def _quantize(
     q_min: torch.Tensor,
     q_max: torch.Tensor,
     args: QuantizationArgs,
-    dtype: Optional[torch.dtype] = None,
-    global_scale: Optional[torch.Tensor] = None,
+    dtype: torch.dtype | None = None,
+    global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
 
     # if a global scale is optionally provided, use it
@@ -486,9 +485,9 @@ def _quantize(
 def _dequantize(
     x_q: torch.Tensor,
     scale: torch.Tensor,
-    zero_point: torch.Tensor = None,
-    dtype: Optional[torch.dtype] = None,
-    global_scale: Optional[torch.Tensor] = None,
+    zero_point: torch.Tensor | None = None,
+    dtype: torch.dtype | None = None,
+    global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
 
     # if a global scale is optionally provided, use it
