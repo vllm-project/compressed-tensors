@@ -14,6 +14,7 @@
 
 from functools import wraps
 from math import ceil
+
 import torch
 from compressed_tensors.quantization.quant_args import (
     DynamicType,
@@ -28,6 +29,7 @@ from compressed_tensors.quantization.utils import (
     compute_dynamic_scales_and_zp,
 )
 from torch.nn import Module
+
 
 __all__ = [
     "quantize",
