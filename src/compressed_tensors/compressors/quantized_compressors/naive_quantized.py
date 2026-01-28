@@ -26,7 +26,6 @@ from compressed_tensors.quantization.utils import (
     can_quantize,
     calculate_block_padding,
     pad_tensor_for_block_quant,
-    unpad_tensor_from_block_quant,
 )
 from torch import Tensor
 
@@ -57,7 +56,6 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
             "weight_scale",
             "weight_zero_point",
             "weight_g_idx",
-            "weight_shape_original",
         )
 
     def compression_param_info(
@@ -172,12 +170,10 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
 
         result["weight"] = quantized_weight
 
-        # Store original shape if weight was padded
+        # If weight was padded for block quantization, return the padded scale/zero_point
+        # Note: We don't save weight_shape_original to avoid issues with vLLM weight loading.
+        # The config.json should be updated with padded dimensions by the quantization tool.
         if original_shape is not None:
-            result["weight_shape_original"] = torch.tensor(
-                list(original_shape), dtype=torch.int64
-            )
-            # Also return the padded scale and zero_point
             result["weight_scale"] = scale
             if zero_point is not None:
                 result["weight_zero_point"] = zero_point
@@ -200,18 +196,13 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
         scale = compressed_data["weight_scale"]
         zero_point = compressed_data.get("weight_zero_point", None)
         g_idx = compressed_data.get("weight_g_idx", None)
-        original_shape = compressed_data.get("weight_shape_original", None)
 
         decompressed_weight = dequantize(
             x_q=weight, scale=scale, zero_point=zero_point, g_idx=g_idx
         )
 
-        # If weight was padded for block quantization, unpad to original shape
-        if original_shape is not None:
-            original_shape = tuple(original_shape.tolist())
-            decompressed_weight = unpad_tensor_from_block_quant(
-                decompressed_weight, original_shape
-            )
+        # Note: For block-quantized models with padding, the decompressed weight
+        # will remain padded. The config.json should reflect the padded dimensions.
 
         return decompressed_weight
 

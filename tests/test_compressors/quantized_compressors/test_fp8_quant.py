@@ -233,15 +233,11 @@ def test_block_quant_compression_padding(rows, cols, block_height, block_width):
             padded_cols,
         ), f"Expected padded shape ({padded_rows}, {padded_cols}), got {compressed_weight.shape}"
 
-        # Check that original_shape was stored
+        # Note: weight_shape_original is NOT saved to avoid vLLM weight loading issues
+        # The config.json should be updated with padded dimensions by the quantization tool
         assert (
-            "dummy.weight_shape_original" in compressed_state_dict
-        ), "weight_shape_original should be stored for padded weights"
-        original_shape = compressed_state_dict["dummy.weight_shape_original"]
-        assert tuple(original_shape.tolist()) == (
-            rows,
-            cols,
-        ), f"Original shape should be ({rows}, {cols})"
+            "dummy.weight_shape_original" not in compressed_state_dict
+        ), "weight_shape_original should NOT be stored (vLLM compatibility)"
 
         # Check that scale was also padded
         expected_scale_rows = padded_rows // block_height
@@ -269,13 +265,20 @@ def test_block_quant_compression_padding(rows, cols, block_height, block_width):
         (300, 400, 128, 128),  # Both non-divisible
     ],
 )
-def test_block_quant_decompress_unpadding(rows, cols, block_height, block_width, tmp_path):
+def test_block_quant_decompress_keeps_padding(rows, cols, block_height, block_width, tmp_path):
     """
-    Test that decompression correctly unpads weights that were padded during compression.
+    Test that decompression returns weights with padded dimensions.
+    For vLLM compatibility, we don't unpad - the config.json should reflect padded dims.
     """
     import math
 
     block_structure = [block_height, block_width]
+
+    # Calculate padded dimensions
+    pad_rows = (block_height - rows % block_height) % block_height
+    pad_cols = (block_width - cols % block_width) % block_width
+    padded_rows = rows + pad_rows
+    padded_cols = cols + pad_cols
 
     # Create scale tensor with ceiling division
     num_rb = math.ceil(rows / block_height)
@@ -308,11 +311,12 @@ def test_block_quant_decompress_unpadding(rows, cols, block_height, block_width,
     for name, value in reconstructed_gen:
         reconstructed[name] = value
 
-    # Check that decompressed weight has original shape
+    # Check that decompressed weight has PADDED shape (not original)
+    # This is intentional for vLLM compatibility
     decompressed_weight = reconstructed["dummy"]["weight"]
     assert decompressed_weight.shape == (
-        rows,
-        cols,
-    ), f"Decompressed weight should have original shape ({rows}, {cols}), got {decompressed_weight.shape}"
+        padded_rows,
+        padded_cols,
+    ), f"Decompressed weight should have padded shape ({padded_rows}, {padded_cols}), got {decompressed_weight.shape}"
 
     shutil.rmtree(tmp_path)
