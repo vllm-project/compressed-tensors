@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import types
 from collections import OrderedDict
 from copy import deepcopy
 from typing import Dict, List, Optional
@@ -19,7 +20,6 @@ from typing import OrderedDict as OrderedDictType
 from typing import Union
 
 import torch
-from compressed_tensors.config import CompressionFormat
 from compressed_tensors.modeling import (
     initialize_hooked_attention,
     initialize_hooked_kv_cache,
@@ -34,7 +34,6 @@ from compressed_tensors.quantization.quant_config import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
-from compressed_tensors.utils.helpers import replace_module
 from compressed_tensors.utils.match import (
     is_narrow_match,
     match_named_modules,
@@ -109,19 +108,13 @@ def load_pretrained_quantization_parameters(
             )
 
 
-def apply_quantization_config(
-    model: Module, config: Union[QuantizationConfig, None], run_compressed: bool = False
-):
+def apply_quantization_config(model: Module, config: Union[QuantizationConfig, None]):
     """
     Initializes the model for quantization in-place based on the given config.
-    Optionally coverts quantizable modules to compressed_linear modules
 
     :param model: model to apply quantization config to
     :param config: quantization config
-    :param run_compressed: Whether the model will be run in compressed mode or
-        decompressed fully on load
     """
-    from compressed_tensors.linear.compressed_linear import CompressedLinear
 
     config = deepcopy(config)
     if config is None:  # see PR #180
@@ -154,33 +147,21 @@ def apply_quantization_config(
         # target matched - add layer and scheme to target list
         submodule.quantization_scheme = scheme
 
-        # replace with run compressed if applicable
-        # FUTURE: move this to model compressor
-        if (
-            run_compressed
-            and isinstance(submodule, torch.nn.Linear)
-            and config.format != CompressionFormat.dense.value
+        if is_attention_module(submodule) and is_narrow_match(
+            model, scheme.targets, name
         ):
-            # TODO: expand to more module types
-            compressed_linear = CompressedLinear.from_linear(
-                submodule,
-                quantization_scheme=scheme,
-                quantization_format=config.format,
-            )
-            replace_module(model, name, compressed_linear)
+            initialize_hooked_attention(model, submodule)
 
-        else:
-            if is_attention_module(submodule) and is_narrow_match(
-                model, scheme.targets, name
-            ):
-                initialize_hooked_attention(model, submodule)
-
-            initialize_module_for_quantization(
-                submodule,
-                force_zero_point=force_zero_point,
-            )
+        initialize_module_for_quantization(
+            submodule,
+            force_zero_point=force_zero_point,
+        )
 
         submodule.quantization_status = config.quantization_status
+
+    # Auto-decompress for HuggingFace PreTrainedModel
+    if config.quantization_status == QuantizationStatus.COMPRESSED:
+        _wrap_post_init_for_decompression(model)
 
 
 def _apply_kv_cache_scheme(
@@ -258,3 +239,34 @@ def _scheme_from_targets(
     # return the first scheme (the prioritized one,
     # since the order of target_to_scheme matters)
     return target_to_scheme[targets[0]]
+
+
+def _wrap_post_init_for_decompression(model: Module):
+    """
+    Wrap model.post_init to auto-decompress after weights are loaded.
+
+    This ensures that when a compressed model is loaded via HuggingFace's
+    AutoModel.from_pretrained(), the model is automatically decompressed
+    and ready for inference without requiring an explicit dequantize() call.
+
+    :param model: The model instance to wrap (must be a PreTrainedModel)
+    """
+    try:
+        from transformers import PreTrainedModel
+    except ImportError:
+        return  # transformers not installed
+
+    if not isinstance(model, PreTrainedModel):
+        return  # not a HuggingFace model
+
+    from compressed_tensors.compressors.model_compressors import ModelCompressor
+
+    original_post_init = model.post_init
+
+    def wrapped_post_init(self):
+        original_post_init()
+        compressor = ModelCompressor.from_pretrained_model(self)
+        if compressor is not None:
+            compressor.decompress_model(self)
+
+    model.post_init = types.MethodType(wrapped_post_init, model)
