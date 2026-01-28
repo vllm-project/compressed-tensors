@@ -23,7 +23,7 @@ runs:
       with:
           venv: ${{ inputs.venv }}
           name: compressed
-          extra: "[dev,accelerate]"
+          extra: "[dev]"
 
     - name: clean up
       run: |

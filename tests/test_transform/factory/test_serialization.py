@@ -16,24 +16,25 @@ import os
 
 import pytest
 import torch
+from compressed_tensors.offload import offload_model
 from compressed_tensors.transform import (
     TransformConfig,
     TransformScheme,
     apply_transform_config,
 )
-from compressed_tensors.utils import offloaded_dispatch
 from safetensors import safe_open
-from tests.testing_utils import requires_accelerate, requires_gpu
+from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 @pytest.mark.parametrize("type", ("hadamard", "random-hadamard"))
 @pytest.mark.parametrize("randomize", (True, False))
-def test_serialization(type, randomize, model_apply, tmp_path, offload=False):
+@pytest.mark.parametrize("offload", (True, False))
+def test_serialization(type, randomize, model_apply, tmp_path, offload):
     # get model, maybe offload
     model, apply = model_apply
     if offload:
-        offloaded_dispatch(model, torch.device("cuda"))
+        offload_model(model, torch.device("cuda"))
 
     # apply transforms to model
     config = TransformConfig(
@@ -48,7 +49,8 @@ def test_serialization(type, randomize, model_apply, tmp_path, offload=False):
     # check that saved values match model values
     # note that shared weights are only serialized once
     safetensors_path = os.path.join(model_path, "model.safetensors")
-    with safe_open(safetensors_path, framework="pt", device="cpu") as file:
+    device = "cuda:0" if offload else "cpu"
+    with safe_open(safetensors_path, framework="pt", device=device) as file:
         saved_keys = set(file.keys())
         assert {
             "fcs.0.weight",
@@ -60,17 +62,7 @@ def test_serialization(type, randomize, model_apply, tmp_path, offload=False):
         for key in saved_keys:
             param = model.get_parameter(key)
             saved_param = file.get_tensor(key)
-
-            if param.device.type != "meta":  # skip testing values in offload case
-                assert torch.equal(param, saved_param)
-
-
-@requires_gpu
-@requires_accelerate()
-@pytest.mark.parametrize("type", ("hadamard", "random-hadamard"))
-@pytest.mark.parametrize("randomize", (True, False))
-def test_serialization_offload(type, randomize, model_apply, tmp_path):
-    test_serialization(type, randomize, model_apply, tmp_path, offload=True)
+            assert torch.equal(param, saved_param)
 
 
 @pytest.mark.skip("Requires transformers#40673")

@@ -30,7 +30,7 @@ jobs:
         - name: Set Env
           run: pip3 install --upgrade pip setuptools
         - name: "⚙️ Install dependencies"
-          run: pip3 install .[dev,accelerate]
+          run: pip3 install .[dev]
         - name: clean up
           run: |
             echo "cleaning up disk space as GHA runner has limited disk size."

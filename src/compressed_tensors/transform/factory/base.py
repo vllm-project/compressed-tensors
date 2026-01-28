@@ -26,6 +26,7 @@ from compressed_tensors.modeling.kvcache import (
     initialize_hooked_kv_cache,
     register_key_hook,
 )
+from compressed_tensors.offload import OffloadCache
 from compressed_tensors.registry.registry import RegistryMixin, T
 from compressed_tensors.transform import (
     TransformArgs,
@@ -34,8 +35,6 @@ from compressed_tensors.transform import (
 )
 from compressed_tensors.utils import (
     align_module_device,
-    delete_offload_module,
-    has_offloaded_params,
     match_named_modules,
     patch_attr,
     register_offload_module,
@@ -116,13 +115,6 @@ class TransformFactory(RegistryMixin, ABC):
         :param module: target module to apply transforms to
         :param args: defines how the transform will be applied to the target module
         """
-        if has_offloaded_params(module):
-            if module._hf_hook.place_submodules:
-                raise NotImplementedError(
-                    "Applying transforms to offloaded submodules with "
-                    "`place_submodules=True` is not supported"
-                )
-
         # create transform as submodule
         transform_name = f"{self.name}_{args.location}"
         transform = self.create_transform(module, args)
@@ -150,13 +142,13 @@ class TransformFactory(RegistryMixin, ABC):
             if self.scheme.requires_grad:
                 # for training, the weight changes with every forward pass
                 # so we can leverage parametrization to propagate the gradient
-                if has_offloaded_params(module):
+                if isinstance(module._parameters, OffloadCache):
                     raise ValueError("Offloaded training is not supported")
                 P.register_parametrization(module, "weight", transform)
 
             else:
                 # transform is no longer needed (unfusing is not supported)
-                delete_offload_module(module, transform_name)
+                delattr(module, transform_name)
 
         # register output transformation hook
         elif args.location == TransformLocation.OUTPUT:
