@@ -77,6 +77,7 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
         mantissa = BFLOAT16_DATA.mantissa
         exponent = BFLOAT16_DATA.exponent
     else:
+        assert scale_dtype is torch.float32
         int_dtype = torch.uint32
         mantissa = FLOAT32_DATA.mantissa
         exponent = FLOAT32_DATA.exponent
@@ -90,7 +91,9 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
     # mask to only keep exponent - we conservatively round down
     # to better represent smaller numbers / prevent overflow
     block_max_uint = torch.bitwise_and(x + VAL_TO_ADD, SIGN_EXPONENT_MASK)
-    return block_max_uint.to(int_dtype).view(scale_dtype)
+    if scale_dtype is torch.bfloat16:
+        return block_max_uint.to(int_dtype).view(scale_dtype)
+    return block_max_uint.view(scale_dtype)
 
 
 def generate_mxfp4_scales(x: torch.Tensor) -> torch.Tensor:
