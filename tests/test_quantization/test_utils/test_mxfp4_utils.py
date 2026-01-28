@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 from compressed_tensors.quantization import round_to_quantized_type_dtype
 from compressed_tensors.quantization.utils import (
@@ -61,7 +62,8 @@ def test_round_power_2():
     assert torch.equal(rounded, x_rounded)
 
 
-def test_mxfp4_scales_e2e():
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+def test_mxfp4_scales_e2e(dtype):
     from compressed_tensors.quantization.quant_args import (
         QuantizationArgs,
         QuantizationStrategy,
@@ -70,7 +72,7 @@ def test_mxfp4_scales_e2e():
 
     mock_weight = torch.normal(mean=0.0002, std=0.0576, size=(2880, 2880))
 
-    x = mock_weight.reshape(*mock_weight.shape[:-1], -1, 32).to(torch.bfloat16)
+    x = mock_weight.reshape(*mock_weight.shape[:-1], -1, 32).to(dtype)
     min_vals = torch.amin(x, dim=-1)
     max_vals = torch.amax(x, dim=-1)
 
