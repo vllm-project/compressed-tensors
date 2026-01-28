@@ -14,7 +14,6 @@
 
 
 import logging
-from typing import Optional, Tuple, Union
 
 import torch
 from compressed_tensors.modeling import (
@@ -60,7 +59,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def initialize_module_for_quantization(
     module: Module,
-    scheme: Optional[QuantizationScheme] = None,
+    scheme: QuantizationScheme | None = None,
     force_zero_point: bool = True,
 ):
     """
@@ -156,7 +155,7 @@ def initialize_qparams(
     module: Module,
     base_name: str,
     quantization_args: QuantizationArgs,
-    observed_shape: Tuple[Union[int, None]],
+    observed_shape: tuple[int | None, ...],
     observed_dtype: torch.dtype,
     force_zero_point: bool = True,
 ):
@@ -280,8 +279,8 @@ def initialize_attn_qparams(
 ):
     """Initlaize k_scale, v_scale for self_attn"""
 
-    impl: Optional[QuantizedAttentionImpl] = getattr(module, IMPL_ATTR, None)
-    kv_cache: Optional[QuantizedKVCache] = getattr(module, KV_CACHE_ATTR, None)
+    impl: QuantizedAttentionImpl | None = getattr(module, IMPL_ATTR, None)
+    kv_cache: QuantizedKVCache | None = getattr(module, KV_CACHE_ATTR, None)
 
     if impl is None and kv_cache is None:
         raise ValueError(

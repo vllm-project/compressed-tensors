@@ -14,7 +14,7 @@
 
 import logging
 import math
-from typing import Generator, Optional, Tuple
+from collections.abc import Generator
 
 import torch
 from compressed_tensors.quantization.quant_args import (
@@ -66,8 +66,8 @@ def calculate_qparams(
     min_vals: Tensor,
     max_vals: Tensor,
     quantization_args: QuantizationArgs,
-    global_scale: Optional[Tensor] = None,
-) -> Tuple[FloatTensor, IntTensor]:
+    global_scale: Tensor | None = None,
+) -> tuple[FloatTensor, IntTensor]:
     """
     :param min_vals: tensor of min value(s) to calculate scale(s) and zero point(s)
         from
@@ -152,7 +152,7 @@ def compute_dynamic_scales_and_zp(
     value: Tensor,
     args: QuantizationArgs,
     module: torch.nn.Module,
-    global_scale: Optional[Tensor] = None,
+    global_scale: Tensor | None = None,
 ):
     """
     Returns the computed scales and zero points for dynamic activation
@@ -207,7 +207,9 @@ def compute_dynamic_scales_and_zp(
     return calculate_qparams(min_val, max_val, args, global_scale=global_scale)
 
 
-def calculate_range(quantization_args: QuantizationArgs, device: str) -> Tuple:
+def calculate_range(
+    quantization_args: QuantizationArgs, device: str
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Calculated the effective quantization range for the given Quantization Args
 
@@ -285,7 +287,7 @@ def module_type(module: Module) -> str:
     "Please use `model.named_modules()` and filter by "
     "compressed_tensors.InternalModule if neceessary"
 )
-def iter_named_leaf_modules(model: Module) -> Generator[Tuple[str, Module], None, None]:
+def iter_named_leaf_modules(model: Module) -> Generator[tuple[str, Module], None, None]:
     """
     Yields modules that do not have any submodules except observers. The observers
     themselves are not yielded
@@ -321,7 +323,7 @@ def iter_named_quantizable_modules(
     include_children: bool = True,
     include_attn: bool = False,
     include_mlp: bool = False,
-) -> Generator[Tuple[str, Module], None, None]:
+) -> Generator[tuple[str, Module], None, None]:
     """
     Yield name and submodule of
     - leaf modules, set by include_children
@@ -416,9 +418,9 @@ def is_kv_cache_quant_scheme(scheme: QuantizationScheme) -> bool:
 def generate_gparam(
     updated_min_val: torch.Tensor,
     updated_max_val: torch.Tensor,
-    scale_data: Optional[FloatArgs] = FP8_E4M3_DATA,
-    quant_data: Optional[FloatArgs] = FP4_E2M1_DATA,
-    dtype: Optional[torch.dtype] = torch.float32,
+    scale_data: FloatArgs | None = FP8_E4M3_DATA,
+    quant_data: FloatArgs | None = FP4_E2M1_DATA,
+    dtype: torch.dtype | None = torch.float32,
 ):
     """
     Generate a global scale for an entire tensor (input_tensor).
@@ -439,7 +441,7 @@ def generate_gparam(
 def strategy_cdiv(
     value: int,
     divisor: int,
-    strategy: Optional[QuantizationStrategy],
+    strategy: QuantizationStrategy | None,
     strict: bool = False,
 ) -> int:
     dividend = math.ceil(value / divisor)
