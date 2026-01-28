@@ -170,10 +170,10 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
 
         result["weight"] = quantized_weight
 
-        # If weight was padded for block quantization, return the padded scale
-        # Note: We don't save weight_shape_original to avoid issues with vLLM weight loading.
-        # The config.json should be updated with padded dimensions by the quantization tool.
-        # Don't add zero_point here - base class _skip_zp() will omit it for symmetric quant
+        # If weight was padded for block quantization, return the padded scale.
+        # We don't save weight_shape_original to avoid vLLM weight loading issues.
+        # The config.json should be updated with padded dims by the quant tool.
+        # Don't add zero_point here - base class _skip_zp() omits it for symmetric
         if original_shape is not None:
             result["weight_scale"] = scale
 

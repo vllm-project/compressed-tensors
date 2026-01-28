@@ -228,13 +228,13 @@ def test_block_quant_compression_padding(rows, cols, block_height, block_width):
     # Check that weight was padded if needed
     compressed_weight = compressed_state_dict["dummy.weight"]
     if needs_padding:
-        assert compressed_weight.shape == (
-            padded_rows,
-            padded_cols,
-        ), f"Expected padded shape ({padded_rows}, {padded_cols}), got {compressed_weight.shape}"
+        assert compressed_weight.shape == (padded_rows, padded_cols), (
+            f"Expected padded shape ({padded_rows}, {padded_cols}), "
+            f"got {compressed_weight.shape}"
+        )
 
-        # Note: weight_shape_original is NOT saved to avoid vLLM weight loading issues
-        # The config.json should be updated with padded dimensions by the quantization tool
+        # weight_shape_original is NOT saved to avoid vLLM weight loading issues.
+        # The config.json should be updated with padded dims by the quant tool.
         assert (
             "dummy.weight_shape_original" not in compressed_state_dict
         ), "weight_shape_original should NOT be stored (vLLM compatibility)"
@@ -243,16 +243,16 @@ def test_block_quant_compression_padding(rows, cols, block_height, block_width):
         expected_scale_rows = padded_rows // block_height
         expected_scale_cols = padded_cols // block_width
         compressed_scale = compressed_state_dict["dummy.weight_scale"]
-        assert compressed_scale.shape == (
-            expected_scale_rows,
-            expected_scale_cols,
-        ), f"Expected scale shape ({expected_scale_rows}, {expected_scale_cols}), got {compressed_scale.shape}"
+        assert compressed_scale.shape == (expected_scale_rows, expected_scale_cols), (
+            f"Expected scale shape ({expected_scale_rows}, {expected_scale_cols}), "
+            f"got {compressed_scale.shape}"
+        )
     else:
         # Divisible dimensions should not be padded
         assert compressed_weight.shape == (
             rows,
             cols,
-        ), f"Divisible dimensions should not be padded"
+        ), "Divisible dimensions should not be padded"
         assert (
             "dummy.weight_shape_original" not in compressed_state_dict
         ), "weight_shape_original should not be stored for non-padded weights"
@@ -316,9 +316,9 @@ def test_block_quant_decompress_keeps_padding(
     # Check that decompressed weight has PADDED shape (not original)
     # This is intentional for vLLM compatibility
     decompressed_weight = reconstructed["dummy"]["weight"]
-    assert decompressed_weight.shape == (
-        padded_rows,
-        padded_cols,
-    ), f"Decompressed weight should have padded shape ({padded_rows}, {padded_cols}), got {decompressed_weight.shape}"
+    assert decompressed_weight.shape == (padded_rows, padded_cols), (
+        f"Decompressed weight should have padded shape "
+        f"({padded_rows}, {padded_cols}), got {decompressed_weight.shape}"
+    )
 
     shutil.rmtree(tmp_path)
