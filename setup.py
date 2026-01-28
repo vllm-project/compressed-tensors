@@ -92,7 +92,7 @@ def _setup_install_requires() -> List:
 
 def _setup_extras() -> Dict:
     return {
-        "dev": ["black==22.12.0", "isort==5.8.0", "wheel>=0.36.2", "flake8>=3.8.3", "pytest>=6.0.0", "nbconvert>=7.16.3", "transformers<5.0"],
+        "dev": ["black==22.12.0", "isort==5.8.0", "wheel>=0.36.2", "flake8>=3.8.3", "pytest>=6.0.0", "nbconvert>=7.16.3", "transformers<5.0", "accelerate"],
         "accelerate": ["accelerate"]
     }
 
