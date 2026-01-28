@@ -131,6 +131,11 @@ class BaseQuantizationCompressor(BaseCompressor):
                 if name.endswith("weight_scale") and self._skip_scale():
                     continue
 
+                # Skip if this value was already set by compress_weight
+                # (e.g., padded scale/zero_point for block quantization)
+                if name in compressed_dict:
+                    continue
+
                 compressed_dict[name] = value.to(compression_device)
 
         return compressed_dict
