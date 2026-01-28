@@ -45,16 +45,6 @@ class BaseCompressor(RegistryMixin, ABC):
             - BaseCompressor.compress()
 
 
-    Module Lifecycle (run_compressed=True):
-        - apply_quantization_config()
-        - compressed_module = CompressedLinear(module)
-            - initialize_module_for_quantization()
-            - BaseCompressor.compression_param_info()
-            - register_parameters()
-        - compressed_module.forward()
-            -compressed_module.decompress()
-
-
     :param config: config specifying compression parameters
     """
 

@@ -50,15 +50,6 @@ class BaseSparseCompressor(BaseCompressor):
             - BaseSparseCompressor.compress()
                 - BaseSparseCompressor.compress_weight()
 
-    Module Lifecycle (run_compressed=True):
-        - apply_quantization_config()
-        - compressed_module = CompressedLinear(module)
-            - initialize_module_for_quantization()
-            - BaseSparseCompressor.compression_param_info()
-            - register_parameters()
-        - compressed_module.forward()
-            - compressed_module.decompress()
-
 
     :param config: config specifying compression parameters
     """
