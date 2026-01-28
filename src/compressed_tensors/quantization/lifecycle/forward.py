@@ -369,13 +369,18 @@ def wrap_module_forward_quantized(module: Module, scheme: QuantizationScheme):
 
         input_ = args[0]
 
-        compressed = self.quantization_status == QuantizationStatus.COMPRESSED
+        if self.quantization_status == QuantizationStatus.COMPRESSED:
+            raise RuntimeError(
+                "Cannot run inference on a compressed model. "
+                "Please call `model.dequantize()` to decompress the model "
+                "before inference."
+            )
 
         if scheme.input_activations is not None:
             # prehook should calibrate activations before forward call
             input_ = forward_quantize(self, input_, "input", scheme.input_activations)
 
-        if scheme.weights is not None and not compressed:
+        if scheme.weights is not None:
             # calibrate and (fake) quantize weights when applicable
             unquantized_weight = self.weight.data.clone()
             self.weight.data = forward_quantize(
@@ -388,7 +393,7 @@ def wrap_module_forward_quantized(module: Module, scheme: QuantizationScheme):
         )
 
         # restore back to unquantized_value
-        if scheme.weights is not None and not compressed:
+        if scheme.weights is not None:
             self.weight.data = unquantized_weight
 
         if scheme.output_activations is not None:
