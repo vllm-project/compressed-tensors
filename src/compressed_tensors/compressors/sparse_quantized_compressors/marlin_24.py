@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import warnings
 from typing import Dict, Generator, Tuple
 
 import numpy as np
@@ -138,6 +139,12 @@ class Marlin24Compressor(BaseCompressor):
         :param show_progress: whether to show tqdm progress
         :return: compressed state dict
         """
+        warnings.warn(
+            "The marlin24 format is deprecated and will be removed in a "
+            "future release. vLLM no longer supports marlin24 models.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.validate_quant_compatability(names_to_scheme)
 
         compressed_dict = {}
