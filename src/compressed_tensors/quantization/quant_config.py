@@ -162,7 +162,7 @@ class QuantizationConfig(BaseModel):
     @staticmethod
     def from_pretrained(
         model: Module, format: str | list | None = None
-    ) -> "QuantizationConfig" | None:
+    ) -> "QuantizationConfig | None":
         """
         Converts a model into its associated QuantizationConfig based on the
         QuantizationScheme attached to each quantized module
