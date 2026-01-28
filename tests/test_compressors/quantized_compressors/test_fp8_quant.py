@@ -265,7 +265,9 @@ def test_block_quant_compression_padding(rows, cols, block_height, block_width):
         (300, 400, 128, 128),  # Both non-divisible
     ],
 )
-def test_block_quant_decompress_keeps_padding(rows, cols, block_height, block_width, tmp_path):
+def test_block_quant_decompress_keeps_padding(
+    rows, cols, block_height, block_width, tmp_path
+):
     """
     Test that decompression returns weights with padded dimensions.
     For vLLM compatibility, we don't unpad - the config.json should reflect padded dims.

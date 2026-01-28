@@ -159,12 +159,12 @@ def test_pad_tensor_for_block_quant(rows, cols, block_height, block_width):
     assert original_shape == tensor.shape
 
     # Check padded dimensions are divisible by block size
-    assert padded.shape[-2] % block_height == 0, (
-        f"Padded rows {padded.shape[-2]} should be divisible by {block_height}"
-    )
-    assert padded.shape[-1] % block_width == 0, (
-        f"Padded cols {padded.shape[-1]} should be divisible by {block_width}"
-    )
+    assert (
+        padded.shape[-2] % block_height == 0
+    ), f"Padded rows {padded.shape[-2]} should be divisible by {block_height}"
+    assert (
+        padded.shape[-1] % block_width == 0
+    ), f"Padded cols {padded.shape[-1]} should be divisible by {block_width}"
 
     # Check that original values are preserved
     assert torch.equal(
@@ -173,13 +173,9 @@ def test_pad_tensor_for_block_quant(rows, cols, block_height, block_width):
 
     # Check that padding is zeros
     if padded.shape[-2] > rows:
-        assert torch.all(
-            padded[rows:, :] == 0
-        ), "Row padding should be zeros"
+        assert torch.all(padded[rows:, :] == 0), "Row padding should be zeros"
     if padded.shape[-1] > cols:
-        assert torch.all(
-            padded[:, cols:] == 0
-        ), "Column padding should be zeros"
+        assert torch.all(padded[:, cols:] == 0), "Column padding should be zeros"
 
 
 @pytest.mark.parametrize(
@@ -205,9 +201,9 @@ def test_unpad_tensor_from_block_quant(rows, cols, block_height, block_width):
     unpadded = unpad_tensor_from_block_quant(padded, original_shape)
 
     # Check shape matches original
-    assert unpadded.shape == original_shape, (
-        f"Unpadded shape {unpadded.shape} should match original {original_shape}"
-    )
+    assert (
+        unpadded.shape == original_shape
+    ), f"Unpadded shape {unpadded.shape} should match original {original_shape}"
 
     # Check values match original
     assert torch.equal(unpadded, original), "Unpadded values should match original"

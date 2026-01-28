@@ -23,8 +23,8 @@ from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 from compressed_tensors.quantization.utils import (
-    can_quantize,
     calculate_block_padding,
+    can_quantize,
     pad_tensor_for_block_quant,
 )
 from torch import Tensor
