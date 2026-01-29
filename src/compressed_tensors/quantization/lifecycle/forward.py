@@ -16,6 +16,7 @@ from functools import wraps
 from math import ceil
 
 import torch
+import torch.nn.functional as F
 from compressed_tensors.quantization.quant_args import (
     DynamicType,
     QuantizationArgs,
@@ -208,19 +209,16 @@ def _process_quantization(
     if args.strategy == QuantizationStrategy.BLOCK:
         original_shape = x.shape
         rows, cols = x.shape[-2], x.shape[-1]
+        original_rows, original_cols = rows, cols
         block_height, block_width = args.block_structure
 
-        # Ensure exact division (tensor dimensions must be divisible by block size)
-        if rows % block_height != 0:
-            raise ValueError(
-                f"Tensor height {rows} is not divisible by block_height {block_height}."
-                f" Block quantization requires exact division."
-            )
-        if cols % block_width != 0:
-            raise ValueError(
-                f"Tensor width {cols} is not divisible by block_width {block_width}. "
-                f"Block quantization requires exact division."
-            )
+        # Pad tensor if dimensions are not divisible by block size
+        pad_rows = (block_height - rows % block_height) % block_height
+        pad_cols = (block_width - cols % block_width) % block_width
+        if pad_rows > 0 or pad_cols > 0:
+            x = F.pad(x, (0, pad_cols, 0, pad_rows), mode="constant", value=0)
+            rows = rows + pad_rows
+            cols = cols + pad_cols
 
         # reshape into blocks and transpose to make each block contiguous
         num_rows_blocks = rows // block_height
@@ -255,8 +253,14 @@ def _process_quantization(
                 zero_point=zb,
                 global_scale=global_scale,
             )
-        # restore original shape
-        output = x_blocks.transpose(1, 2).reshape(original_shape)
+        # restore original shape (with padding)
+        padded_shape = list(original_shape)
+        padded_shape[-2] = rows
+        padded_shape[-1] = cols
+        output = x_blocks.transpose(1, 2).reshape(padded_shape)
+        # slice back to original dimensions if padding was applied
+        if pad_rows > 0 or pad_cols > 0:
+            output = output[..., :original_rows, :original_cols]
     elif args.strategy in (
         QuantizationStrategy.GROUP,
         QuantizationStrategy.TENSOR_GROUP,

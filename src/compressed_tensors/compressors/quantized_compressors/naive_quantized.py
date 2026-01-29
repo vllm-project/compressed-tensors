@@ -20,9 +20,13 @@ from compressed_tensors.compressors.quantized_compressors.base import (
     BaseQuantizationCompressor,
 )
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationArgs
+from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from compressed_tensors.quantization.utils import can_quantize
+from compressed_tensors.quantization.utils import (
+    calculate_block_padding,
+    can_quantize,
+    pad_tensor_for_block_quant,
+)
 from torch import Tensor
 
 
@@ -96,6 +100,59 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
                 "global_scale is not supported for the NaiveQuantizationCompressor"
             )
 
+        result = {}
+        original_shape = None
+
+        # For block quantization, pad weight to divisible dimensions
+        # This ensures proper scale alignment when layers are merged in vLLM
+        if (
+            quantization_args.strategy == QuantizationStrategy.BLOCK
+            and quantization_args.block_structure is not None
+        ):
+            block_structure = tuple(quantization_args.block_structure)
+            pad_rows, pad_cols = calculate_block_padding(weight.shape, block_structure)
+
+            if pad_rows > 0 or pad_cols > 0:
+                original_shape = weight.shape
+                weight, _ = pad_tensor_for_block_quant(weight, block_structure)
+
+                # Also pad the scale tensor to match the padded weight dimensions
+                # Scale shape is (num_row_blocks, num_col_blocks)
+                padded_rows, padded_cols = weight.shape[-2], weight.shape[-1]
+                block_height, block_width = block_structure
+                expected_scale_rows = padded_rows // block_height
+                expected_scale_cols = padded_cols // block_width
+
+                if scale.shape[0] < expected_scale_rows:
+                    scale_pad_rows = expected_scale_rows - scale.shape[0]
+                    scale = torch.nn.functional.pad(
+                        scale, (0, 0, 0, scale_pad_rows), mode="constant", value=0
+                    )
+                if scale.shape[1] < expected_scale_cols:
+                    scale_pad_cols = expected_scale_cols - scale.shape[1]
+                    scale = torch.nn.functional.pad(
+                        scale, (0, scale_pad_cols, 0, 0), mode="constant", value=0
+                    )
+
+                # Pad zero_point if present
+                if zero_point is not None:
+                    if zero_point.shape[0] < expected_scale_rows:
+                        zp_pad_rows = expected_scale_rows - zero_point.shape[0]
+                        zero_point = torch.nn.functional.pad(
+                            zero_point,
+                            (0, 0, 0, zp_pad_rows),
+                            mode="constant",
+                            value=0,
+                        )
+                    if zero_point.shape[1] < expected_scale_cols:
+                        zp_pad_cols = expected_scale_cols - zero_point.shape[1]
+                        zero_point = torch.nn.functional.pad(
+                            zero_point,
+                            (0, zp_pad_cols, 0, 0),
+                            mode="constant",
+                            value=0,
+                        )
+
         if can_quantize(weight, quantization_args):
             quantized_weight = quantize(
                 x=weight,
@@ -111,7 +168,16 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
         if device is not None:
             quantized_weight = quantized_weight.to(device)
 
-        return {"weight": quantized_weight}
+        result["weight"] = quantized_weight
+
+        # If weight was padded for block quantization, return the padded scale.
+        # We don't save weight_shape_original to avoid vLLM weight loading issues.
+        # The config.json should be updated with padded dims by the quant tool.
+        # Don't add zero_point here - base class _skip_zp() omits it for symmetric
+        if original_shape is not None:
+            result["weight_scale"] = scale
+
+        return result
 
     def decompress_weight(
         self,
@@ -129,9 +195,13 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
         scale = compressed_data["weight_scale"]
         zero_point = compressed_data.get("weight_zero_point", None)
         g_idx = compressed_data.get("weight_g_idx", None)
+
         decompressed_weight = dequantize(
             x_q=weight, scale=scale, zero_point=zero_point, g_idx=g_idx
         )
+
+        # Note: For block-quantized models with padding, the decompressed weight
+        # will remain padded. The config.json should reflect the padded dimensions.
 
         return decompressed_weight
 
