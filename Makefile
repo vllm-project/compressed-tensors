@@ -23,7 +23,7 @@ style:
 # run tests for the repo
 test:
 	@echo "Running python tests";
-	pytest tests;
+	pytest -ra tests;
 
 # creates wheel file
 build:
