@@ -121,10 +121,6 @@ def is_gpu_available():
         return False
 
 
-def _enough_gpus(num_required_gpus):
-    return torch.cuda.device_count() >= num_required_gpus
-
-
 def requires_gpu(test_case_or_num):
     """
     Pytest decorator to skip based on number of available GPUs.
