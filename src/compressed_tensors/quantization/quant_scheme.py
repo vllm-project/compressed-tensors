@@ -174,7 +174,6 @@ NVFP4 = dict(
         symmetric=True,
         dynamic=False,
         group_size=16,
-        observer="static_minmax",
         scale_dtype=FP8_E4M3_DATA.dtype,
         zp_dtype=FP8_E4M3_DATA.dtype,
     ),
