@@ -340,7 +340,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             QuantizationStrategy.TENSOR_GROUP,
         ):
             raise ValueError(
-                "Must use group quantization strategy in order to apply "
+                "Must use group or tensor_group quantization strategy in order to apply "
                 "activation ordering"
             )
 
