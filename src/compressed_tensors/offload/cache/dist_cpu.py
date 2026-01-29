@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
-
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.cpu import CPUCache
@@ -24,7 +22,7 @@ class DistributedCPUCache(CPUCache):
     Handles offloading and onloading tensors from/to cpu memory shared across processes
     """
 
-    offload_device: Optional[torch.device | str] = torch.device("cpu")
+    offload_device = torch.device("cpu")
 
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
         if tensor is None:
