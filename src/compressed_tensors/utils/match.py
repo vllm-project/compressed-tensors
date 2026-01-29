@@ -16,8 +16,7 @@ import logging
 import os
 import re
 from collections import defaultdict
-from collections.abc import Generator
-from typing import Iterable, List, Mapping, Optional, Tuple, Union
+from collections.abc import Generator, Iterable, Mapping
 
 import torch
 from compressed_tensors.utils.internal import InternalModule
@@ -42,11 +41,11 @@ FusedMappping = Mapping[str, Iterable[str]]
 
 def match_named_modules(
     model: torch.nn.Module,
-    targets: Optional[Iterable[str]],
-    ignore: Optional[Iterable[str]] = None,
-    fused: Optional[FusedMappping] = None,
+    targets: Iterable[str] | None,
+    ignore: Iterable[str] | None = None,
+    fused: FusedMappping | None = None,
     warn_on_fail: bool = False,
-) -> Generator[Tuple[str, torch.nn.Module]]:
+) -> Generator[tuple[str, torch.nn.Module], None, None]:
     """
     Yields names and modules which match `targets` but do not match `ignore`.
     Values are returned in order of `model.named_modules()`
@@ -81,11 +80,11 @@ def match_named_modules(
 
 def match_named_parameters(
     model: torch.nn.Module,
-    targets: Optional[Iterable[str]],
-    ignore: Optional[Iterable[str]] = None,
-    fused: Optional[FusedMappping] = None,
+    targets: Iterable[str] | None,
+    ignore: Iterable[str] | None = None,
+    fused: FusedMappping | None = None,
     warn_on_fail: bool = False,
-) -> Generator[Tuple[str, torch.nn.Module, torch.nn.Parameter]]:
+) -> Generator[tuple[str, torch.nn.Module, torch.nn.Parameter], None, None]:
     """
     Yields parameters which match `targets` but do not match `ignore`.
     Values are returned in order of `model.named_modules()`
@@ -123,8 +122,8 @@ def match_named_parameters(
 
 
 def match_targets(
-    name: str, module: torch.nn.Module, targets: Optional[Iterable[str]]
-) -> List[str]:
+    name: str, module: torch.nn.Module, targets: Iterable[str] | None
+) -> list[str]:
     """
     Returns the targets that match the given name and module.
 
@@ -188,10 +187,10 @@ def get_lowest_common_ancestor_name(names: list[str | None]) -> str:
 
 def match_modules_set(
     model: torch.nn.Module,
-    targets: Optional[Iterable[str]],
-    ignore: Optional[Iterable[str]] = None,
+    targets: Iterable[str] | None,
+    ignore: Iterable[str] | None = None,
     error_on_module_rematch: bool = True,
-) -> Generator[List[List[torch.nn.Module]]]:
+) -> Generator[list[list[torch.nn.Module]], None, None]:
     """
     Yields modules grouped by parent context.
 
@@ -353,9 +352,9 @@ def match_modules_set(
 def is_match(
     name: str,
     module: torch.nn.Module,
-    targets: Union[str, Iterable[str]],
-    ignore: Union[str, Iterable[str]] = tuple(),
-    fused: Optional[FusedMappping] = None,
+    targets: str | Iterable[str],
+    ignore: str | Iterable[str] = tuple(),
+    fused: FusedMappping | None = None,
 ) -> bool:
     """
     Returns true if either module name or module parent classes match against target
@@ -392,9 +391,9 @@ def is_match(
 
 def is_narrow_match(
     model: torch.nn.Module,
-    targets: Union[str, Iterable[str]],
+    targets: str | Iterable[str],
     name: str,
-    module: Optional[torch.nn.Module] = None,
+    module: torch.nn.Module | None = None,
 ) -> bool:
     """
     Checks if any of the targets narrowly match the module. A target narrowly matches
@@ -418,7 +417,7 @@ def is_narrow_match(
     )
 
 
-def _match_name(name: str, target: str, fused: Optional[FusedMappping] = None) -> bool:
+def _match_name(name: str, target: str, fused: FusedMappping | None = None) -> bool:
     """
     Returns true if target string begins with "re:" and regex matches or if target
     string exactly matches name. If the name refers to a fused module defined by vLLM,

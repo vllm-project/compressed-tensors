@@ -16,7 +16,7 @@ import json
 import os
 import re
 import struct
-from typing import Dict, Iterable, Optional, Tuple, Union
+from collections.abc import Iterable
 
 from torch import Tensor
 from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME, cached_file
@@ -34,13 +34,13 @@ __all__ = [
     "is_quantization_param",
 ]
 
-NestedStateDictType = Dict[str, Dict[str, Tensor]]
-WeightMappingType = Dict[str, str]
-NestedWeightMappingType = Dict[str, WeightMappingType]
+NestedStateDictType = dict[str, dict[str, Tensor]]
+WeightMappingType = dict[str, str]
+NestedWeightMappingType = dict[str, WeightMappingType]
 
 
 def get_safetensors_folder(
-    pretrained_model_name_or_path: str, cache_dir: Optional[str] = None
+    pretrained_model_name_or_path: str, cache_dir: str | None = None
 ) -> str:
     """
     Given a Hugging Face stub or a local path, return the folder containing the
@@ -81,7 +81,7 @@ def get_safetensors_folder(
     )
 
 
-def get_safetensors_header(safetensors_path: str) -> Dict[str, str]:
+def get_safetensors_header(safetensors_path: str) -> dict[str, str]:
     """
     Extracts the metadata from a safetensors file as JSON
 
@@ -96,7 +96,7 @@ def get_safetensors_header(safetensors_path: str) -> Dict[str, str]:
     return header
 
 
-def match_param_name(full_name: str, param_name: str) -> Optional[str]:
+def match_param_name(full_name: str, param_name: str) -> str | None:
     """
     Helper function extracting the uncompressed parameterized layer name from a
     compressed name. Assumes the compressed name was merged using merge_names.
@@ -125,7 +125,7 @@ def merge_names(parent_name: str, child_name: str) -> str:
     return parent_name + "." + child_name
 
 
-def get_weight_mappings(path_to_model_or_tensors: str) -> Dict[str, str]:
+def get_weight_mappings(path_to_model_or_tensors: str) -> dict[str, str]:
     """
     Takes a path to a state dict saved in safetensors format and returns a mapping
     from parameterized layer name to file location.
@@ -183,7 +183,7 @@ def get_nested_weight_mappings(
     model_path: str,
     params_to_nest: Iterable[str],
     return_unmatched_params: bool = False,
-) -> Union[NestedWeightMappingType, Tuple[NestedWeightMappingType, WeightMappingType]]:
+) -> NestedWeightMappingType | tuple[NestedWeightMappingType, WeightMappingType]:
     """
     Takes a path to a state dict saved in safetensors format and returns a nested
     mapping from uncompressed parameterized layer names to the file locations of
@@ -249,10 +249,10 @@ def get_nested_weight_mappings(
 
 
 def get_nested_mappings_from_state_dict(
-    state_dict: Dict[str, Tensor],
+    state_dict: dict[str, Tensor],
     params_to_nest: Iterable[str],
     return_unmatched_params: bool = False,
-) -> Union[NestedStateDictType, Tuple[NestedStateDictType, Dict[str, Tensor]]]:
+) -> NestedStateDictType | tuple[NestedStateDictType, dict[str, Tensor]]:
     """
     Takes a state dict and returns a nested mapping from uncompressed
     parameterized layer names to the value of
@@ -291,7 +291,7 @@ def get_nested_mappings_from_state_dict(
     return nested_weight_mappings
 
 
-def get_quantization_parameter_to_path_mapping(model_path: str) -> Dict[str, str]:
+def get_quantization_parameter_to_path_mapping(model_path: str) -> dict[str, str]:
     """
     Given a model path, return a mapping between a parameter and its path
     on disk
