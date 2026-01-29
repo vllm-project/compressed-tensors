@@ -33,26 +33,8 @@ OFFLOAD_DEVICE = torch.device("cpu")
 
 @pytest.mark.unit
 @requires_gpu
-def test_onloading():
-    _test_onloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
-
-
-@pytest.mark.unit
-@requires_gpu
-def test_garbage_collect():
-    _test_garbage_collect(OFFLOAD_DEVICE, ONLOAD_DEVICE)
-
-
-@pytest.mark.unit
-@requires_gpu
-def test_offload():
-    _test_offload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
-
-
-@pytest.mark.unit
-@requires_gpu
-def test_onload():
-    _test_onload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_delete():
+    _test_delete(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
@@ -69,8 +51,27 @@ def test_disable_onloading():
 
 @pytest.mark.unit
 @requires_gpu
-def test_delete():
-    _test_delete(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_garbage_collect():
+    _test_garbage_collect(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_offload():
+    _test_offload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+@requires_gpu
+def test_onload():
+    _test_onload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_onloading():
+    _test_onloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit

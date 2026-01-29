@@ -45,7 +45,6 @@ class DistributedCPUCache(CPUCache):
         dist.broadcast_object_list(broadcast_obj, src=0)
 
         if dist.get_rank() != 0:
-            print(broadcast_obj)
             # reconstruct tensor from shared memory file handle
             tensor = torch.empty_like(tensor, device=self.offload_device)
             tensor.set_(torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj))
