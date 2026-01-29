@@ -65,7 +65,6 @@ def test_serialization(type, randomize, model_apply, tmp_path, offload):
             assert torch.equal(param, saved_param)
 
 
-@pytest.mark.skip("Requires transformers#40673")
 @requires_gpu
 @pytest.mark.parametrize(
     "model_stub,exp_perplexity",
