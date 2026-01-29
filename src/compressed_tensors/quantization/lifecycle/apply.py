@@ -14,9 +14,6 @@
 
 from collections import OrderedDict
 from copy import deepcopy
-from typing import Dict, List, Optional
-from typing import OrderedDict as OrderedDictType
-from typing import Union
 
 import torch
 from compressed_tensors.config import CompressionFormat
@@ -60,8 +57,8 @@ from compressed_tensors.utils.safetensors_load import (
 
 def load_pretrained_quantization_parameters(
     model: Module,
-    model_name_or_path: Optional[str] = None,
-    load_weight_qparams: Optional[bool] = False,
+    model_name_or_path: str | None = None,
+    load_weight_qparams: bool = False,
 ):
     """
     Loads the quantization parameters (scale and zero point) from model_name_or_path to
@@ -110,7 +107,7 @@ def load_pretrained_quantization_parameters(
 
 
 def apply_quantization_config(
-    model: Module, config: Union[QuantizationConfig, None], run_compressed: bool = False
+    model: Module, config: QuantizationConfig | None, run_compressed: bool = False
 ):
     """
     Initializes the model for quantization in-place based on the given config.
@@ -207,7 +204,7 @@ def _apply_kv_cache_scheme(
 
 
 def _load_quant_args_from_mapping(
-    base_name: str, module_name: str, module: Module, mapping: Dict
+    base_name: str, module_name: str, module: Module, mapping: dict
 ):
     # TODO: skip update and just register here, don't do it in initialize
     """
@@ -251,8 +248,8 @@ def _load_quant_args_from_mapping(
 
 
 def _scheme_from_targets(
-    target_to_scheme: OrderedDictType[str, QuantizationScheme],
-    targets: List[str],
+    target_to_scheme: OrderedDict[str, QuantizationScheme],
+    targets: list[str],
     name: str,
 ) -> QuantizationScheme:
     # return the first scheme (the prioritized one,

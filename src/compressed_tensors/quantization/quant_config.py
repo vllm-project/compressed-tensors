@@ -13,7 +13,7 @@
 # limitations under the License.
 from collections import defaultdict
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Optional, Set, Union
+from typing import Annotated, Any
 
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
@@ -55,7 +55,7 @@ class QuantizationStatus(str, Enum):
     COMPRESSED = "compressed"
 
     @classmethod
-    def lifecycle_order(cls) -> List["QuantizationStatus"]:
+    def lifecycle_order(cls) -> list["QuantizationStatus"]:
         """
         :return: list of correct quantization lifecycle order
         """
@@ -131,13 +131,13 @@ class QuantizationConfig(BaseModel):
         are not quantized even if they match up with a target in config_groups
     """
 
-    config_groups: Dict[str, Union[QuantizationScheme, List[str]]]
+    config_groups: dict[str, QuantizationScheme | list[str]]
     quant_method: str = DEFAULT_QUANTIZATION_METHOD
-    kv_cache_scheme: Optional[QuantizationArgs] = None
+    kv_cache_scheme: QuantizationArgs | None = None
     format: str = DEFAULT_QUANTIZATION_FORMAT
     quantization_status: QuantizationStatus = QuantizationStatus.INITIALIZED
-    global_compression_ratio: Optional[float] = None
-    ignore: Optional[List[str]] = Field(default_factory=list)
+    global_compression_ratio: float | None = None
+    ignore: list[str] | None = Field(default_factory=list)
     # `run_compressed` is a dummy, unused arg for backwards compatibility
     # see: https://github.com/huggingface/transformers/pull/39324
     run_compressed: Annotated[Any, Field(exclude=True)] = None
@@ -161,8 +161,8 @@ class QuantizationConfig(BaseModel):
 
     @staticmethod
     def from_pretrained(
-        model: Module, format: Optional[Union[str, list]] = None
-    ) -> Optional["QuantizationConfig"]:
+        model: Module, format: str | list | None = None
+    ) -> "QuantizationConfig | None":
         """
         Converts a model into its associated QuantizationConfig based on the
         QuantizationScheme attached to each quantized module
@@ -177,21 +177,21 @@ class QuantizationConfig(BaseModel):
 
         # set of all quantization schemes
         # TODO: make quant config/scheme/args frozen/hashable and use a set
-        quantization_schemes: List[QuantizationScheme] = list()
+        quantization_schemes: list[QuantizationScheme] = list()
 
         # use any status from modules (in practice, use the last module)
         model_status = None
 
         # set of all quantized types
         # this is later used to create the ignore list
-        quantization_type_names: Set[str] = set()
+        quantization_type_names: set[str] = set()
 
         # maps types to names which are not quantized
         # this is later used to create the ignore list
-        ignore: Dict[str, List[str]] = defaultdict(list)
+        ignore: dict[str, list[str]] = defaultdict(list)
 
         # this keeps track of any kvcache schemes
-        kv_cache_scheme: Optional[QuantizationArgs] = None
+        kv_cache_scheme: QuantizationArgs | None = None
 
         for name, submodule in model.named_modules():
             layer_type: str = module_type(submodule)

@@ -35,8 +35,8 @@ class DeviceCache(OffloadCache):
         :param key: cpu tensor to onload
         :return: device tensor
         """
-        assert offloaded.device == self.onload_device
-        return offloaded
+        # move because onload_device might be modified after init
+        return send_tensors(offloaded, device=self.onload_device, copy=False)
 
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
         """
