@@ -334,8 +334,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             QuantizationStrategy.TENSOR_GROUP,
         ):
             raise ValueError(
-                "Must use group or tensor_group quantization strategy in order to apply "
-                "activation ordering"
+                "Must use group or tensor_group quantization strategy in "
+                "order to apply activation ordering"
             )
 
         # infer observer w.r.t. dynamic
