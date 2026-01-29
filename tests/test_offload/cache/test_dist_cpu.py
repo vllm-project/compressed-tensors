@@ -39,63 +39,63 @@ OFFLOAD_DEVICE = torch.device("cpu")
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
 @torchrun(world_size=2)
 def test_delete():
     _test_delete(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
 @torchrun(world_size=2)
 def test_disable_offloading():
     _test_disable_offloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
 @torchrun(world_size=2)
 def test_disable_onloading():
     _test_disable_onloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
 @torchrun(world_size=2)
 def test_garbage_collect():
     _test_garbage_collect(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
 @torchrun(world_size=2)
 def test_offload():
     _test_offload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
 @torchrun(world_size=2)
 def test_onload():
     _test_onload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
 @torchrun(world_size=2)
 def test_onloading():
     _test_onloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
 @torchrun(world_size=2)
 def test_shared_attributes():
     _test_shared_attributes(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
 @torchrun(world_size=2)
 def test_distributed_offload():
     cache = DistributedCPUCache(ONLOAD_DEVICE)
@@ -118,7 +118,7 @@ def test_distributed_offload():
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
 @torchrun(world_size=2)
 def test_shared_cpu_offload():
     cache = DistributedCPUCache(ONLOAD_DEVICE)
