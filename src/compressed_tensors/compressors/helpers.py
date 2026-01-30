@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import Dict, Generator, Optional, Tuple, Union
 
 import torch
 from compressed_tensors.compressors import BaseCompressor
@@ -32,9 +32,9 @@ __all__ = [
 
 
 def save_compressed(
-    tensors: Dict[str, Tensor],
-    save_path: Union[str, Path],
-    compression_format: Optional[CompressionFormat] = None,
+    tensors: dict[str, Tensor],
+    save_path: str | Path,
+    compression_format: CompressionFormat | None = None,
 ):
     """
     Save compressed tensors to disk. If tensors are not compressed,
@@ -68,10 +68,10 @@ def save_compressed(
 
 
 def load_compressed(
-    compressed_tensors: Union[str, Path],
+    compressed_tensors: str | Path,
     compression_config: SparsityCompressionConfig = None,
-    device: Optional[str] = "cpu",
-) -> Generator[Tuple[str, Tensor], None, None]:
+    device: str | None = "cpu",
+) -> Generator[tuple[str, Tensor], None, None]:
     """
     Load compressed tensors from disk.
     If tensors are not compressed, load them as is.
@@ -111,7 +111,7 @@ def load_compressed(
 def save_compressed_model(
     model: torch.nn.Module,
     filename: str,
-    compression_format: Optional[CompressionFormat] = None,
+    compression_format: CompressionFormat | None = None,
     force_contiguous: bool = True,
 ):
     """

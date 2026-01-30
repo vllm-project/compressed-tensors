@@ -14,7 +14,7 @@
 
 import logging
 import warnings
-from typing import Dict, Generator, Tuple
+from collections.abc import Generator
 
 import numpy as np
 import torch
@@ -49,7 +49,7 @@ class Marlin24Compressor(BaseCompressor):
 
     @staticmethod
     def validate_quant_compatability(
-        names_to_scheme: Dict[str, QuantizationScheme],
+        names_to_scheme: dict[str, QuantizationScheme],
     ) -> bool:
         """
         Checks if every quantized module in the model is compatible with Marlin24
@@ -115,7 +115,7 @@ class Marlin24Compressor(BaseCompressor):
         return True
 
     @property
-    def compression_param_names(self) -> Tuple[str]:
+    def compression_param_names(self) -> tuple[str, ...]:
         """
         Returns a tuple of compression parameter names introduced by
         the compressor during compression
@@ -124,11 +124,11 @@ class Marlin24Compressor(BaseCompressor):
 
     def compress(
         self,
-        model_state: Dict[str, Tensor],
-        names_to_scheme: Dict[str, QuantizationScheme],
+        model_state: dict[str, Tensor],
+        names_to_scheme: dict[str, QuantizationScheme],
         show_progress: bool = False,
         **kwargs,
-    ) -> Dict[str, Tensor]:
+    ) -> dict[str, Tensor]:
         """
         Compresses a quantized state_dict with 2:4 sparsity structure for inference
         with the Marlin24 kernel
@@ -204,7 +204,7 @@ class Marlin24Compressor(BaseCompressor):
 
     def decompress(
         self, path_to_model_or_tensors: str, device: str = "cpu", **kwargs
-    ) -> Generator[Tuple[str, Tensor], None, None]:
+    ) -> Generator[tuple[str, Tensor], None, None]:
         raise NotImplementedError(
             "Decompression is not implemented for the Marlin24 Compressor."
         )

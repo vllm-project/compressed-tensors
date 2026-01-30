@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, Dict, Generator, Tuple
+from collections.abc import Generator
+from typing import TYPE_CHECKING
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
@@ -31,34 +32,34 @@ class DenseCompressor(BaseCompressor):
     """
 
     @property
-    def compression_param_names(self) -> Tuple[str]:
+    def compression_param_names(self) -> tuple[str, ...]:
         """
         Returns a tuple of compression parameter names introduced by
         the compressor during compression
         """
         return ()
 
-    def compress(self, model_state: Dict[str, Tensor], **kwargs) -> Dict[str, Tensor]:
+    def compress(self, model_state: dict[str, Tensor], **kwargs) -> dict[str, Tensor]:
         return model_state
 
     def decompress(
         self, path_to_model_or_tensors: str, device: str = "cpu", **kwargs
-    ) -> Generator[Tuple[str, Tensor], None, None]:
+    ) -> Generator[tuple[str, Tensor], None, None]:
         return iter([])
 
     def decompress_from_state_dict(
         self,
-        state_dict: Dict[str, Tensor],
-    ) -> Generator[Tuple[str, Dict[str, Tensor]], None, None]:
+        state_dict: dict[str, Tensor],
+    ) -> Generator[tuple[str, dict[str, Tensor]], None, None]:
         for key, value in state_dict.items():
             yield key, value
 
     def decompress_module_from_state_dict(
         self,
         prefix: str,
-        state_dict: Dict[str, torch.Tensor],
+        state_dict: dict[str, torch.Tensor],
         scheme: "QuantizationScheme",
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """
         This function is implemented as a workaround because of how
         `ModelCompressor.quantization_compressor` can be set to either

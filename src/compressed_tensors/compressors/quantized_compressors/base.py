@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import logging
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any, Dict, Generator, Tuple, Union
+from typing import Any
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
@@ -68,12 +69,12 @@ class BaseQuantizationCompressor(BaseCompressor):
 
     def compress(
         self,
-        model_state: Dict[str, Tensor],
-        names_to_scheme: Dict[str, QuantizationScheme],
+        model_state: dict[str, Tensor],
+        names_to_scheme: dict[str, QuantizationScheme],
         show_progress: bool = False,
         compression_device: str = "cpu",
         **kwargs,
-    ) -> Dict[str, Tensor]:
+    ) -> dict[str, Tensor]:
         """
         Compresses a dense state dict
 
@@ -141,7 +142,7 @@ class BaseQuantizationCompressor(BaseCompressor):
         return isinstance(self, NVFP4PackedCompressor)
 
     def _skip_zp(
-        self, name: str, names_to_scheme: Dict[str, QuantizationScheme]
+        self, name: str, names_to_scheme: dict[str, QuantizationScheme]
     ) -> bool:
         from compressed_tensors.compressors import PackedQuantizationCompressor
 
@@ -169,10 +170,10 @@ class BaseQuantizationCompressor(BaseCompressor):
 
     def decompress(
         self,
-        path_to_model_or_tensors: Union[str, Path, Dict[str, Any]],
-        names_to_scheme: Dict[str, QuantizationScheme],
+        path_to_model_or_tensors: str | Path | dict[str, Any],
+        names_to_scheme: dict[str, QuantizationScheme],
         device: str = "cpu",
-    ) -> Generator[Tuple[str, Tensor], None, None]:
+    ) -> Generator[tuple[str, Tensor], None, None]:
         """
         Reads a compressed state dict located at path_to_model_or_tensors
         and returns a generator for sequentially decompressing back to a
@@ -196,8 +197,8 @@ class BaseQuantizationCompressor(BaseCompressor):
 
     def _decompress_from_path(
         self,
-        path_to_model: Union[str, Path, Dict[str, Any]],
-        names_to_scheme: Dict[str, QuantizationScheme],
+        path_to_model: str | Path | dict[str, Any],
+        names_to_scheme: dict[str, QuantizationScheme],
         device: str,
     ):
         weight_mappings = get_nested_weight_mappings(
@@ -219,9 +220,9 @@ class BaseQuantizationCompressor(BaseCompressor):
 
     def decompress_from_state_dict(
         self,
-        state_dict: Dict[str, torch.Tensor],
-        names_to_scheme: Dict[str, QuantizationScheme],
-    ) -> Generator[Tuple[str, Dict[str, torch.Tensor]], None, None]:
+        state_dict: dict[str, torch.Tensor],
+        names_to_scheme: dict[str, QuantizationScheme],
+    ) -> Generator[tuple[str, dict[str, torch.Tensor]], None, None]:
         weight_mappings = get_nested_mappings_from_state_dict(
             state_dict, self.compression_param_names
         )
@@ -239,9 +240,9 @@ class BaseQuantizationCompressor(BaseCompressor):
     def decompress_module_from_state_dict(
         self,
         prefix: str,
-        state_dict: Dict[str, torch.Tensor],
+        state_dict: dict[str, torch.Tensor],
         scheme: QuantizationScheme,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """
         Only used by in-memory decompression pathways to decompress the parameters of
         one module
