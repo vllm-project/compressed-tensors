@@ -26,7 +26,7 @@ def _test_onloading(offload_device: str, onload_device: str):
     onloaded = cache["weight"]
 
     assert type(onloaded) is type(tensor)
-    assert torch.equal(onloaded.to(tensor.device), tensor)
+    assert torch.equal(onloaded, tensor.to(onloaded))
 
 
 def _test_garbage_collect(offload_device: str, onload_device: str):
@@ -45,7 +45,7 @@ def _test_offload(offload_device: str, onload_device: str):
     tensor = torch.ones(10, device=onload_device)
     offloaded = cache.offload(tensor)
     assert offloaded.device == offload_device
-    assert torch.equal(offloaded.to(onload_device), tensor)
+    assert torch.equal(offloaded, tensor.to(offloaded))
 
 
 def _test_onload(offload_device: str, onload_device: str):
@@ -53,7 +53,7 @@ def _test_onload(offload_device: str, onload_device: str):
     tensor = torch.ones(10, device=onload_device)
     onloaded = cache.onload(cache.offload(tensor))
     assert onloaded.device == onload_device
-    assert torch.equal(onloaded, onloaded)
+    assert torch.equal(onloaded, tensor.to(onloaded))
 
 
 def _test_disable_offloading(offload_device: str, onload_device: str):
