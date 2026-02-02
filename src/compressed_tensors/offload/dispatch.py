@@ -18,6 +18,7 @@ from functools import partial
 from typing import Literal, TypeVar
 
 import torch
+import torch.distributed as dist
 from compressed_tensors.offload.module import offload_module, remove_module_offload
 from compressed_tensors.offload.utils import get_module_sizes
 from compressed_tensors.utils import getattr_chain
@@ -171,6 +172,14 @@ def get_device_memory() -> dict[torch.device, int]:
     """
     if not torch.cuda.is_available():
         return dict()
+
+    if dist.is_available() and dist.is_initialized():
+        logger.info("Detected distributed context. Dispatching to local rank gpu")
+        return {
+            torch.device("cuda"): torch.cuda.get_device_properties(
+                dist.get_rank()
+            ).total_memory
+        }
 
     return {
         # TODO: extend to xpu, ect.

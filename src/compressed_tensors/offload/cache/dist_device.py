@@ -13,35 +13,36 @@
 # limitations under the License.
 
 import torch
-from compressed_tensors.offload.cache.base import OffloadCache
-from compressed_tensors.offload.utils import send_tensors
+import torch.distributed as dist
+from compressed_tensors.offload.cache.device import DeviceCache
+from torch._prims_common import DeviceLikeType
 
 
-class DeviceCache(OffloadCache):
+class DistributedDeviceCache(DeviceCache):
     """
     Handles offloading and onloading tensors from/to device memory. Onloading
     tensors is a no-op (except when in a align_module_device context).
     """
 
-    def __init__(self, onload_device: torch.device | str):
+    def __init__(self, onload_device: DeviceLikeType):
         super().__init__(onload_device)
         self.offload_device = self.onload_device
 
-    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor:
-        """
-        No op, offloaded tensors are already on device
-
-        :param key: cpu tensor to onload
-        :return: device tensor
-        """
-        # move because onload_device might be modified after init
-        return send_tensors(offloaded, device=self.onload_device, copy=False)
-
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
         """
-        Offload a tensor from any device to a device
+        TODO
 
         :param value: tensor on any device
         :return: tensor on cpu
         """
-        return send_tensors(tensor, device=self.offload_device, copy=False)
+        if tensor is None:
+            return None
+
+        if dist.get_rank() == 0:
+            tensor = super().offload(tensor)
+
+        else:
+            tensor = torch.empty_like(tensor, device=self.offload_device)
+
+        dist.broadcast(tensor, src=0)
+        return tensor
