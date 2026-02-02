@@ -41,8 +41,8 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
             # We're running in a torchrun subprocess:
             # init distributed and run test func
             if "TORCHELASTIC_RUN_ID" in os.environ:
-                local_rank = int(os.environ["LOCAL_RANK"])
                 rank = int(os.environ["RANK"])
+                local_rank = int(os.environ["LOCAL_RANK"])
 
                 torch.cuda.set_device(local_rank)
                 dist.init_process_group(
@@ -50,6 +50,7 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
                     init_method="env://",
                     rank=rank,
                     world_size=world_size,
+                    device_id=local_rank,
                 )
                 dist.barrier()
 
