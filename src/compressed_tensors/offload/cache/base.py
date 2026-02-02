@@ -15,7 +15,7 @@
 import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import MutableMapping
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 
 import torch
 import torch.distributed as dist
@@ -41,7 +41,7 @@ class OffloadCache(MutableMapping, ABC):
     """
 
     onload_device: torch.device | str
-    offload_device: Optional[torch.device | str]
+    offload_device: torch.device | str | None
 
     # global flags for disabling
     offloading_disabled: ClassVar[bool] = False
@@ -56,7 +56,7 @@ class OffloadCache(MutableMapping, ABC):
     @classmethod
     def cls_from_device(
         cls,
-        device: Optional[torch.device | str | Literal["disk"]] = None,
+        device: torch.device | str | Literal["disk"] | None = None,
     ) -> type["OffloadCache"]:
         """
         Get the subclass which implements offloading for the given `offload_device`.

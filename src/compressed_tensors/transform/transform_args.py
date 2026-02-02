@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from enum import Enum
-from typing import List
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -67,10 +66,10 @@ class TransformArgs(BaseModel, use_enum_values=True):
     :param ignore: any modules which should be ignored from the targets list
     """
 
-    targets: List[str]
+    targets: list[str]
     location: TransformLocation
     inverse: bool = Field(default=False)
-    ignore: List[str] = Field(default_factory=list)
+    ignore: list[str] = Field(default_factory=list)
 
     @field_validator("targets", "ignore", mode="before")
     @classmethod
