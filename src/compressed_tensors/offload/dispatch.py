@@ -95,8 +95,9 @@ def dispatch_model(
             extra_memory = (
                 1  # batch_size
                 * 2048  # seq_len
-                * getattr_chain(model, "_config.hidden_dim", 256)
+                * getattr_chain(model, "config.intermediate_size", 256)
                 * getattr(model, "dtype", torch.bfloat16).itemsize
+                + 1e9  # extra memory for fragmentation, kv cache, ect.
             )
         else:
             extra_memory = 0
@@ -134,7 +135,7 @@ def dispatch_model(
         largest_offloaded_module = max(size for _, size in sizes[len(dispatch) :])
 
         # pop off modules until all offloaded modules can fit in last device
-        while largest_offloaded_module > device_memory[last_device] - extra_memory:
+        while largest_offloaded_module + extra_memory > device_memory[last_device]:
             if len(dispatch) <= 0:
                 raise ValueError(
                     f"Cannot fit no_split module of size {largest_offloaded_module} "
@@ -149,7 +150,6 @@ def dispatch_model(
         for module, _ in list(sizes[len(dispatch) :]):
             dispatch.append((module, last_device, "cpu"))
 
-        extra_memory = 0
         logger.warning("Forced to offload modules due to insufficient gpu resources")
 
     # dispatch
