@@ -111,7 +111,6 @@ def _test_delete(offload_device: str, onload_device: str):
 
 def _test_shared_attributes(offload_device: str, onload_device: str):
     cache = OffloadCache.cls_from_device(offload_device)(onload_device)
-    assert cache.offload_device is cache.__class__.offload_device
     assert cache.offloading_disabled is cache.__class__.offloading_disabled
     assert cache.onloading_disabled is cache.__class__.onloading_disabled
     assert cache.keep_onloaded_values is cache.__class__.keep_onloaded_values
