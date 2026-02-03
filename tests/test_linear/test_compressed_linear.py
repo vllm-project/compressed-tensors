@@ -14,7 +14,6 @@
 
 import pytest
 import torch
-from compressed_tensors.linear.compressed_linear import CompressedLinear
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -31,6 +30,7 @@ def models_with_linear_quantized():
 def test_model_forward_pass(model_stub):
     """
     Test that AutoModelForCausalLM can process tokenized inputs and generate output.
+    Models are automatically decompressed after loading.
     """
     # Load model
     model = AutoModelForCausalLM.from_pretrained(
@@ -56,43 +56,3 @@ def test_model_forward_pass(model_stub):
 
     # Ensure output is not empty
     assert outputs is not None, "Model forward pass failed, no output generated."
-
-
-@pytest.mark.parametrize("model_stub", models_with_linear_quantized())
-def test_compressed_linear_from_linear_usage(monkeypatch, model_stub):
-    """
-    Test that CompressedLinear.from_linear is used for creating
-    CompressedLinear instances.
-    """
-    call_count = 0
-
-    original_from_linear = CompressedLinear.from_linear
-
-    def fake_from_linear(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        return original_from_linear(*args, **kwargs)
-
-    # Replace the original from_linear with our fake to count its invocations
-    monkeypatch.setattr(CompressedLinear, "from_linear", fake_from_linear)
-
-    # Load model to trigger the creation of CompressedLinear instances
-    model = AutoModelForCausalLM.from_pretrained(
-        model_stub, torch_dtype="auto", device_map="auto"
-    )
-
-    # Known quantized layers that should be
-    # instances of CompressedLinear
-    # (This is not an exhaustive list)
-    quantized_layers = {"q_proj", "k_proj", "v_proj"}
-
-    # Check that the expected layers are instances of CompressedLinear
-    for layer_name, module in model.named_modules():
-        if any(layer in layer_name for layer in quantized_layers):
-            assert isinstance(
-                module, CompressedLinear
-            ), f"{layer_name} should be an instance of CompressedLinear"
-            f"but got {type(module).__name__}"
-
-    assert call_count > 0, "`CompressedLinear.from_linear` was not used during the "
-    "creation of CompressedLinear instances."
