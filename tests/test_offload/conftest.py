@@ -23,6 +23,13 @@ import torch
 import torch.distributed as dist
 
 
+def assert_device_equal(device_a: torch.device, device_b: torch.device):
+    cur_index = torch.cuda.current_device()
+    a_index = cur_index if device_a.index is None else device_a.index
+    b_index = cur_index if device_b.index is None else device_b.index
+    assert device_a.type == device_b.type and a_index == b_index
+
+
 def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Test a function within parallel `torchrun` subprocesses, each running with `pytest`
