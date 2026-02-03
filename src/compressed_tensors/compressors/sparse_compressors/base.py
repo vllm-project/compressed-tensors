@@ -28,7 +28,7 @@ class BaseSparseCompressor(BaseCompressor):
     Compressors support compressing/decompressing a full module state dict or a single
     quantized PyTorch leaf module.
 
-    Model Load Lifecycle (run_compressed=False):
+    Model Load Lifecycle:
         - ModelCompressor.decompress()
             - apply_quantization_config()
             - BaseSparseCompressor.decompress()
@@ -38,16 +38,6 @@ class BaseSparseCompressor(BaseCompressor):
         - ModelCompressor.compress()
             - BaseSparseCompressor.compress()
                 - BaseSparseCompressor.compress_weight()
-
-    Module Lifecycle (run_compressed=True):
-        - apply_quantization_config()
-        - compressed_module = CompressedLinear(module)
-            - initialize_module_for_quantization()
-            - BaseSparseCompressor.compression_param_info()
-            - register_parameters()
-        - compressed_module.forward()
-            - compressed_module.decompress()
-
 
     :param config: config specifying compression parameters
     """

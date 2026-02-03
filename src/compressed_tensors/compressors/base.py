@@ -24,7 +24,7 @@ class BaseCompressor(RegistryMixin, ABC):
     Compressors support compressing/decompressing a full module state dict or a single
     quantized PyTorch leaf module.
 
-    Model Load Lifecycle (run_compressed=False):
+    Model Load Lifecycle:
         - ModelCompressor.decompress()
             - apply_quantization_config()
             - BaseCompressor.decompress()
@@ -32,17 +32,6 @@ class BaseCompressor(RegistryMixin, ABC):
     Model Save Lifecycle:
         - ModelCompressor.compress()
             - BaseCompressor.compress()
-
-
-    Module Lifecycle (run_compressed=True):
-        - apply_quantization_config()
-        - compressed_module = CompressedLinear(module)
-            - initialize_module_for_quantization()
-            - BaseCompressor.compression_param_info()
-            - register_parameters()
-        - compressed_module.forward()
-            -compressed_module.decompress()
-
 
     :param config: config specifying compression parameters
     """

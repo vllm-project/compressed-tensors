@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import warnings
 from collections import OrderedDict
 from copy import deepcopy
 
 import torch
-from compressed_tensors.config import CompressionFormat
 from compressed_tensors.modeling import (
     initialize_hooked_attention,
     initialize_hooked_kv_cache,
@@ -20,7 +20,6 @@ from compressed_tensors.quantization.quant_config import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
-from compressed_tensors.utils.helpers import replace_module
 from compressed_tensors.utils.match import (
     is_narrow_match,
     match_named_modules,
@@ -100,14 +99,25 @@ def apply_quantization_config(
 ):
     """
     Initializes the model for quantization in-place based on the given config.
-    Optionally coverts quantizable modules to compressed_linear modules
 
     :param model: model to apply quantization config to
     :param config: quantization config
-    :param run_compressed: Whether the model will be run in compressed mode or
-        decompressed fully on load
+    :param run_compressed: Deprecated. This parameter is ignored.
+        The CompressedLinear pathway has been removed.
+        Call `model.dequantize()` after loading to decompress.
     """
-    from compressed_tensors.linear.compressed_linear import CompressedLinear
+    # Deprecation warning - don't error to avoid breaking existing code
+    # Use FutureWarning instead of DeprecationWarning so users see it by default
+    if run_compressed:
+        warnings.warn(
+            "`run_compressed=True` is deprecated and will be ignored. "
+            "The CompressedLinear pathway has been removed. "
+            "Models will be decompressed after weight loading. "
+            "For manual decompression, use: "
+            "`ModelCompressor.from_pretrained_model(model).decompress_model(model)`",
+            FutureWarning,
+            stacklevel=2,
+        )
 
     config = deepcopy(config)
     if config is None:  # see PR #180
@@ -140,33 +150,58 @@ def apply_quantization_config(
         # target matched - add layer and scheme to target list
         submodule.quantization_scheme = scheme
 
-        # replace with run compressed if applicable
-        # FUTURE: move this to model compressor
-        if (
-            run_compressed
-            and isinstance(submodule, torch.nn.Linear)
-            and config.format != CompressionFormat.dense.value
+        if is_attention_module(submodule) and is_narrow_match(
+            model, scheme.targets, name
         ):
-            # TODO: expand to more module types
-            compressed_linear = CompressedLinear.from_linear(
-                submodule,
-                quantization_scheme=scheme,
-                quantization_format=config.format,
-            )
-            replace_module(model, name, compressed_linear)
+            initialize_hooked_attention(model, submodule)
 
-        else:
-            if is_attention_module(submodule) and is_narrow_match(
-                model, scheme.targets, name
-            ):
-                initialize_hooked_attention(model, submodule)
-
-            initialize_module_for_quantization(
-                submodule,
-                force_zero_point=force_zero_point,
-            )
+        initialize_module_for_quantization(
+            submodule,
+            force_zero_point=force_zero_point,
+        )
 
         submodule.quantization_status = config.quantization_status
+
+    # Register a load_state_dict post-hook to decompress after weights are loaded
+    # This ensures decompression happens at the right time in the HF load flow:
+    # 1. Model __init__ runs (post_init already called)
+    # 2. apply_quantization_config called (we register hook here)
+    # 3. Weights loaded via load_state_dict
+    # 4. Our hook fires -> decompression happens
+    #
+    # Register hook when:
+    # - config status is COMPRESSED (weights stored compressed), OR
+    # - run_compressed=True was requested (indicates caller expects compressed behavior)
+    should_register_hook = (
+        config.quantization_status == QuantizationStatus.COMPRESSED or run_compressed
+    )
+    if should_register_hook and not getattr(
+        model, "_ct_decompress_hook_registered", False
+    ):
+
+        def decompress_after_load(module, incompatible_keys):
+            # Only decompress once
+            if getattr(module, "_ct_decompressed", False):
+                return
+
+            from compressed_tensors.compressors import ModelCompressor
+
+            compressor = ModelCompressor.from_pretrained_model(module)
+            if compressor is not None:
+                compressor.decompress_model(module)
+                # Only mark as decompressed if we actually decompressed
+                module._ct_decompressed = True
+
+            # Remove the hook after first invocation (cleanup for long-lived processes)
+            handle = getattr(module, "_ct_decompress_hook_handle", None)
+            if handle is not None:
+                handle.remove()
+                module._ct_decompress_hook_handle = None
+
+        # Register the hook - it will fire after load_state_dict completes
+        hook_handle = model.register_load_state_dict_post_hook(decompress_after_load)
+        model._ct_decompress_hook_registered = True
+        model._ct_decompress_hook_handle = hook_handle
 
 
 def _apply_kv_cache_scheme(
