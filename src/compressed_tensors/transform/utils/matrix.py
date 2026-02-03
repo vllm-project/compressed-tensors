@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
-
 import torch
 from compressed_tensors.transform import TransformLocation
 
@@ -24,7 +22,7 @@ __all__ = ["get_transform_size", "apply_transform_weight"]
 def get_transform_size(
     module: torch.nn.Module,
     location: TransformLocation,
-    head_dim: Optional[int] = None,
+    head_dim: int | None = None,
 ) -> int:
     """
     Determine the size of a transform matrix given its location on the module

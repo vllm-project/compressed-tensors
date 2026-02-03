@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import contextlib
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
@@ -146,7 +146,7 @@ def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.M
 @contextlib.contextmanager
 def align_modules(
     modules: torch.nn.Module | Iterable[torch.nn.Module],
-    execution_device: Optional[torch.device] = None,
+    execution_device: torch.device | None = None,
 ):
     """
     Context manager for onloading modules to a device, and disabling onload and offload
@@ -163,7 +163,7 @@ def align_modules(
 
 @contextlib.contextmanager
 def align_module_device(
-    module: torch.nn.Module, execution_device: Optional[torch.device] = None
+    module: torch.nn.Module, execution_device: torch.device | None = None
 ):
     """
     Context manager that moves a module's parameters to the specified execution device.
