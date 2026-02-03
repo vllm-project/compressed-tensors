@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional
-
 import torch
 from compressed_tensors.transform import TransformArgs, TransformScheme
 from compressed_tensors.transform.factory.base import TransformBase, TransformFactory
@@ -38,7 +36,7 @@ class HadamardFactory(TransformFactory):
     :param seed: random seed used to transform weight randomization
     """
 
-    def __init__(self, name: str, scheme: TransformScheme, seed: Optional[int] = None):
+    def __init__(self, name: str, scheme: TransformScheme, seed: int | None = None):
         super().__init__(name, scheme, seed)
         self.weights = ParameterizedDefaultDict(self._create_weight)
         self.perms = ParameterizedDefaultDict(self._create_permutation)
@@ -83,12 +81,12 @@ class HadamardFactory(TransformFactory):
 
 
 class HadamardTransform(TransformBase):
-    _dynamic_tied_weights_keys: List[str] = ["weight", "perm"]
+    _dynamic_tied_weights_keys: list[str] = ["weight", "perm"]
 
     def __init__(
         self,
         weight: Parameter,
-        perm: Optional[Parameter],
+        perm: Parameter | None,
         scheme: TransformScheme,
         args: TransformArgs,
         module_type: type[torch.nn.Module],

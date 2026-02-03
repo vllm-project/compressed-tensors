@@ -14,7 +14,6 @@
 
 import math
 from pathlib import Path
-from typing import Optional
 
 import torch
 from safetensors import safe_open
@@ -66,7 +65,7 @@ def random_hadamard_matrix(
     size: int,
     dtype: torch.dtype = torch.bfloat16,
     device: torch.device = torch.device("cpu"),
-    gen: Optional[torch.Generator] = None,
+    gen: torch.Generator | None = None,
 ) -> torch.Tensor:
     """
     Produces a randomly generated Hadamard matrix. Differs from
@@ -104,7 +103,7 @@ def _fetch_hadamard_divisor(
     dtype: torch.dtype,
     device: torch.device = torch.device("cpu"),
     file_path: str = REPO_PATH,
-) -> Optional[torch.Tensor]:
+) -> torch.Tensor | None:
     """
     Fetch a known hadamard matrix from the given file path. The returned matrix will
     be of of size `k` such that `n / k` is a power of two. Return None if no such
