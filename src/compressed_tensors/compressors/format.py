@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import List, Optional
-
 import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import QuantizationScheme
@@ -15,7 +13,7 @@ __all__ = ["infer_model_format", "infer_module_format"]
 
 # Priority order for compression format matching
 # More specific formats should come before more general ones
-COMPRESSION_FORMAT_PRIORITY: List[CompressionFormat] = [
+COMPRESSION_FORMAT_PRIORITY: list[CompressionFormat] = [
     CompressionFormat.mxfp4_pack_quantized,
     CompressionFormat.nvfp4_pack_quantized,
     CompressionFormat.pack_quantized,
@@ -28,7 +26,7 @@ COMPRESSION_FORMAT_PRIORITY: List[CompressionFormat] = [
 
 def infer_model_format(
     model: torch.nn.Module,
-    force_compression_format: Optional[str] = None,
+    force_compression_format: str | None = None,
 ) -> CompressionFormat:
     """
     Infers the quantization format for a model based on its modules
