@@ -84,6 +84,7 @@ def calculate_qparams(
     # 0.0 must always be representable within the quantized range
     min_vals = torch.min(min_vals, torch.zeros_like(min_vals))
     max_vals = torch.max(max_vals, torch.zeros_like(max_vals))
+    observed_dtype = min_vals.dtype
 
     device = min_vals.device
 
@@ -125,16 +126,8 @@ def calculate_qparams(
 
     # 5. Update any 0s with small values to
     # prevent div by 0
-    eps = _get_dtype_eps(
-        dtype=quantization_args.scale_dtype
-        if quantization_args.scale_dtype is not None
-        else scales.dtype
-    )
-    scales = torch.where(
-        scales == 0,
-        torch.tensor(eps, dtype=scales.dtype, device=device),
-        scales,
-    )
+    scale_dtype = quantization_args.scale_dtype or observed_dtype
+    _clamp_scale_values(scales, scale_dtype)
 
     # 6. Round the zp to zp_dtype
     zero_points = round_to_quantized_type_dtype(
@@ -435,6 +428,7 @@ def generate_gparam(
     max_vals = torch.max(updated_max_val, torch.zeros_like(updated_max_val))
     max_val_pos = torch.max(torch.abs(min_vals), torch.abs(max_vals))
     global_scale = scale_data.max * quant_data.max / max_val_pos
+    global_scale = _clamp_scale_values(global_scale)
     return global_scale.to(dtype).reshape([1])
 
 
@@ -461,12 +455,16 @@ def strategy_cdiv(
     return dividend
 
 
-def _get_dtype_eps(dtype: torch.dtype) -> float:
-    if dtype == FP8_E4M3_DATA.dtype:
-        return 0.125
-    elif dtype == FP4_E2M1_DATA.dtype:
-        return 0.25
-    elif torch.is_floating_point(torch.tensor([], dtype=dtype)):
-        return torch.finfo(dtype).eps
-    else:
-        return 1
+def _clamp_scale_values(tensor: torch.Tensor, dtype: torch.dtype) -> float:
+    # note that scales always have a torch dtype (don't support FP4 scales atm)
+    assert dtype.is_floating_point, "Non-floating point dtypes are not supported"
+    info = torch.finfo(dtype)
+    tensor = torch.nan_to_num(
+        tensor,
+        nan=info.eps,
+        posinf=info.max,
+        neginf=info.min,
+    )
+    tensor = torch.where(tensor == 0, info.eps, tensor)
+
+    return tensor
