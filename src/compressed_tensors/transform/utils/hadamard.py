@@ -147,6 +147,6 @@ def _matmul_hadU(X: torch.Tensor) -> torch.Tensor:
     # Use bcast instead
     a = hadK.reshape(1, K, K).to(input) 
     b = input.reshape(1, K, -1)
-    input = torch.matmul(a, b)
+    input = a @ b
     # normalize
     return input.view(X.shape)
