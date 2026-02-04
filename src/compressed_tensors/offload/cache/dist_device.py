@@ -15,25 +15,23 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.device import DeviceCache
-from torch._prims_common import DeviceLikeType
 
 
 class DistributedDeviceCache(DeviceCache):
     """
     Handles offloading and onloading tensors from/to device memory. Onloading
-    tensors is a no-op (except when in a align_module_device context).
-    """
+    tensors is typically a no-op (except onload device has been modified).
 
-    def __init__(self, onload_device: DeviceLikeType):
-        super().__init__(onload_device)
-        self.offload_device = self.onload_device
+    The device offload is not shared between ranks. When dispatching with this cache,
+    the model is replicated across devices.
+    """
 
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
         """
-        TODO
+        Move a tensor to device, then broadcast data to all other ranks
 
         :param value: tensor on any device
-        :return: tensor on cpu
+        :return: tensor on device
         """
         if tensor is None:
             return None
