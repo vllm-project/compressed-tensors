@@ -29,7 +29,7 @@ class DeviceCache(OffloadCache):
     tensors is typically a no-op (except onload device has been modified).
     """
 
-    def __init__(self, onload_device: DeviceLikeType):
+    def __init__(self, onload_device: "DeviceLikeType"):
         super().__init__(onload_device)
         self.offload_device = self.onload_device
 
