@@ -32,6 +32,7 @@ _atol = 1e-1  # bfloat16 is low precision for large matrices
 @pytest.mark.parametrize("size", _sizes_to_test)
 def test_random_hadamard_matrix_compliant(size):
     # (H / sqrt(n))(H.T / sqrt(n)) == I
+    # fails if not float32 / fails with bfloat16;
     matrix = random_hadamard_matrix(size, device="cuda")
     product = (matrix @ matrix.T) / matrix.size(0)
     eye = torch.eye(size, dtype=product.dtype, device="cuda")
@@ -72,6 +73,7 @@ def test_deterministic_hadamard_compliant(size):
         return
 
     # (H / sqrt(n))(H.T / sqrt(n)) == I
+    # fails if not float32 / fails with bfloat16 (for anything greater than 1024)
     matrix = deterministic_hadamard_matrix(size, device="cuda")
     product = (matrix @ matrix.T) / matrix.size(0)
     eye = torch.eye(size, dtype=product.dtype, device="cuda")

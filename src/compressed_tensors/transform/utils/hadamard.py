@@ -20,7 +20,7 @@ __all__ = ["random_hadamard_matrix", "deterministic_hadamard_matrix", "is_pow2"]
 
 def deterministic_hadamard_matrix(
     size: int,
-    dtype: torch.dtype = torch.bfloat16,
+    dtype: torch.dtype = torch.float32,
     device: torch.device = torch.device("cpu"),
 ) -> torch.Tensor:
     """
@@ -52,7 +52,7 @@ def deterministic_hadamard_matrix(
 
 def random_hadamard_matrix(
     size: int,
-    dtype: torch.dtype = torch.bfloat16,
+    dtype: torch.dtype = torch.float32,
     device: torch.device = torch.device("cpu"),
     gen: torch.Generator | None = None,
 ) -> torch.Tensor:
@@ -145,7 +145,8 @@ def _matmul_hadU(X: torch.Tensor) -> torch.Tensor:
     # input = torch.bmm(
     #     hadK.repeat(len(input), 1, 1).to(input.device).to(input.dtype), input)
     # Use bcast instead
-    input = hadK.view(1, K, K).to(input) @ input
-
+    a = hadK.reshape(1, K, K).to(input) 
+    b = input.reshape(1, K, -1)
+    input = torch.matmul(a, b)
     # normalize
     return input.view(X.shape)
