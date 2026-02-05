@@ -138,6 +138,20 @@ class OffloadCache(MutableMapping, ABC):
         """
         raise NotImplementedError()
 
+    @classmethod
+    @abstractmethod
+    def update(cls, offloaded: torch.Tensor, data: torch.Tensor | None):
+        """
+        TODO
+
+        NOTE: Operation is performed asynchronously. If you need the offloaded value
+        to updated across all ranks, call `dist.barrier()` after calling this function
+
+        :param tensor: tensor to offload
+        :return: offloaded tensor
+        """
+        raise NotImplementedError()
+
     def __getitem__(self, key: str) -> torch.Tensor:
         """
         Onload a tensor
@@ -169,23 +183,31 @@ class OffloadCache(MutableMapping, ABC):
 
     def __setitem__(self, key: str, value: torch.Tensor | None):
         """
-        Offload a tensor and add it to the cache.
+        Update the offloaded and onloaded values if the key exists, otherwise
+        offload the value and add it  to the cache.
 
-        If called within the `disable_onloading` context, the tensor is not offloaded
-        and is instead assigned directly
+        If called within the `disable_onloading` context, the value is assigned directly
 
         :param key: name of tensor
         :param value: tensor value to offload
         """
-        if key in self:
-            del self[key]
-
         # when onloading is disabled, parameters can be access and assigned directly
         if self.onloading_disabled:
             self.offloaded_values[key] = value
             return
 
-        self.offloaded_values[key] = self.offload(value)
+        # if the key already exists, update with the new value
+        offloaded = self.offloaded_values.get(key, None)
+        if offloaded is not None:
+            self.update(offloaded, value)
+
+            onloaded = self.keep_onloaded_values.get(offloaded, None)
+            if onloaded is not offloaded:
+                onloaded.copy_(value)
+
+        # if the key does not exist (or the value is None), offload the new value
+        else:
+            self.offloaded_values[key] = self.offload(value)
 
     def __delitem__(self, key: str):
         """

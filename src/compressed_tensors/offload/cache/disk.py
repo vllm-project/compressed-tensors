@@ -69,7 +69,9 @@ class DiskCache(OffloadCache):
             onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
             return onloaded
 
-    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+    def offload(
+        self, tensor: torch.Tensor | None, offloaded: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         """
         Offload a tensor to disk by writing a new safetensors file
 
@@ -83,7 +85,8 @@ class DiskCache(OffloadCache):
             assert tensor in self.index
             return tensor
 
-        offloaded = send_tensors(tensor, device="meta")
+        if offloaded is None:
+            offloaded = send_tensors(tensor, device="meta")
 
         file_name = f"{self._new_file_prefix}{id(tensor)}.safetensors"
         file_path = os.path.join(self.offload_dir, file_name)
@@ -109,6 +112,10 @@ class DiskCache(OffloadCache):
             os.remove(file_path)
         del self.index[offloaded]
         super().__delitem__(key)
+
+    def update(self, offloaded: torch.Tensor, data: torch.Tensor | None):
+        # write new data to disk using `offloaded` as the key
+        super().offload(data, offloaded)
 
 
 def _get_safe_open_device(device: "DeviceLikeType") -> str | int:

@@ -56,3 +56,8 @@ class DistributedCPUCache(CPUCache):
         dist.barrier()
 
         return tensor
+
+    def update(self, offloaded: torch.Tensor, data: torch.Tensor):
+        if dist.get_rank() == 0:
+            # copy into shared cpu memory
+            super().update(offloaded, data)

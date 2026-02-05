@@ -41,3 +41,6 @@ class CPUCache(OffloadCache):
         :return: tensor on cpu
         """
         return send_tensors(tensor, device=self.offload_device, copy=False)
+
+    def update(self, offloaded: torch.Tensor, data: torch.Tensor):
+        offloaded.copy_(data)

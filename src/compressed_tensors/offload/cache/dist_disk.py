@@ -50,15 +50,14 @@ class DistributedDiskCache(DiskCache):
         return offloaded
 
     def __delitem__(self, key: str):
-        """
-        Remove the offloaded tensor associated with `key`. Any references to its
-        onloaded tensors held by this class are invalidated.
-
-        :param key: name of tensor to invalidate
-        """
         if dist.get_rank() == 0:
             super().__delitem__(key)
         else:
             offloaded = self.offloaded_values[key]
             del self.index[offloaded]
             super(DiskCache, self).__delitem__(key)
+
+    def update(self, offloaded: torch.Tensor, data: torch.Tensor | None):
+        if dist.get_rank() == 0:
+            # write new data to disk using `offloaded` as the key
+            super().update(data, offloaded)

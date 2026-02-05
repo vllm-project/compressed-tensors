@@ -93,10 +93,13 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
     :param data: tensor to update parameter with
     """
     if isinstance(module._parameters, OffloadCache):
-        with module._parameters.disable_onloading():
-            value = getattr(module, name)
-            value.copy_(module._parameters.offload(data))
-            setattr(module, name, value)
+        # | Component | Update Implementation                      |
+        # | --------- | ------------------------------------------ |
+        # | CPU       | Copy into offloaded value once (rank 0)    |
+        # | Disk      | Write file to disk once (rank 0)           |
+        # | Device    | Copy into each replica (all ranks)         |
+        # | --------- | ------------------------------------------ |
+        setattr(module, name, data)
 
     else:
         getattr(module, name).copy_(data)
