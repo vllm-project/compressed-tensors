@@ -12,42 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING
-
 import torch
-from compressed_tensors.offload.cache.base import OffloadCache
-from compressed_tensors.offload.utils import send_tensors
+import torch.distributed as dist
+from compressed_tensors.offload.cache.device import DeviceCache
+from compressed_tensors.offload.utils import to_empty
 
 
-if TYPE_CHECKING:
-    from torch._prims_common import DeviceLikeType
-
-
-class DeviceCache(OffloadCache):
+class DistributedDeviceCache(DeviceCache):
     """
     Handles offloading and onloading tensors from/to device memory. Onloading
     tensors is typically a no-op (except onload device has been modified).
+
+    The device offload is not shared between ranks. When dispatching with this cache,
+    the model is replicated across devices.
     """
-
-    def __init__(self, onload_device: "DeviceLikeType"):
-        super().__init__(onload_device)
-        self.offload_device = self.onload_device
-
-    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor:
-        """
-        Typically a no op, except when onload device has been modified
-
-        :param key: device tensor to onload
-        :return: device tensor
-        """
-        # move because onload_device might be modified after init
-        return send_tensors(offloaded, device=self.onload_device, copy=False)
 
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
         """
-        Offload a tensor to the device
+        Move a tensor to device, then broadcast data to all other ranks
 
         :param value: tensor on any device
         :return: tensor on device
         """
-        return send_tensors(tensor, device=self.offload_device, copy=False)
+        if tensor is None:
+            return None
+
+        if dist.get_rank() == 0:
+            tensor = super().offload(tensor)
+
+        else:
+            tensor = to_empty(tensor, device=self.offload_device)
+
+        dist.broadcast(tensor, src=0)
+        return tensor
