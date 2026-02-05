@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import pytest
 import torch
+from compressed_tensors.offload.cache.disk import DiskCache
+from safetensors import safe_open
 from tests.test_offload.cache.helpers import (
     _test_delete,
     _test_disable_offloading,
@@ -25,11 +29,12 @@ from tests.test_offload.cache.helpers import (
     _test_shared_attributes,
     _test_tensor_subclass,
 )
+from tests.test_offload.conftest import assert_tensor_equal
 from tests.testing_utils import requires_gpu
 
 
 ONLOAD_DEVICE = torch.device("cuda")
-OFFLOAD_DEVICE = torch.device("cpu")
+OFFLOAD_DEVICE = "disk"
 
 
 @pytest.mark.unit
@@ -85,3 +90,39 @@ def test_shared_attributes():
 @requires_gpu
 def test_tensor_subclass():
     _test_tensor_subclass(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+def test_files(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    os.mkdir(offload_dir)
+
+    # initial write
+    DiskCache.index = {}
+    cache = DiskCache("cpu", offload_dir=str(offload_dir))
+    tensor = torch.zeros(10)
+    cache["weight"] = tensor
+
+    files = os.listdir(offload_dir)
+    assert len(DiskCache.index) == 1
+    assert len(files) == 1
+    with safe_open(offload_dir / files[0], framework="pt", device="cpu") as file:
+        read_tensor = file.get_tensor("weight")
+        assert_tensor_equal(read_tensor, tensor)
+
+    # modify
+    tensor = torch.ones(10)
+    cache["weight"] = tensor
+
+    files = os.listdir(offload_dir)
+    assert len(DiskCache.index) == 1
+    assert len(files) == 1
+    with safe_open(offload_dir / files[0], framework="pt", device="cpu") as file:
+        read_tensor = file.get_tensor("weight")
+        assert_tensor_equal(read_tensor, tensor)
+
+    # delete
+    del cache["weight"]
+    files = os.listdir(offload_dir)
+    assert len(DiskCache.index) == 0
+    assert len(files) == 0

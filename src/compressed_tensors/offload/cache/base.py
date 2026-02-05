@@ -67,7 +67,9 @@ class OffloadCache(MutableMapping, ABC):
         """
         from compressed_tensors.offload.cache.cpu import CPUCache
         from compressed_tensors.offload.cache.device import DeviceCache
+        from compressed_tensors.offload.cache.disk import DiskCache
         from compressed_tensors.offload.cache.dist_cpu import DistributedCPUCache
+        from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 
         device_type = torch.device(device).type if device != "disk" else "disk"
         distributed = dist.is_available() and dist.is_initialized()
@@ -79,6 +81,10 @@ class OffloadCache(MutableMapping, ABC):
                 return DistributedCPUCache
             case ("cuda", False):
                 return DeviceCache
+            case ("disk", False):
+                return DiskCache
+            case ("disk", True):
+                return DistributedDiskCache
             case _:
                 raise NotImplementedError(
                     f"Offload of type {device} and "
@@ -90,6 +96,7 @@ class OffloadCache(MutableMapping, ABC):
         cls,
         mapping: MutableMapping[str, torch.Tensor | None],
         onload_device: torch.device | str,
+        **kwargs,
     ):
         """
         Initialize an instance from a given mapping, typically `Module._parameters` or
@@ -97,8 +104,9 @@ class OffloadCache(MutableMapping, ABC):
 
         :param mapping: mapping used to populate cache
         :param onload_device: device which tensors will be onloaded to
+        :param \\**kwargs: keyword arguments for cache constructor
         """
-        instance = cls(onload_device=onload_device)
+        instance = cls(onload_device=onload_device, **kwargs)
         instance.offloaded_values = {
             name: instance.offload(tensor) for name, tensor in mapping.items()
         }
