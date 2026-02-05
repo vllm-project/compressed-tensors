@@ -31,7 +31,7 @@ from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 
 
-ONLOAD_DEVICE = torch.device("cuda:0")
+ONLOAD_DEVICE = torch.device("cuda")
 OFFLOAD_DEVICE = torch.device("cpu")
 
 # Note that tests only require at least 1 gpu
@@ -99,7 +99,7 @@ def test_shared_attributes():
 @torchrun(world_size=2)
 def test_distributed_offload():
     cache = DistributedCPUCache(ONLOAD_DEVICE)
-    tensor = torch.zeros(5)
+    tensor = torch.zeros((5, 2))
     cache["tensor"] = tensor
 
     # check tensor construction
@@ -108,7 +108,7 @@ def test_distributed_offload():
         assert torch.equal(cache["tensor"].cpu(), tensor)
 
     # update tensor
-    tensor = torch.ones(5)
+    tensor = torch.ones((5, 2))
     cache["tensor"] = tensor
 
     # check tensor construction
@@ -122,11 +122,11 @@ def test_distributed_offload():
 @torchrun(world_size=2)
 def test_shared_cpu_offload():
     cache = DistributedCPUCache(ONLOAD_DEVICE)
-    tensor = torch.zeros(5)
+    tensor = torch.zeros((5, 2))
     cache["tensor"] = tensor
 
     # modify the offloaded cpu tensor directly
-    tensor = torch.ones(5)
+    tensor = torch.ones((5, 2))
     if dist.get_rank() == 0:
         with disable_onloading():
             cache["tensor"].copy_(tensor)

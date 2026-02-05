@@ -23,6 +23,13 @@ import torch
 import torch.distributed as dist
 
 
+def assert_device_equal(device_a: torch.device, device_b: torch.device):
+    cur_index = torch.cuda.current_device()
+    a_index = cur_index if device_a.index is None else device_a.index
+    b_index = cur_index if device_b.index is None else device_b.index
+    assert device_a.type == device_b.type and a_index == b_index
+
+
 def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Test a function within parallel `torchrun` subprocesses, each running with `pytest`
@@ -41,8 +48,8 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
             # We're running in a torchrun subprocess:
             # init distributed and run test func
             if "TORCHELASTIC_RUN_ID" in os.environ:
-                local_rank = int(os.environ["LOCAL_RANK"])
                 rank = int(os.environ["RANK"])
+                local_rank = int(os.environ["LOCAL_RANK"])
 
                 torch.cuda.set_device(local_rank)
                 dist.init_process_group(
@@ -50,6 +57,7 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
                     init_method="env://",
                     rank=rank,
                     world_size=world_size,
+                    device_id=local_rank,
                 )
                 dist.barrier()
 
