@@ -26,6 +26,7 @@ __all__ = [
     "get_module_device",
     "move_module_tensor",
     "module_size",
+    "to_empty",
 ]
 
 T = TypeVar("T")
@@ -156,3 +157,10 @@ def module_size(module: torch.nn.Module, recurse: bool = True) -> int:
             module.parameters(recurse=recurse), module.buffers(recurse=recurse)
         )
         return sum((tensor.nbytes for tensor in tensors), 0)
+
+
+def to_empty(tensor: T, **kwargs) -> T:
+    empty = torch.empty_like(tensor.data, **kwargs)
+    empty.__class__ = tensor.__class__
+    empty.__dict__ = tensor.__dict__.copy()
+    return empty

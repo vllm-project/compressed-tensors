@@ -15,6 +15,7 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.device import DeviceCache
+from compressed_tensors.offload.utils import to_empty
 
 
 class DistributedDeviceCache(DeviceCache):
@@ -40,7 +41,7 @@ class DistributedDeviceCache(DeviceCache):
             tensor = super().offload(tensor)
 
         else:
-            tensor = torch.empty_like(tensor, device=self.offload_device)
+            tensor = to_empty(tensor, device=self.offload_device)
 
         dist.broadcast(tensor, src=0)
         return tensor
