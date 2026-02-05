@@ -45,7 +45,12 @@ class DistributedCPUCache(CPUCache):
         if dist.get_rank() != 0:
             # reconstruct tensor from shared memory file handle
             tensor = torch.empty_like(tensor, device=self.offload_device)
-            tensor.set_(torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj))
+            tensor.set_(
+                torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj),
+                storage_offset=tensor.storage_offset(),
+                size=tensor.size(),
+                stride=tensor.stride(),
+            )
 
         # ensure that rank 0 does not garbage collect before other ranks reconstruct
         dist.barrier()

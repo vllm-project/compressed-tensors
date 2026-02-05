@@ -15,7 +15,7 @@
 from collections.abc import Container
 from copy import deepcopy
 from functools import partial
-from typing import Literal, Optional, TypeVar
+from typing import Literal, TypeVar
 
 import torch
 from compressed_tensors.offload.module import offload_module, remove_module_offload
@@ -62,9 +62,9 @@ def offload_model(
 
 def dispatch_model(
     model: ModelType,
-    device_memory: Optional[dict[torch.device, int]] = None,
-    extra_memory: Optional[int] = None,
-    no_split_modules: Optional[Container[str]] = None,
+    device_memory: dict[torch.device, int] | None = None,
+    extra_memory: int | None = None,
+    no_split_modules: Container[str] | None = None,
 ) -> ModelType:
     """
     Dispatch a model for autoregressive generation. This means that modules are

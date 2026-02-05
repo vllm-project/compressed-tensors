@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict
-
 from compressed_tensors.transform import TransformScheme
 from pydantic import BaseModel, ConfigDict
 
@@ -30,6 +28,6 @@ class TransformConfig(BaseModel):
         to a particular model. The keys can be any arbitrary string
     """
 
-    config_groups: Dict[str, TransformScheme]
+    config_groups: dict[str, TransformScheme]
 
     model_config = ConfigDict(extra="forbid")

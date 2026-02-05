@@ -15,7 +15,7 @@
 from collections.abc import Container
 from dataclasses import fields, is_dataclass
 from itertools import chain
-from typing import Optional, TypeVar
+from typing import TypeVar
 
 import torch
 from loguru import logger
@@ -67,7 +67,7 @@ def send_tensors(value: T, *args, **kwargs) -> T:
 
 
 def get_module_device(
-    module: torch.nn.Module, default: Optional[torch.device] = None
+    module: torch.nn.Module, default: torch.device | None = None
 ) -> torch.device:
     """
     Infer the device of a module using the first

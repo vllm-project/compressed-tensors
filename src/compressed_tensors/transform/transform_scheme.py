@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional
-
 import torch
 from compressed_tensors.transform import TransformArgs
 from compressed_tensors.utils import TorchDtype
@@ -46,10 +44,10 @@ class TransformScheme(BaseModel):
     """
 
     type: str
-    apply: List[TransformArgs] = Field(default_factory=list)
+    apply: list[TransformArgs] = Field(default_factory=list)
     randomize: bool = Field(default=False)
     requires_grad: bool = Field(default=False)
-    head_dim: Optional[int] = Field(default=None)
+    head_dim: int | None = Field(default=None)
     precision: TorchDtype = Field(default=torch.float32)
 
     model_config = ConfigDict(extra="forbid")

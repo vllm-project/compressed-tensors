@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
 
 import torch
 import torch.nn.utils.parametrize as P
@@ -58,9 +57,9 @@ class TransformFactory(RegistryMixin, ABC):
     :param seed: random seed used to transform weight randomization
     """
 
-    transforms: List["TransformBase"]
+    transforms: list["TransformBase"]
 
-    def __init__(self, name: str, scheme: TransformScheme, seed: Optional[int] = None):
+    def __init__(self, name: str, scheme: TransformScheme, seed: int | None = None):
         self.name = name
         self.scheme = scheme
         self.generator = torch.Generator()
@@ -191,7 +190,7 @@ class TransformBase(InternalModule, ABC):
 
     args: TransformArgs
     weight: Parameter
-    _dynamic_tied_weights_keys: List[str] = ["weight"]
+    _dynamic_tied_weights_keys: list[str] = ["weight"]
 
     @abstractmethod
     def forward(self, value: Tensor) -> Tensor:

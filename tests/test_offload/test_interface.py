@@ -25,10 +25,11 @@ from compressed_tensors.offload import (
 )
 from compressed_tensors.offload.cache import CPUCache
 from compressed_tensors.offload.module import offload_module
+from tests.test_offload.conftest import assert_device_equal
 from tests.testing_utils import requires_gpu
 
 
-ONLOAD_DEVICE = torch.device("cuda:0")
+ONLOAD_DEVICE = torch.device("cuda")
 OFFLOAD_DEVICE = torch.device("cpu")
 
 
@@ -72,8 +73,8 @@ def test_disable_onloading():
     cache2["weight"] = torch.tensor(1, device=OFFLOAD_DEVICE)
 
     with disable_onloading():
-        assert cache1["weight"].device == OFFLOAD_DEVICE
-        assert cache2["weight"].device == OFFLOAD_DEVICE
+        assert_device_equal(cache1["weight"].device, OFFLOAD_DEVICE)
+        assert_device_equal(cache2["weight"].device, OFFLOAD_DEVICE)
 
 
 @pytest.mark.unit
@@ -104,37 +105,37 @@ def test_update_offload_parameter(linear: torch.nn.Linear, cache, offload):
 @pytest.mark.unit
 @requires_gpu
 def test_get_execution_device(linear: torch.nn.Linear, cache):
-    assert get_execution_device(linear) == OFFLOAD_DEVICE
+    assert_device_equal(get_execution_device(linear), OFFLOAD_DEVICE)
     linear.to(ONLOAD_DEVICE)
-    assert get_execution_device(linear) == ONLOAD_DEVICE
+    assert_device_equal(get_execution_device(linear), ONLOAD_DEVICE)
 
     linear.to(OFFLOAD_DEVICE)
     offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
-    assert get_execution_device(linear) == ONLOAD_DEVICE
+    assert_device_equal(get_execution_device(linear), ONLOAD_DEVICE)
 
     with disable_onloading():
-        assert get_execution_device(linear) == ONLOAD_DEVICE
+        assert_device_equal(get_execution_device(linear), ONLOAD_DEVICE)
 
     with disable_offloading():
-        assert get_execution_device(linear) == ONLOAD_DEVICE
+        assert_device_equal(get_execution_device(linear), ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
 @requires_gpu
 def test_get_offloaded_device(linear: torch.nn.Linear, cache):
-    assert get_offloaded_device(linear) == OFFLOAD_DEVICE
+    assert_device_equal(get_offloaded_device(linear), OFFLOAD_DEVICE)
     linear.to(ONLOAD_DEVICE)
-    assert get_offloaded_device(linear) == ONLOAD_DEVICE
+    assert_device_equal(get_offloaded_device(linear), ONLOAD_DEVICE)
 
     linear.to(OFFLOAD_DEVICE)
     offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
-    assert get_offloaded_device(linear) == OFFLOAD_DEVICE
+    assert_device_equal(get_offloaded_device(linear), OFFLOAD_DEVICE)
 
     with disable_onloading():
-        assert get_offloaded_device(linear) == OFFLOAD_DEVICE
+        assert_device_equal(get_offloaded_device(linear), OFFLOAD_DEVICE)
 
     with disable_offloading():
-        assert get_offloaded_device(linear) == OFFLOAD_DEVICE
+        assert_device_equal(get_offloaded_device(linear), OFFLOAD_DEVICE)
 
 
 @pytest.mark.unit
@@ -148,7 +149,7 @@ def register_offload_module(linear: torch.nn.Linear, cache):
     sub2 = torch.nn.Linear(1, 1)
     register_offload_module(linear, "sub2", sub2)
     assert linear.sub2 is sub2
-    assert sub2.weight.device == ONLOAD_DEVICE
+    assert_device_equal(sub2.weight.device, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
@@ -157,8 +158,8 @@ def test_align_modules(offloaded_linear: torch.nn.Linear):
     linear = torch.nn.Linear(1, 1, device=ONLOAD_DEVICE)
 
     with align_modules((linear, offloaded_linear), OFFLOAD_DEVICE):
-        assert linear.weight.device == OFFLOAD_DEVICE
-        assert offloaded_linear.weight.device == OFFLOAD_DEVICE
+        assert_device_equal(linear.weight.device, OFFLOAD_DEVICE)
+        assert_device_equal(offloaded_linear.weight.device, OFFLOAD_DEVICE)
 
 
 @pytest.mark.unit
@@ -171,4 +172,4 @@ def test_align_module_device(linear: torch.nn.Linear, cache, offload):
         linear.to(ONLOAD_DEVICE)
 
     with align_module_device(linear, OFFLOAD_DEVICE):
-        assert linear.weight.device == OFFLOAD_DEVICE
+        assert_device_equal(linear.weight.device, OFFLOAD_DEVICE)

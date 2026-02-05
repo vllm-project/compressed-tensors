@@ -27,7 +27,7 @@ from tests.test_offload.cache.helpers import (
 from tests.testing_utils import requires_gpu
 
 
-ONLOAD_DEVICE = torch.device("cuda:0")
+ONLOAD_DEVICE = torch.device("cuda")
 OFFLOAD_DEVICE = torch.device("cpu")
 
 
