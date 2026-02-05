@@ -45,7 +45,12 @@ def send_tensors(value: T, *args, **kwargs) -> T:
     """
     match value:
         case torch.Tensor():
-            tensor = value.data.to(*args, **kwargs)
+            tensor = value.to(*args, **kwargs)
+            
+            # special case: avoid changing param pointer when possible
+            if tensor.data_ptr() == value.data_ptr():
+                return value
+            
             tensor.__class__ = value.__class__
             tensor.__dict__ = value.__dict__.copy()
             return tensor
