@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
-
 from compressed_tensors.config import CompressionFormat, SparsityCompressionConfig
 
 
@@ -32,5 +30,5 @@ class DenseSparsityConfig(SparsityCompressionConfig):
     """
 
     format: str = CompressionFormat.dense.value
-    global_sparsity: Optional[float] = 0.0
-    sparsity_structure: Optional[str] = "unstructured"
+    global_sparsity: float | None = 0.0
+    sparsity_structure: str | None = "unstructured"

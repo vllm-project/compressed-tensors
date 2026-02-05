@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import inspect
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from compressed_tensors.modeling.kvcache import initialize_hooked_kv_cache
 from compressed_tensors.quantization.lifecycle.forward import forward_quantize
@@ -125,7 +125,7 @@ def initialize_hooked_attention(model: PreTrainedModel, module: Module):
 
 
 def register_query_hook(
-    module: Module, hook: Callable[[Module, Tensor], Optional[Tensor]]
+    module: Module, hook: Callable[[Module, Tensor], Tensor | None]
 ) -> RemovableHandle:
     """
     Register a hook which takes post-rope query states as an argument and

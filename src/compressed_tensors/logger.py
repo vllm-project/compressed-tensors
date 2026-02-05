@@ -19,7 +19,7 @@ Logger configuration for Compressed Tensors.
 import os
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -35,12 +35,12 @@ _logged_once = set()
 class LoggerConfig:
     disabled: bool = False
     clear_loggers: bool = True
-    console_log_level: Optional[str] = "INFO"
-    log_file: Optional[str] = None
-    log_file_level: Optional[str] = None
+    console_log_level: str | None = "INFO"
+    log_file: str | None = None
+    log_file_level: str | None = None
 
 
-def configure_logger(config: Optional[LoggerConfig] = None):
+def configure_logger(config: LoggerConfig | None = None):
     """
     Configure the logger for Compressed Tensors.
     This function sets up the console and file logging
@@ -95,7 +95,7 @@ def configure_logger(config: Optional[LoggerConfig] = None):
         )
 
 
-def support_log_once(record: Dict[str, Any]) -> bool:
+def support_log_once(record: dict[str, Any]) -> bool:
     """
     Support logging only once using `.bind(log_once=True)`
 

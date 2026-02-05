@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import warnings
-from typing import List, Optional
 
 import torch
 from compressed_tensors.config import CompressionFormat, SparsityStructure
@@ -30,9 +29,9 @@ __all__ = ["infer_and_set_per_module_quantization_format"]
 
 
 def _get_quant_compression_format(
-    input_args: Optional[QuantizationArgs],
-    weight_args: Optional[QuantizationArgs],
-    sparsity_structure: Optional[str] = None,
+    input_args: QuantizationArgs | None,
+    weight_args: QuantizationArgs | None,
+    sparsity_structure: str | None = None,
 ) -> CompressionFormat:
     """
     Using the weight and input quantization args as well as an optional
@@ -92,8 +91,8 @@ def _get_quant_compression_format(
 
 def set_per_module_format(
     module: torch.nn.Module,
-    sparsity_structure: Optional[str] = None,
-    quantization_format: Optional[str] = None,
+    sparsity_structure: str | None = None,
+    quantization_format: str | None = None,
 ):
     """
     Determine and set the per module quantization format given quantization args
@@ -137,9 +136,9 @@ def set_per_module_format(
 
 def infer_and_set_per_module_quantization_format(
     model: torch.nn.Module,
-    sparsity_structure: Optional[str] = None,
-    quantization_format: Optional[str] = None,
-) -> List[str]:
+    sparsity_structure: str | None = None,
+    quantization_format: str | None = None,
+) -> list[str]:
     """
     Infers the quantization format for a model based on its state and provided
     compression arguments. Updates thhe quantization_scheme.format value

@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
-
 from compressed_tensors.config import (
     CompressionFormat,
     SparsityCompressionConfig,
@@ -36,5 +34,5 @@ class Sparse24BitMaskConfig(SparsityCompressionConfig):
     """
 
     format: str = CompressionFormat.sparse_24_bitmask.value
-    global_sparsity: Optional[float] = 0.0
-    sparsity_structure: Optional[str] = SparsityStructure.TWO_FOUR.value
+    global_sparsity: float | None = 0.0
+    sparsity_structure: str | None = SparsityStructure.TWO_FOUR.value
