@@ -14,10 +14,8 @@
 
 import pytest
 import torch
-import torch.distributed as dist
 from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.load import load_offloaded_model
-from tests.test_offload.conftest import torchrun
 from transformers import AutoModelForCausalLM
 
 
@@ -32,8 +30,26 @@ def test_convert():
             dtype=torch.bfloat16,
         )
 
-    # TODO: assert not hasattr(model, "hf_device_map")
-    from_accelerate(model)
+    assert not hasattr(model, "hf_device_map")
     to_accelerate(model)
-    # TODO: was working, now fails to onload
     model.save_pretrained("temp_save")
+
+
+@pytest.mark.integration
+def test_idempotency(disable_convert):
+    with load_offloaded_model():
+        model = AutoModelForCausalLM.from_pretrained(
+            "Qwen/Qwen3-0.6B",
+            device_map="disk",
+            max_memory={"cpu": 596049920},  # force disk offloading
+            offload_folder="temp",
+            dtype=torch.bfloat16,
+        )
+
+    assert hasattr(model, "hf_device_map")
+
+    from_accelerate(model)
+    from_accelerate(model)
+
+    to_accelerate(model)
+    to_accelerate(model)

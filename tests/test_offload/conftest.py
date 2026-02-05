@@ -15,6 +15,7 @@
 import os
 import subprocess
 import sys
+import pytest
 from functools import wraps
 from types import FunctionType
 from typing import Any, Callable, Literal, Optional
@@ -22,6 +23,14 @@ from typing import Any, Callable, Literal, Optional
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.utils import send_tensors
+
+
+@pytest.fixture()
+def disable_convert(monkeypatch):
+    def skip(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr("compressed_tensors.offload.load.from_accelerate", skip)
 
 
 def assert_device_equal(

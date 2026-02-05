@@ -90,7 +90,7 @@ def patch_from_pretrained(obj: cls_to_patch):
                 assert model.device.type == "meta"
 
         # TODO: this is a no op for meta, but rank 0 hangs waiting for other ranks
-        # from_accelerate(model)
+        from_accelerate(model)
         return model
 
     obj.from_pretrained = from_pretrained.__get__(obj)
