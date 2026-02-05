@@ -67,6 +67,8 @@ def to_accelerate(model: torch.nn.Module):
 
     :param model: model dispatched with `compressed_tensors` offloading
     """
+    from compressed_tensors.offload import get_offloaded_device  # avoid circular import
+
     try:
         from accelerate.hooks import AlignDevicesHook, add_hook_to_module
         from accelerate.utils import OffloadedWeightsLoader, PrefixedDataset
@@ -109,7 +111,13 @@ def to_accelerate(model: torch.nn.Module):
                 place_submodules=False,
             )
             add_hook_to_module(module, hook)
-            hf_device_map[name] = str(cache.offload_device)
+
+        hf_device_map[name] = get_offloaded_device(module, torch.device("cpu")).type
+
+    # for some reason, in transformers<5, we need at least 2 device types to save
+    # this is pretty much always the case, but let's catch it here anyways
+    if len(set(hf_device_map.values())) <= 1:
+        raise NotImplementedError("Accelerate requires hybrid offloading for saving")
 
     setattr(model, "hf_device_map", hf_device_map)
 
@@ -180,9 +188,7 @@ def _convert_accelerate_disk(module: torch.nn.Module, onload_device: torch.devic
 
     # meta tensors are no-ops
     # non-meta tensors are offloaded onto new files
-    print("pre")
     offload_module(module, onload_device, "disk", offload_dir=dataset.save_folder)
-    print("post")
 
 
 def _get_tensors(

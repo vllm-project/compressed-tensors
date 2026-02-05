@@ -89,7 +89,8 @@ def get_module_device(
         return default
     else:
         logger.warning(
-            f"Unable to get execution device of {module}, falling back to CPU"
+            f"Unable to get execution device of {module}, falling back to CPU",
+            log_once=True,
         )
         return torch.device("cpu")
 

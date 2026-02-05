@@ -119,7 +119,9 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         getattr(module, name).copy_(data)
 
 
-def get_execution_device(module: torch.nn.Module) -> torch.device | str:
+def get_execution_device(
+    module: torch.nn.Module, default: torch.device | None = None
+) -> torch.device | str:
     """
     Get the device which inputs should be moved to before module execution.
 
@@ -130,16 +132,18 @@ def get_execution_device(module: torch.nn.Module) -> torch.device | str:
         return module._parameters.onload_device
 
     else:
-        return get_module_device(module)
+        return get_module_device(module, default)
 
 
-def get_offloaded_device(module: torch.nn.Module) -> torch.device:
+def get_offloaded_device(
+    module: torch.nn.Module, default: torch.device | None = None
+) -> torch.device:
     """
     :param module: module to check
     :return: device module is offloaded to onto after forward pass
     """
     with disable_onloading():
-        return get_module_device(module)
+        return get_module_device(module, default)
 
 
 def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.Module):
