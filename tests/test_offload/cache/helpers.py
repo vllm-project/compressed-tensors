@@ -17,7 +17,6 @@ from weakref import ref
 
 import torch
 from compressed_tensors.offload import OffloadCache
-from compressed_tensors.offload.utils import send_tensors
 from tests.test_offload.conftest import assert_device_equal, assert_tensor_equal
 
 
@@ -28,7 +27,7 @@ def _test_onloading(offload_device, onload_device):
     onloaded = cache["weight"]
 
     assert type(onloaded) is type(tensor)
-    assert_tensor_equal(onloaded, send_tensors(tensor, onload_device))
+    assert_tensor_equal(onloaded, tensor, onload_device)
 
 
 def _test_garbage_collect(offload_device, onload_device):
@@ -47,7 +46,7 @@ def _test_offload(offload_device, onload_device):
     tensor = torch.ones(10, device=onload_device)
     offloaded = cache.offload(tensor)
     assert_device_equal(offloaded.device, offload_device)
-    assert_tensor_equal(offloaded, send_tensors(tensor, offload_device))
+    assert_tensor_equal(offloaded, tensor, offload_device)
 
 
 def _test_onload(offload_device, onload_device):
@@ -55,7 +54,7 @@ def _test_onload(offload_device, onload_device):
     tensor = torch.ones(10, device=onload_device)
     onloaded = cache.onload(cache.offload(tensor))
     assert_device_equal(onloaded.device, onload_device)
-    assert_tensor_equal(onloaded, send_tensors(tensor, onload_device))
+    assert_tensor_equal(onloaded, tensor, onload_device)
 
 
 def _test_disable_offloading(offload_device, onload_device):
@@ -130,11 +129,11 @@ def _test_tensor_subclass(offload_device, onload_device):
     cache["param"] = param
     cache["buffer"] = buffer
 
-    assert_tensor_equal(cache["tensor"], send_tensors(tensor, onload_device))
-    assert_tensor_equal(cache["param"], send_tensors(param, onload_device))
-    assert_tensor_equal(cache["buffer"], send_tensors(buffer, onload_device))
+    assert_tensor_equal(cache["tensor"], tensor, onload_device)
+    assert_tensor_equal(cache["param"], param, onload_device)
+    assert_tensor_equal(cache["buffer"], buffer, onload_device)
 
     with cache.disable_onloading():
-        assert_tensor_equal(cache["tensor"], send_tensors(tensor, offload_device))
-        assert_tensor_equal(cache["param"], send_tensors(param, offload_device))
-        assert_tensor_equal(cache["buffer"], send_tensors(buffer, offload_device))
+        assert_tensor_equal(cache["tensor"], tensor, offload_device)
+        assert_tensor_equal(cache["param"], param, offload_device)
+        assert_tensor_equal(cache["buffer"], buffer, offload_device)

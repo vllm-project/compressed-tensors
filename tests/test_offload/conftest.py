@@ -17,10 +17,11 @@ import subprocess
 import sys
 from functools import wraps
 from types import FunctionType
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Optional
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.offload.utils import send_tensors
 
 
 def assert_device_equal(
@@ -38,7 +39,14 @@ def assert_device_equal(
     assert device_a.type == device_b.type and a_index == b_index
 
 
-def assert_tensor_equal(tensor_a: torch.Tensor, tensor_b: torch.Tensor):
+def assert_tensor_equal(
+    tensor_a: torch.Tensor,
+    tensor_b: torch.Tensor,
+    device: Optional[torch.device | str] = None,
+):
+    if device is not None:
+        tensor_b = send_tensors(tensor_b, "meta" if device == "disk" else device)
+
     assert tensor_a.__class__ == tensor_b.__class__
     assert tensor_a.requires_grad == tensor_b.requires_grad
     assert tensor_a.__dict__ == tensor_b.__dict__
