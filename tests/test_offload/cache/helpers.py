@@ -17,7 +17,7 @@ from weakref import ref
 
 import torch
 from compressed_tensors.offload import OffloadCache
-from tests.test_offload.conftest import assert_device_equal
+from tests.test_offload.conftest import assert_device_equal, assert_tensor_equal
 
 
 def _test_onloading(offload_device: str, onload_device: str):
@@ -27,7 +27,7 @@ def _test_onloading(offload_device: str, onload_device: str):
     onloaded = cache["weight"]
 
     assert type(onloaded) is type(tensor)
-    assert torch.equal(onloaded, tensor.to(onloaded))
+    assert_tensor_equal(onloaded, tensor.to(onloaded))
 
 
 def _test_garbage_collect(offload_device: str, onload_device: str):
@@ -46,7 +46,7 @@ def _test_offload(offload_device: str, onload_device: str):
     tensor = torch.ones(10, device=onload_device)
     offloaded = cache.offload(tensor)
     assert_device_equal(offloaded.device, offload_device)
-    assert torch.equal(offloaded, tensor.to(offloaded))
+    assert_tensor_equal(offloaded, tensor.to(offloaded))
 
 
 def _test_onload(offload_device: str, onload_device: str):
@@ -54,7 +54,7 @@ def _test_onload(offload_device: str, onload_device: str):
     tensor = torch.ones(10, device=onload_device)
     onloaded = cache.onload(cache.offload(tensor))
     assert_device_equal(onloaded.device, onload_device)
-    assert torch.equal(onloaded, tensor.to(onloaded))
+    assert_tensor_equal(onloaded, tensor.to(onloaded))
 
 
 def _test_disable_offloading(offload_device: str, onload_device: str):
