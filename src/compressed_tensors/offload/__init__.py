@@ -99,7 +99,7 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         # | Disk      | Write file to disk once (rank 0)           |
         # | Device    | Copy into each replica (all ranks)         |
         # | --------- | ------------------------------------------ |
-        setattr(module, name, data)
+        setattr(module, name, torch.nn.Parameter(data.data))
 
     else:
         getattr(module, name).copy_(data)
