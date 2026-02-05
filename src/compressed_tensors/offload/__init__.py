@@ -17,11 +17,13 @@ from collections.abc import Iterable
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.dispatch import (  # noqa: F401
     dispatch_model,
     offload_model,
     remove_dispatch,
 )
+from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
 from compressed_tensors.offload.utils import get_module_device, move_module_tensor
 from compressed_tensors.utils.helpers import patch_attr
@@ -32,6 +34,10 @@ __all__ = [
     "offload_model",
     "dispatch_model",
     "remove_dispatch",
+    # accelerate conversion
+    "load_offloaded_model",
+    "from_accelerate",
+    "to_accelerate",
     # control movement
     "disable_onloading",
     "disable_offloading",

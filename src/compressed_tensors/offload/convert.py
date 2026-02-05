@@ -12,110 +12,182 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
-import inspect
-from functools import wraps
-from types import FrameType, MethodType
 
-import psutil
+from itertools import chain
+from typing import Iterable, Literal
+
 import torch
-import torch.distributed as dist
-from transformers import AutoConfig, PreTrainedModel
-from transformers.models.auto.modeling_auto import _BaseAutoModelClass
+from compressed_tensors.offload.cache import DiskCache, OffloadCache
+from compressed_tensors.offload.module import offload_module, remove_module_offload
+from loguru import logger
 
 
-__all__ = ["offloaded_model"]
+__all__ = ["from_accelerate", "to_accelerate"]
 
 
-cls_to_patch = _BaseAutoModelClass | PreTrainedModel
-
-
-@contextlib.contextmanager
-def offloaded_model():
+def from_accelerate(model: torch.nn.Module):
     """
-    Context manager used to load a transformers model with offloading implemented by
-    compressed-tensors.
+    Convert a model from `accelerate` offloading to `compressed_tensors` offloading.
+    This is often called after loading a model with `from_pretrained(device_map=...)`.
 
-    The model is first loaded with accelerate's offloading, then convereted into
-    offloading implemented by compressed-tensors. If a distributed environment has been
-    initialized, then rank 0 loads the weights while other ranks load on the meta
-    device, then the offload is shared across ranks during conversion.
-
-    In addition to the standard `device_map` options, this context also supports
-    `device_map="disk"`, which means that the model will load as many parameters can
-    fit onto the cpu, and any extra parameters will be loaded on disk.
+    :param model: model dispatched with `accelerate` offloading
     """
-    frame = _get_caller_frame()
-    cls_to_patch = (_BaseAutoModelClass, PreTrainedModel)
+    try:
+        from accelerate.hooks import remove_hook_from_module
+    except ImportError:
+        return
 
-    with contextlib.ExitStack() as stack:
-        for obj in frame.f_globals.values():
-            if isinstance(obj, type) and issubclass(obj, cls_to_patch):
-                stack.enter_context(patch_from_pretrained(obj))
+    for module in model.modules():
+        onload_device, offload_device = _get_accelerate_devices(module)
+        match (onload_device, offload_device):
+            case torch.device(), torch.device():
+                remove_hook_from_module(module, recurse=False)
+                offload_module(module, onload_device, offload_device)
 
-            if isinstance(obj, cls_to_patch):
-                stack.enter_context(patch_save_pretrained(obj))
+            case torch.device(), "disk":
+                _convert_accelerate_disk(module, onload_device)
 
-        yield
+            case None, None:
+                remove_hook_from_module(module, recurse=False)
+
+            case _:
+                raise ValueError()
+
+    if hasattr(model, "hf_device_map"):
+        delattr(model, "hf_device_map")
+
+    print("done convert")
 
 
-@contextlib.contextmanager
-def patch_from_pretrained(obj: cls_to_patch):
-    original_func = obj.from_pretrained.__func__
+def to_accelerate(model: torch.nn.Module):
+    """
+    Convert a model from `compressed_tensors` offloading to `accelerate` offloading.
+    This is is often called before `PreTrainedModel.save_pretrained`, as without this
+    conversion, `save_pretrained` will use excessive memory and device movement.
 
-    @wraps(original_func)
-    def from_pretrained(cls, *args, **kwargs):
-        arguments = inspect.signature(original_func).bind(*args).arguments
-        arguments.update(kwargs)
+    :param model: model dispatched with `compressed_tensors` offloading
+    """
+    try:
+        from accelerate.hooks import AlignDevicesHook, add_hook_to_module
+        from accelerate.utils import OffloadedWeightsLoader, PrefixedDataset
+    except ImportError:
+        if any(isinstance(m._parameters, OffloadCache) for m in model.modules()):
+            logger.warning(
+                "Cannot convert model without `accelerate` installed. This may result "
+                "in high memory usage during saving and tied tensors being saved twice"
+            )
+        return
 
-        rank_0 = (
-            not (dist.is_available() and dist.is_initialized()) or dist.get_rank() == 0
-        )
-        if rank_0:
-            device_map = arguments.get("device_map", None)
+    hf_disk_index = {
+        weight_info["weight_name"]: weight_info
+        for weight_info in DiskCache.index.values()
+    }
+    hf_device_map = {}
 
-            # intercept "disk"
-            if device_map == "disk":
-                arguments["device_map"] = "auto"
-                if "max_memory" not in arguments:
-                    arguments["max_memory"] = {"cpu": psutil.virtual_memory().available}
+    for name, module in model.named_modules():
+        cache = module._parameters
+        if isinstance(cache, OffloadCache):
+            remove_module_offload(module, onload_tensors=False)
 
-            model = original_func(cls, **arguments)
+            if isinstance(cache, DiskCache):
+                weights_map = PrefixedDataset(
+                    prefix=f"{name}.",
+                    dataset=OffloadedWeightsLoader(
+                        index=hf_disk_index,
+                        save_folder=cache.offload_dir,
+                    ),
+                )
+            else:
+                weights_map = dict(_get_tensors(module, recurse=False))
 
+            hook = AlignDevicesHook(
+                execution_device=cache.onload_device,
+                offload=True,
+                io_same_device=True,
+                weights_map=weights_map,
+                offload_buffers=True,
+                place_submodules=False,
+            )
+            add_hook_to_module(module, hook)
+            hf_device_map[name] = str(cache.offload_device)
+
+    setattr(model, "hf_device_map", hf_device_map)
+
+
+def _get_accelerate_devices(
+    module: torch.nn.Module,
+) -> tuple[torch.device | None, torch.device | Literal["disk"] | None]:
+    try:
+        from accelerate.hooks import AlignDevicesHook
+        from accelerate.utils import OffloadedWeightsLoader, PrefixedDataset
+    except ImportError:
+        return None, None
+
+    hook = getattr(module, "_hf_hook", None)
+    if not isinstance(hook, AlignDevicesHook) or not hook.offload:
+        return None, None
+    if hook.place_submodules:
+        raise ValueError("Cannot convert dispatches with `place_submodules`")
+    onload_device = torch.device(hook.execution_device)
+
+    name, _ = next(_get_tensors(module))
+    dataset = hook.weights_map
+    while isinstance(dataset, PrefixedDataset):
+        name = dataset.prefix + name
+        dataset = dataset.dataset
+
+    if isinstance(dataset, dict):
+        return onload_device, dataset[name].device
+
+    elif isinstance(dataset, OffloadedWeightsLoader):
+        if name in dataset.state_dict:
+            return onload_device, torch.device("cpu")
+        elif name in dataset.index:
+            return onload_device, "disk"
         else:
-            # other ranks load on meta device
-            with torch.device("meta"):
-                model_stub = arguments.pop("pretrained_model_name_or_path")
-                dtype = arguments.pop("dtype", arguments.pop("torch_dtype", None))
+            return None, None
 
-                config = AutoConfig.from_pretrained(model_stub)
-                model = obj.from_config(config, dtype=dtype)
-                assert model.device.type == "meta"
-
-        return model
-
-    obj.from_pretrained = from_pretrained.__get__(obj)
-    yield
-    obj.from_pretrained = original_func.__get__(obj)
+    else:
+        raise ValueError()
 
 
-def patch_save_pretrained(original: MethodType):
-    original_func = original.__func__
+def _convert_accelerate_disk(module: torch.nn.Module, onload_device: torch.device):
+    try:
+        from accelerate.hooks import AlignDevicesHook, remove_hook_from_module
+        from accelerate.utils import OffloadedWeightsLoader, PrefixedDataset
+    except ImportError:
+        return
 
-    @wraps(original_func)
-    def save_pretrained(self, *args, **kwargs):
-        return original_func(self, *args, **kwargs)
+    from compressed_tensors.offload.cache.disk import DiskCache
 
-    return save_pretrained
+    hook: AlignDevicesHook = getattr(module, "_hf_hook")
+    prefix = ""
+    dataset = hook.weights_map
+    while isinstance(dataset, PrefixedDataset):
+        prefix += dataset.prefix
+        dataset = dataset.dataset
+
+    assert isinstance(dataset, OffloadedWeightsLoader)
+
+    for name, tensor in _get_tensors(module):
+        if tensor is not None and tensor.device.type == "meta":
+            DiskCache.index[tensor] = dataset.index[prefix + name]
+
+    # changing this flag means that tensors are not moved again
+    # remove wrapped forward, ect.
+    hook.offload = False
+    remove_hook_from_module(module, recurse=False)
+
+    # meta tensors are no-ops
+    # non-meta tensors are offloaded onto new files
+    print("pre")
+    offload_module(module, onload_device, "disk", offload_dir=dataset.save_folder)
+    print("post")
 
 
-def _get_caller_frame() -> FrameType:
-    frame = inspect.currentframe()
-    frame = frame.f_back.f_back  # skip this function's caller's frame
-    while frame is not None and "contextlib" in frame.f_code.co_filename:
-        frame = frame.f_back  # skip contextlib frames
-
-    if frame is None:
-        raise RuntimeError("Could not find caller frame")
-
-    return frame
+def _get_tensors(
+    module: torch.nn.Module, recurse: bool = False
+) -> Iterable[tuple[str, torch.Tensor | None]]:
+    return chain(
+        module.named_parameters(recurse=recurse), module.named_buffers(recurse=recurse)
+    )
