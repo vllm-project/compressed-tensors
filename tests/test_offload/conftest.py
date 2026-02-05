@@ -95,9 +95,7 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
                 )
                 dist.barrier()
 
-                ret = func(*args, **kwargs)
-                dist.destroy_process_group()
-                return ret
+                return func(*args, **kwargs)
 
             # First time calling in the main process:
             # trigger torchrun with this function as the pytest target

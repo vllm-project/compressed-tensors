@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.utils import send_tensors, to_tensor
 from safetensors import safe_open
 from safetensors.torch import save_file
 
@@ -64,6 +65,7 @@ class DiskCache(OffloadCache):
             weight_info["safetensors_file"], framework="pt", device=device
         ) as file:
             onloaded = file.get_tensor(weight_info["weight_name"])
+            onloaded = to_tensor(onloaded, offloaded)
             onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
             return onloaded
 
@@ -81,7 +83,7 @@ class DiskCache(OffloadCache):
             assert tensor in self.index
             return tensor
 
-        offloaded = tensor.to("meta")
+        offloaded = send_tensors(tensor, device="meta")
 
         file_name = f"{self._new_file_prefix}{id(tensor)}.safetensors"
         file_path = os.path.join(self.offload_dir, file_name)
