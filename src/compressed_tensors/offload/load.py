@@ -80,12 +80,20 @@ def patch_from_pretrained(obj: cls_to_patch):
             # other ranks load on meta device
             with torch.device("meta"):
                 model_stub = arguments.pop("pretrained_model_name_or_path")
-                dtype = arguments.pop("dtype", arguments.pop("torch_dtype", None))
+                # TODO: I don't think `from_config` supports dtype="auto"
+                dtype = None#arguments.pop("dtype", arguments.pop("torch_dtype", None))
 
                 config = AutoConfig.from_pretrained(model_stub)
                 model = obj.from_config(config, dtype=dtype)
                 assert model.device.type == "meta"
 
+        # TODO: warning if "disk" not in hf_device_map.values()
+        # ie the model fits on cpu
+        # TODO: catch/handle if whole model is trying to be offloaded to disk?
+        # Theoretically should never occur
+        
+
+        print(model.hf_device_map)
         # TODO: this is a no op for meta, but rank 0 hangs waiting for other ranks
         from_accelerate(model)
         return model

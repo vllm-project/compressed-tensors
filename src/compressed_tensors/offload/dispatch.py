@@ -51,6 +51,7 @@ def offload_model(
     :param offload_device: device to offload weights to
     :return: dispatched model
     """
+    return
     # convert accelerate if applicable
     from_accelerate(model)
 
@@ -83,6 +84,7 @@ def dispatch_model(
         across multiple devices
     :return: dispatched model
     """
+    return
     # convert accelerate if applicable
     from_accelerate(model)
 

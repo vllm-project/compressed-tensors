@@ -19,7 +19,7 @@ __all__ = ["is_distributed", "is_rank0"]
 
 
 def is_rank0() -> bool:
-    return is_distributed() and dist.get_rank()
+    return not is_distributed() or dist.get_rank() == 0
 
 
 def is_distributed() -> bool:
