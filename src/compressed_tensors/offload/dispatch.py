@@ -18,6 +18,7 @@ from functools import partial
 from typing import Literal, TypeVar
 
 import torch
+from compressed_tensors.offload.convert import from_accelerate
 from compressed_tensors.offload.module import offload_module, remove_module_offload
 from compressed_tensors.offload.utils import get_module_sizes
 from compressed_tensors.utils import getattr_chain
@@ -50,8 +51,9 @@ def offload_model(
     :param offload_device: device to offload weights to
     :return: dispatched model
     """
-    # remove any previous dispatches
-    remove_dispatch(model)
+    return
+    # convert accelerate if applicable
+    from_accelerate(model)
 
     # offload modules in place
     for module in model.modules():
@@ -82,8 +84,9 @@ def dispatch_model(
         across multiple devices
     :return: dispatched model
     """
-    # remove previous dispatches
-    remove_dispatch(model)
+    return
+    # convert accelerate if applicable
+    from_accelerate(model)
 
     # infer no_split_modules
     if no_split_modules is None:

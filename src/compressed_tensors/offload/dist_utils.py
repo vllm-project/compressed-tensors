@@ -11,11 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# flake8: noqa
 
-from .base import OffloadCache
-from .cpu import CPUCache
-from .device import DeviceCache
-from .disk import DiskCache
-from .dist_cpu import DistributedCPUCache
-from .dist_disk import DistributedDiskCache
+import torch.distributed as dist
+
+
+__all__ = ["is_distributed", "is_rank0"]
+
+
+def is_rank0() -> bool:
+    return not is_distributed() or dist.get_rank() == 0
+
+
+def is_distributed() -> bool:
+    return dist.is_available() and dist.is_initialized()
