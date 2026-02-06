@@ -24,6 +24,12 @@ class DistributedDiskCache(DiskCache):
     """
 
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+        """
+        Synchronously write tensor data to disk
+
+        :param tensor: tensor on any device
+        :return: meta tensor representing disk offloaded parameter
+        """
         if dist.get_rank() == 0:
             # write to disk
             offloaded = super().offload(tensor)
@@ -50,6 +56,14 @@ class DistributedDiskCache(DiskCache):
         return offloaded
 
     def __delitem__(self, key: str):
+        """
+        Remove the offload associated with `key`. If a new file was created to store
+        updated tensor data, that new tensor data file is deleted.
+
+        Any references to its onloaded tensors held by this class are invalidated.
+
+        :param key: name of tensor to invalidate
+        """
         if dist.get_rank() == 0:
             super().__delitem__(key)
         else:

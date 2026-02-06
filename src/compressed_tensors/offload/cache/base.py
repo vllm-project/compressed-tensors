@@ -139,11 +139,10 @@ class OffloadCache(MutableMapping, ABC):
         """
         raise NotImplementedError()
 
-    @classmethod
     @abstractmethod
-    def update(cls, offloaded: torch.Tensor, data: torch.Tensor | None):
+    def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
-        TODO
+        Update the data of an offloaded tensor
 
         NOTE: Operation is performed asynchronously. If you need the offloaded value
         to updated across all ranks, call `dist.barrier()` after calling this function
@@ -200,7 +199,7 @@ class OffloadCache(MutableMapping, ABC):
         # if the key already exists, update with the new value
         offloaded = self.offloaded_values.get(key, None)
         if offloaded is not None:
-            self.update(offloaded, value)
+            self.update_offload(offloaded, value)
 
             onloaded = self.keep_onloaded_values.get(offloaded, None)
             if onloaded is not None and onloaded is not offloaded:

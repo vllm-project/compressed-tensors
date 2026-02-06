@@ -102,8 +102,10 @@ class DiskCache(OffloadCache):
 
     def __delitem__(self, key: str):
         """
-        Remove the offloaded tensor associated with `key`. Any references to its
-        onloaded tensors held by this class are invalidated.
+        Remove the offload associated with `key`. If a new file was created to store
+        updated tensor data, that new tensor data file is deleted.
+
+        Any references to its onloaded tensors held by this class are invalidated.
 
         :param key: name of tensor to invalidate
         """
@@ -114,7 +116,14 @@ class DiskCache(OffloadCache):
         del self.index[offloaded]
         super().__delitem__(key)
 
-    def update(self, offloaded: torch.Tensor, data: torch.Tensor | None):
+    def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
+        """
+        Write new param data to file. If the file already existed (ie, the param has
+        already been modified at least once), then the file is overwritten.
+
+        :param offloaded: meta tensors representating parameter to update
+        :param data: new data
+        """
         # write new data to disk using `offloaded` as the key
         DiskCache.offload(self, data, offloaded)
 
