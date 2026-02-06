@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from collections import defaultdict
 from itertools import chain
 from typing import Iterable, Literal
 
@@ -45,7 +46,7 @@ def from_accelerate(model: torch.nn.Module):
                 offload_module(module, onload_device, offload_device)
 
             case torch.device(), "disk":
-                _convert_accelerate_disk(module, onload_device)
+                _from_accelerate_disk(module, onload_device)
 
             case None, None:
                 remove_hook_from_module(module, recurse=False)
@@ -80,10 +81,7 @@ def to_accelerate(model: torch.nn.Module):
             )
         return
 
-    hf_disk_index = {
-        weight_info["weight_name"]: weight_info
-        for weight_info in DiskCache.index.values()
-    }
+    hf_disk_index = _to_accelerate_disk_index(model, DiskCache.index)
     hf_device_map = {}
 
     for name, module in model.named_modules():
@@ -120,6 +118,21 @@ def to_accelerate(model: torch.nn.Module):
         raise NotImplementedError("Accelerate requires hybrid offloading for saving")
 
     setattr(model, "hf_device_map", hf_device_map)
+
+
+def _to_accelerate_disk_index(
+    model: torch.nn.Module, index: dict[torch.Tensor, dict[str, str]]
+) -> dict[str, dict[str, str]]:
+    from compressed_tensors.offload import disable_onloading  # circular dependency
+
+    with disable_onloading():
+        offloaded_to_key = _invert_dict(model.state_dict(keep_vars=True))
+
+    return {
+        key: weight_info
+        for offloaded, weight_info in index.items()
+        for key in offloaded_to_key[offloaded]
+    }
 
 
 def _get_accelerate_devices(
@@ -159,7 +172,7 @@ def _get_accelerate_devices(
         raise ValueError()
 
 
-def _convert_accelerate_disk(module: torch.nn.Module, onload_device: torch.device):
+def _from_accelerate_disk(module: torch.nn.Module, onload_device: torch.device):
     try:
         from accelerate.hooks import AlignDevicesHook, remove_hook_from_module
         from accelerate.utils import OffloadedWeightsLoader, PrefixedDataset
@@ -197,3 +210,10 @@ def _get_tensors(
     return chain(
         module.named_parameters(recurse=recurse), module.named_buffers(recurse=recurse)
     )
+
+
+def _invert_dict(d: dict) -> dict:
+    inverted = defaultdict(list)
+    for key, value in d.items():
+        inverted[value].append(key)
+    return inverted
