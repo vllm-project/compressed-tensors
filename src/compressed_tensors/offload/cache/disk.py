@@ -76,6 +76,7 @@ class DiskCache(OffloadCache):
         Offload a tensor to disk by writing a new safetensors file
 
         :param tensor: tensor on any device
+        :param offloaded: optional meta tensor used to look up an existing file
         :return: meta tensor representing the offloaded tensor
         """
         if tensor is None:
@@ -88,7 +89,7 @@ class DiskCache(OffloadCache):
         if offloaded is None:
             offloaded = send_tensors(tensor, device="meta")
 
-        file_name = f"{self._new_file_prefix}{id(tensor)}.safetensors"
+        file_name = f"{self._new_file_prefix}{id(offloaded)}.safetensors"
         file_path = os.path.join(self.offload_dir, file_name)
         self.index[offloaded] = {
             "safetensors_file": file_path,
@@ -115,7 +116,7 @@ class DiskCache(OffloadCache):
 
     def update(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         # write new data to disk using `offloaded` as the key
-        super().offload(data, offloaded)
+        DiskCache.offload(self, data, offloaded)
 
 
 def _get_safe_open_device(device: "DeviceLikeType") -> str | int:

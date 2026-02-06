@@ -129,11 +129,12 @@ class OffloadCache(MutableMapping, ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+    def offload(self, tensor: torch.Tensor | None, **kwargs) -> torch.Tensor:
         """
         Given a tensor, returns that tensor after offloading
 
         :param tensor: tensor to offload
+        :param \\**kwargs: optional keyword arguments for subclasses
         :return: offloaded tensor
         """
         raise NotImplementedError()
@@ -202,7 +203,7 @@ class OffloadCache(MutableMapping, ABC):
             self.update(offloaded, value)
 
             onloaded = self.keep_onloaded_values.get(offloaded, None)
-            if onloaded is not offloaded:
+            if onloaded is not None and onloaded is not offloaded:
                 onloaded.copy_(value)
 
         # if the key does not exist (or the value is None), offload the new value

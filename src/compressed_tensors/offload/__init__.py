@@ -85,20 +85,25 @@ def disable_onloading():
 
 def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Tensor):
     """
-    Update the data of an existing parameter and its offload dict. Supports both
-    parameters of offloaded modules and non-offloaded modules
+    Update the offload and onload data of an existing parameter/buffer. Supports both
+    parameters of both offloaded modules and non-offloaded modules.
+
+    NOTE: This function does not guard against multiple processes writing to offload
+    at the same time. It is the responsibility of the caller to ensure that, for any
+    parameter/buffer, only one rank calls this function at a time.
 
     :param module: module containing the parameter to update
     :param name: name of module parameter to update
     :param data: tensor to update parameter with
     """
     if isinstance(module._parameters, OffloadCache):
-        # | Component | Update Implementation                      |
-        # | --------- | ------------------------------------------ |
-        # | CPU       | Copy into offloaded value once (rank 0)    |
-        # | Disk      | Write file to disk once (rank 0)           |
-        # | Device    | Copy into each replica (all ranks)         |
-        # | --------- | ------------------------------------------ |
+        # | Component | Update Implementation       |
+        # | --------- | --------------------------- |
+        # | CPU       | Copy into shared cpu memory |
+        # | Disk      | Write file to disk          |
+        # | Device    | Copy into local device      |
+        # | --------- | --------------------------- |
+        # all implementations update onloaded data if applicable
         setattr(module, name, torch.nn.Parameter(data.data))
 
     else:
