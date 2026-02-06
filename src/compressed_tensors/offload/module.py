@@ -38,6 +38,12 @@ def offload_module(
     :param onload_device: device used to onload parameters and buffers
     :param offload_device: device used to offload parameters and buffers
     """
+    if isinstance(module._parameters, OffloadCache):
+        raise ValueError(
+            "Attempted to offload a module twice. "
+            "Please call `remove_module_offload` first."
+        )
+
     cache_cls = OffloadCache.cls_from_device(offload_device)
     module._parameters = cache_cls.from_mapping(module._parameters, onload_device)
     module._buffers = cache_cls.from_mapping(module._buffers, onload_device)
@@ -47,7 +53,10 @@ def offload_module(
 
     @wraps(original_forward_func)
     def forward(self, *args, **kwargs):
-        if not OffloadCache.onloading_disabled:
+        if not OffloadCache.onloading_disabled and isinstance(
+            module._parameters, OffloadCache
+        ):
+            onload_device = module._parameters.onload_device
             args = send_tensors(args, device=onload_device)
             kwargs = send_tensors(kwargs, device=onload_device)
 
