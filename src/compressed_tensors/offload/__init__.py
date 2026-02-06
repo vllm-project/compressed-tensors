@@ -92,6 +92,9 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
     at the same time. It is the responsibility of the caller to ensure that, for any
     parameter/buffer, only one rank calls this function at a time.
 
+    NOTE: This function does not update onloaded values across ranks. The caller is
+    responsible for broadcasting any updates to other ranks, if they are onloaded.
+
     :param module: module containing the parameter to update
     :param name: name of module parameter to update
     :param data: tensor to update parameter with
