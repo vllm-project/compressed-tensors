@@ -15,11 +15,11 @@
 import os
 import subprocess
 import sys
-import pytest
 from functools import wraps
 from types import FunctionType
 from typing import Any, Callable, Literal, Optional
 
+import pytest
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.utils import send_tensors

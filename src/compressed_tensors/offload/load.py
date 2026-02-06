@@ -19,8 +19,8 @@ from types import FrameType
 
 import psutil
 import torch
-import torch.distributed as dist
 from compressed_tensors.offload.convert import from_accelerate
+from compressed_tensors.offload.dist_utils import is_rank0
 from transformers import AutoConfig, PreTrainedModel
 from transformers.models.auto.modeling_auto import _BaseAutoModelClass
 
@@ -65,10 +65,7 @@ def patch_from_pretrained(obj: cls_to_patch):
         arguments = inspect.signature(original_func).bind(*args).arguments
         arguments.update(kwargs)
 
-        rank_0 = (
-            not (dist.is_available() and dist.is_initialized()) or dist.get_rank() == 0
-        )
-        if rank_0:
+        if is_rank0():
             device_map = arguments.get("device_map", None)
 
             # intercept "disk"
