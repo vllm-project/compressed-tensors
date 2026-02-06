@@ -107,7 +107,7 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         # | Device    | Copy into local device      |
         # | --------- | --------------------------- |
         # all implementations update onloaded data if applicable
-        setattr(module, name, torch.nn.Parameter(data.data))
+        setattr(module, name, torch.nn.Parameter(data.data, requires_grad=False))
 
     else:
         getattr(module, name).copy_(data)
