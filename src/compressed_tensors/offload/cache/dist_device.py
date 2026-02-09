@@ -21,7 +21,7 @@ from compressed_tensors.offload.utils import to_empty
 class DistributedDeviceCache(DeviceCache):
     """
     Handles offloading and onloading tensors from/to device memory. Onloading
-    tensors is typically a no-op (except onload device has been modified).
+    tensors is typically a no-op (except when onload device has been modified).
 
     The device offload is not shared between ranks. When dispatching with this cache,
     the model is replicated across devices.
