@@ -162,47 +162,6 @@ def apply_quantization_config(
 
         submodule.quantization_status = config.quantization_status
 
-    # Register a load_state_dict post-hook to decompress after weights are loaded
-    # This ensures decompression happens at the right time in the HF load flow:
-    # 1. Model __init__ runs (post_init already called)
-    # 2. apply_quantization_config called (we register hook here)
-    # 3. Weights loaded via load_state_dict
-    # 4. Our hook fires -> decompression happens
-    #
-    # Register hook when:
-    # - config status is COMPRESSED (weights stored compressed), OR
-    # - run_compressed=True was requested (indicates caller expects compressed behavior)
-    should_register_hook = (
-        config.quantization_status == QuantizationStatus.COMPRESSED or run_compressed
-    )
-    if should_register_hook and not getattr(
-        model, "_ct_decompress_hook_registered", False
-    ):
-
-        def decompress_after_load(module, incompatible_keys):
-            # Only decompress once
-            if getattr(module, "_ct_decompressed", False):
-                return
-
-            from compressed_tensors.compressors import ModelCompressor
-
-            compressor = ModelCompressor.from_pretrained_model(module)
-            if compressor is not None:
-                compressor.decompress_model(module)
-                # Only mark as decompressed if we actually decompressed
-                module._ct_decompressed = True
-
-            # Remove the hook after first invocation (cleanup for long-lived processes)
-            handle = getattr(module, "_ct_decompress_hook_handle", None)
-            if handle is not None:
-                handle.remove()
-                module._ct_decompress_hook_handle = None
-
-        # Register the hook - it will fire after load_state_dict completes
-        hook_handle = model.register_load_state_dict_post_hook(decompress_after_load)
-        model._ct_decompress_hook_registered = True
-        model._ct_decompress_hook_handle = hook_handle
-
 
 def _apply_kv_cache_scheme(
     model: torch.nn.Module,
