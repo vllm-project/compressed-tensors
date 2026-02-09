@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """
 Universal registry to support registration and loading of child classes and plugins
 of neuralmagic utilities

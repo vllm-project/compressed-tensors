@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 from enum import Enum
 
 from compressed_tensors.utils import delete_offload_parameter, disable_hf_hook

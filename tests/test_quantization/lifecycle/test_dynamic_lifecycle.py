@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import torch
 from compressed_tensors.quantization.lifecycle import apply_quantization_config
 from compressed_tensors.quantization.quant_config import QuantizationConfig

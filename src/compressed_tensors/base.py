@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 # configs
 QUANTIZATION_CONFIG_NAME = "quantization_config"
 SPARSITY_CONFIG_NAME = "sparsity_config"

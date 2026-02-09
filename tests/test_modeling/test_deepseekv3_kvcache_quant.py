@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 from compressed_tensors.modeling import (
     IMPL_ATTR,
     KV_CACHE_ATTR,

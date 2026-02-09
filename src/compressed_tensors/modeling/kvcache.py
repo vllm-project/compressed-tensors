@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from weakref import ReferenceType, ref

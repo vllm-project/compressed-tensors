@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 #
 # Modified by Roberto Lopez Castro (roberto.lopez.castro@udc.es).
 # Pulled from nm-vllm/vllm/model_executor/layers/quantization/utils/format_24.py
