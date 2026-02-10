@@ -70,6 +70,8 @@ class HadamardFactory(TransformFactory):
 
 
 class HadamardTransform(TransformBase):
+    _dynamic_tied_weights_keys: list[str] = ["weight", "perm"]
+
     def __init__(
         self,
         weight: Parameter,
