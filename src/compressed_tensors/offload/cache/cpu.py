@@ -31,11 +31,12 @@ class CPUCache(OffloadCache):
         """
         return send_tensors(tensor, device=self.offload_device, copy=False)
 
-    def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor):
+    def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
         Update the offloaded cpu value with new data
 
         :param offloaded: cpu tensor to update
         :param data: new data to copy from
         """
-        offloaded.copy_(data)
+        if data is not None:
+            offloaded.copy_(data)
