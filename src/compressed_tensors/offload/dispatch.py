@@ -1,16 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from collections.abc import Container
 from copy import deepcopy
@@ -95,8 +84,9 @@ def dispatch_model(
             extra_memory = (
                 1  # batch_size
                 * 2048  # seq_len
-                * getattr_chain(model, "_config.hidden_dim", 256)
+                * getattr_chain(model, "config.intermediate_size", 256)
                 * getattr(model, "dtype", torch.bfloat16).itemsize
+                + 1e9  # extra memory for fragmentation, kv cache, ect.
             )
         else:
             extra_memory = 0
@@ -134,7 +124,7 @@ def dispatch_model(
         largest_offloaded_module = max(size for _, size in sizes[len(dispatch) :])
 
         # pop off modules until all offloaded modules can fit in last device
-        while largest_offloaded_module > device_memory[last_device] - extra_memory:
+        while largest_offloaded_module + extra_memory > device_memory[last_device]:
             if len(dispatch) <= 0:
                 raise ValueError(
                     f"Cannot fit no_split module of size {largest_offloaded_module} "
@@ -149,7 +139,6 @@ def dispatch_model(
         for module, _ in list(sizes[len(dispatch) :]):
             dispatch.append((module, last_device, "cpu"))
 
-        extra_memory = 0
         logger.warning("Forced to offload modules due to insufficient gpu resources")
 
     # dispatch
