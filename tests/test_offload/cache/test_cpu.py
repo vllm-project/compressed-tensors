@@ -12,6 +12,7 @@ from tests.test_offload.cache.helpers import (
     _test_onload,
     _test_onloading,
     _test_shared_attributes,
+    _test_tensor_subclass,
 )
 from tests.testing_utils import requires_gpu
 
@@ -67,3 +68,9 @@ def test_onloading():
 @requires_gpu
 def test_shared_attributes():
     _test_shared_attributes(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_tensor_subclass():
+    _test_tensor_subclass(OFFLOAD_DEVICE, ONLOAD_DEVICE)

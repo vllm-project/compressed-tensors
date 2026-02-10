@@ -15,9 +15,12 @@ __all__ = [
     "get_module_device",
     "move_module_tensor",
     "module_size",
+    "to_empty",
+    "to_tensor",
 ]
 
 T = TypeVar("T")
+TensorCls = TypeVar("TensorCls", bound=torch.Tensor)
 
 
 def send_tensors(value: T, *args, **kwargs) -> T:
@@ -30,14 +33,16 @@ def send_tensors(value: T, *args, **kwargs) -> T:
     :return: value with moved tensors
     """
     match value:
-        case torch.nn.Parameter():
-            data = value.to(*args, **kwargs)
-            # special case: avoid changing param pointer when possible
-            if data.data_ptr() == value.data_ptr():
-                return value
-            return value.__class__(data, requires_grad=value.requires_grad)
         case torch.Tensor():
-            return value.to(*args, **kwargs)
+            tensor = value.to(*args, **kwargs)
+
+            # special case: avoid changing param pointer when possible
+            if tensor.data_ptr() == value.data_ptr():
+                return value
+
+            tensor.__class__ = value.__class__
+            tensor.__dict__ = value.__dict__.copy()
+            return tensor
         case list():
             return [send_tensors(v, *args, **kwargs) for v in value]
         case tuple():
@@ -145,3 +150,31 @@ def module_size(module: torch.nn.Module, recurse: bool = True) -> int:
             module.parameters(recurse=recurse), module.buffers(recurse=recurse)
         )
         return sum((tensor.nbytes for tensor in tensors), 0)
+
+
+def to_empty(tensor: TensorCls, **kwargs) -> TensorCls:
+    """
+    Create an empty tensor like the given tensor, with the same tensor subclass
+    and dict values
+
+    :param tensor: tensor to create empty like
+    :return: empty tensor
+    """
+    empty = torch.empty_like(tensor.data, **kwargs)
+    empty.__class__ = tensor.__class__
+    empty.__dict__ = tensor.__dict__.copy()
+    return empty
+
+
+def to_tensor(dst: torch.Tensor, src: TensorCls) -> TensorCls:
+    """
+    Copy the subclass, dict, and attributes into `dst` from `src`
+
+    :param dst: tensor to copy attributes into
+    :param src: tensor to copy attributes from
+    :return: dst tensor with copied attributes
+    """
+    dst.__class__ = src.__class__
+    dst.__dict__ = src.__dict__.copy()
+    dst.requires_grad = src.requires_grad
+    return dst
