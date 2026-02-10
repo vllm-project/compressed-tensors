@@ -10,7 +10,7 @@ import torch
 from compressed_tensors.offload import disable_offloading, disable_onloading
 from compressed_tensors.offload.cache.cpu import CPUCache
 from compressed_tensors.offload.module import offload_module
-from tests.test_offload.conftest import assert_device_equal, assert_tensor_equal
+from tests.test_offload.conftest import assert_device_equal
 from tests.testing_utils import requires_gpu
 
 
