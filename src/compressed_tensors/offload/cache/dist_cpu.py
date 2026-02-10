@@ -18,6 +18,7 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.cpu import CPUCache
+from compressed_tensors.offload.utils import to_empty
 
 
 class DistributedCPUCache(CPUCache):
@@ -53,7 +54,7 @@ class DistributedCPUCache(CPUCache):
 
         if dist.get_rank() != 0:
             # reconstruct tensor from shared memory file handle
-            tensor = torch.empty_like(tensor, device=self.offload_device)
+            tensor = to_empty(tensor, device=self.offload_device)
             tensor.set_(
                 torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj),
                 storage_offset=tensor.storage_offset(),
