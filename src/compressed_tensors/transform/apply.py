@@ -61,16 +61,21 @@ def _update_transforms_tied_weights(model: torch.nn.Module):
                 param_fqn = f"{name}.{param_name}" if name else param_name
                 weight_to_keys[param_hash].append(param_fqn)
 
-    # 2. assign each group of shared weights to the same value
-    # create tied weights: key -> tied_keys[0]
-    transform_tied_weights_keys = {}
+    # 2. collect all tied weight keys (excluding the source/primary key from each group)
+    transform_tied_weights_keys = []
     for keys in weight_to_keys.values():
         keys = list(keys)
-        for key in keys[1:]:  # skip A -> A
-            transform_tied_weights_keys[key] = keys[0]
+        # keys[1:] are the dependent keys that point to keys[0] (the source)
+        transform_tied_weights_keys.extend(keys[1:])
 
     # 3. update tied weights attributes
-    if getattr(model, "_tied_weights_keys", None) is None:
-        model._tied_weights_keys = {}
-    model._tied_weights_keys.update(transform_tied_weights_keys)
+    # Note: transformers uses _tied_weights_keys as a list of strings
+    existing_keys = getattr(model, "_tied_weights_keys", None)
+    if existing_keys is None:
+        model._tied_weights_keys = transform_tied_weights_keys
+    elif isinstance(existing_keys, list):
+        model._tied_weights_keys = existing_keys + transform_tied_weights_keys
+    else:
+        # Handle unexpected type by converting to list
+        model._tied_weights_keys = list(existing_keys) + transform_tied_weights_keys
     model.all_tied_weights_keys = model._tied_weights_keys
