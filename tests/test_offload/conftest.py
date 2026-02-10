@@ -6,17 +6,48 @@ import subprocess
 import sys
 from functools import wraps
 from types import FunctionType
-from typing import Any, Callable
+from typing import Any, Callable, Literal, Optional
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.offload.utils import send_tensors
 
 
-def assert_device_equal(device_a: torch.device, device_b: torch.device):
+def assert_device_equal(
+    device_a: torch.device | Literal["disk"],
+    device_b: torch.device | Literal["disk"],
+):
+    if device_a == "disk":
+        device_a = torch.device("meta")
+    if device_b == "disk":
+        device_b = torch.device("meta")
+
     cur_index = torch.cuda.current_device()
     a_index = cur_index if device_a.index is None else device_a.index
     b_index = cur_index if device_b.index is None else device_b.index
     assert device_a.type == device_b.type and a_index == b_index
+
+
+def assert_tensor_equal(
+    tensor_a: torch.Tensor,
+    tensor_b: torch.Tensor,
+    device: Optional[torch.device | str] = None,
+):
+    if device is not None:
+        tensor_b = send_tensors(tensor_b, "meta" if device == "disk" else device)
+
+    assert tensor_a.__class__ == tensor_b.__class__
+    assert tensor_a.requires_grad == tensor_b.requires_grad
+    assert tensor_a.__dict__ == tensor_b.__dict__
+
+    if tensor_a.is_meta or tensor_b.is_meta:
+        assert (
+            tensor_a.device == tensor_b.device
+            and tensor_a.shape == tensor_b.shape
+            and tensor_a.dtype == tensor_b.dtype
+        )
+    else:
+        assert torch.equal(tensor_a, tensor_b)
 
 
 def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
