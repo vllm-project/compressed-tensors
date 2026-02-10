@@ -179,11 +179,7 @@ class TransformBase(InternalModule, ABC):
 
     args: TransformArgs
     weight: Parameter
-    tied_weights_hash: dict[str, int]
-
-    def __init__(self):
-        super().__init__()
-        self.tied_weights_hash = {}
+    _dynamic_tied_weights_keys: list[str] = ["weight"]
 
     @abstractmethod
     def forward(self, value: Tensor) -> Tensor:
@@ -195,7 +191,3 @@ class TransformBase(InternalModule, ABC):
 
     def __repr__(self):
         return f"{self.__class__.__name__}(inverse={self.args.inverse})"
-
-    def register_parameter(self, name: str, param: Parameter | None) -> None:
-        self.tied_weights_hash[name] = id(param)
-        super().register_parameter(name, param)
