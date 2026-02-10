@@ -36,6 +36,6 @@ class CPUCache(OffloadCache):
         Update the offloaded cpu value with new data
 
         :param offloaded: cpu tensor to update
-        :param data: new data to copy
+        :param data: new data to copy from
         """
         offloaded.copy_(data)

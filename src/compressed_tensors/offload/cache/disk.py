@@ -105,7 +105,7 @@ class DiskCache(OffloadCache):
         Remove the offload associated with `key`. If a new file was created to store
         updated tensor data, that new tensor data file is deleted.
 
-        Any references to its onloaded tensors held by this class are invalidated.
+        Any references to onloaded tensors held by this class are invalidated.
 
         :param key: name of tensor to invalidate
         """
