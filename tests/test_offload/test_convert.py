@@ -100,7 +100,7 @@ def test_remove_accelerate(tmp_path):
     device_map, _offload_dir = remove_accelerate(model)
     assert device_map == {
         "": (None, None),
-        "0": (torch.device(type="cuda", index=0), torch.device(type="cuda", index=0)),
+        "0": (torch.device("cuda:0"), torch.device("cuda:0")),
         "1": ("cuda", "cpu"),
         "2": ("cuda", "disk"),
     }
@@ -127,7 +127,14 @@ def test_from_accelerate(tmp_path):
         offload_dir=offload_dir,
     )
 
-    from_accelerate(model)
+    device_map, _offload_dir = from_accelerate(model)
+    assert device_map == {
+        "": (None, None),
+        "0": (torch.device("cuda:0"), torch.device("cuda:0")),
+        "1": ("cuda", "cpu"),
+        "2": ("cuda", "disk"),
+    }
+    assert _offload_dir == offload_dir
     assert isinstance(model[0]._parameters, DeviceCache)
     assert isinstance(model[1]._parameters, CPUCache)
     assert isinstance(model[2]._parameters, DiskCache)
@@ -157,7 +164,15 @@ def test_from_accelerate_dist(tmp_path):
     else:
         model.to("meta")
 
-    from_accelerate(model)
+    device_map, _offload_dir = from_accelerate(model)
+    assert device_map == {
+        "": (None, None),
+        "0": ("cuda", "cpu"),
+        "1": ("cuda", "cpu"),
+        "2": ("cuda", "disk"),
+    }
+    if dist.get_rank() == 0:
+        assert _offload_dir == offload_dir
     # assert isinstance(model[0]._parameters, DeviceCache)
     assert isinstance(model[1]._parameters, CPUCache)
     assert isinstance(model[2]._parameters, DiskCache)
