@@ -2,8 +2,11 @@
 
 BUILD_TYPE ?= dev # set nightly to build nightly release
 PYCHECKDIRS := src tests
+PYCHECKGLOBS := 'src/**/*.py' 'tests/**/*.py' 'utils/**/*.py' 'examples/**/*.py' setup.py
 # run checks on all files for the repo
 quality:
+	@echo "Running copyright checks";
+	python utils/copyright.py quality $(PYCHECKGLOBS)
 	@echo "Running python quality checks";
 	black --target-version py310 --check $(PYCHECKDIRS);
 	isort --check-only $(PYCHECKDIRS);
@@ -11,6 +14,8 @@ quality:
 
 # style the code according to accepted standards for the repo
 style:
+	@echo "Running copyright checks";
+	python utils/copyright.py style $(PYCHECKGLOBS)
 	@echo "Running python styling";
 	black --target-version py310 $(PYCHECKDIRS);
 	isort $(PYCHECKDIRS);
