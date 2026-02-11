@@ -162,7 +162,7 @@ def get_device_memory() -> dict[torch.device, int]:
     if not torch.cuda.is_available():
         return dict()
 
-    if dist.is_available() and dist.is_initialized() and dist.get_rank() == 0:
+    if dist.is_available() and dist.is_initialized():
         logger.info("Detected distributed context. Dispatching to local rank gpu")
         device_memory = torch.cuda.get_device_properties(dist.get_rank()).total_memory
         return {torch.device("cuda"): device_memory}
