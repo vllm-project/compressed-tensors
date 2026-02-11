@@ -24,7 +24,6 @@ def cache():
 
 
 @pytest.fixture(scope="function")
-@torch.no_grad()
 def linear():
     return torch.nn.Linear(5, 5, bias=True, device=OFFLOAD_DEVICE)
 
@@ -170,7 +169,6 @@ def test_register_parameter(
 @pytest.mark.parametrize("param_device", (ONLOAD_DEVICE, OFFLOAD_DEVICE))
 @pytest.mark.parametrize("use_register_parameter", (True, False))
 @pytest.mark.parametrize("requires_grad", (True, False))
-@torch.no_grad()
 def test_register_parameter_invalidates(
     offloaded_linear: torch.nn.Linear,
     param_device,
