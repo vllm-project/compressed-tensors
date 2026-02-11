@@ -99,7 +99,8 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         setattr(module, name, torch.nn.Parameter(data.data, requires_grad=False))
 
     else:
-        getattr(module, name).copy_(data)
+        with torch.no_grad():
+            getattr(module, name).copy_(data)
 
 
 def get_execution_device(module: torch.nn.Module) -> torch.device | str:
