@@ -4,10 +4,11 @@
 from collections.abc import Container
 from copy import deepcopy
 from functools import partial
-from typing import Literal, TypeVar
+from typing import Literal, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.module import offload_module, remove_module_offload
 from compressed_tensors.offload.utils import get_module_sizes
 from compressed_tensors.utils import getattr_chain
@@ -18,12 +19,15 @@ from transformers import PreTrainedModel
 
 __all__ = [
     "offload_model",
+    "dispatch_with_map",
     "dispatch_model",
     "remove_dispatch",
     "get_device_memory",
+    "DeviceMap",
 ]
 
 ModelType = TypeVar("ModelType", bound=torch.nn.Module)
+DeviceMap = dict[str, tuple[torch.device | None, torch.device | str | None]]
 
 
 def offload_model(
@@ -32,22 +36,48 @@ def offload_model(
     offload_device: torch.device | str | Literal["disk"] = torch.device("cpu"),
 ) -> ModelType:
     """
-    Offload a model to the `offload_device`. During forward passes, model weights will
-    be onloaded to the `onload_device`
+    Modify the dispatch of a model to onload to the provided `onload_device`. Existing
+    offloaded tensors will not be modified. If a module is not offloaded, it will be
+    offloaded to the provided `offload_device`.
 
     :param model: model to dispatch
     :param onload_device: device to move weights to during forward pass
-    :param offload_device: device to offload weights to
+    :param offload_device: device to offload weights to, if not already offloaded
     :return: dispatched model
     """
-    # remove any previous dispatches
-    remove_dispatch(model)
-
     # offload modules in place
     for module in model.modules():
-        offload_module(module, onload_device, offload_device)
+        if isinstance(module._parameters, OffloadCache):
+            module._parameters.onload_device = onload_device
+            module._buffers.onload_device = onload_device
+        else:
+            offload_module(module, onload_device, offload_device)
 
     return model
+
+
+def dispatch_with_map(
+    model: torch.nn.Module,
+    device_map: DeviceMap,
+    offload_dir: Optional[str] = None,
+):
+    """
+    Dispatch a model according to the provided device map
+
+    :param model: model to dispatch
+    :param device_map: device map specifying the onload and offload of each module
+    :param offload_dir: optional directory for disk offloading
+    """
+    for name, (onload_device, offload_device) in device_map.items():
+        module = model.get_submodule(name)
+
+        if offload_device == "disk":
+            offload_module(
+                module, onload_device, offload_device, offload_dir=offload_dir
+            )
+
+        elif offload_device is not None:
+            offload_module(module, onload_device, offload_device)
 
 
 def dispatch_model(
@@ -59,7 +89,8 @@ def dispatch_model(
     """
     Dispatch a model for autoregressive generation. This means that modules are
     dispatched evenly across available devices and kept onloaded if possible. If
-    onloading the entire model is not possible, some modules may be offloaded.
+    onloading the entire model is not possible, some modules may be offloaded. Any
+    existing offloads will be removed.
 
     Disclaimers:
     * Optimal runtime assumes that modules are called in order of `model.modules()`
@@ -72,9 +103,6 @@ def dispatch_model(
         across multiple devices
     :return: dispatched model
     """
-    # remove previous dispatches
-    remove_dispatch(model)
-
     # infer no_split_modules
     if no_split_modules is None:
         no_split_modules = getattr(model, "_no_split_modules", tuple())
@@ -147,6 +175,7 @@ def dispatch_model(
         assert len(dispatch) == len(sizes)
         for module, onload, offload in dispatch:
             for submodule in module.modules():
+                remove_module_offload(submodule, onload_tensors=True)
                 offload_module(submodule, onload, offload)
 
         logger.debug(f"Dispatched model with {extra_memory} bytes of extra memory")

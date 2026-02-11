@@ -60,7 +60,7 @@ class DiskCache(OffloadCache):
 
     def offload(
         self, tensor: torch.Tensor | None, offloaded: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+    ) -> torch.Tensor | None:
         """
         Offload a tensor to disk by writing a new safetensors file
 

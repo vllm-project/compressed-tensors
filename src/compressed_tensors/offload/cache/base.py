@@ -136,7 +136,7 @@ class OffloadCache(MutableMapping, ABC):
         Update the data of an offloaded tensor
 
         NOTE: Operation is performed asynchronously. If you need the offloaded value
-        to updated across all ranks, call `dist.barrier()` after calling this function
+        to update across all ranks, call `dist.barrier()` after calling this function
 
         :param tensor: offloaded tensor to update
         :param data: new tensor data

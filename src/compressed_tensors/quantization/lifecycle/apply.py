@@ -5,6 +5,7 @@ from collections import OrderedDict
 from copy import deepcopy
 
 import torch
+import tqdm
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.modeling import (
     initialize_hooked_attention,
@@ -130,8 +131,13 @@ def apply_quantization_config(
             target_to_scheme[target] = scheme
 
     # mark appropriate layers for quantization by setting their quantization schemes
-    for name, submodule in match_named_modules(
-        model, target_to_scheme, config.ignore, warn_on_fail=True
+    for name, submodule in tqdm.tqdm(
+        list(
+            match_named_modules(
+                model, target_to_scheme, config.ignore, warn_on_fail=True
+            )
+        ),
+        desc="Applying quantization config to model",
     ):
         # mark modules to be quantized by adding
         # quant scheme to the matching layers
