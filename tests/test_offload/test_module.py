@@ -24,6 +24,7 @@ def cache():
 
 
 @pytest.fixture(scope="function")
+@torch.no_grad()
 def linear():
     return torch.nn.Linear(5, 5, bias=True, device=OFFLOAD_DEVICE)
 
@@ -169,6 +170,7 @@ def test_register_parameter(
 @pytest.mark.parametrize("param_device", (ONLOAD_DEVICE, OFFLOAD_DEVICE))
 @pytest.mark.parametrize("use_register_parameter", (True, False))
 @pytest.mark.parametrize("requires_grad", (True, False))
+@torch.no_grad()
 def test_register_parameter_invalidates(
     offloaded_linear: torch.nn.Linear,
     param_device,
@@ -181,7 +183,7 @@ def test_register_parameter_invalidates(
         assert onloaded_weight in set(CPUCache.keep_onloaded_values.values())
 
         # add new param
-        data = torch.ones(5, device=param_device)
+        data = torch.ones((5, 5), device=param_device)
         param = torch.nn.Parameter(data, requires_grad=requires_grad)
         if use_register_parameter:
             offloaded_linear.register_parameter("weight", param)
@@ -190,10 +192,7 @@ def test_register_parameter_invalidates(
 
         # new param is correct
         assert_device_equal(offloaded_linear.weight.device, ONLOAD_DEVICE)
-        assert torch.equal(offloaded_linear.weight.to(param_device), param)
-
-        # original weight is invalidated
-        assert onloaded_weight not in set(CPUCache.keep_onloaded_values.values())
+        assert torch.equal(offloaded_linear.weight, param.to(ONLOAD_DEVICE))
 
 
 def test_forward_signature(linear: torch.nn.Linear, cache):

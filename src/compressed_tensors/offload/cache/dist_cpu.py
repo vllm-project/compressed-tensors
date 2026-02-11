@@ -15,6 +15,12 @@ class DistributedCPUCache(CPUCache):
     offload_device = torch.device("cpu")
 
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+        """
+        Synchronously create shared cpu memory for offload
+
+        :param tensor: tensor on any device
+        :return: cpu tensor whose data is located in shared memory
+        """
         if tensor is None:
             return None
 

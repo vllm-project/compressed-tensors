@@ -117,26 +117,27 @@ def test_distributed_files(tmp_path):
     offload_dir = tmp_path / "offload_dir"
     os.mkdir(offload_dir)
 
-    # initial write
+    # initial write, broadcasted to all ranks
     DiskCache.index = {}
     cache = DistributedDiskCache("cpu", offload_dir=str(offload_dir))
     tensor = torch.zeros(10)
     cache["weight"] = tensor
 
-    assert len(DiskCache.index) == 1  # test with DiskCache, not DistributedDiskCache
-    if dist.get_rank() == 0:
+    assert len(DiskCache.index) == 1
+    if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
         files = os.listdir(offload_dir)
         assert len(files) == 1
         with safe_open(offload_dir / files[0], framework="pt", device="cpu") as file:
             read_tensor = file.get_tensor("weight")
             assert_tensor_equal(read_tensor, tensor)
 
-    # modify
+    # modify on one rank
     tensor = torch.ones(10)
-    cache["weight"] = tensor
+    if dist.get_rank() == 0:
+        cache["weight"] = tensor
 
     assert len(DiskCache.index) == 1
-    if dist.get_rank() == 0:
+    if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
         files = os.listdir(offload_dir)
         assert len(files) == 1
         with safe_open(offload_dir / files[0], framework="pt", device="cpu") as file:
@@ -146,6 +147,6 @@ def test_distributed_files(tmp_path):
     # delete
     del cache["weight"]
     assert len(DiskCache.index) == 0
-    if dist.get_rank() == 0:
+    if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
         files = os.listdir(offload_dir)
         assert len(files) == 0

@@ -28,6 +28,7 @@ def cache():
 
 
 @pytest.fixture(scope="function")
+@torch.no_grad()
 def linear():
     return torch.nn.Linear(5, 5, bias=True, device=OFFLOAD_DEVICE)
 
@@ -77,16 +78,16 @@ def test_update_offload_parameter(linear: torch.nn.Linear, cache, offload):
 
     assert linear.weight == 0
 
-    update_offload_parameter(linear, "weight", 1)
+    update_offload_parameter(linear, "weight", torch.tensor(1))
     assert linear.weight == 1
 
     with disable_offloading():
-        update_offload_parameter(linear, "weight", 2)
+        update_offload_parameter(linear, "weight", torch.tensor(2))
         assert linear.weight == 2
     assert linear.weight == 2
 
     with disable_onloading():
-        update_offload_parameter(linear, "weight", 3)
+        update_offload_parameter(linear, "weight", torch.tensor(3))
         assert linear.weight == 3
     assert linear.weight == 3
 
