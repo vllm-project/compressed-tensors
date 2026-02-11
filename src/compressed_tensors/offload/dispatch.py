@@ -182,7 +182,9 @@ def dispatch_model(
             remove_module_offload(module, onload_tensors=True)
             if module in dispatch_dict:
                 onload, offload = dispatch_dict[module]
-                offload_module(module, onload, offload)
+                for submodule in module.modules():
+                    remove_module_offload(submodule, onload_tensors=True)
+                    offload_module(submodule, onload, offload)
 
         logger.debug(f"Dispatched model with {extra_memory} bytes of extra memory")
         return model
