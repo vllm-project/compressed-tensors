@@ -11,7 +11,7 @@ on:
 
 jobs:
   quality-check:
-    runs-on: ubuntu-24.04
+    runs-on: ibm-wdc-k8s-vllm-utils
     steps:
         - uses: actions/setup-python@v5
           with:
