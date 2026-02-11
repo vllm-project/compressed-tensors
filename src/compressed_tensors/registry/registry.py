@@ -3,7 +3,6 @@
 
 """
 Universal registry to support registration and loading of child classes and plugins
-of neuralmagic utilities
 """
 
 import importlib
@@ -57,7 +56,6 @@ def standardize_alias_name(
 class RegistryMixin:
     """
     Universal registry to support registration and loading of child classes and plugins
-    of neuralmagic utilities.
 
     Classes that require a registry or plugins may add the `RegistryMixin` and use
     `register` and `load` as the main entrypoints for adding new implementations and
