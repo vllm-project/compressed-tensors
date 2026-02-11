@@ -41,6 +41,7 @@ class DeviceCache(OffloadCache):
         """
         return send_tensors(tensor, device=self.offload_device, copy=False)
 
+    @torch.no_grad()
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
         Update the device value with new data

@@ -14,7 +14,7 @@ from compressed_tensors.offload import (
 )
 from compressed_tensors.offload.cache import CPUCache
 from compressed_tensors.offload.module import offload_module
-from tests.test_offload.conftest import assert_device_equal
+from tests.test_offload.conftest import assert_device_equal, assert_tensor_equal
 from tests.testing_utils import requires_gpu
 
 
@@ -28,7 +28,6 @@ def cache():
 
 
 @pytest.fixture(scope="function")
-@torch.no_grad()
 def linear():
     return torch.nn.Linear(5, 5, bias=True, device=OFFLOAD_DEVICE)
 
@@ -90,6 +89,18 @@ def test_update_offload_parameter(linear: torch.nn.Linear, cache, offload):
         update_offload_parameter(linear, "weight", torch.tensor(3))
         assert linear.weight == 3
     assert linear.weight == 3
+
+
+@pytest.mark.unit
+def test_update_offload_parameter_with_grad(linear: torch.nn.Linear):
+    zeros = torch.nn.Parameter(torch.zeros(5, 5), requires_grad=True)
+    update_offload_parameter(linear, "weight", zeros)
+    assert_tensor_equal(linear.weight, zeros)
+
+    ones = torch.nn.Parameter(torch.ones(5, 5), requires_grad=True)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+    update_offload_parameter(linear, "weight", ones)
+    assert_tensor_equal(linear.weight, ones, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
