@@ -11,6 +11,9 @@ from tests.test_offload.conftest import torchrun
 from transformers import AutoModelForCausalLM
 
 
+acclerate = pytest.importorskip("accelerate")
+
+
 @pytest.mark.integration
 @torchrun(world_size=2)
 def test_accelerate_load_disk(disable_convert):

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
 from itertools import chain
 from typing import TYPE_CHECKING, Iterable
 
@@ -9,9 +10,11 @@ import torch.distributed as dist
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.dispatch import dispatch_with_map
 from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
+from loguru import logger
 
 
 if TYPE_CHECKING:
+    from accelerate.utils import OffloadedWeightsLoader
     from compressed_tensors.offload.dispatch import DeviceMap
 
 
@@ -120,13 +123,40 @@ def remove_accelerate_from_module(
 
             # Copy accelerate's disk index into DiskCache for our later use
             assert tensor.device.type == "meta"
-            DiskCache.index[tensor] = dataset.index[full_name]
+            _save_ct_index_entry(dataset, full_name, tensor)
 
             # Prevent onloading disk tensors after removing hook
             hook.offload = False
 
     remove_hook_from_module(module, recurse=False)
     return hook.execution_device, offload_device, dataset.save_folder
+
+
+def _save_ct_index_entry(
+    dataset: "OffloadedWeightsLoader", name: str, offloaded: torch.Tensor
+):
+    entry: dict = dataset.index[name]
+
+    if "safetensors_file" in entry:
+        # typical case: model is loaded from safetensors file
+        DiskCache.index[offloaded] = entry
+
+    else:
+        # unfortunately, ct's implementation does not support loading non-safetensors
+        # we must onload and save as safetensors. This should only occur while testing
+        onloaded = dataset[name]
+        DiskCache("cpu", dataset.save_folder).offload(onloaded, offloaded=offloaded)
+        logger.warning(
+            "Attempting to disk offload a model which was not saved with safetensors. "
+            "compressed-tensors only supports disk onload from safetensors files, so "
+            "weights must be onloaded and re-saved as safetensors files.",
+            log_once=True,
+        )
+
+        # remove original weight_file
+        original_weight_file = os.path.join(dataset.save_folder, f"{name}.dat")
+        if os.path.exists(original_weight_file):
+            os.remove(original_weight_file)
 
 
 def _get_tensors(
