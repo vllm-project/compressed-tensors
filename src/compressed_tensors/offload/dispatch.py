@@ -4,7 +4,7 @@
 from collections.abc import Container
 from copy import deepcopy
 from functools import partial
-from typing import Literal, Optional, TypeVar, Any
+from typing import Any, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
