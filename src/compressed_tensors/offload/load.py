@@ -57,10 +57,7 @@ def patch_from_pretrained(obj: cls_to_patch):
 
         match (args["device_map"], is_distributed()):
             case "auto", True:
-                raise ValueError(
-                    "Cannot use an `auto` device map in a distributed context. Please "
-                    "use `device_map='cuda'` instead"
-                )
+                args["device_map"] = "cuda"
 
             case "auto_offload", _:
                 args["device_map"] = "auto"
