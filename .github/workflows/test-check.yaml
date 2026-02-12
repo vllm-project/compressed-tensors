@@ -30,7 +30,7 @@ jobs:
         - name: Set Env
           run: pip3 install --upgrade pip setuptools
         - name: "⚙️ Install dependencies"
-          run: pip3 install .[dev]
+          run: pip3 install .[dev] --extra-index-url https://download.pytorch.org/whl/cu129
         - name: clean up
           run: |
             echo "cleaning up disk space as GHA runner has limited disk size."
