@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-
 from collections import defaultdict
+from typing import Optional
 
 import torch
 from compressed_tensors.offload.cache import DiskCache, OffloadCache
@@ -12,10 +12,10 @@ from compressed_tensors.utils import patch_attr
 from loguru import logger
 
 
-__all__ = ["to_accelerate"]
+__all__ = ["to_accelerate", "to_accelerate_module"]
 
 
-def to_accelerate(model: torch.nn.Module):
+def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
     """
     Convert a model from `compressed_tensors` offloading to `accelerate` offloading.
     This is is often called before `PreTrainedModel.save_pretrained`, as without this
@@ -23,62 +23,73 @@ def to_accelerate(model: torch.nn.Module):
 
     :param model: model dispatched with `compressed_tensors` offloading
     """
-    from compressed_tensors.offload import get_offloaded_device  # avoid circular import
-
-    try:
-        from accelerate.hooks import AlignDevicesHook, add_hook_to_module
-        from accelerate.utils import OffloadedWeightsLoader, PrefixedDataset
-    except ImportError:
-        if any(isinstance(m._parameters, OffloadCache) for m in model.modules()):
-            logger.warning(
-                "Cannot convert model without `accelerate` installed. This may result "
-                "in high memory usage during saving and tied tensors being saved twice"
-            )
-        return
-
     hf_device_map = {}
     hf_disk_index = _to_accelerate_disk_index(model, DiskCache.index)
 
     for name, module in model.named_modules():
-        cache = module._parameters
-        if isinstance(cache, OffloadCache):
-            remove_module_offload(module, onload_tensors=False)
-
-            # create weights map
-            if isinstance(cache, DiskCache):
-                weights_map = PrefixedDataset(
-                    prefix=f"{name}.",
-                    dataset=OffloadedWeightsLoader(
-                        index=hf_disk_index,
-                        save_folder=cache.offload_dir,
-                    ),
-                )
-            else:
-                weights_map = dict(get_tensors(module, recurse=False))
-
-            # create hook
-            hook = AlignDevicesHook(
-                execution_device=cache.onload_device,
-                offload=True,
-                io_same_device=True,
-                weights_map=weights_map,
-                offload_buffers=True,
-                place_submodules=False,
-            )
-
-            # add hook
-            with patch_attr(AlignDevicesHook, "init_hook", lambda self, module: module):
-                add_hook_to_module(module, hook)
-
-        hf_device_map[name] = get_offloaded_device(module, torch.device("cpu")).type
-
-    # for some reason, in transformers<5, we need at least 2 device types to save
-    # this is essentially always going to be the case
-    # this is pretty much always the case, but let's catch it here anyways
-    if len(set(hf_device_map.values())) <= 1:
-        raise NotImplementedError("Accelerate requires hybrid offloading for saving")
+        offload = to_accelerate_module(module, name, hf_disk_index)
+        hf_device_map[name] = offload
 
     setattr(model, "hf_device_map", hf_device_map)
+    return hf_device_map
+
+
+def to_accelerate_module(
+    module: torch.nn.Module,
+    name: Optional[str] = None,
+    hf_disk_index: Optional[dict[str, dict[str, str]]] = None,
+) -> str:
+    has_accelerate = True
+    try:
+        from accelerate.hooks import AlignDevicesHook, add_hook_to_module
+        from accelerate.utils import OffloadedWeightsLoader, PrefixedDataset
+    except ImportError:
+        logger.warning(
+            "Cannot convert module without `accelerate` installed. This may result "
+            "in high memory usage during saving and tied tensors being saved twice",
+            log_once=True,
+        )
+        has_accelerate = False
+
+    offload_device = torch.device("cpu")
+    if has_accelerate and isinstance(module._parameters, OffloadCache):
+        cache = module._parameters
+        offload_device = cache.offload_device
+        remove_module_offload(module, onload_tensors=False)
+
+        # create weights map
+        if isinstance(cache, DiskCache):
+            if name is None or hf_disk_index is None:
+                raise ValueError(
+                    "Must provide `name` and `hf_disk_index` "
+                    "to convert disk offloaded module"
+                )
+
+            weights_map = PrefixedDataset(
+                prefix=f"{name}.",
+                dataset=OffloadedWeightsLoader(
+                    index=hf_disk_index,
+                    save_folder=cache.offload_dir,
+                ),
+            )
+        else:
+            weights_map = dict(get_tensors(module, recurse=False))
+
+        # create hook
+        hook = AlignDevicesHook(
+            execution_device=cache.onload_device,
+            offload=True,
+            io_same_device=True,
+            weights_map=weights_map,
+            offload_buffers=True,
+            place_submodules=False,
+        )
+
+        # add hook (skip onloading)
+        with patch_attr(AlignDevicesHook, "init_hook", lambda self, module: module):
+            add_hook_to_module(module, hook)
+
+    return str(offload_device)
 
 
 def _to_accelerate_disk_index(
