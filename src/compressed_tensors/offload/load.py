@@ -33,8 +33,8 @@ def load_offloaded_model():
     device, then the offload is shared across ranks during conversion.
 
     In addition to the standard `device_map` options, this context also supports
-    `device_map="disk"`, which means that the model will load as many parameters can
-    fit onto the cpu, and any extra parameters will be loaded on disk.
+    `device_map="auto_offload"`, which means that the model will load as many parameters
+    can fit onto the cpu, and any extra parameters will be loaded on disk.
     """
     frame = _get_caller_frame()
 

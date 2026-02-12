@@ -3,6 +3,7 @@
 
 import contextlib
 from collections.abc import Iterable
+from typing import Literal
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
@@ -115,7 +116,7 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
 
 def get_execution_device(
     module: torch.nn.Module, default: torch.device | None = None
-) -> torch.device | str:
+) -> torch.device | Literal["disk"]:
     """
     Get the device which inputs should be moved to before module execution.
 
@@ -131,17 +132,15 @@ def get_execution_device(
 
 def get_offloaded_device(
     module: torch.nn.Module, default: torch.device | None = None
-) -> torch.device | str:
+) -> torch.device | Literal["disk"]:
     """
     :param module: module to check
     :return: device module is offloaded to onto after forward pass
     """
-    from compressed_tensors.offload.cache.disk import DiskCache
+    if isinstance(module._parameters, OffloadCache):
+        return module._parameters.offload_device
 
-    if isinstance(module._parameters, DiskCache):
-        return "disk"
-
-    with disable_onloading():
+    else:
         return get_module_device(module, default)
 
 

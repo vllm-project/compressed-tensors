@@ -27,7 +27,7 @@ def offload_module(
     :param module: module to offload
     :param onload_device: device used to onload parameters and buffers
     :param offload_device: device used to offload parameters and buffers
-    #TODO
+    :param \\**kwargs: keyword arguments for cache constructor
     """
     if isinstance(module._parameters, OffloadCache):
         raise ValueError(

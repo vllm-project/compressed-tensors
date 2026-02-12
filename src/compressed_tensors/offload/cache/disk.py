@@ -27,7 +27,7 @@ class DiskCache(OffloadCache):
     tensors and their locations on disk is defined by `index`.
     """
 
-    offload_device: Optional[torch.device | str] = "disk"
+    offload_device = "disk"
 
     # offloaded tensors -> weight info
     index: dict[torch.Tensor, dict[str, str]] = dict()
@@ -40,13 +40,16 @@ class DiskCache(OffloadCache):
         super().__init__(onload_device)
         self.offload_dir = offload_dir or tempfile.mkdtemp()
 
-    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor:
+    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Onload a tensor from disk/meta to device
 
         :param offloaded: meta tensor to onload
         :return: device tensor, read from disk
         """
+        if offloaded is None:
+            return None
+
         weight_info = self.index[offloaded]
         device = _get_safe_open_device(self.onload_device)
 

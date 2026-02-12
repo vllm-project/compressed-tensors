@@ -22,6 +22,7 @@ def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
     conversion, `save_pretrained` will use excessive memory and device movement.
 
     :param model: model dispatched with `compressed_tensors` offloading
+    :return: accelerate-style device map
     """
     hf_device_map = {}
     hf_disk_index = _to_accelerate_disk_index(model, DiskCache.index)
@@ -39,6 +40,14 @@ def to_accelerate_module(
     name: Optional[str] = None,
     hf_disk_index: Optional[dict[str, dict[str, str]]] = None,
 ) -> str:
+    """
+    Convert a module from `compressed_tensors` offloading to `accelerate` offloading
+
+    :param module: module to convert to accelerate offloading
+    :param name: name of module in model
+    :param hf_disk_index: accelerate-style disk index to attach to weight loaders
+    :return: str of offloaded device. Defaults to cpu if module does not have parameters
+    """
     has_accelerate = True
     try:
         from accelerate.hooks import AlignDevicesHook, add_hook_to_module
