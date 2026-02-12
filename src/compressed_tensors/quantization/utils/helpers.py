@@ -494,8 +494,8 @@ def calculate_block_padding(
 
 def pad_tensor_for_block_quant(
     tensor: torch.Tensor,
-    block_structure: Tuple[int, int],
-) -> Tuple[torch.Tensor, Tuple[int, int]]:
+    block_structure: tuple[int, int],
+) -> tuple[torch.Tensor, tuple[int, int]]:
     """
     Pad a tensor so its dimensions are divisible by the block size.
 
