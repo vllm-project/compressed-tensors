@@ -36,7 +36,6 @@ def from_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
     else:
         device_map, offload_dir = None, None
 
-    print(device_map)
     broadcast_obj = [device_map, offload_dir]
     if is_distributed():
         dist.broadcast_object_list(broadcast_obj, src=0)
@@ -174,7 +173,7 @@ def _norm_device(device: str | torch.device | None) -> str | torch.device | None
         and device.index == dist.get_rank()
     ):
         device = torch.device(type=device.type, index=None)
-    
+
     return device
 
 

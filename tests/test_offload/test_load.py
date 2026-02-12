@@ -6,7 +6,7 @@ import os
 import pytest
 import torch
 import torch.distributed as dist
-from compressed_tensors.offload.convert import from_accelerate, to_accelerate
+from compressed_tensors.offload.convert import from_accelerate
 from compressed_tensors.offload.load import load_offloaded_model
 from tests.test_offload.conftest import torchrun
 from transformers import AutoModelForCausalLM

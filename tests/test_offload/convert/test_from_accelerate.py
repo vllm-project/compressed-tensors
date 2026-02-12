@@ -7,16 +7,13 @@ import pytest
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache import CPUCache, DeviceCache, DiskCache
-from compressed_tensors.offload.convert import from_accelerate, to_accelerate
+from compressed_tensors.offload.convert import from_accelerate
 from compressed_tensors.offload.convert.from_accelerate import (
     remove_accelerate,
     remove_accelerate_from_module,
 )
-from compressed_tensors.offload.load import load_offloaded_model
-from compressed_tensors.offload.module import offload_module
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
-from transformers import AutoModelForCausalLM
 
 
 acclerate = pytest.importorskip("accelerate")
@@ -28,6 +25,14 @@ def test_remove_accelerate_from_module_device():
     # there"s no way to force accelerate to "offload" to cuda. Instead, it just
     # stays on cuda with no hooks
     linear = torch.nn.Linear(5, 5, device="cuda:0")
+    assert remove_accelerate_from_module(linear) == (
+        torch.device("cuda:0"),
+        torch.device("cuda:0"),
+        None,
+    )
+    assert not hasattr(linear, "_hf_hook")
+
+    # test idempotency
     assert remove_accelerate_from_module(linear) == (
         torch.device("cuda:0"),
         torch.device("cuda:0"),
@@ -49,7 +54,11 @@ def test_remove_accelerate_from_module_cpu():
         state_dict=linear.state_dict(),
         force_hooks=True,
     )
-    assert remove_accelerate_from_module(linear) == (torch.device("cuda"), torch.device("cpu"), None)
+    assert remove_accelerate_from_module(linear) == (
+        torch.device("cuda"),
+        torch.device("cpu"),
+        None,
+    )
     assert not hasattr(linear, "_hf_hook")
 
 
@@ -73,7 +82,11 @@ def test_remove_accelerate_from_module_disk(tmp_path):
         force_hooks=True,
         offload_dir=offload_dir,
     )
-    assert remove_accelerate_from_module(linear) == (torch.device("cuda"), "disk", offload_dir)
+    assert remove_accelerate_from_module(linear) == (
+        torch.device("cuda"),
+        "disk",
+        offload_dir,
+    )
     assert not hasattr(linear, "_hf_hook")
 
 
@@ -175,41 +188,3 @@ def test_from_accelerate_dist(tmp_path):
     assert isinstance(model[0]._parameters, DeviceCache)
     assert isinstance(model[1]._parameters, CPUCache)
     assert isinstance(model[2]._parameters, DiskCache)
-
-
-# @pytest.mark.integration
-# def test_convert():
-#     with load_offloaded_model():
-#         acclerate = pytest.importorskip("accelerate")
-
-#         model = AutoModelForCausalLM.from_pretrained(
-#             "Qwen/Qwen3-0.6B",
-#             device_map="disk",
-#             max_memory={"cpu": 596049920},  # force disk offloading
-#             offload_folder="temp",
-#             dtype=torch.bfloat16,
-#         )
-
-#     assert not hasattr(model, "hf_device_map")
-#     to_accelerate(model)
-#     model.save_pretrained("temp_save")
-
-
-# @pytest.mark.integration
-# def test_idempotency(disable_convert):
-#     with load_offloaded_model():
-#         model = AutoModelForCausalLM.from_pretrained(
-#             "Qwen/Qwen3-0.6B",
-#             device_map="disk",
-#             max_memory={"cpu": 596049920},  # force disk offloading
-#             offload_folder="temp",
-#             dtype=torch.bfloat16,
-#         )
-
-#     assert hasattr(model, "hf_device_map")
-
-#     from_accelerate(model)
-#     from_accelerate(model)
-
-#     to_accelerate(model)
-#     to_accelerate(model)
