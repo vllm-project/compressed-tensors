@@ -1,19 +1,8 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import Dict, Generator, Optional, Tuple, Union
 
 import torch
 from compressed_tensors.compressors import BaseCompressor
@@ -32,9 +21,9 @@ __all__ = [
 
 
 def save_compressed(
-    tensors: Dict[str, Tensor],
-    save_path: Union[str, Path],
-    compression_format: Optional[CompressionFormat] = None,
+    tensors: dict[str, Tensor],
+    save_path: str | Path,
+    compression_format: CompressionFormat | None = None,
 ):
     """
     Save compressed tensors to disk. If tensors are not compressed,
@@ -68,10 +57,10 @@ def save_compressed(
 
 
 def load_compressed(
-    compressed_tensors: Union[str, Path],
+    compressed_tensors: str | Path,
     compression_config: SparsityCompressionConfig = None,
-    device: Optional[str] = "cpu",
-) -> Generator[Tuple[str, Tensor], None, None]:
+    device: str | None = "cpu",
+) -> Generator[tuple[str, Tensor], None, None]:
     """
     Load compressed tensors from disk.
     If tensors are not compressed, load them as is.
@@ -111,7 +100,7 @@ def load_compressed(
 def save_compressed_model(
     model: torch.nn.Module,
     filename: str,
-    compression_format: Optional[CompressionFormat] = None,
+    compression_format: CompressionFormat | None = None,
     force_contiguous: bool = True,
 ):
     """

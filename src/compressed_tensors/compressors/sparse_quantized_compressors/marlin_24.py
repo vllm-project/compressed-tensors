@@ -1,20 +1,9 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import logging
 import warnings
-from typing import Dict, Generator, Tuple
+from collections.abc import Generator
 
 import numpy as np
 import torch
@@ -49,7 +38,7 @@ class Marlin24Compressor(BaseCompressor):
 
     @staticmethod
     def validate_quant_compatability(
-        names_to_scheme: Dict[str, QuantizationScheme],
+        names_to_scheme: dict[str, QuantizationScheme],
     ) -> bool:
         """
         Checks if every quantized module in the model is compatible with Marlin24
@@ -115,7 +104,7 @@ class Marlin24Compressor(BaseCompressor):
         return True
 
     @property
-    def compression_param_names(self) -> Tuple[str]:
+    def compression_param_names(self) -> tuple[str, ...]:
         """
         Returns a tuple of compression parameter names introduced by
         the compressor during compression
@@ -124,11 +113,11 @@ class Marlin24Compressor(BaseCompressor):
 
     def compress(
         self,
-        model_state: Dict[str, Tensor],
-        names_to_scheme: Dict[str, QuantizationScheme],
+        model_state: dict[str, Tensor],
+        names_to_scheme: dict[str, QuantizationScheme],
         show_progress: bool = False,
         **kwargs,
-    ) -> Dict[str, Tensor]:
+    ) -> dict[str, Tensor]:
         """
         Compresses a quantized state_dict with 2:4 sparsity structure for inference
         with the Marlin24 kernel
@@ -204,7 +193,7 @@ class Marlin24Compressor(BaseCompressor):
 
     def decompress(
         self, path_to_model_or_tensors: str, device: str = "cpu", **kwargs
-    ) -> Generator[Tuple[str, Tensor], None, None]:
+    ) -> Generator[tuple[str, Tensor], None, None]:
         raise NotImplementedError(
             "Decompression is not implemented for the Marlin24 Compressor."
         )

@@ -1,19 +1,8 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from abc import ABC, abstractmethod
-from typing import Dict, Generator, Optional, Tuple, Union
+from collections.abc import Generator
 
 import torch
 from compressed_tensors.config import SparsityCompressionConfig
@@ -59,15 +48,15 @@ class BaseCompressor(RegistryMixin, ABC):
     """
 
     def __init__(
-        self, config: Union[SparsityCompressionConfig, QuantizationConfig, None] = None
+        self, config: SparsityCompressionConfig | QuantizationConfig | None = None
     ):
         self.config = config
 
     def compression_param_info(
         self,
         weight_shape: torch.Size,
-        quantization_args: Optional[QuantizationArgs] = None,
-    ) -> Dict[str, Tuple[torch.Size, torch.dtype]]:
+        quantization_args: QuantizationArgs | None = None,
+    ) -> dict[str, tuple[torch.Size, torch.dtype]]:
         """
         Creates a dictionary of expected shapes and dtypes for each compression
             parameter used by the compressor
@@ -80,7 +69,7 @@ class BaseCompressor(RegistryMixin, ABC):
 
     @property
     @abstractmethod
-    def compression_param_names(self) -> Tuple[str]:
+    def compression_param_names(self) -> tuple[str, ...]:
         """
         Returns a tuple of compression parameter names introduced by
         the compressor during compression
@@ -90,9 +79,9 @@ class BaseCompressor(RegistryMixin, ABC):
     @abstractmethod
     def compress(
         self,
-        model_state: Dict[str, Tensor],
+        model_state: dict[str, Tensor],
         **kwargs,
-    ) -> Dict[str, Tensor]:
+    ) -> dict[str, Tensor]:
         """
         Compresses a dense state dict
 
@@ -108,7 +97,7 @@ class BaseCompressor(RegistryMixin, ABC):
         path_to_model_or_tensors: str,
         device: str = "cpu",
         **kwargs,
-    ) -> Generator[Tuple[str, Tensor], None, None]:
+    ) -> Generator[tuple[str, Tensor], None, None]:
         """
         Reads a compressed state dict located at path_to_model_or_tensors
         and returns a generator for sequentially decompressing back to a
@@ -122,7 +111,7 @@ class BaseCompressor(RegistryMixin, ABC):
         """
         raise NotImplementedError()
 
-    def compress_module(self, module: Module) -> Optional[Dict[str, torch.Tensor]]:
+    def compress_module(self, module: Module) -> dict[str, torch.Tensor] | None:
         """
         Compresses a single quantized leaf PyTorch module. If the module is not
         quantized, this function has no effect.
@@ -153,7 +142,7 @@ class BaseCompressor(RegistryMixin, ABC):
         self,
         weight: Tensor,
         **kwargs,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> dict[str, torch.Tensor]:
         """
         Compresses a single uncompressed weight
 
@@ -196,7 +185,7 @@ class BaseCompressor(RegistryMixin, ABC):
         return decompressed_weight
 
     def decompress_weight(
-        self, compressed_data: Dict[str, Tensor], **kwargs
+        self, compressed_data: dict[str, Tensor], **kwargs
     ) -> torch.Tensor:
         """
         Decompresses a single compressed weight

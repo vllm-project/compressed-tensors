@@ -1,18 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-from typing import Dict, Optional, Tuple
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
@@ -46,7 +33,7 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
     """
 
     @property
-    def compression_param_names(self) -> Tuple[str]:
+    def compression_param_names(self) -> tuple[str, ...]:
         """
         Returns a tuple of compression parameter names introduced by
         the compressor during compression
@@ -61,8 +48,8 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
     def compression_param_info(
         self,
         weight_shape: torch.Size,
-        quantization_args: Optional[QuantizationArgs] = None,
-    ) -> Dict[str, Tuple[torch.Size, torch.dtype]]:
+        quantization_args: QuantizationArgs | None = None,
+    ) -> dict[str, tuple[torch.Size, torch.dtype]]:
         """
         Creates a dictionary of expected shapes and dtypes for each compression
             parameter used by the compressor
@@ -79,11 +66,11 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
         weight: Tensor,
         scale: Tensor,
         quantization_args: QuantizationArgs,
-        zero_point: Optional[Tensor] = None,
-        g_idx: Optional[torch.Tensor] = None,
-        device: Optional[torch.device] = None,
-        global_scale: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
+        zero_point: Tensor | None = None,
+        g_idx: torch.Tensor | None = None,
+        device: torch.device | None = None,
+        global_scale: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
         """
         Compresses a single uncompressed weight
 
@@ -181,8 +168,8 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
 
     def decompress_weight(
         self,
-        compressed_data: Dict[str, Tensor],
-        quantization_args: Optional[QuantizationArgs] = None,
+        compressed_data: dict[str, Tensor],
+        quantization_args: QuantizationArgs | None = None,
     ) -> torch.Tensor:
         """
         Decompresses a single compressed weight

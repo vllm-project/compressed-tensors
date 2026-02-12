@@ -1,20 +1,9 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import warnings
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import torch
 from compressed_tensors.utils import Aliasable
@@ -34,6 +23,7 @@ __all__ = [
     "FP8_E4M3_DATA",
     "FP4_E2M1_DATA",
     "BFLOAT16_DATA",
+    "FLOAT32_DATA",
     "FloatArgs",
     "QuantizationType",
     "QuantizationStrategy",
@@ -48,10 +38,10 @@ __all__ = [
 class FloatArgs:
     exponent: int
     mantissa: int
-    bits: Optional[int] = None
-    max: Optional[float] = None
-    min: Optional[float] = None
-    dtype: Optional[torch.dtype] = None
+    bits: int | None = None
+    max: float | None = None
+    min: float | None = None
+    dtype: torch.dtype | None = None
 
 
 class FP4_E2M1_DATA(FloatArgs):
@@ -89,6 +79,11 @@ class FP8_E4M3_DATA(FloatArgs):
 class BFLOAT16_DATA(FloatArgs):
     exponent = 8
     mantissa = 7
+
+
+class FLOAT32_DATA(FloatArgs):
+    exponent = 8
+    mantissa = 23
 
 
 class QuantizationType(str, Enum):
@@ -147,7 +142,7 @@ class ActivationOrdering(Aliasable, str, Enum):
     STATIC = "static"
 
     @staticmethod
-    def get_aliases() -> Dict[str, str]:
+    def get_aliases() -> dict[str, str]:
         return {
             "dynamic": "group",
             "static": "weight",
@@ -178,21 +173,21 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     num_bits: int = 8
     type: QuantizationType = QuantizationType.INT
     symmetric: bool = True
-    group_size: Optional[int] = None
-    strategy: Optional[QuantizationStrategy] = None
-    block_structure: Optional[List[int]] = None
-    dynamic: Union[DynamicType, bool] = False
-    actorder: Union[ActivationOrdering, bool, None] = None
-    scale_dtype: Optional[TorchDtype] = None
-    zp_dtype: Optional[TorchDtype] = None
-    observer: Optional[str] = Field(
+    group_size: int | None = None
+    strategy: QuantizationStrategy | None = None
+    block_structure: list[int] | None = None
+    dynamic: DynamicType | bool = False
+    actorder: ActivationOrdering | bool | None = None
+    scale_dtype: TorchDtype | None = None
+    zp_dtype: TorchDtype | None = None
+    observer: str | None = Field(
         default=None,
         description=(
             "Determines the method of computing quantization parameters (scales and "
             "zero-points). Defaults to min-max when not using dynamic quantization"
         ),
     )
-    observer_kwargs: Dict[str, Any] = Field(
+    observer_kwargs: dict[str, Any] = Field(
         default_factory=dict,
         description=(
             "optional dict of kwargs to be passed directly to torch quantization "
@@ -214,7 +209,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         return value
 
     @field_validator("group_size", mode="before")
-    def validate_group(cls, value) -> Union[int, None]:
+    def validate_group(cls, value) -> int | None:
         if value is None:
             return value
 
@@ -227,7 +222,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         return value
 
     @field_validator("block_structure", mode="before")
-    def validate_block_structure(cls, value) -> Optional[List[int]]:
+    def validate_block_structure(cls, value) -> list[int] | None:
         if value is None:
             return value
         # For backward compatibility, allow string format "2x4", "8x16", etc.
@@ -251,14 +246,14 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         )
 
     @field_validator("strategy", mode="before")
-    def validate_strategy(cls, value) -> Union[QuantizationStrategy, None]:
+    def validate_strategy(cls, value) -> QuantizationStrategy | None:
         if isinstance(value, str):
             return QuantizationStrategy(value.lower())
 
         return value
 
     @field_validator("actorder", mode="before")
-    def validate_actorder(cls, value) -> Optional[ActivationOrdering]:
+    def validate_actorder(cls, value) -> ActivationOrdering | None:
         if isinstance(value, bool):
             return ActivationOrdering.GROUP if value else None
 
@@ -268,7 +263,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         return value
 
     @field_validator("dynamic", mode="before")
-    def validate_dynamic(cls, value) -> Union[DynamicType, bool]:
+    def validate_dynamic(cls, value) -> DynamicType | bool:
         if isinstance(value, str):
             return DynamicType(value.lower())
         return value
@@ -329,10 +324,13 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             raise ValueError(f"Block structure requires block strategy\n{model}")
 
         # validate activation ordering and strategy
-        if actorder is not None and strategy != QuantizationStrategy.GROUP:
+        if actorder is not None and strategy not in (
+            QuantizationStrategy.GROUP,
+            QuantizationStrategy.TENSOR_GROUP,
+        ):
             raise ValueError(
-                "Must use group quantization strategy in order to apply "
-                "activation ordering"
+                "Must use group or tensor_group quantization strategy in "
+                "order to apply activation ordering"
             )
 
         # infer observer w.r.t. dynamic
@@ -369,7 +367,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
 
         elif observer is None:
             # default to minmax for non-dynamic cases
-            observer = "minmax"
+            observer = "memoryless_minmax"
 
         if zp_dtype is None:
             if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
@@ -409,7 +407,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
 def round_to_quantized_type_dtype(
     tensor: torch.Tensor,
     dtype: torch.dtype,
-    cast_to_original_dtype: Optional[bool] = True,
+    cast_to_original_dtype: bool = True,
 ) -> torch.Tensor:
     """
     Rounds an input tensor to the nearest quantized representation given a dtype.
@@ -439,7 +437,7 @@ def round_to_quantized_type_args(
     args: QuantizationArgs,
     min: torch.Tensor,
     max: torch.Tensor,
-    cast_to_original_dtype: Optional[bool] = True,
+    cast_to_original_dtype: bool = True,
 ) -> torch.Tensor:
     """
     Rounds an input tensor to the nearest quantized representation given

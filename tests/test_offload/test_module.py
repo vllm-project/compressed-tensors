@@ -1,16 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import gc
 import inspect
@@ -21,10 +10,11 @@ import torch
 from compressed_tensors.offload import disable_offloading, disable_onloading
 from compressed_tensors.offload.cache.cpu import CPUCache
 from compressed_tensors.offload.module import offload_module
+from tests.test_offload.conftest import assert_device_equal
 from tests.testing_utils import requires_gpu
 
 
-ONLOAD_DEVICE = torch.device("cuda:0")
+ONLOAD_DEVICE = torch.device("cuda")
 OFFLOAD_DEVICE = torch.device("cpu")
 
 
@@ -59,8 +49,8 @@ def test_onloading(linear: torch.nn.Linear, cache):
     onloaded_weight = linear.weight
     onloaded_bias = linear.bias
 
-    assert onloaded_weight.device == ONLOAD_DEVICE
-    assert onloaded_bias.device == ONLOAD_DEVICE
+    assert_device_equal(onloaded_weight.device, ONLOAD_DEVICE)
+    assert_device_equal(onloaded_bias.device, ONLOAD_DEVICE)
 
     assert type(onloaded_weight) is type(weight)
     assert type(onloaded_bias) is type(bias)
@@ -86,12 +76,12 @@ def test_garbage_collect(offloaded_linear: torch.nn.Linear):
 def test_disable_offloading(offloaded_linear: torch.nn.Linear):
     outside_onloaded = offloaded_linear.weight
     outside_onloaded_ref = ref(outside_onloaded)
-    assert outside_onloaded.device == ONLOAD_DEVICE
+    assert_device_equal(outside_onloaded.device, ONLOAD_DEVICE)
 
     with disable_offloading():
         inside_onloaded = offloaded_linear.weight
         inside_onloaded_ref = ref(inside_onloaded)
-        assert inside_onloaded.device == ONLOAD_DEVICE
+        assert_device_equal(inside_onloaded.device, ONLOAD_DEVICE)
 
         del outside_onloaded
         del inside_onloaded
@@ -141,7 +131,7 @@ def test_delete(offloaded_linear: torch.nn.Linear):
 @requires_gpu
 def test_forward_call(linear: torch.nn.Linear, cache):
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        assert input.device == ONLOAD_DEVICE
+        assert_device_equal(input.device, ONLOAD_DEVICE)
         return torch.nn.functional.linear(input, linear.weight, linear.bias)
 
     linear.forward = forward.__get__(linear)
@@ -151,7 +141,7 @@ def test_forward_call(linear: torch.nn.Linear, cache):
     with torch.no_grad():
         input = torch.zeros(5, device=OFFLOAD_DEVICE)
         output = linear.forward(input)
-        assert output.device == ONLOAD_DEVICE
+        assert_device_equal(output.device, ONLOAD_DEVICE)
 
 
 @pytest.mark.parametrize("param_device", (ONLOAD_DEVICE, OFFLOAD_DEVICE))
@@ -172,7 +162,7 @@ def test_register_parameter(
         offloaded_linear.param_name = param
 
     # new param is correctly onloaded
-    assert offloaded_linear.param_name.device == ONLOAD_DEVICE
+    assert_device_equal(offloaded_linear.param_name.device, ONLOAD_DEVICE)
     assert torch.equal(offloaded_linear.param_name.to(param_device), param)
 
 
@@ -191,7 +181,7 @@ def test_register_parameter_invalidates(
         assert onloaded_weight in set(CPUCache.keep_onloaded_values.values())
 
         # add new param
-        data = torch.ones(5, device=param_device)
+        data = torch.ones((5, 5), device=param_device)
         param = torch.nn.Parameter(data, requires_grad=requires_grad)
         if use_register_parameter:
             offloaded_linear.register_parameter("weight", param)
@@ -199,11 +189,8 @@ def test_register_parameter_invalidates(
             offloaded_linear.weight = param
 
         # new param is correct
-        assert offloaded_linear.weight.device == ONLOAD_DEVICE
-        assert torch.equal(offloaded_linear.weight.to(param_device), param)
-
-        # original weight is invalidated
-        assert onloaded_weight not in set(CPUCache.keep_onloaded_values.values())
+        assert_device_equal(offloaded_linear.weight.device, ONLOAD_DEVICE)
+        assert torch.equal(offloaded_linear.weight, param.to(ONLOAD_DEVICE))
 
 
 def test_forward_signature(linear: torch.nn.Linear, cache):

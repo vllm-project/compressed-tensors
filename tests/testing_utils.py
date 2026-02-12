@@ -1,20 +1,9 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# flake8: noqa
-import unittest
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+# flake8: noqa
 import pytest
+import torch
 
 
 def compressed_tensors_config_available():
@@ -122,5 +111,32 @@ def is_gpu_available():
         return False
 
 
-def requires_gpu(test_case):
-    return unittest.skipUnless(is_gpu_available(), "test requires GPU")(test_case)
+def requires_gpu(test_case_or_num):
+    """
+    Pytest decorator to skip based on number of available GPUs.
+
+    Designed for backwards compatibility with the old requires_gpu decorator
+    Usage:
+    @requires_gpu
+    def test_something():
+        # only runs if there is at least 1 GPU available
+        pass
+
+    @requires_gpu(2)
+    def test_something_else():
+        # only runs if there are at least 2 GPUs available
+        pass
+    """
+    if isinstance(test_case_or_num, int):
+        num_required_gpus = test_case_or_num
+    else:
+        num_required_gpus = 1
+
+    decorator = pytest.mark.skipif(
+        (torch.cuda.device_count() < num_required_gpus),
+        reason=f"Not enough GPUs available, {num_required_gpus} GPUs required",
+    )
+    if isinstance(test_case_or_num, int):
+        return decorator
+    else:
+        return decorator(test_case_or_num)

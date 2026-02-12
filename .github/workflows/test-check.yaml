@@ -12,7 +12,7 @@ on:
 
 jobs:
   python-tests:
-    runs-on: ibm-wdc-k8s-vllm-h100-solo
+    runs-on: gcp-k8s-vllm-l4-duo
     env:
         HF_TOKEN: ${{ secrets.HF_RED_HAT_READ_ONLY }}
     steps:
@@ -30,7 +30,7 @@ jobs:
         - name: Set Env
           run: pip3 install --upgrade pip setuptools
         - name: "⚙️ Install dependencies"
-          run: pip3 install .[dev]
+          run: pip3 install .[dev] --extra-index-url https://download.pytorch.org/whl/cu129
         - name: clean up
           run: |
             echo "cleaning up disk space as GHA runner has limited disk size."

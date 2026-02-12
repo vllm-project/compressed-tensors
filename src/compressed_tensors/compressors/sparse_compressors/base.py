@@ -1,19 +1,8 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import logging
-from typing import Dict, Generator, Optional, Set, Tuple
+from collections.abc import Generator
 
 from compressed_tensors.compressors.base import BaseCompressor
 from compressed_tensors.utils import (
@@ -65,10 +54,10 @@ class BaseSparseCompressor(BaseCompressor):
 
     def compress(
         self,
-        model_state: Dict[str, Tensor],
-        compression_targets: Optional[Set[str]] = None,
+        model_state: dict[str, Tensor],
+        compression_targets: set[str] | None = None,
         show_progress: bool = False,
-    ) -> Dict[str, Tensor]:
+    ) -> dict[str, Tensor]:
         """
         Compresses a dense state dict using bitmask compression
 
@@ -110,9 +99,9 @@ class BaseSparseCompressor(BaseCompressor):
         self,
         path_to_model_or_tensors: str,
         device: str = "cpu",
-        params_to_skip_load: Optional[Tuple] = None,
+        params_to_skip_load: tuple | None = None,
         **kwargs,
-    ) -> Generator[Tuple[str, Tensor], None, None]:
+    ) -> Generator[tuple[str, Tensor], None, None]:
         """
         Reads a bitmask compressed state dict located
         at path_to_model_or_tensors and returns a generator
@@ -157,8 +146,8 @@ class BaseSparseCompressor(BaseCompressor):
 
     def decompress_from_state_dict(
         self,
-        state_dict: Dict[str, Tensor],
-    ) -> Generator[Tuple[str, Dict[str, Tensor]], None, None]:
+        state_dict: dict[str, Tensor],
+    ) -> Generator[tuple[str, dict[str, Tensor]], None, None]:
         """
         Decompress the state dict of a module (or model)
 
@@ -185,7 +174,7 @@ class BaseSparseCompressor(BaseCompressor):
             yield ignored_param_path, ignored_param_value
 
     @staticmethod
-    def should_compress(name: str, expanded_targets: Optional[Set[str]] = None) -> bool:
+    def should_compress(name: str, expanded_targets: set[str] | None = None) -> bool:
         """
         Check if a parameter should be compressed.
         Currently, this only returns True for weight parameters.

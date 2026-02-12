@@ -1,18 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-from typing import List, Optional
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
 from compressed_tensors.transform import TransformArgs, TransformScheme
@@ -38,7 +25,7 @@ class HadamardFactory(TransformFactory):
     :param seed: random seed used to transform weight randomization
     """
 
-    def __init__(self, name: str, scheme: TransformScheme, seed: Optional[int] = None):
+    def __init__(self, name: str, scheme: TransformScheme, seed: int | None = None):
         super().__init__(name, scheme, seed)
         self.weights = ParameterizedDefaultDict(self._create_weight)
         self.perms = ParameterizedDefaultDict(self._create_permutation)
@@ -83,12 +70,12 @@ class HadamardFactory(TransformFactory):
 
 
 class HadamardTransform(TransformBase):
-    _dynamic_tied_weights_keys: List[str] = ["weight", "perm"]
+    _dynamic_tied_weights_keys: list[str] = ["weight", "perm"]
 
     def __init__(
         self,
         weight: Parameter,
-        perm: Optional[Parameter],
+        perm: Parameter | None,
         scheme: TransformScheme,
         args: TransformArgs,
         module_type: type[torch.nn.Module],

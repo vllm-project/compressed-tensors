@@ -1,19 +1,7 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from enum import Enum
-from typing import List
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -67,10 +55,10 @@ class TransformArgs(BaseModel, use_enum_values=True):
     :param ignore: any modules which should be ignored from the targets list
     """
 
-    targets: List[str]
+    targets: list[str]
     location: TransformLocation
     inverse: bool = Field(default=False)
-    ignore: List[str] = Field(default_factory=list)
+    ignore: list[str] = Field(default_factory=list)
 
     @field_validator("targets", "ignore", mode="before")
     @classmethod

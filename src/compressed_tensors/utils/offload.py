@@ -1,16 +1,6 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """
 Utilities associated with offloading functionality
 
@@ -22,7 +12,7 @@ Utilities associated with offloading functionality
 """
 
 import contextlib
-from typing import Literal, Optional
+from typing import Literal
 
 import torch
 from compressed_tensors.offload import (
@@ -98,7 +88,7 @@ def register_offload_parameter(
     module: torch.nn.Module,
     name: str,
     parameter: torch.nn.Parameter,
-    offload_device: Optional[torch.device | Literal["disk"]] = None,
+    offload_device: torch.device | Literal["disk"] | None = None,
 ):
     """
     Register a parameter to the given module which may be offloaded
@@ -147,7 +137,7 @@ def delete_offload_module(base: torch.nn.Module, name: str):
 def offloaded_dispatch(
     module: torch.nn.Module,
     execution_device: torch.device,
-    offload_device: Optional[torch.device | Literal["disk"]] = None,
+    offload_device: torch.device | Literal["disk"] | None = None,
 ) -> torch.nn.Module:
     """
     Dispatch a model, keeping device parameters offloaded on their current device

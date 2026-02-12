@@ -1,20 +1,7 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import logging
-from typing import Optional, Tuple, Union
 
 import torch
 from compressed_tensors.modeling import (
@@ -60,7 +47,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def initialize_module_for_quantization(
     module: Module,
-    scheme: Optional[QuantizationScheme] = None,
+    scheme: QuantizationScheme | None = None,
     force_zero_point: bool = True,
 ):
     """
@@ -156,7 +143,7 @@ def initialize_qparams(
     module: Module,
     base_name: str,
     quantization_args: QuantizationArgs,
-    observed_shape: Tuple[Union[int, None]],
+    observed_shape: tuple[int | None, ...],
     observed_dtype: torch.dtype,
     force_zero_point: bool = True,
 ):
@@ -280,8 +267,8 @@ def initialize_attn_qparams(
 ):
     """Initlaize k_scale, v_scale for self_attn"""
 
-    impl: Optional[QuantizedAttentionImpl] = getattr(module, IMPL_ATTR, None)
-    kv_cache: Optional[QuantizedKVCache] = getattr(module, KV_CACHE_ATTR, None)
+    impl: QuantizedAttentionImpl | None = getattr(module, IMPL_ATTR, None)
+    kv_cache: QuantizedKVCache | None = getattr(module, KV_CACHE_ATTR, None)
 
     if impl is None and kv_cache is None:
         raise ValueError(

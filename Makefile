@@ -14,7 +14,7 @@ quality:
 
 # style the code according to accepted standards for the repo
 style:
-	@echo "Running copyright style";
+	@echo "Running copyright checks";
 	python utils/copyright.py style $(PYCHECKGLOBS)
 	@echo "Running python styling";
 	black --target-version py310 $(PYCHECKDIRS);
@@ -23,7 +23,7 @@ style:
 # run tests for the repo
 test:
 	@echo "Running python tests";
-	pytest tests;
+	pytest -ra tests;
 
 # creates wheel file
 build:

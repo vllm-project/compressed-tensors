@@ -1,19 +1,8 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
@@ -85,21 +74,33 @@ def disable_onloading():
 
 def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Tensor):
     """
-    Update the data of an existing parameter and its offload dict. Supports both
-    parameters of offloaded modules and non-offloaded modules
+    Update the offload and onload data of an existing parameter/buffer. Supports both
+    parameters of both offloaded modules and non-offloaded modules.
+
+    NOTE: This function does not guard against multiple processes writing to offload
+    at the same time. It is the responsibility of the caller to ensure that, for any
+    parameter/buffer, only one rank calls this function at a time.
+
+    NOTE: This function does not update onloaded values across ranks. The caller is
+    responsible for broadcasting any updates to other ranks, if they are onloaded.
 
     :param module: module containing the parameter to update
     :param name: name of module parameter to update
     :param data: tensor to update parameter with
     """
     if isinstance(module._parameters, OffloadCache):
-        with module._parameters.disable_onloading():
-            value = getattr(module, name)
-            value.copy_(module._parameters.offload(data))
-            setattr(module, name, value)
+        # | Component | Update Implementation       |
+        # | --------- | --------------------------- |
+        # | CPU       | Copy into shared cpu memory |
+        # | Disk      | Write file to disk          |
+        # | Device    | Copy into local device      |
+        # | --------- | --------------------------- |
+        # all implementations update onloaded data if applicable
+        setattr(module, name, torch.nn.Parameter(data.data, requires_grad=False))
 
     else:
-        getattr(module, name).copy_(data)
+        with torch.no_grad():
+            getattr(module, name).copy_(data)
 
 
 def get_execution_device(module: torch.nn.Module) -> torch.device | str:
@@ -146,7 +147,7 @@ def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.M
 @contextlib.contextmanager
 def align_modules(
     modules: torch.nn.Module | Iterable[torch.nn.Module],
-    execution_device: Optional[torch.device] = None,
+    execution_device: torch.device | None = None,
 ):
     """
     Context manager for onloading modules to a device, and disabling onload and offload
@@ -163,7 +164,7 @@ def align_modules(
 
 @contextlib.contextmanager
 def align_module_device(
-    module: torch.nn.Module, execution_device: Optional[torch.device] = None
+    module: torch.nn.Module, execution_device: torch.device | None = None
 ):
     """
     Context manager that moves a module's parameters to the specified execution device.

@@ -1,32 +1,12 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
 import warnings
+from collections.abc import Callable, Iterable, Mapping
 from functools import wraps
 from types import MappingProxyType
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    Optional,
-    TypeVar,
-)
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy
 import torch
@@ -66,7 +46,7 @@ FSDP_WRAPPER_NAME = "_fsdp_wrapped_module"
 
 def infer_compressor_from_model_config(
     pretrained_model_name_or_path: str,
-) -> Optional["ModelCompressor"]:  # noqa: F821
+) -> "ModelCompressor | None":  # noqa: F821
     """
     Given a path to a model config, extract a sparsity config if it exists and return
     the associated ModelCompressor
@@ -185,7 +165,7 @@ def getattr_chain(obj: Any, chain_str: str, *args, **kwargs) -> Any:
 
 
 def deprecated(
-    future_name: Optional[str] = None, message: Optional[str] = None
+    future_name: str | None = None, message: str | None = None
 ) -> Callable[[T], T]:
     """
     Decorator to mark functions as deprecated
@@ -224,7 +204,7 @@ class Aliasable:
     """
 
     @staticmethod
-    def get_aliases() -> Dict[str, str]:
+    def get_aliases() -> dict[str, str]:
         raise NotImplementedError()
 
     def __eq__(self, other):
@@ -246,8 +226,8 @@ class Aliasable:
 
 
 def shard_tensor(
-    tensor: torch.Tensor, shard_sizes: List[int], dim: int = 0
-) -> List[torch.Tensor]:
+    tensor: torch.Tensor, shard_sizes: list[int], dim: int = 0
+) -> list[torch.Tensor]:
     """
     Shards a tensor into a list of tensors along a given dimension.
 
@@ -277,7 +257,7 @@ def shard_tensor(
     return shards
 
 
-def combine_shards(shards, dim=0):
+def combine_shards(shards: list[torch.Tensor], dim: int = 0) -> torch.Tensor:
     """
     Combine decompressed shards along a given dimension using `narrow`.
 
@@ -325,7 +305,7 @@ def pack_bitmasks(bytemasks: torch.Tensor) -> torch.Tensor:
 
 
 def unpack_bitmasks(
-    packed_bitmasks: torch.Tensor, original_shape: List[int]
+    packed_bitmasks: torch.Tensor, original_shape: list[int]
 ) -> torch.Tensor:
     """
     Converts a bitmask tensor back to a bytemask tensor for use during decompression

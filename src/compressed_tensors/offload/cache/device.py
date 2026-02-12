@@ -1,48 +1,53 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
+from typing import TYPE_CHECKING
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.utils import send_tensors
 
 
+if TYPE_CHECKING:
+    from torch._prims_common import DeviceLikeType
+
+
 class DeviceCache(OffloadCache):
     """
     Handles offloading and onloading tensors from/to device memory. Onloading
-    tensors is a no-op.
+    tensors is typically a no-op (except onload device has been modified).
     """
 
-    def __init__(self, onload_device: torch.device | str):
-        self.onload_device = onload_device
-        self.offload_device = onload_device
-        self.offloaded_values = dict()
+    def __init__(self, onload_device: "DeviceLikeType"):
+        super().__init__(onload_device)
+        self.offload_device = self.onload_device
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor:
         """
-        No op, offloaded tensors are already on device
+        Typically a no op, except when onload device has been modified
 
-        :param key: cpu tensor to onload
+        :param key: device tensor to onload
         :return: device tensor
         """
-        assert offloaded.device == self.onload_device
-        return offloaded
+        # move because onload_device might be modified after init
+        return send_tensors(offloaded, device=self.onload_device, copy=False)
 
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
         """
-        Offload a tensor from any device to a device
+        Offload a tensor to the device
 
         :param value: tensor on any device
-        :return: tensor on cpu
+        :return: tensor on device
         """
         return send_tensors(tensor, device=self.offload_device, copy=False)
+
+    @torch.no_grad()
+    def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
+        """
+        Update the device value with new data
+
+        :param offloaded: device tensor to update
+        :param data: new data to copy from
+        """
+        if data is not None:
+            offloaded.copy_(data)

@@ -1,18 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-from typing import Dict, List, Tuple, Union
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
@@ -39,7 +26,7 @@ class BitmaskCompressor(BaseSparseCompressor):
     """
 
     @property
-    def compression_param_names(self) -> Tuple[str]:
+    def compression_param_names(self) -> tuple[str, ...]:
         """
         Returns a tuple of compression parameter names introduced by
         the compressor during compression
@@ -70,7 +57,7 @@ class BitmaskTensor:
 
     def __init__(
         self,
-        shape: Union[torch.Size, List],
+        shape: torch.Size | list,
         compressed: Tensor,
         bitmask: Tensor,
         row_offsets: Tensor,
@@ -112,7 +99,7 @@ class BitmaskTensor:
             + sizeof_tensor(self.row_offsets)
         )
 
-    def dict(self, name_prefix: str, device: str = "cpu") -> Dict[str, Tensor]:
+    def dict(self, name_prefix: str, device: str = "cpu") -> dict[str, Tensor]:
         """
         :name_prefix: name of original tensor to store compressed weight as
         :return: dict of compressed data for the stored weight
@@ -128,7 +115,7 @@ class BitmaskTensor:
         return f"BitmaskTensor(shape={self.shape}, compressed=True)"
 
 
-def bitmask_compress(tensor: Tensor) -> Tuple[Tensor, Tensor, Tensor]:
+def bitmask_compress(tensor: Tensor) -> tuple[Tensor, Tensor, Tensor]:
     """
     Compresses a dense tensor using bitmask compression
 

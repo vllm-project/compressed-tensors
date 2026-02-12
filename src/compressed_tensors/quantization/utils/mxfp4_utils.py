@@ -1,20 +1,10 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
 from compressed_tensors.quantization.quant_args import (
     BFLOAT16_DATA,
+    FLOAT32_DATA,
     FP4_E2M1_DATA,
     QuantizationArgs,
 )
@@ -70,21 +60,29 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
 
     :param x: tensor to round to closest power of 2
     """
-    assert x.dtype == torch.bfloat16
-    x = x.view(torch.uint16).to(torch.int32)
+    scale_dtype = x.dtype
+    if scale_dtype is torch.bfloat16:
+        int_dtype = torch.uint16
+        mantissa = BFLOAT16_DATA.mantissa
+        exponent = BFLOAT16_DATA.exponent
+    else:
+        assert scale_dtype is torch.float32
+        int_dtype = torch.uint32
+        mantissa = FLOAT32_DATA.mantissa
+        exponent = FLOAT32_DATA.exponent
+
+    x = x.view(int_dtype).to(torch.int32)
 
     # Find closest power of 2
-    BFLOAT16_VAL_TO_ADD = 1 << (BFLOAT16_DATA.mantissa - FP4_E2M1_DATA.mantissa - 1)
+    VAL_TO_ADD = 1 << (mantissa - FP4_E2M1_DATA.mantissa - 1)
     # Add value to push the value to the next exponent
-    BFLOAT16_SIGN_EXPONENT_MASK = (
-        (1 << (BFLOAT16_DATA.exponent + 1)) - 1
-    ) << BFLOAT16_DATA.mantissa
+    SIGN_EXPONENT_MASK = ((1 << (exponent + 1)) - 1) << mantissa
     # mask to only keep exponent - we conservatively round down
     # to better represent smaller numbers / prevent overflow
-    block_max_uint = torch.bitwise_and(
-        x + BFLOAT16_VAL_TO_ADD, BFLOAT16_SIGN_EXPONENT_MASK
-    )
-    return block_max_uint.to(torch.uint16).view(torch.bfloat16)
+    block_max_uint = torch.bitwise_and(x + VAL_TO_ADD, SIGN_EXPONENT_MASK)
+    if scale_dtype is torch.bfloat16:
+        return block_max_uint.to(int_dtype).view(scale_dtype)
+    return block_max_uint.view(scale_dtype)
 
 
 def generate_mxfp4_scales(x: torch.Tensor) -> torch.Tensor:

@@ -1,19 +1,7 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Union
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
@@ -41,7 +29,7 @@ class Sparse24BitMaskCompressor(BaseSparseCompressor):
     """
 
     @property
-    def compression_param_names(self) -> Tuple[str]:
+    def compression_param_names(self) -> tuple[str, ...]:
         """
         Returns a tuple of compression parameter names introduced by
         the compressor during compression
@@ -78,14 +66,14 @@ class Sparse24BitMaskTensor:
     :param bitmask: 2d bitmask of non-zero values
     """
 
-    shape: List[int]
+    shape: list[int]
     compressed: Tensor
     bitmask: Tensor
 
     @staticmethod
     def from_dense(
         tensor: Tensor,
-        sparsity_structure: Union[SparsityStructure, str] = SparsityStructure.TWO_FOUR,
+        sparsity_structure: SparsityStructure | str = SparsityStructure.TWO_FOUR,
     ) -> "Sparse24BitMaskTensor":
         """
         :param tensor: dense tensor to compress
@@ -108,7 +96,7 @@ class Sparse24BitMaskTensor:
 
     @staticmethod
     def from_compressed_data(
-        shape: Union[List[int], Tensor], compressed: Tensor, bitmask: Tensor
+        shape: list[int] | Tensor, compressed: Tensor, bitmask: Tensor
     ) -> "Sparse24BitMaskTensor":
         """
         :param shape: shape of the dense tensor (can be a list or a tensor)
@@ -140,7 +128,7 @@ class Sparse24BitMaskTensor:
 
         return sizeof_tensor(self.compressed) + sizeof_tensor(self.bitmask)
 
-    def dict(self, name_prefix: str, device: str = "cpu") -> Dict[str, Tensor]:
+    def dict(self, name_prefix: str, device: str = "cpu") -> dict[str, Tensor]:
         """
         :param name_prefix: name of original tensor to store compressed weight as
         :return: dict of compressed data for the stored weight
@@ -161,8 +149,8 @@ class Sparse24BitMaskTensor:
 
 def sparse24_bitmask_compress(
     tensor: Tensor,
-    sparsity_structure: Union[SparsityStructure, str] = SparsityStructure.TWO_FOUR,
-) -> Tuple[Tensor, Tensor, Tensor]:
+    sparsity_structure: SparsityStructure | str = SparsityStructure.TWO_FOUR,
+) -> tuple[Tensor, Tensor, Tensor]:
     """
     Compresses a dense tensor using bitmask compression
 

@@ -1,25 +1,13 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 """
 Universal registry to support registration and loading of child classes and plugins
-of neuralmagic utilities
 """
 
 import importlib
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, TypeVar, Union
+from typing import Any, TypeVar
 
 
 __all__ = [
@@ -32,8 +20,8 @@ __all__ = [
 ]
 
 
-_ALIAS_REGISTRY: Dict[type, Dict[str, str]] = defaultdict(dict)
-_REGISTRY: Dict[type, Dict[str, Any]] = defaultdict(dict)
+_ALIAS_REGISTRY: dict[type, dict[str, str]] = defaultdict(dict)
+_REGISTRY: dict[type, dict[str, Any]] = defaultdict(dict)
 T = TypeVar("", bound="RegistryMixin")
 
 
@@ -55,8 +43,8 @@ def standardize_lookup_name(name: str) -> str:
 
 
 def standardize_alias_name(
-    name: Union[None, str, List[str]],
-) -> Union[None, str, List[str]]:
+    name: str | list[str] | None,
+) -> str | list[str] | None:
     if name is None:
         return None
     elif isinstance(name, str):
@@ -68,7 +56,6 @@ def standardize_alias_name(
 class RegistryMixin:
     """
     Universal registry to support registration and loading of child classes and plugins
-    of neuralmagic utilities.
 
     Classes that require a registry or plugins may add the `RegistryMixin` and use
     `register` and `load` as the main entrypoints for adding new implementations and
@@ -119,9 +106,7 @@ class RegistryMixin:
     registry_requires_subclass: bool = False
 
     @classmethod
-    def register(
-        cls, name: Optional[str] = None, alias: Union[List[str], str, None] = None
-    ):
+    def register(cls, name: str | None = None, alias: list[str] | str | None = None):
         """
         Decorator for registering a value (ie class or function) wrapped by this
         decorator to the base class (class that .register is called from)
@@ -141,7 +126,7 @@ class RegistryMixin:
 
     @classmethod
     def register_value(
-        cls, value: Any, name: str, alias: Union[str, List[str], None] = None
+        cls, value: Any, name: str, alias: str | list[str] | None = None
     ):
         """
         Registers the given value to the class `.register_value` is called from
@@ -186,14 +171,14 @@ class RegistryMixin:
         )
 
     @classmethod
-    def registered_names(cls) -> List[str]:
+    def registered_names(cls) -> list[str]:
         """
         :return: list of all names registered to this class
         """
         return registered_names(cls)
 
     @classmethod
-    def registered_aliases(cls) -> List[str]:
+    def registered_aliases(cls) -> list[str]:
         """
         :return: list of all aliases registered to this class
         """
@@ -203,8 +188,8 @@ class RegistryMixin:
 def register(
     parent_class: type,
     value: Any,
-    name: Optional[str] = None,
-    alias: Union[List[str], str, None] = None,
+    name: str | None = None,
+    alias: list[str] | str | None = None,
     require_subclass: bool = False,
 ):
     """
@@ -277,7 +262,7 @@ def get_from_registry(
     return retrieved_value
 
 
-def registered_names(parent_class: type) -> List[str]:
+def registered_names(parent_class: type) -> list[str]:
     """
     :param parent_class: class to look up the registry of
     :return: all names registered to the given class
@@ -285,7 +270,7 @@ def registered_names(parent_class: type) -> List[str]:
     return list(_REGISTRY[parent_class].keys())
 
 
-def registered_aliases(parent_class: type) -> List[str]:
+def registered_aliases(parent_class: type) -> list[str]:
     """
     :param parent_class: class to look up the registry of
     :return: all aliases registered to the given class
@@ -297,9 +282,7 @@ def registered_aliases(parent_class: type) -> List[str]:
     return registered_aliases
 
 
-def register_alias(
-    name: str, parent_class: type, alias: Union[str, List[str], None] = None
-):
+def register_alias(name: str, parent_class: type, alias: str | list[str] | None = None):
     """
     Updates the mapping from the alias(es) to the given name.
     If the alias is None, the name is used as the alias.
