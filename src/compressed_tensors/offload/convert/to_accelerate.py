@@ -3,11 +3,10 @@
 
 
 from collections import defaultdict
-from itertools import chain
-from typing import Iterable
 
 import torch
 from compressed_tensors.offload.cache import DiskCache, OffloadCache
+from compressed_tensors.offload.convert.helpers import get_tensors
 from compressed_tensors.offload.module import remove_module_offload
 from compressed_tensors.utils import patch_attr
 from loguru import logger
@@ -55,7 +54,7 @@ def to_accelerate(model: torch.nn.Module):
                     ),
                 )
             else:
-                weights_map = dict(_get_tensors(module, recurse=False))
+                weights_map = dict(get_tensors(module, recurse=False))
 
             # create hook
             hook = AlignDevicesHook(
@@ -95,14 +94,6 @@ def _to_accelerate_disk_index(
         for offloaded, weight_info in index.items()
         for key in offloaded_to_key[offloaded]
     }
-
-
-def _get_tensors(
-    module: torch.nn.Module, recurse: bool = False
-) -> Iterable[tuple[str, torch.Tensor | None]]:
-    return chain(
-        module.named_parameters(recurse=recurse), module.named_buffers(recurse=recurse)
-    )
 
 
 def _invert_dict(d: dict) -> dict:

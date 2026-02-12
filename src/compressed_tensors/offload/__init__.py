@@ -131,11 +131,16 @@ def get_execution_device(
 
 def get_offloaded_device(
     module: torch.nn.Module, default: torch.device | None = None
-) -> torch.device:
+) -> torch.device | str:
     """
     :param module: module to check
     :return: device module is offloaded to onto after forward pass
     """
+    from compressed_tensors.offload.cache.disk import DiskCache
+
+    if isinstance(module._parameters, DiskCache):
+        return "disk"
+
     with disable_onloading():
         return get_module_device(module, default)
 

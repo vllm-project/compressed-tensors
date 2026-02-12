@@ -2,12 +2,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
-from itertools import chain
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.disk import DiskCache
+from compressed_tensors.offload.convert.helpers import get_tensors, norm_device
 from compressed_tensors.offload.dispatch import dispatch_with_map
 from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
 from loguru import logger
@@ -130,8 +130,8 @@ def remove_accelerate_from_module(
 
     remove_hook_from_module(module, recurse=False)
     return (
-        _norm_device(hook.execution_device),
-        _norm_device(offload_device),
+        norm_device(hook.execution_device),
+        norm_device(offload_device),
         dataset.save_folder,
     )
 
@@ -163,36 +163,13 @@ def _save_ct_index_entry(
             os.remove(original_weight_file)
 
 
-def _norm_device(device: str | torch.device | None) -> str | torch.device | None:
-    if device not in ("disk", None):
-        device = torch.device(device)
-
-    if (
-        is_distributed()
-        and isinstance(device, torch.device)
-        and device.index == dist.get_rank()
-    ):
-        device = torch.device(type=device.type, index=None)
-
-    return device
-
-
-def _get_tensors(
-    module: torch.nn.Module, recurse: bool = False
-) -> Iterable[tuple[str, torch.Tensor | None]]:
-    return chain(
-        module.named_parameters(recurse=recurse),
-        module.named_buffers(recurse=recurse),
-    )
-
-
 def _direct_tensors(module: torch.nn.Module) -> dict[str, torch.Tensor]:
-    return {name: t for name, t in _get_tensors(module) if t is not None}
+    return {name: t for name, t in get_tensors(module) if t is not None}
 
 
 def _infer_device_from_tensors(tensors: dict[str, torch.Tensor]) -> torch.device | None:
     t = next(iter(tensors.values()), None)
-    return _norm_device(t.device if t is not None else None)
+    return norm_device(t.device if t is not None else None)
 
 
 def _infer_module_device(module: torch.nn.Module) -> torch.device | None:

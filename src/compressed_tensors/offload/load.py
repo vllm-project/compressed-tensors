@@ -8,6 +8,7 @@ from types import FrameType
 
 import psutil
 import torch
+import torch.distributed as dist
 from compressed_tensors.offload.convert import from_accelerate
 from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
 from transformers import PreTrainedModel
@@ -55,22 +56,24 @@ def patch_from_pretrained(obj: cls_to_patch):
         args.update(kwargs)
         args["device_map"] = args.get("device_map", None)
 
+        # Intercept auto device map options
         match (args["device_map"], is_distributed()):
             case "auto", True:
-                args["device_map"] = "cuda"
+                if "max_memory" not in args:
+                    # only sees local device memory
+                    args["max_memory"] = _get_device_memory() | _get_cpu_memory()
 
             case "auto_offload", _:
                 args["device_map"] = "auto"
                 if "max_memory" not in args:
-                    args["max_memory"] = {"cpu": psutil.virtual_memory().available}
+                    args["max_memory"] = _get_cpu_memory()
 
-        if is_rank0():
-            model = original_func(cls, **args)
-
-        else:
+        # Rank 0 does loading, other ranks init on meta device
+        if not is_rank0():
             args["device_map"] = "meta"
-            model = original_func(cls, **args)
+        model = original_func(cls, **args)
 
+        # During conversion, rank 0 shares weights with ranks via offload/broadcast
         from_accelerate(model)
         return model
 
@@ -79,7 +82,14 @@ def patch_from_pretrained(obj: cls_to_patch):
     obj.from_pretrained = original_func.__get__(obj)
 
 
-DeviceMap = dict[str, tuple[torch.device | None, torch.device | None]]
+def _get_device_memory() -> dict[int, int]:
+    assert is_distributed()
+    device_memory = torch.cuda.get_device_properties(dist.get_rank()).total_memory
+    return {dist.get_rank(): device_memory}
+
+
+def _get_cpu_memory() -> dict[str, int]:
+    return {"cpu": psutil.virtual_memory().available}
 
 
 def _get_caller_frame() -> FrameType:

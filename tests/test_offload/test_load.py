@@ -1,83 +1,70 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import os
-
 import pytest
 import torch
-import torch.distributed as dist
-from compressed_tensors.offload.convert import from_accelerate
+from compressed_tensors.offload import get_offloaded_device
 from compressed_tensors.offload.load import load_offloaded_model
-from tests.test_offload.conftest import torchrun
+from tests.test_offload.conftest import assert_device_equal, torchrun
+from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM
 
 
 acclerate = pytest.importorskip("accelerate")
 
 
+TEST_PARAMETERS = [
+    (
+        "auto",
+        {0: 596049920, "cpu": 1e15},  # force cpu offload for testing
+        torch.device("cuda"),
+        torch.device("cpu"),
+    ),
+    (
+        "cuda",
+        None,
+        torch.device("cuda"),
+        torch.device("cuda"),
+    ),
+    (
+        "cpu",
+        None,
+        torch.device("cpu"),
+        torch.device("cpu"),
+    ),
+    (
+        "auto_offload",
+        {"cpu": 596049920},  # force disk offload for testing
+        torch.device("cpu"),
+        "disk",
+    ),
+]
+
+
 @pytest.mark.integration
-@torchrun(world_size=2)
-def test_load_disk_dist(disable_convert, tmp_path):
-
-    offload_dir = tmp_path / "offload_dir"
-    os.mkdir(offload_dir)
-
+@requires_gpu
+@pytest.mark.parametrize("device_map,max_memory,first,second", TEST_PARAMETERS)
+def test_load(device_map, max_memory, first, second):
     with load_offloaded_model():
         model = AutoModelForCausalLM.from_pretrained(
             "Qwen/Qwen3-0.6B",
-            device_map="disk",
-            max_memory={"cpu": 596049920},  # force disk offloading (~half model size)
-            offload_folder=offload_dir,
+            device_map=device_map,
+            max_memory=max_memory,
             dtype=torch.bfloat16,
         )
 
-    assert model.num_parameters() == 596049920
-
-    if dist.get_rank() == 0:
-        assert model.device.type != "meta"
-        assert set(model.hf_device_map.values()) == {"cpu", "disk"}
-    else:
-        assert model.device.type == "meta"
-
-    device_map, _offload_dir = from_accelerate(model)
     for layer_index in range(0, 8):
-        assert device_map[f"model.layers.{layer_index}.self_attn.q_proj"] == (
-            torch.device("cpu"),
-            torch.device("cpu"),
-        )
-    for layer_index in range(8, 28):
-        assert device_map[f"model.layers.{layer_index}.self_attn.q_proj"] == (
-            "cpu",
-            "disk",
-        )
+        module = model.get_submodule(f"model.layers.{layer_index}.self_attn.q_proj")
+        assert_device_equal(get_offloaded_device(module), first)
 
-    if dist.get_rank() == 0:
-        assert _offload_dir == offload_dir
+    for layer_index in range(8, 28):
+        module = model.get_submodule(f"model.layers.{layer_index}.self_attn.q_proj")
+        assert_device_equal(get_offloaded_device(module), second)
 
 
 @pytest.mark.integration
+@requires_gpu(2)
 @torchrun(world_size=2)
-def test_load_device_dist(disable_convert):
-
-    with load_offloaded_model():
-        model = AutoModelForCausalLM.from_pretrained(
-            "Qwen/Qwen3-0.6B",
-            device_map="cuda",
-            dtype=torch.bfloat16,
-        )
-
-    assert model.num_parameters() == 596049920
-
-    if dist.get_rank() == 0:
-        assert model.device.type != "meta"
-        assert set(model.hf_device_map.values()) == {torch.device("cuda")}
-    else:
-        assert model.device.type == "meta"
-
-    device_map, _offload_dir = from_accelerate(model)
-    for layer_index in range(0, 28):
-        assert device_map[f"model.layers.{layer_index}.self_attn.q_proj"] == (
-            torch.device("cuda"),
-            torch.device("cuda"),
-        )
-    assert _offload_dir is None
+def test_load_dist():
+    for parameters in TEST_PARAMETERS:
+        test_load(*parameters)

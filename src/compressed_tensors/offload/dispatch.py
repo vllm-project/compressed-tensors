@@ -194,7 +194,7 @@ def get_device_memory() -> dict[torch.device, int]:
     """
     Get the total memory of all available cuda devices
 
-    :return: list of device memory dataclasses
+    :return: mapping from torch device to total memory
     """
     if not torch.cuda.is_available():
         return dict()
