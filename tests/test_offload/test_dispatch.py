@@ -185,7 +185,8 @@ def test_offload_and_dispatch_model(model_id):
     true_logits = model(**sample).logits
 
     # offload entire model
-    model = offload_model(model, "cuda:0", "cpu")
+    model.to("cpu")
+    model = offload_model(model, "cuda:0")
     offloaded_logits = model(**sample).logits
     for module in model.modules():
         assert_module_offloaded(module, "cuda:0", torch.device("cpu"))

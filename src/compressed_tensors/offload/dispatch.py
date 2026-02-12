@@ -4,13 +4,13 @@
 from collections.abc import Container
 from copy import deepcopy
 from functools import partial
-from typing import Literal, Optional, TypeVar
+from typing import Literal, Optional, TypeVar, Any
 
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.module import offload_module, remove_module_offload
-from compressed_tensors.offload.utils import get_module_sizes
+from compressed_tensors.offload.utils import get_module_device, get_module_sizes
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
 from loguru import logger
@@ -33,7 +33,7 @@ DeviceMap = dict[str, tuple[torch.device | None, torch.device | str | None]]
 def offload_model(
     model: ModelType,
     onload_device: torch.device | str,
-    offload_device: torch.device | str | Literal["disk"] = torch.device("cpu"),
+    offload_device: Any = None,
 ) -> ModelType:
     """
     Modify the dispatch of a model to onload to the provided `onload_device`. Existing
@@ -45,12 +45,19 @@ def offload_model(
     :param offload_device: device to offload weights to, if not already offloaded
     :return: dispatched model
     """
+    if offload_device is not None:
+        logger.warning(
+            "`offload_model` now keeps the same offload device that model was loaded "
+            "on. Please specify offload by loading the model on its offload device(s)"
+        )
+
     # offload modules in place
     for module in model.modules():
         if isinstance(module._parameters, OffloadCache):
             module._parameters.onload_device = onload_device
             module._buffers.onload_device = onload_device
         else:
+            offload_device = get_module_device(module, torch.device("cpu"))
             offload_module(module, onload_device, offload_device)
 
     return model
