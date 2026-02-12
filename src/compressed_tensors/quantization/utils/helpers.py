@@ -467,9 +467,9 @@ def _get_dtype_eps(dtype: torch.dtype) -> float:
 
 
 def calculate_block_padding(
-    shape: Tuple[int, ...],
-    block_structure: Tuple[int, int],
-) -> Tuple[int, int]:
+    shape: tuple[int, ...],
+    block_structure: tuple[int, int],
+) -> tuple[int, int]:
     """
     Calculate the padding needed to make tensor dimensions divisible by block size.
 
@@ -525,7 +525,7 @@ def pad_tensor_for_block_quant(
 
 def unpad_tensor_from_block_quant(
     tensor: torch.Tensor,
-    original_shape: Tuple[int, ...],
+    original_shape: tuple[int, ...],
 ) -> torch.Tensor:
     """
     Remove padding from a tensor that was padded for block quantization.
