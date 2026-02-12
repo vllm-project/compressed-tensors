@@ -49,7 +49,7 @@ def test_remove_accelerate_from_module_cpu():
         state_dict=linear.state_dict(),
         force_hooks=True,
     )
-    assert remove_accelerate_from_module(linear) == ("cuda", "cpu", None)
+    assert remove_accelerate_from_module(linear) == (torch.device("cuda"), torch.device("cpu"), None)
     assert not hasattr(linear, "_hf_hook")
 
 
@@ -73,7 +73,7 @@ def test_remove_accelerate_from_module_disk(tmp_path):
         force_hooks=True,
         offload_dir=offload_dir,
     )
-    assert remove_accelerate_from_module(linear) == ("cuda", "disk", offload_dir)
+    assert remove_accelerate_from_module(linear) == (torch.device("cuda"), "disk", offload_dir)
     assert not hasattr(linear, "_hf_hook")
 
 
@@ -101,8 +101,8 @@ def test_remove_accelerate(tmp_path):
     assert device_map == {
         "": (None, None),
         "0": (torch.device("cuda:0"), torch.device("cuda:0")),
-        "1": ("cuda", "cpu"),
-        "2": ("cuda", "disk"),
+        "1": (torch.device("cuda"), torch.device("cpu")),
+        "2": (torch.device("cuda"), "disk"),
     }
     assert _offload_dir == offload_dir
     assert not hasattr(model, "hf_device_map")
@@ -131,8 +131,8 @@ def test_from_accelerate(tmp_path):
     assert device_map == {
         "": (None, None),
         "0": (torch.device("cuda:0"), torch.device("cuda:0")),
-        "1": ("cuda", "cpu"),
-        "2": ("cuda", "disk"),
+        "1": (torch.device("cuda"), torch.device("cpu")),
+        "2": (torch.device("cuda"), "disk"),
     }
     assert _offload_dir == offload_dir
     assert isinstance(model[0]._parameters, DeviceCache)
@@ -155,8 +155,7 @@ def test_from_accelerate_dist(tmp_path):
     if dist.get_rank() == 0:
         dispatch_model(
             model,
-            # {"0": 0, "1": "cpu", "2": "disk"},
-            {"0": "cpu", "1": "cpu", "2": "disk"},
+            {"0": 0, "1": "cpu", "2": "disk"},
             main_device="cuda",
             force_hooks=True,
             offload_dir=offload_dir,
@@ -167,13 +166,13 @@ def test_from_accelerate_dist(tmp_path):
     device_map, _offload_dir = from_accelerate(model)
     assert device_map == {
         "": (None, None),
-        "0": ("cuda", "cpu"),
-        "1": ("cuda", "cpu"),
-        "2": ("cuda", "disk"),
+        "0": (torch.device("cuda"), torch.device("cuda")),  # index agnostic
+        "1": (torch.device("cuda"), torch.device("cpu")),
+        "2": (torch.device("cuda"), "disk"),
     }
     if dist.get_rank() == 0:
         assert _offload_dir == offload_dir
-    # assert isinstance(model[0]._parameters, DeviceCache)
+    assert isinstance(model[0]._parameters, DeviceCache)
     assert isinstance(model[1]._parameters, CPUCache)
     assert isinstance(model[2]._parameters, DiskCache)
 

@@ -31,12 +31,12 @@ def from_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
 
     :param model: accelerate-offloaded model if rank0, meta model otherwise
     """
-    device_map: DeviceMap | None = None
-    offload_dir: str | None = None
-
     if is_rank0():
         device_map, offload_dir = remove_accelerate(model)
+    else:
+        device_map, offload_dir = None, None
 
+    print(device_map)
     broadcast_obj = [device_map, offload_dir]
     if is_distributed():
         dist.broadcast_object_list(broadcast_obj, src=0)
@@ -130,7 +130,11 @@ def remove_accelerate_from_module(
             hook.offload = False
 
     remove_hook_from_module(module, recurse=False)
-    return hook.execution_device, offload_device, dataset.save_folder
+    return (
+        _norm_device(hook.execution_device),
+        _norm_device(offload_device),
+        dataset.save_folder,
+    )
 
 
 def _save_ct_index_entry(
@@ -160,6 +164,20 @@ def _save_ct_index_entry(
             os.remove(original_weight_file)
 
 
+def _norm_device(device: str | torch.device | None) -> str | torch.device | None:
+    if device not in ("disk", None):
+        device = torch.device(device)
+
+    if (
+        is_distributed()
+        and isinstance(device, torch.device)
+        and device.index == dist.get_rank()
+    ):
+        device = torch.device(type=device.type, index=None)
+    
+    return device
+
+
 def _get_tensors(
     module: torch.nn.Module, recurse: bool = False
 ) -> Iterable[tuple[str, torch.Tensor | None]]:
@@ -175,7 +193,7 @@ def _direct_tensors(module: torch.nn.Module) -> dict[str, torch.Tensor]:
 
 def _infer_device_from_tensors(tensors: dict[str, torch.Tensor]) -> torch.device | None:
     t = next(iter(tensors.values()), None)
-    return t.device if t is not None else None
+    return _norm_device(t.device if t is not None else None)
 
 
 def _infer_module_device(module: torch.nn.Module) -> torch.device | None:

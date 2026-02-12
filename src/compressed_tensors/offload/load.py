@@ -8,8 +8,9 @@ from types import FrameType
 
 import psutil
 import torch
+import torch.distributed as dist
 from compressed_tensors.offload.convert import from_accelerate
-from compressed_tensors.offload.dist_utils import is_rank0
+from compressed_tensors.offload.dist_utils import is_rank0, is_distributed
 from transformers import PreTrainedModel
 from transformers.models.auto.modeling_auto import _BaseAutoModelClass
 
@@ -51,23 +52,28 @@ def patch_from_pretrained(obj: cls_to_patch):
 
     @wraps(original_func)
     def from_pretrained(cls, *args, **kwargs):
-        arguments = inspect.signature(original_func).bind(*args).arguments
-        arguments.update(kwargs)
+        args = inspect.signature(original_func).bind(*args).arguments
+        args.update(kwargs)
+        args["device_map"] = args.get("device_map", None)
+
+        match (args["device_map"], is_distributed()):
+            case "auto", True:
+                raise ValueError(
+                    "Cannot use an `auto` device map in a distributed context. Please "
+                    "use `device_map='cuda'` instead"
+                )
+
+            case "auto_offload", _:
+                args["device_map"] = "auto"
+                if "max_memory" not in args:
+                    args["max_memory"] = {"cpu": psutil.virtual_memory().available}
 
         if is_rank0():
-            device_map = arguments.get("device_map", None)
-
-            # intercept "disk"
-            if device_map == "disk":
-                arguments["device_map"] = "auto"
-                if "max_memory" not in arguments:
-                    arguments["max_memory"] = {"cpu": psutil.virtual_memory().available}
-
-            model = original_func(cls, **arguments)
+            model = original_func(cls, **args)
 
         else:
-            arguments["device_map"] = "meta"
-            model = original_func(cls, **arguments)
+            args["device_map"] = "meta"
+            model = original_func(cls, **args)
 
         from_accelerate(model)
         return model

@@ -53,3 +53,31 @@ def test_load_disk_dist(disable_convert, tmp_path):
 
     if dist.get_rank() == 0:
         assert _offload_dir == offload_dir
+
+
+@pytest.mark.integration
+@torchrun(world_size=2)
+def test_load_device_dist(disable_convert):
+
+    with load_offloaded_model():
+        model = AutoModelForCausalLM.from_pretrained(
+            "Qwen/Qwen3-0.6B",
+            device_map="cuda",
+            dtype=torch.bfloat16,
+        )
+
+    assert model.num_parameters() == 596049920
+
+    if dist.get_rank() == 0:
+        assert model.device.type != "meta"
+        assert set(model.hf_device_map.values()) == {torch.device("cuda")}
+    else:
+        assert model.device.type == "meta"
+
+    device_map, _offload_dir = from_accelerate(model)
+    for layer_index in range(0, 28):
+        assert device_map[f"model.layers.{layer_index}.self_attn.q_proj"] == (
+            torch.device("cuda"),
+            torch.device("cuda"),
+        )
+    assert _offload_dir is None
