@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Optional
-
 from compressed_tensors.config import CompressionFormat, SparsityCompressionConfig
 
 
@@ -21,5 +19,5 @@ class BitmaskConfig(SparsityCompressionConfig):
     """
 
     format: str = CompressionFormat.sparse_bitmask.value
-    global_sparsity: Optional[float] = 0.0
-    sparsity_structure: Optional[str] = "unstructured"
+    global_sparsity: float | None = 0.0
+    sparsity_structure: str | None = "unstructured"

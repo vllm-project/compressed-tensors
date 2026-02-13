@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import warnings
-from typing import Dict, Tuple
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
@@ -58,7 +57,7 @@ class CompressedLinear(Linear):
         )
 
         # get the shape and dtype of compressed parameters
-        compression_params: Dict[str, Tuple] = module.compressor.compression_param_info(
+        compression_params: dict[str, tuple] = module.compressor.compression_param_info(
             module.weight.shape, quantization_scheme.weights
         )
 

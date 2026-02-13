@@ -2,7 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 from weakref import ReferenceType, ref
 
 from compressed_tensors.quantization.lifecycle.forward import forward_quantize
@@ -44,9 +45,9 @@ class QuantizedKVCache(InternalModule):
         super().__init__()
         self.config = config
         self.attn_module = ref(attn_module)  # avoid circular reference
-        self.past_key_values: Optional[ReferenceType[Cache]] = None
+        self.past_key_values: ReferenceType[Cache] | None = None
 
-    def update(self, *args, **kwargs) -> Tuple[Tensor, Tensor]:
+    def update(self, *args, **kwargs) -> tuple[Tensor, Tensor]:
         return self(*args, **kwargs)
 
     def forward(
@@ -55,7 +56,7 @@ class QuantizedKVCache(InternalModule):
         value_states: Tensor,
         *args,
         **kwargs,
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor]:
         # quantization
         module = self.attn_module()
         quant_args_attr = "quantization_scheme.input_activations"
@@ -76,7 +77,7 @@ class QuantizedKVCache(InternalModule):
 
         return ret
 
-    def add_past_key_values(self, past_key_values: Optional[Cache]):
+    def add_past_key_values(self, past_key_values: Cache | None):
         if past_key_values is not None:
             self.past_key_values = ref(past_key_values)
         else:
@@ -87,8 +88,8 @@ class QuantizedKVCache(InternalModule):
 
 
 def _kv_cache_attention_hook(
-    module: Module, args: List[Any], kwargs: Dict[str, Any]
-) -> Tuple[List[Any], Dict[str, Any]]:
+    module: Module, args: list[Any], kwargs: dict[str, Any]
+) -> tuple[list[Any], dict[str, Any]]:
     """
     Hook which should be called before each quantized attention forward pass.
     This hook dynamically replaces the `past_key_values` kwarg to the attention
@@ -102,7 +103,7 @@ def _kv_cache_attention_hook(
         if "past_key_values" in inspect.signature(module.forward).parameters
         else "past_key_value"
     )
-    past_key_values: Optional[Cache] = kwargs.get(_past_kv_name, None)
+    past_key_values: Cache | None = kwargs.get(_past_kv_name, None)
 
     cache: QuantizedKVCache = getattr(module, KV_CACHE_ATTR)
     cache.add_past_key_values(past_key_values)
@@ -127,7 +128,7 @@ def initialize_hooked_kv_cache(model: PreTrainedModel, module: Module):
 
 
 def register_key_hook(
-    module: Module, hook: Callable[[Module, Tensor], Optional[Tensor]]
+    module: Module, hook: Callable[[Module, Tensor], Tensor | None]
 ) -> RemovableHandle:
     """
     Register a hook which takes post-rope key states as an argument and
@@ -150,7 +151,7 @@ def register_key_hook(
 
 
 def register_value_hook(
-    module: Module, hook: Callable[[Module, Tensor], Optional[Tensor]]
+    module: Module, hook: Callable[[Module, Tensor], Tensor | None]
 ) -> RemovableHandle:
     """
     Register a hook which takes value states as an argument and
