@@ -360,6 +360,17 @@ def wrap_module_forward_quantized(module: Module, scheme: QuantizationScheme):
 
         compressed = self.quantization_status == QuantizationStatus.COMPRESSED
 
+        # Error guard - CompressedLinear has been removed, cannot run compressed
+        if compressed:
+            raise RuntimeError(
+                f"Module {self.__class__.__name__} is still in COMPRESSED state. "
+                "Cannot run inference on compressed weights. "
+                "Decompress the model first using:\n"
+                "  from compressed_tensors.compressors import ModelCompressor\n"
+                "  compressor = ModelCompressor.from_pretrained_model(model)\n"
+                "  compressor.decompress_model(model)"
+            )
+
         if scheme.input_activations is not None:
             # prehook should calibrate activations before forward call
             input_ = forward_quantize(self, input_, "input", scheme.input_activations)

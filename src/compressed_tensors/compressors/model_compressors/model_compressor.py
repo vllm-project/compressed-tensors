@@ -25,7 +25,6 @@ from compressed_tensors.config import CompressionFormat, SparsityCompressionConf
 from compressed_tensors.config.format import (
     infer_and_set_per_module_quantization_format,
 )
-from compressed_tensors.linear.compressed_linear import CompressedLinear
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_METHOD,
     QuantizationConfig,
@@ -464,9 +463,6 @@ class ModelCompressor:
             ),
             desc="Compressing model",
         ):
-            if isinstance(module, CompressedLinear):
-                continue  # already compressed
-
             module_device = get_execution_device(module)
             is_meta = module_device.type == "meta"
 
