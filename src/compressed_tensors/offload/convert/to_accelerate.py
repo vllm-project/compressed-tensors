@@ -28,8 +28,8 @@ def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
     hf_disk_index = _to_accelerate_disk_index(model, DiskCache.index)
 
     for name, module in model.named_modules():
-        offload = to_accelerate_module(module, name, hf_disk_index)
-        hf_device_map[name] = offload
+        offload_device_str = to_accelerate_module(module, name, hf_disk_index)
+        hf_device_map[name] = offload_device_str
 
     setattr(model, "hf_device_map", hf_device_map)
     return hf_device_map

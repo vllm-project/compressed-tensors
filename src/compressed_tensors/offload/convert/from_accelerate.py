@@ -55,18 +55,18 @@ def remove_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
     device_map = {}
 
     for name, module in model.named_modules(remove_duplicate=False):
-        onload, offload, module_dir = remove_accelerate_from_module(module)
+        onload_dev, offload_dev, _offload_dir = remove_accelerate_from_module(module)
 
-        if module_dir is not None and offload_dir not in (None, module_dir):
-            raise ValueError(
-                "Expected model to only have one `offload_dir`, "
-                f"instead got {offload_dir} and {module_dir}"
-            )
+        if _offload_dir is not None:
+            if offload_dir is not None and _offload_dir != offload_dir:
+                raise ValueError(
+                    "Expected model to only have one `offload_dir`, "
+                    f"instead got {offload_dir} and {_offload_dir}"
+                )
 
-        if module_dir is not None:
-            offload_dir = module_dir
+            offload_dir = _offload_dir
 
-        device_map[name] = (onload, offload)
+        device_map[name] = (onload_dev, offload_dev)
 
     if hasattr(model, "hf_device_map"):
         delattr(model, "hf_device_map")
