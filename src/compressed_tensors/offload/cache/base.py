@@ -30,7 +30,7 @@ class OffloadCache(MutableMapping, ABC):
     """
 
     onload_device: torch.device | str
-    offload_device: torch.device | str | None
+    offload_device: torch.device | Literal["disk"]
 
     # global flags for disabling
     offloading_disabled: ClassVar[bool] = False
@@ -111,7 +111,7 @@ class OffloadCache(MutableMapping, ABC):
         self.offloaded_values = dict()
 
     @abstractmethod
-    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor:
+    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Given an offloaded tensor, returns that tensor after onloading
 
@@ -121,7 +121,7 @@ class OffloadCache(MutableMapping, ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Given a tensor, returns that tensor after offloading
 
@@ -136,7 +136,7 @@ class OffloadCache(MutableMapping, ABC):
         Update the data of an offloaded tensor
 
         NOTE: Operation is performed asynchronously. If you need the offloaded value
-        to updated across all ranks, call `dist.barrier()` after calling this function
+        to update across all ranks, call `dist.barrier()` after calling this function
 
         :param tensor: offloaded tensor to update
         :param data: new tensor data

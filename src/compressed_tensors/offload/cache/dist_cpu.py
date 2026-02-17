@@ -12,9 +12,7 @@ class DistributedCPUCache(CPUCache):
     Handles offloading and onloading tensors from/to cpu memory shared across processes
     """
 
-    offload_device = torch.device("cpu")
-
-    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Synchronously create shared cpu memory for offload
 
