@@ -52,6 +52,7 @@ __all__ = [
 ]
 
 
+@deprecated("compressed_tensors.offload::update_offload_parameter")
 def update_parameter_data(
     module: torch.nn.Module, new_param_data: torch.Tensor, param_name: str
 ):

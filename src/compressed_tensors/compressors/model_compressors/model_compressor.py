@@ -26,6 +26,7 @@ from compressed_tensors.config.format import (
     infer_and_set_per_module_quantization_format,
 )
 from compressed_tensors.linear.compressed_linear import CompressedLinear
+from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_METHOD,
     QuantizationConfig,
@@ -45,7 +46,6 @@ from compressed_tensors.utils import (
     merge_names,
     patch_attr,
     register_offload_parameter,
-    update_parameter_data,
 )
 from compressed_tensors.utils.helpers import (
     fix_fsdp_module_name,
@@ -748,7 +748,7 @@ class ModelCompressor:
                 model_path_or_state_dict, names_to_scheme=names_to_scheme
             )
             # TODO: all weight quantization params will be moved to the compressor
-            # to prevent duplicate parameter updates in update_parameter_data
+            # to prevent duplicate parameter updates in update_offload_parameter
             self._replace_weights(
                 dense_gen, model, load_weight_qparams=not load_weight_qparams
             )
@@ -883,7 +883,7 @@ class ModelCompressor:
                     elif load_weight_qparams:
                         # Should already be registered to the correct device for
                         # for scales/zero-points
-                        update_parameter_data(module, param_data, param_name)
+                        update_offload_parameter(module, param_name, param_data)
 
 
 def map_module_to_scheme(model: Module) -> dict[str, QuantizationScheme]:
