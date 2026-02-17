@@ -132,7 +132,9 @@ def test_dispatch_split():
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
 
     # first linear on first device, rest on second device
-    dispatch_model(model, device_memory=device_memory, no_split_modules=tuple(), extra_memory=0)
+    dispatch_model(
+        model, device_memory=device_memory, no_split_modules=tuple(), extra_memory=0
+    )
     assert_module_on_device(model.decoder0.linear0, "cuda:0")
     assert_module_on_device(model.decoder0.linear1, "cuda:1")
     assert_module_on_device(model.decoder1, "cuda:1")
@@ -160,7 +162,9 @@ def test_dispatch_offloaded():
 
         # first linear stays onloaded
         # second linear is popped off to fit offloaded decoder1
-        dispatch_model(model, device_memory=device_memory, no_split_modules=tuple(), extra_memory=0)
+        dispatch_model(
+            model, device_memory=device_memory, no_split_modules=tuple(), extra_memory=0
+        )
         assert_module_on_device(model.decoder0.linear0, "cuda:0")
         assert_module_offloaded(model.decoder0.linear1, "cuda:0", "cpu")
         assert_module_offloaded(model.decoder1, "cuda:0", "cpu")
