@@ -82,7 +82,7 @@ def test_dispatch_one_device():
     if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform one device dispatch test, not enough device memory")
 
-    dispatch_model(model, device_memory=device_memory)
+    dispatch_model(model, device_memory=device_memory, extra_memory=0)
     assert_module_on_device(model, "cuda:0")
 
 
@@ -98,7 +98,7 @@ def test_dispatch_two_devices():
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
 
     # first decoder on first device, rest on second device
-    dispatch_model(model, device_memory=device_memory)
+    dispatch_model(model, device_memory=device_memory, extra_memory=0)
     assert_module_on_device(model.decoder0, "cuda:0")
     assert_module_on_device(model.decoder1, "cuda:1")
 
@@ -115,7 +115,7 @@ def test_dispatch_no_split():
         pytest.skip("Cannot perform split dispatch test: not enough devices or mem")
 
     # first device is skipped: all ends up on second device
-    dispatch_model(model, device_memory=device_memory)
+    dispatch_model(model, device_memory=device_memory, extra_memory=0)
     assert_module_on_device(model, "cuda:1")
 
 
@@ -132,7 +132,9 @@ def test_dispatch_split():
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
 
     # first linear on first device, rest on second device
-    dispatch_model(model, device_memory=device_memory, no_split_modules=tuple())
+    dispatch_model(
+        model, device_memory=device_memory, no_split_modules=tuple(), extra_memory=0
+    )
     assert_module_on_device(model.decoder0.linear0, "cuda:0")
     assert_module_on_device(model.decoder0.linear1, "cuda:1")
     assert_module_on_device(model.decoder1, "cuda:1")
@@ -160,7 +162,9 @@ def test_dispatch_offloaded():
 
         # first linear stays onloaded
         # second linear is popped off to fit offloaded decoder1
-        dispatch_model(model, device_memory=device_memory, no_split_modules=tuple())
+        dispatch_model(
+            model, device_memory=device_memory, no_split_modules=tuple(), extra_memory=0
+        )
         assert_module_on_device(model.decoder0.linear0, "cuda:0")
         assert_module_offloaded(model.decoder0.linear1, "cuda:0", "cpu")
         assert_module_offloaded(model.decoder1, "cuda:0", "cpu")
@@ -174,7 +178,8 @@ def test_offload_and_dispatch_model(model_id):
     model = AutoModelForCausalLM.from_pretrained(model_id).eval()
     tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-    device_memory = {torch.device("cuda:0"): module_size(model)}
+    tied_tensors_size = model.lm_head.weight.nbytes
+    device_memory = {torch.device("cuda:0"): module_size(model) + tied_tensors_size}
     if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform split dispatch test: not enough devices or mem")
 
@@ -184,21 +189,22 @@ def test_offload_and_dispatch_model(model_id):
     true_logits = model(**sample).logits
 
     # offload entire model
-    model = offload_model(model, "cuda:0", "cpu")
+    model.to("cpu")
+    model = offload_model(model, "cuda:0")
     offloaded_logits = model(**sample).logits
-    for child in model.children():
-        assert_module_offloaded(child, "cuda:0", torch.device("cpu"))
+    for module in model.modules():
+        assert_module_offloaded(module, "cuda:0", torch.device("cpu"))
     assert torch.allclose(offloaded_logits, true_logits)
 
     # dispatch model and fits
     model = dispatch_model(model, device_memory=device_memory, extra_memory=0)
     dispatched_logits = model(**sample).logits
-    assert_module_on_device(model, "cuda:0")
+    for module in model.modules():
+        assert_module_on_device(module, "cuda:0")
     assert torch.allclose(dispatched_logits, true_logits)
 
     # dispatch model with offload
     device_memory[torch.device("cuda:0")] = device_memory[torch.device("cuda:0")] // 2
     model = dispatch_model(model, device_memory=device_memory, extra_memory=0)
     dispatched_logits = model(**sample).logits
-    assert_module_on_device(model, "cuda:0")
     assert torch.allclose(dispatched_logits, true_logits)

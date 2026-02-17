@@ -16,7 +16,7 @@ class DistributedDeviceCache(DeviceCache):
     the model is replicated across devices.
     """
 
-    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Move a tensor to device, then broadcast data to all other ranks
 

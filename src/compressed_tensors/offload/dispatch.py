@@ -4,12 +4,17 @@
 from collections.abc import Container
 from copy import deepcopy
 from functools import partial
-from typing import Literal, TypeVar
+from typing import Any, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.module import offload_module, remove_module_offload
-from compressed_tensors.offload.utils import get_module_sizes
+from compressed_tensors.offload.utils import (
+    get_module_device,
+    get_module_sizes,
+    module_size,
+)
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
 from loguru import logger
@@ -18,36 +23,95 @@ from transformers import PreTrainedModel
 
 __all__ = [
     "offload_model",
+    "dispatch_with_map",
+    "get_device_map",
     "dispatch_model",
     "remove_dispatch",
     "get_device_memory",
+    "DeviceMap",
 ]
 
 ModelType = TypeVar("ModelType", bound=torch.nn.Module)
+DeviceMap = dict[str, tuple[torch.device | None, torch.device | str | None]]
 
 
 def offload_model(
     model: ModelType,
     onload_device: torch.device | str,
-    offload_device: torch.device | str | Literal["disk"] = torch.device("cpu"),
+    offload_device: Any = None,
 ) -> ModelType:
     """
-    Offload a model to the `offload_device`. During forward passes, model weights will
-    be onloaded to the `onload_device`
+    Modify the dispatch of a model to onload to the provided `onload_device`. Existing
+    offloaded tensors will not be modified. If a module is not offloaded, it will be
+    offloaded to the provided `offload_device`.
 
     :param model: model to dispatch
     :param onload_device: device to move weights to during forward pass
-    :param offload_device: device to offload weights to
+    :param offload_device: device to offload weights to, if not already offloaded
     :return: dispatched model
     """
-    # remove any previous dispatches
-    remove_dispatch(model)
+    if offload_device is not None:
+        logger.warning(
+            "`offload_model` now keeps the same offload device that model was loaded "
+            "on. Please specify offload by loading the model on its offload device(s)"
+        )
 
     # offload modules in place
     for module in model.modules():
-        offload_module(module, onload_device, offload_device)
+        if isinstance(module._parameters, OffloadCache):
+            module._parameters.onload_device = onload_device
+            module._buffers.onload_device = onload_device
+        else:
+            offload_device = get_module_device(module, torch.device("cpu"))
+            offload_module(module, onload_device, offload_device)
 
     return model
+
+
+def dispatch_with_map(
+    model: torch.nn.Module,
+    device_map: DeviceMap,
+    offload_dir: Optional[str] = None,
+):
+    """
+    Dispatch a model according to the provided device map
+
+    :param model: model to dispatch
+    :param device_map: device map specifying the onload and offload of each module
+    :param offload_dir: optional directory for disk offloading
+    """
+    for name, (onload_device, offload_device) in device_map.items():
+        module = model.get_submodule(name)
+
+        if offload_device == "disk":
+            offload_module(
+                module, onload_device, offload_device, offload_dir=offload_dir
+            )
+
+        elif offload_device is not None:
+            offload_module(module, onload_device, offload_device)
+
+
+def get_device_map(
+    model: torch.nn.Module, default_device: torch.device = torch.device("cpu")
+) -> DeviceMap:
+    """
+    Get the device map of a CT-offloaded model
+
+    :param: model: model to get device map of
+    :param default_device: the default onload/offload device
+        when module has no parameters
+    :return: device map specifying the onload and offload device of all modules
+    """
+    from compressed_tensors.offload import get_execution_device, get_offloaded_device
+
+    return {
+        name: (
+            get_execution_device(module, default_device),
+            get_offloaded_device(module, default_device),
+        )
+        for name, module in model.named_modules(remove_duplicate=False)
+    }
 
 
 def dispatch_model(
@@ -59,7 +123,8 @@ def dispatch_model(
     """
     Dispatch a model for autoregressive generation. This means that modules are
     dispatched evenly across available devices and kept onloaded if possible. If
-    onloading the entire model is not possible, some modules may be offloaded.
+    onloading the entire model is not possible, some modules may be offloaded. Any
+    existing offloads will be removed.
 
     Disclaimers:
     * Optimal runtime assumes that modules are called in order of `model.modules()`
@@ -72,25 +137,9 @@ def dispatch_model(
         across multiple devices
     :return: dispatched model
     """
-    # remove previous dispatches
-    remove_dispatch(model)
-
     # infer no_split_modules
     if no_split_modules is None:
         no_split_modules = getattr(model, "_no_split_modules", tuple())
-
-    # estimate activations memory requirement
-    if extra_memory is None:
-        if isinstance(model, PreTrainedModel):
-            extra_memory = (
-                1  # batch_size
-                * 2048  # seq_len
-                * getattr_chain(model, "config.intermediate_size", 256)
-                * getattr(model, "dtype", torch.bfloat16).itemsize
-                + 1e9  # extra memory for fragmentation, kv cache, ect.
-            )
-        else:
-            extra_memory = 0
 
     # collect devices
     if device_memory is None:
@@ -102,6 +151,20 @@ def dispatch_model(
     sizes = get_module_sizes(model, no_split_modules)
     if len(sizes) <= 0:
         raise ValueError("Model does not have any modules")
+
+    # estimate memory requirement
+    if extra_memory is None:
+        # fragmentation, kv cache, embeddings, ect.
+        extra_memory = max(module_size(model) * 0.05, 1e9)
+
+        # activations
+        if isinstance(model, PreTrainedModel):
+            extra_memory += (
+                1  # batch_size
+                * 2048  # seq_len
+                * getattr_chain(model, "config.intermediate_size", 256)
+                * getattr(model, "dtype", torch.bfloat16).itemsize
+            )
 
     # search for the best dispatch which maximizes extra memory across devices
     try:
@@ -145,9 +208,18 @@ def dispatch_model(
     # dispatch
     finally:
         assert len(dispatch) == len(sizes)
-        for module, onload, offload in dispatch:
-            for submodule in module.modules():
-                offload_module(submodule, onload, offload)
+
+        dispatch_dict = {
+            submodule: (onload, offload)
+            for module, onload, offload in dispatch
+            for submodule in module.modules()
+        }
+
+        for module in model.modules():
+            remove_module_offload(module, onload_tensors=True)
+            if module in dispatch_dict:
+                onload, offload = dispatch_dict[module]
+                offload_module(module, onload, offload)
 
         logger.debug(f"Dispatched model with {extra_memory} bytes of extra memory")
         return model
@@ -157,7 +229,7 @@ def get_device_memory() -> dict[torch.device, int]:
     """
     Get the total memory of all available cuda devices
 
-    :return: list of device memory dataclasses
+    :return: mapping from torch device to total memory
     """
     if not torch.cuda.is_available():
         return dict()
