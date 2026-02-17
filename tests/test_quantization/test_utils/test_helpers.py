@@ -14,7 +14,7 @@ from compressed_tensors.quantization.utils import (
     calculate_qparams,
     compute_dynamic_scales_and_zp,
     generate_gparam,
-    pad_tensor_for_block_quant,
+    maybe_pad_tensor_for_block_quant,
 )
 
 
@@ -136,12 +136,12 @@ def test_calculate_block_padding(shape, block_structure, expected_padding):
         (50, 50, 128, 128),  # Smaller than block
     ],
 )
-def test_pad_tensor_for_block_quant(rows, cols, block_height, block_width):
-    """Test that pad_tensor_for_block_quant correctly pads tensors."""
+def test_maybe_pad_tensor_for_block_quant(rows, cols, block_height, block_width):
+    """Test that maybe_pad_tensor_for_block_quant correctly pads tensors."""
     tensor = torch.randn(rows, cols)
     block_structure = (block_height, block_width)
 
-    padded = pad_tensor_for_block_quant(tensor, block_structure)
+    padded = maybe_pad_tensor_for_block_quant(tensor, block_structure)
 
     # Check padded dimensions are divisible by block size
     assert (

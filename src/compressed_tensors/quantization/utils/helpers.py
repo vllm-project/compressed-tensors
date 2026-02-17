@@ -43,7 +43,7 @@ __all__ = [
     "generate_gparam",
     "strategy_cdiv",
     "calculate_block_padding",
-    "pad_tensor_for_block_quant",
+    "maybe_pad_tensor_for_block_quant",
 ]
 
 # target the self_attn layer
@@ -491,7 +491,7 @@ def calculate_block_padding(
     return pad_rows, pad_cols
 
 
-def pad_tensor_for_block_quant(
+def maybe_pad_tensor_for_block_quant(
     tensor: torch.Tensor,
     block_structure: tuple[int, int],
 ) -> torch.Tensor:

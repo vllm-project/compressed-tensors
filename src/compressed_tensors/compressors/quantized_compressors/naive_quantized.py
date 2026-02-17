@@ -12,7 +12,7 @@ from compressed_tensors.quantization.lifecycle.forward import dequantize, quanti
 from compressed_tensors.quantization.utils import (
     calculate_block_padding,
     can_quantize,
-    pad_tensor_for_block_quant,
+    maybe_pad_tensor_for_block_quant,
 )
 from torch import Tensor
 
@@ -96,10 +96,8 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
             and quantization_args.block_structure is not None
         ):
             block_structure = tuple(quantization_args.block_structure)
-            pad_rows, pad_cols = calculate_block_padding(weight.shape, block_structure)
 
-            if pad_rows > 0 or pad_cols > 0:
-                weight = pad_tensor_for_block_quant(weight, block_structure)
+            weight = maybe_pad_tensor_for_block_quant(weight, block_structure)
 
         if can_quantize(weight, quantization_args):
             quantized_weight = quantize(
@@ -120,7 +118,7 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
             # return quantized_weight truncated back to original shape
             return {
                 "weight": quantized_weight[
-                    tuple([slice(k) for k in original_weight_shape])
+                    tuple([slice(v) for v in original_weight_shape])
                 ]
             }
         return {"weight": quantized_weight}
