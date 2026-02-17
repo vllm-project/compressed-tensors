@@ -10,7 +10,11 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.module import offload_module, remove_module_offload
-from compressed_tensors.offload.utils import get_module_device, get_module_sizes
+from compressed_tensors.offload.utils import (
+    get_module_device,
+    get_module_sizes,
+    module_size,
+)
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
 from loguru import logger
@@ -137,19 +141,6 @@ def dispatch_model(
     if no_split_modules is None:
         no_split_modules = getattr(model, "_no_split_modules", tuple())
 
-    # estimate activations memory requirement
-    if extra_memory is None:
-        if isinstance(model, PreTrainedModel):
-            extra_memory = (
-                1  # batch_size
-                * 2048  # seq_len
-                * getattr_chain(model, "config.intermediate_size", 256)
-                * getattr(model, "dtype", torch.bfloat16).itemsize
-                + 1e9  # extra memory for fragmentation, kv cache, ect.
-            )
-        else:
-            extra_memory = 0
-
     # collect devices
     if device_memory is None:
         device_memory: dict[torch.device, int] = get_device_memory()
@@ -160,6 +151,20 @@ def dispatch_model(
     sizes = get_module_sizes(model, no_split_modules)
     if len(sizes) <= 0:
         raise ValueError("Model does not have any modules")
+
+    # estimate memory requirement
+    if extra_memory is None:
+        # fragmentation, kv cache, embeddings, ect.
+        extra_memory = max(module_size(model) * 0.05, 1e9)
+
+        # activations
+        if isinstance(model, PreTrainedModel):
+            extra_memory += (
+                1  # batch_size
+                * 2048  # seq_len
+                * getattr_chain(model, "config.intermediate_size", 256)
+                * getattr(model, "dtype", torch.bfloat16).itemsize
+            )
 
     # search for the best dispatch which maximizes extra memory across devices
     try:
