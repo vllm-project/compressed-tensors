@@ -3,7 +3,6 @@
 
 import logging
 import math
-from collections.abc import Generator
 
 import torch
 from compressed_tensors.quantization.quant_args import (
@@ -15,13 +14,11 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationType,
     round_to_quantized_type_dtype,
 )
-from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils.mxfp4_utils import (
     generate_mxfp4_scales,
     maybe_convert_from_mxfp4_exp,
     should_generatre_mxfp4_scales,
 )
-from compressed_tensors.utils import deprecated
 from loguru import logger
 from torch import FloatTensor, IntTensor, Tensor
 from torch.nn import Module
@@ -34,9 +31,6 @@ __all__ = [
     "get_torch_bit_depth",
     "can_quantize",
     "KV_CACHE_TARGETS",
-    "is_kv_cache_quant_scheme",
-    "iter_named_leaf_modules",
-    "iter_named_quantizable_modules",
     "compute_dynamic_scales_and_zp",
     "calculate_range",
     "calculate_qparams",
@@ -273,83 +267,6 @@ def module_type(module: Module) -> str:
     return type(module).__name__
 
 
-@deprecated(
-    message="This function will be removed in a future release. "
-    "Please use `model.named_modules()` and filter by "
-    "compressed_tensors.InternalModule if neceessary"
-)
-def iter_named_leaf_modules(model: Module) -> Generator[tuple[str, Module], None, None]:
-    """
-    Yields modules that do not have any submodules except observers. The observers
-    themselves are not yielded
-    :param model: model to get leaf modules of
-    :returns: generator tuple of (name, leaf_submodule)
-    """
-    for name, submodule in model.named_modules():
-        children = list(submodule.children())
-        # TODO: verify if an observer would ever be attached in this case/remove check
-        if len(children) == 0 and "observer" in name:
-            yield name, submodule
-        else:
-            if len(children) > 0:
-                named_children, children = zip(*list(submodule.named_children()))
-            has_non_observer_children = False
-            for i in range(len(children)):
-                child_name = named_children[i]
-
-                if "observer" not in child_name:
-                    has_non_observer_children = True
-
-            if not has_non_observer_children:
-                yield name, submodule
-
-
-@deprecated(
-    message="This function will be removed in a future release. "
-    "Please use `model.named_modules()` and filter by "
-    "compressed_tensors.InternalModule if neceessary"
-)
-def iter_named_quantizable_modules(
-    model: Module,
-    include_children: bool = True,
-    include_attn: bool = False,
-    include_mlp: bool = False,
-) -> Generator[tuple[str, Module], None, None]:
-    """
-    Yield name and submodule of
-    - leaf modules, set by include_children
-    - attention modyles, set by include_attn
-    :param model: model to get leaf modules of
-    :param include_children: flag to get the leaf modules
-    :param inlcude_attn: flag to get the attention modules
-    :returns: generator tuple of (name, submodule)
-    """
-    for name, submodule in model.named_modules():
-        # TODO: verify if an observer would ever be attached in this case/remove check
-        if include_children:
-            children = list(submodule.children())
-            if len(children) == 0 and "observer" not in name:
-                yield name, submodule
-            else:
-                if len(children) > 0:
-                    named_children, children = zip(*list(submodule.named_children()))
-                has_non_observer_children = False
-                for i in range(len(children)):
-                    child_name = named_children[i]
-
-                    if "observer" not in child_name:
-                        has_non_observer_children = True
-
-                if not has_non_observer_children:
-                    yield name, submodule
-        if include_attn:
-            if name.endswith("self_attn"):
-                yield name, submodule
-        if include_mlp:
-            if name.endswith("mlp"):
-                yield name, submodule
-
-
 def get_torch_bit_depth(value: torch.Tensor) -> int:
     """
     Determine the number of bits used to represent the dtype of a tensor
@@ -383,27 +300,6 @@ def can_quantize(value: torch.Tensor, quant_args: "QuantizationArgs") -> bool:  
         )
 
     return bit_depth > quant_args.num_bits
-
-
-@deprecated()
-def is_kv_cache_quant_scheme(scheme: QuantizationScheme) -> bool:
-    """
-    Check whether the QuantizationScheme targets the kv cache.
-    It does if all the following criteria are met:
-    - the scheme targets either exactly match the KV_CACHE_TARGETS
-        or the match KV_CACHE_TARGETS regex pattern
-    - the scheme quantizes output_activations (we want to quantize the
-        outputs from the KV_CACHE_TARGETS, as their correspond to the
-        keys and values that are to be saved in the cache)
-
-    :param scheme: The QuantizationScheme to investigate
-    :return: boolean flag
-    """
-    for target in scheme.targets:
-        if target in KV_CACHE_TARGETS:
-            return True
-
-    return False
 
 
 def generate_gparam(
