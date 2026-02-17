@@ -49,6 +49,7 @@ __all__ = [
     # utilities
     "is_distributed",
     "is_rank0",
+    "init_dist",
 ]
 
 

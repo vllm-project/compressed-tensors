@@ -14,6 +14,7 @@ def is_rank0() -> bool:
 def is_distributed() -> bool:
     return dist.is_available() and dist.is_initialized()
 
+
 def init_dist():
     rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
