@@ -26,7 +26,7 @@ from compressed_tensors.config.format import (
     infer_and_set_per_module_quantization_format,
 )
 from compressed_tensors.linear.compressed_linear import CompressedLinear
-from compressed_tensors.offload import update_offload_parameter
+from compressed_tensors.offload import OffloadCache, update_offload_parameter
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_METHOD,
     QuantizationConfig,
@@ -40,7 +40,6 @@ from compressed_tensors.utils import (
     align_module_device,
     get_execution_device,
     get_safetensors_folder,
-    has_offloaded_params,
     merge_names,
     patch_attr,
 )
@@ -827,7 +826,9 @@ class ModelCompressor:
             module = operator.attrgetter(prefix)(model)
 
             params_device = next(module.parameters()).device
-            device = "cpu" if has_offloaded_params(module) else params_device
+            device = (
+                "cpu" if isinstance(module._parameters, OffloadCache) else params_device
+            )
             delattr(module, param_name)
             requires_grad = data.dtype in (torch.float16, torch.float32, torch.bfloat16)
             param = torch.nn.Parameter(data.to(device), requires_grad=requires_grad)
@@ -854,7 +855,9 @@ class ModelCompressor:
             module = operator.attrgetter(mod_path)(model)
 
             params_device = next(module.parameters()).device
-            device = "cpu" if has_offloaded_params(module) else params_device
+            device = (
+                "cpu" if isinstance(module._parameters, OffloadCache) else params_device
+            )
 
             for param_name, param_data in data.items():
                 if hasattr(module, param_name):
