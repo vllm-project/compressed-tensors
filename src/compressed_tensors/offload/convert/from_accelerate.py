@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.offload.cache import DiskCache, OffloadCache
+from compressed_tensors.offload.cache import DiskCache
 from compressed_tensors.offload.convert.helpers import get_tensors, norm_device
 from compressed_tensors.offload.dispatch import dispatch_with_map
 from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
