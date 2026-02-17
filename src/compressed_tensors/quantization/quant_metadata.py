@@ -3,7 +3,7 @@
 
 from enum import Enum
 
-from compressed_tensors.utils import disable_hf_hook
+from compressed_tensors.offload.module import unwrap_offload_forward
 from torch.nn import Module
 
 
@@ -61,7 +61,7 @@ class QuantizationMetadata:
 
         :param module: Module to clear
         """
-        with disable_hf_hook(module):
+        with unwrap_offload_forward(module):
             # Unwrap forward call
             if hasattr(module.forward, "__wrapped__"):
                 module.forward = module.forward.__wrapped__.__get__(module)
