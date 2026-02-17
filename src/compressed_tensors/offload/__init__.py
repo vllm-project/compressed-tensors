@@ -10,6 +10,8 @@ from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.dispatch import (  # noqa: F401
     dispatch_model,
+    dispatch_with_map,
+    get_device_map,
     offload_model,
     remove_dispatch,
 )
@@ -25,6 +27,8 @@ __all__ = [
     "offload_model",
     "dispatch_model",
     "remove_dispatch",
+    "dispatch_with_map",
+    "get_device_map",
     # accelerate conversion
     "load_offloaded_model",
     "from_accelerate",

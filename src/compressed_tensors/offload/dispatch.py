@@ -20,6 +20,7 @@ from transformers import PreTrainedModel
 __all__ = [
     "offload_model",
     "dispatch_with_map",
+    "get_device_map",
     "dispatch_model",
     "remove_dispatch",
     "get_device_memory",
@@ -85,6 +86,28 @@ def dispatch_with_map(
 
         elif offload_device is not None:
             offload_module(module, onload_device, offload_device)
+
+
+def get_device_map(
+    model: torch.nn.Module, default_device: torch.device = torch.device("cpu")
+) -> DeviceMap:
+    """
+    Get the device map of a CT-offloaded model
+
+    :param: model: model to get device map of
+    :param default_device: the default onload/offload device
+        when module has no parameters
+    :return: device map specifying the onload and offload device of all modules
+    """
+    from compressed_tensors.offload import get_execution_device, get_offloaded_device
+
+    return {
+        name: (
+            get_execution_device(module, default_device),
+            get_offloaded_device(module, default_device),
+        )
+        for name, module in model.named_modules(remove_duplicate=False)
+    }
 
 
 def dispatch_model(
