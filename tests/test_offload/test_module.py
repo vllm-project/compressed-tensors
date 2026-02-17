@@ -144,6 +144,7 @@ def test_forward_call(linear: torch.nn.Linear, cache):
         assert_device_equal(output.device, ONLOAD_DEVICE)
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("param_device", (ONLOAD_DEVICE, OFFLOAD_DEVICE))
 @pytest.mark.parametrize("use_register_parameter", (True, False))
 @pytest.mark.parametrize("requires_grad", (True, False))
@@ -166,6 +167,7 @@ def test_register_parameter(
     assert torch.equal(offloaded_linear.param_name.to(param_device), param)
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize("param_device", (ONLOAD_DEVICE, OFFLOAD_DEVICE))
 @pytest.mark.parametrize("use_register_parameter", (True, False))
 @pytest.mark.parametrize("requires_grad", (True, False))
@@ -193,8 +195,42 @@ def test_register_parameter_invalidates(
         assert torch.equal(offloaded_linear.weight, param.to(ONLOAD_DEVICE))
 
 
+@pytest.mark.unit
 def test_forward_signature(linear: torch.nn.Linear, cache):
     original_signature = inspect.signature(linear.forward)
 
     offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     assert inspect.signature(linear.forward) == original_signature
+
+
+@pytest.mark.unit
+def test_set_item(offloaded_linear: torch.nn.Linear):
+    # update
+    update = torch.nn.Parameter(
+        torch.rand(5, 5, device=OFFLOAD_DEVICE), requires_grad=False
+    )
+    offloaded_linear.weight = update
+    with disable_onloading():
+        assert offloaded_linear.weight is not update
+
+    # overwrite with different size
+    overwrite = torch.nn.Parameter(
+        torch.rand(6, 6, device=OFFLOAD_DEVICE), requires_grad=False
+    )
+    offloaded_linear.weight = overwrite
+    with disable_onloading():
+        assert offloaded_linear.weight is overwrite
+
+
+@pytest.mark.unit
+def test_set_item_buffers(offloaded_linear: torch.nn.Linear):
+    # common case: registering buffers of difference sizes twice
+    new = torch.rand(5)
+    offloaded_linear.register_buffer("buffer", new, persistent=False)
+    with disable_onloading():
+        assert offloaded_linear.buffer is new
+
+    overwrite = torch.rand(6)
+    offloaded_linear.register_buffer("buffer", overwrite, persistent=False)
+    with disable_onloading():
+        assert offloaded_linear.buffer is overwrite
