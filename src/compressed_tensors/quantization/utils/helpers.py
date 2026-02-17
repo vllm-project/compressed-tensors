@@ -44,7 +44,6 @@ __all__ = [
     "strategy_cdiv",
     "calculate_block_padding",
     "pad_tensor_for_block_quant",
-    "unpad_tensor_from_block_quant",
 ]
 
 # target the self_attn layer
@@ -495,7 +494,7 @@ def calculate_block_padding(
 def pad_tensor_for_block_quant(
     tensor: torch.Tensor,
     block_structure: tuple[int, int],
-) -> tuple[torch.Tensor, tuple[int, int]]:
+) -> torch.Tensor:
     """
     Pad a tensor so its dimensions are divisible by the block size.
 
@@ -506,7 +505,7 @@ def pad_tensor_for_block_quant(
 
     :param tensor: tensor to pad (at least 2D)
     :param block_structure: [block_height, block_width] for block quantization
-    :return: tuple of (padded_tensor, original_shape)
+    :return: padded tensor
     """
     original_shape = tensor.shape
 
@@ -520,23 +519,4 @@ def pad_tensor_for_block_quant(
         tensor, (0, pad_cols, 0, pad_rows), mode="constant", value=0
     )
 
-    return padded_tensor, original_shape
-
-
-def unpad_tensor_from_block_quant(
-    tensor: torch.Tensor,
-    original_shape: tuple[int, ...],
-) -> torch.Tensor:
-    """
-    Remove padding from a tensor that was padded for block quantization.
-
-    :param tensor: padded tensor
-    :param original_shape: original shape before padding
-    :return: tensor with padding removed, matching original_shape
-    """
-    if tensor.shape == original_shape:
-        return tensor
-
-    # Slice to original dimensions
-    original_rows, original_cols = original_shape[-2], original_shape[-1]
-    return tensor[..., :original_rows, :original_cols]
+    return padded_tensor

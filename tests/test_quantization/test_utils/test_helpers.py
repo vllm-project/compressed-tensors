@@ -15,7 +15,6 @@ from compressed_tensors.quantization.utils import (
     compute_dynamic_scales_and_zp,
     generate_gparam,
     pad_tensor_for_block_quant,
-    unpad_tensor_from_block_quant,
 )
 
 
@@ -142,10 +141,7 @@ def test_pad_tensor_for_block_quant(rows, cols, block_height, block_width):
     tensor = torch.randn(rows, cols)
     block_structure = (block_height, block_width)
 
-    padded, original_shape = pad_tensor_for_block_quant(tensor, block_structure)
-
-    # Check original shape is correct
-    assert original_shape == tensor.shape
+    padded = pad_tensor_for_block_quant(tensor, block_structure)
 
     # Check padded dimensions are divisible by block size
     assert (
@@ -165,51 +161,3 @@ def test_pad_tensor_for_block_quant(rows, cols, block_height, block_width):
         assert torch.all(padded[rows:, :] == 0), "Row padding should be zeros"
     if padded.shape[-1] > cols:
         assert torch.all(padded[:, cols:] == 0), "Column padding should be zeros"
-
-
-@pytest.mark.parametrize(
-    "rows,cols,block_height,block_width",
-    [
-        (10944, 2048, 128, 128),
-        (100, 200, 128, 128),
-        (256, 256, 128, 128),
-    ],
-)
-def test_unpad_tensor_from_block_quant(rows, cols, block_height, block_width):
-    """Test that unpad_tensor_from_block_quant correctly removes padding."""
-    original_shape = (rows, cols)
-    block_structure = (block_height, block_width)
-
-    # Create a tensor with random values
-    original = torch.randn(rows, cols)
-
-    # Pad it
-    padded, _ = pad_tensor_for_block_quant(original, block_structure)
-
-    # Unpad it
-    unpadded = unpad_tensor_from_block_quant(padded, original_shape)
-
-    # Check shape matches original
-    assert (
-        unpadded.shape == original_shape
-    ), f"Unpadded shape {unpadded.shape} should match original {original_shape}"
-
-    # Check values match original
-    assert torch.equal(unpadded, original), "Unpadded values should match original"
-
-
-def test_pad_unpad_roundtrip():
-    """Test that padding and unpadding is lossless."""
-    rows, cols = 10944, 2048
-    block_structure = (128, 128)
-
-    original = torch.randn(rows, cols)
-
-    # Pad
-    padded, original_shape = pad_tensor_for_block_quant(original, block_structure)
-
-    # Unpad
-    recovered = unpad_tensor_from_block_quant(padded, original_shape)
-
-    # Should be exactly equal (no loss)
-    assert torch.equal(recovered, original), "Pad/unpad roundtrip should be lossless"
