@@ -5,7 +5,6 @@ from functools import wraps
 from math import ceil
 
 import torch
-import torch.nn.functional as F
 from compressed_tensors.quantization.quant_args import (
     DynamicType,
     QuantizationArgs,
