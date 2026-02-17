@@ -183,18 +183,11 @@ def get_block_quant_config(block_structure):
 def test_block_quant_compression_padding(rows, cols, block_height, block_width):
     """
     Test that block quantization compresses weights with non-divisible dimensions
-    by padding to divisible dimensions.
+    without changing the original shape
     """
     import math
 
     block_structure = [block_height, block_width]
-
-    # Calculate expected padded dimensions
-    pad_rows = (block_height - rows % block_height) % block_height
-    pad_cols = (block_width - cols % block_width) % block_width
-    padded_rows = rows + pad_rows
-    padded_cols = cols + pad_cols
-    needs_padding = pad_rows > 0 or pad_cols > 0
 
     # Create scale tensor with ceiling division
     num_rb = math.ceil(rows / block_height)
@@ -216,98 +209,9 @@ def test_block_quant_compression_padding(rows, cols, block_height, block_width):
 
     # Check that weight was padded if needed
     compressed_weight = compressed_state_dict["dummy.weight"]
-    if needs_padding:
-        assert compressed_weight.shape == (padded_rows, padded_cols), (
-            f"Expected padded shape ({padded_rows}, {padded_cols}), "
-            f"got {compressed_weight.shape}"
-        )
 
-        # weight_shape_original is NOT saved to avoid vLLM weight loading issues.
-        # The config.json should be updated with padded dims by the quant tool.
-        assert (
-            "dummy.weight_shape_original" not in compressed_state_dict
-        ), "weight_shape_original should NOT be stored (vLLM compatibility)"
-
-        # Check that scale was also padded
-        expected_scale_rows = padded_rows // block_height
-        expected_scale_cols = padded_cols // block_width
-        compressed_scale = compressed_state_dict["dummy.weight_scale"]
-        assert compressed_scale.shape == (expected_scale_rows, expected_scale_cols), (
-            f"Expected scale shape ({expected_scale_rows}, {expected_scale_cols}), "
-            f"got {compressed_scale.shape}"
-        )
-    else:
-        # Divisible dimensions should not be padded
-        assert compressed_weight.shape == (
-            rows,
-            cols,
-        ), "Divisible dimensions should not be padded"
-        assert (
-            "dummy.weight_shape_original" not in compressed_state_dict
-        ), "weight_shape_original should not be stored for non-padded weights"
-
-
-@pytest.mark.parametrize(
-    "rows,cols,block_height,block_width",
-    [
-        (10944, 2048, 128, 128),  # DeepSeek-V2-Lite intermediate_size
-        (300, 400, 128, 128),  # Both non-divisible
-    ],
-)
-def test_block_quant_decompress_keeps_padding(
-    rows, cols, block_height, block_width, tmp_path
-):
-    """
-    Test that decompression returns weights with padded dimensions.
-    For vLLM compatibility, we don't unpad - the config.json should reflect padded dims.
-    """
-    import math
-
-    block_structure = [block_height, block_width]
-
-    # Calculate padded dimensions
-    pad_rows = (block_height - rows % block_height) % block_height
-    pad_cols = (block_width - cols % block_width) % block_width
-    padded_rows = rows + pad_rows
-    padded_cols = cols + pad_cols
-
-    # Create scale tensor with ceiling division
-    num_rb = math.ceil(rows / block_height)
-    num_cb = math.ceil(cols / block_width)
-
-    original_weight = torch.rand((rows, cols))
-    dense_state_dict = {
-        "dummy.weight": original_weight.clone(),
-        "dummy.weight_scale": torch.rand((num_rb, num_cb)) * 0.01 + 0.001,
-        "dummy.weight_zero_point": torch.zeros((num_rb, num_cb)),
-    }
-
-    quant_config = get_block_quant_config(block_structure)
-    compressor = FloatQuantizationCompressor(config=quant_config)
-    module_name_to_scheme = {"dummy": quant_config.config_groups["group_1"]}
-
-    # Compress
-    compressed_state_dict = compressor.compress(
-        dense_state_dict, names_to_scheme=module_name_to_scheme
-    )
-
-    # Save to file
-    save_file(compressed_state_dict, tmp_path / "model.safetensors")
-
-    # Decompress
-    reconstructed_gen = compressor.decompress(
-        tmp_path, names_to_scheme=module_name_to_scheme
-    )
-    reconstructed = {}
-    for name, value in reconstructed_gen:
-        reconstructed[name] = value
-
-    # Check that decompressed weight has PADDED shape (not original)
-    # This is intentional for vLLM compatibility
-    decompressed_weight = reconstructed["dummy"]["weight"]
-    assert decompressed_weight.shape == (padded_rows, padded_cols), (
-        f"Decompressed weight should have padded shape "
-        f"({padded_rows}, {padded_cols}), got {decompressed_weight.shape}"
-    )
-
-    shutil.rmtree(tmp_path)
+    # Compressed weight should retain shape of original
+    assert compressed_weight.shape == (
+        rows,
+        cols,
+    ), "Compressed weight shape should be the same as original weight shape"

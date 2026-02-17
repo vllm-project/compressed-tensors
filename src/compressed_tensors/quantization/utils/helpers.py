@@ -512,7 +512,7 @@ def pad_tensor_for_block_quant(
     pad_rows, pad_cols = calculate_block_padding(original_shape, block_structure)
 
     if pad_rows == 0 and pad_cols == 0:
-        return tensor, original_shape
+        return tensor
 
     # F.pad uses (left, right, top, bottom) for last two dimensions
     padded_tensor = torch.nn.functional.pad(
