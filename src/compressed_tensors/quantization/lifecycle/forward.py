@@ -17,6 +17,7 @@ from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils import (
     calculate_range,
     compute_dynamic_scales_and_zp,
+    maybe_pad_tensor_for_block_quant,
 )
 from torch.nn import Module
 
@@ -197,21 +198,14 @@ def _process_quantization(
     # quantization
     if args.strategy == QuantizationStrategy.BLOCK:
         original_shape = x.shape
-        rows, cols = x.shape[-2], x.shape[-1]
-        original_rows, original_cols = rows, cols
         block_height, block_width = args.block_structure
 
-        # Pad tensor if dimensions are not divisible by block size
-        pad_rows = (block_height - rows % block_height) % block_height
-        pad_cols = (block_width - cols % block_width) % block_width
-        if pad_rows > 0 or pad_cols > 0:
-            x = F.pad(x, (0, pad_cols, 0, pad_rows), mode="constant", value=0)
-            rows = rows + pad_rows
-            cols = cols + pad_cols
+        x = maybe_pad_tensor_for_block_quant(x, args.block_structure)
+        padded_shape = x.shape
 
         # reshape into blocks and transpose to make each block contiguous
-        num_rows_blocks = rows // block_height
-        num_cols_blocks = cols // block_width
+        num_rows_blocks = padded_shape[0] // block_height
+        num_cols_blocks = padded_shape[1] // block_width
         x_blocks = x.reshape(
             num_rows_blocks,
             block_height,
@@ -242,14 +236,11 @@ def _process_quantization(
                 zero_point=zb,
                 global_scale=global_scale,
             )
-        # restore original shape (with padding)
-        padded_shape = list(original_shape)
-        padded_shape[-2] = rows
-        padded_shape[-1] = cols
+        # restore padded shape
         output = x_blocks.transpose(1, 2).reshape(padded_shape)
-        # slice back to original dimensions if padding was applied
-        if pad_rows > 0 or pad_cols > 0:
-            output = output[..., :original_rows, :original_cols]
+        # truncate to original dimensions if padding was applied
+        if original_shape != padded_shape:
+            output = output[tuple([slice(v) for v in original_shape])]
     elif args.strategy in (
         QuantizationStrategy.GROUP,
         QuantizationStrategy.TENSOR_GROUP,
