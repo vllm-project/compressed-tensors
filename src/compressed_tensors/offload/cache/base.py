@@ -189,7 +189,7 @@ class OffloadCache(MutableMapping, ABC):
 
         # if the key already exists, update with the new value
         offloaded = self.offloaded_values.get(key, None)
-        if offloaded is not None:
+        if offloaded is not None and torch.is_same_size(offloaded, value):
             self.update_offload(offloaded, value)
 
             onloaded = self.keep_onloaded_values.get(offloaded, None)
