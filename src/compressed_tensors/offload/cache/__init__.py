@@ -6,5 +6,7 @@
 from .base import OffloadCache
 from .cpu import CPUCache
 from .device import DeviceCache
+from .disk import DiskCache
 from .dist_cpu import DistributedCPUCache
 from .dist_device import DistributedDeviceCache
+from .dist_disk import DistributedDiskCache

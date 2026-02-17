@@ -3,14 +3,20 @@
 
 import contextlib
 from collections.abc import Iterable
+from typing import Literal
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.dispatch import (  # noqa: F401
     dispatch_model,
+    dispatch_with_map,
+    get_device_map,
     offload_model,
     remove_dispatch,
 )
+from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
+from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
 from compressed_tensors.offload.utils import get_module_device, move_module_tensor
 from compressed_tensors.utils.helpers import patch_attr
@@ -21,6 +27,12 @@ __all__ = [
     "offload_model",
     "dispatch_model",
     "remove_dispatch",
+    "dispatch_with_map",
+    "get_device_map",
+    # accelerate conversion
+    "load_offloaded_model",
+    "from_accelerate",
+    "to_accelerate",
     # control movement
     "disable_onloading",
     "disable_offloading",
@@ -34,6 +46,9 @@ __all__ = [
     # backwards compatibility: should be deprecated
     "align_modules",
     "align_module_device",
+    # utilities
+    "is_distributed",
+    "is_rank0",
 ]
 
 
@@ -103,7 +118,9 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
             getattr(module, name).copy_(data)
 
 
-def get_execution_device(module: torch.nn.Module) -> torch.device | str:
+def get_execution_device(
+    module: torch.nn.Module, default: torch.device | None = None
+) -> torch.device | Literal["disk"]:
     """
     Get the device which inputs should be moved to before module execution.
 
@@ -114,16 +131,21 @@ def get_execution_device(module: torch.nn.Module) -> torch.device | str:
         return module._parameters.onload_device
 
     else:
-        return get_module_device(module)
+        return get_module_device(module, default)
 
 
-def get_offloaded_device(module: torch.nn.Module) -> torch.device:
+def get_offloaded_device(
+    module: torch.nn.Module, default: torch.device | None = None
+) -> torch.device | Literal["disk"]:
     """
     :param module: module to check
     :return: device module is offloaded to onto after forward pass
     """
-    with disable_onloading():
-        return get_module_device(module)
+    if isinstance(module._parameters, OffloadCache):
+        return module._parameters.offload_device
+
+    else:
+        return get_module_device(module, default)
 
 
 def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.Module):

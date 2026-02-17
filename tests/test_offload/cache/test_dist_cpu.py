@@ -24,9 +24,6 @@ from tests.testing_utils import requires_gpu
 ONLOAD_DEVICE = torch.device("cuda")
 OFFLOAD_DEVICE = torch.device("cpu")
 
-# Note that tests only require at least 1 gpu
-# b/c different ranks can share the same gpu
-
 
 @pytest.mark.unit
 @requires_gpu(2)

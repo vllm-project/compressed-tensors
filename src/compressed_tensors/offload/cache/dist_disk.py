@@ -12,13 +12,16 @@ class DistributedDiskCache(DiskCache):
     `compressed_tensors.offload.cache.disk_cache::DiskCache`.
     """
 
-    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Synchronously write tensor data to disk
 
         :param tensor: tensor on any device
         :return: meta tensor representing disk offloaded parameter
         """
+        if tensor is None:
+            return None
+
         if dist.get_rank() == 0:
             # write to disk
             offloaded = super().offload(tensor)

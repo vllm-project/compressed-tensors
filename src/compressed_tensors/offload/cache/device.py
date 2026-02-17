@@ -22,7 +22,7 @@ class DeviceCache(OffloadCache):
         super().__init__(onload_device)
         self.offload_device = self.onload_device
 
-    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor:
+    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Typically a no op, except when onload device has been modified
 
@@ -32,7 +32,7 @@ class DeviceCache(OffloadCache):
         # move because onload_device might be modified after init
         return send_tensors(offloaded, device=self.onload_device, copy=False)
 
-    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Offload a tensor to the device
 
