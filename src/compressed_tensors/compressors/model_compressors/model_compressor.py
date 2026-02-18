@@ -38,7 +38,6 @@ from compressed_tensors.transform import TransformConfig
 from compressed_tensors.utils import (
     align_module_device,
     get_execution_device,
-    get_offloaded_device,
     get_safetensors_folder,
     has_offloaded_params,
     merge_names,
