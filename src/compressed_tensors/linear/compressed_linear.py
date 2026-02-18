@@ -11,7 +11,6 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
     initialize_module_for_quantization,
 )
-from compressed_tensors.utils import register_offload_parameter
 from compressed_tensors.utils.offload import get_execution_device
 from torch import Tensor
 from torch.nn import Parameter
@@ -71,7 +70,7 @@ class CompressedLinear(Linear):
             param = Parameter(
                 torch.empty(shape, device=init_device, dtype=dtype), requires_grad=False
             )
-            register_offload_parameter(module, name, param)
+            module.register_parameter(name, param)
 
         # mark module as compressed
         module.quantization_status = QuantizationStatus.COMPRESSED
@@ -85,7 +84,7 @@ class CompressedLinear(Linear):
         if self.quantization_status == QuantizationStatus.COMPRESSED:
             weight_data = self.compressor.decompress_module(self)
             param = Parameter(weight_data, requires_grad=False)
-            register_offload_parameter(self, "weight", param)
+            self.register_parameter("weight", param)
 
             self.quantization_status = QuantizationStatus.FROZEN
 

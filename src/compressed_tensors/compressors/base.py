@@ -6,9 +6,9 @@ from collections.abc import Generator
 
 import torch
 from compressed_tensors.config import SparsityCompressionConfig
+from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.quantization import QuantizationArgs, QuantizationConfig
 from compressed_tensors.registry import RegistryMixin
-from compressed_tensors.utils import has_offloaded_params, register_offload_parameter
 from torch import Tensor
 from torch.nn import Module
 
@@ -161,7 +161,9 @@ class BaseCompressor(RegistryMixin, ABC):
         """
 
         params_device = next(module.parameters()).device
-        device = "cpu" if has_offloaded_params(module) else params_device
+        device = (
+            "cpu" if isinstance(module._parameters, OffloadCache) else params_device
+        )
 
         if not hasattr(module, "quantization_scheme"):
             return None  # module is not quantized
@@ -180,7 +182,7 @@ class BaseCompressor(RegistryMixin, ABC):
 
         for name in ("weight_scale", "weight_zero_point"):
             if hasattr(module, name):
-                register_offload_parameter(module, name, compressed_data[name])
+                module.register_parameter(name, compressed_data[name])
 
         return decompressed_weight
 

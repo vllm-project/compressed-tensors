@@ -56,7 +56,7 @@ def update_scale_zp_hook(
     module: torch.nn.Module, input: torch.Tensor, _output: torch.Tensor
 ):
     from compressed_tensors.quantization.utils import calculate_qparams
-    from compressed_tensors.utils import update_parameter_data
+    from compressed_tensors.offload import update_offload_parameter
 
     quantization_scheme = getattr(module, "quantization_scheme", None)
     if not quantization_scheme:
@@ -67,15 +67,15 @@ def update_scale_zp_hook(
     quantization_args = getattr(quantization_scheme, "weights", None)
     min_val, max_val = torch.aminmax(module.weight.data)
     scale, zp = calculate_qparams(min_val, max_val, quantization_args)
-    update_parameter_data(module, scale, "weight_scale")
-    update_parameter_data(module, zp, "weight_zero_point")
+    update_offload_parameter(module, "weight_scale", scale)
+    update_offload_parameter(module, "weight_zero_point", zp)
 
     # update input_activations scale / zero-point
     quantization_args = getattr(quantization_scheme, "input_activations", None)
     min_val, max_val = torch.aminmax(input[0])
     scale, zp = calculate_qparams(min_val, max_val, quantization_args)
-    update_parameter_data(module, scale, "input_scale")
-    update_parameter_data(module, zp, "input_zero_point")
+    update_offload_parameter(module, "input_scale", scale)
+    update_offload_parameter(module, "input_zero_point", zp)
 
     return
 
