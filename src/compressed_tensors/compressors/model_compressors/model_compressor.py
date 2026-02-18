@@ -519,7 +519,7 @@ class ModelCompressor:
                 name = name.removeprefix(f"{prefix}.")
                 value = value.to(onloading_device)
                 param = torch.nn.Parameter(value, requires_grad=False)
-                module.register_parameter(name, param, offload_device)
+                module.register_parameter(name, param)
 
             module.quantization_status = QuantizationStatus.COMPRESSED
         # TODO: consider sparse compression to also be compression
