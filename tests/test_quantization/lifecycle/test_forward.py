@@ -229,3 +229,132 @@ def test_process_quantization_block_static():
         global_scale=None,
     )
     assert out2.shape == x.shape
+
+
+@pytest.mark.parametrize(
+    "rows,cols,block_height,block_width",
+    [
+        (4544, 768, 128, 128),  # Falcon-7B dimensions: 4544 = 64*71
+        (100, 200, 128, 128),  # Both dimensions not divisible
+        (256, 300, 128, 128),  # Only cols not divisible
+        (300, 256, 128, 128),  # Only rows not divisible
+        (127, 127, 128, 128),  # Both dimensions smaller than block size
+        (1, 1, 128, 128),  # Minimal tensor
+    ],
+)
+def test_process_quantization_block_non_divisible(
+    rows, cols, block_height, block_width
+):
+    """
+    Block quantization should handle tensor dimensions that are not divisible
+    by the block size by padding internally.
+    """
+    x = torch.randn(rows, cols)
+    args = QuantizationArgs(
+        num_bits=8,
+        type="float",
+        strategy=QuantizationStrategy.BLOCK,
+        symmetric=True,
+        dynamic=False,
+        block_structure=[block_height, block_width],
+    )
+    # Calculate number of blocks (with ceiling division for padding)
+    num_rb = math.ceil(rows / block_height)
+    num_cb = math.ceil(cols / block_width)
+    scale = torch.rand(num_rb, num_cb) + 0.1
+    zp = torch.zeros_like(scale)
+
+    # Should NOT raise ValueError anymore
+    out = _process_quantization(
+        x=x,
+        scale=scale,
+        zero_point=zp,
+        args=args,
+        do_quantize=True,
+        do_dequantize=False,
+        dtype=None,
+        global_scale=None,
+    )
+    # Output shape should match original input shape
+    assert out.shape == x.shape, f"Expected {x.shape}, got {out.shape}"
+
+    # Full fake-quantize roundtrip
+    out2 = _process_quantization(
+        x=x,
+        scale=scale,
+        zero_point=zp,
+        args=args,
+        do_quantize=True,
+        do_dequantize=True,
+        dtype=None,
+        global_scale=None,
+    )
+    assert out2.shape == x.shape, f"Expected {x.shape}, got {out2.shape}"
+
+
+@pytest.mark.parametrize(
+    "rows,cols,block_height,block_width",
+    [
+        (100, 200, 128, 128),  # Both dimensions not divisible
+        (256, 300, 128, 128),  # Only cols not divisible
+        (300, 256, 128, 128),  # Only rows not divisible
+        (127, 127, 128, 128),  # Both dimensions smaller than block size
+    ],
+)
+def test_process_quantization_block_non_divisible_values(
+    rows, cols, block_height, block_width
+):
+    """
+    Verify that block quantization with non-divisible dimensions produces
+    correct values. Using uniform input (ones) with scale=1.0 should result
+    in zero quantization loss.
+    """
+    # Use uniform values - quantization with scale=1.0 should be lossless
+    x = torch.ones(rows, cols)
+    args = QuantizationArgs(
+        num_bits=8,
+        type="float",
+        strategy=QuantizationStrategy.BLOCK,
+        symmetric=True,
+        dynamic=False,
+        block_structure=[block_height, block_width],
+    )
+    num_rb = math.ceil(rows / block_height)
+    num_cb = math.ceil(cols / block_width)
+    # Use scale=1.0 for lossless quantization of values within FP8 range
+    scale = torch.ones(num_rb, num_cb)
+    zp = torch.zeros_like(scale)
+
+    # Full fake-quantize roundtrip should preserve values exactly
+    out = _process_quantization(
+        x=x,
+        scale=scale,
+        zero_point=zp,
+        args=args,
+        do_quantize=True,
+        do_dequantize=True,
+        dtype=None,
+        global_scale=None,
+    )
+
+    # Values should match input (no quantization loss for uniform values)
+    assert out.shape == x.shape, f"Expected shape {x.shape}, got {out.shape}"
+    assert torch.allclose(
+        out, x, atol=1e-6
+    ), f"Values mismatch: expected all ones, got min={out.min()}, max={out.max()}"
+
+    # Test with a different uniform value
+    x_val = torch.full((rows, cols), 0.5)
+    out_val = _process_quantization(
+        x=x_val,
+        scale=scale,
+        zero_point=zp,
+        args=args,
+        do_quantize=True,
+        do_dequantize=True,
+        dtype=None,
+        global_scale=None,
+    )
+    assert torch.allclose(
+        out_val, x_val, atol=1e-6
+    ), f"Values mismatch for 0.5: got min={out_val.min()}, max={out_val.max()}"

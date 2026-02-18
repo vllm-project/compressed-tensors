@@ -42,6 +42,8 @@ __all__ = [
     "calculate_qparams",
     "generate_gparam",
     "strategy_cdiv",
+    "calculate_block_padding",
+    "maybe_pad_tensor_for_block_quant",
 ]
 
 # target the self_attn layer
@@ -461,3 +463,60 @@ def _get_dtype_eps(dtype: torch.dtype) -> float:
         return torch.finfo(dtype).eps
     else:
         return 1
+
+
+def calculate_block_padding(
+    shape: tuple[int, ...],
+    block_structure: tuple[int, int],
+) -> tuple[int, int]:
+    """
+    Calculate the padding needed to make tensor dimensions divisible by block size.
+
+    For block quantization, dimensions must be divisible by the block size for
+    proper scale alignment when layers are merged in inference frameworks like vLLM.
+
+    :param shape: shape of the tensor (at least 2D)
+    :param block_structure: [block_height, block_width] for block quantization
+    :return: tuple of (pad_rows, pad_cols) needed to make dimensions divisible
+    """
+    if len(shape) < 2:
+        raise ValueError(f"Tensor must be at least 2D, got shape {shape}")
+
+    rows, cols = shape[-2], shape[-1]
+    block_height, block_width = block_structure
+
+    pad_rows = (block_height - rows % block_height) % block_height
+    pad_cols = (block_width - cols % block_width) % block_width
+
+    return pad_rows, pad_cols
+
+
+def maybe_pad_tensor_for_block_quant(
+    tensor: torch.Tensor,
+    block_structure: tuple[int, int],
+) -> torch.Tensor:
+    """
+    Pad a tensor so its dimensions are divisible by the block size.
+
+    This is essential for FP8 block quantization when dimensions are not
+    divisible by block size. The padding ensures that when weights are
+    merged in inference frameworks (like vLLM's gate_up_proj), the scale
+    tensor blocks align correctly.
+
+    :param tensor: tensor to pad (at least 2D)
+    :param block_structure: [block_height, block_width] for block quantization
+    :return: padded tensor
+    """
+    original_shape = tensor.shape
+
+    pad_rows, pad_cols = calculate_block_padding(original_shape, block_structure)
+
+    if pad_rows == 0 and pad_cols == 0:
+        return tensor
+
+    # F.pad uses (left, right, top, bottom) for last two dimensions
+    padded_tensor = torch.nn.functional.pad(
+        tensor, (0, pad_cols, 0, pad_rows), mode="constant", value=0
+    )
+
+    return padded_tensor

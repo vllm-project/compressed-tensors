@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import logging
+import math
 
 import torch
 from compressed_tensors.modeling import (
@@ -221,7 +222,11 @@ def initialize_qparams(
             raise ValueError("Block quant requires at least 2 observed dimensions")
 
         block_structure = quantization_args.block_structure
-        num_rows = strategy_cdiv(observed_shape[-2], block_structure[-2], strategy)
+
+        # NOTE: vllm kernels for block-quantization do not require
+        # num_rows to be evenly divisible by block_structure[-2],
+        # but num_cols does need to be evenly divisible by block_structure[-1]
+        num_rows = math.ceil(observed_shape[-2] / block_structure[-2])
         num_cols = strategy_cdiv(observed_shape[-1], block_structure[-1], strategy)
         expected_shape = (num_rows, num_cols)
 

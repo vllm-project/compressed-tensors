@@ -152,3 +152,66 @@ def test_reload_match(
     assert torch.equal(fake_quant_dummy, reconstructed_dense["dummy"].get("weight"))
 
     shutil.rmtree(tmp_path)
+
+
+def get_block_quant_config(block_structure):
+    """Create a quantization config for block quantization."""
+    config_groups = {
+        "group_1": QuantizationScheme(
+            targets=["Linear"],
+            weights=QuantizationArgs(
+                strategy=QuantizationStrategy.BLOCK,
+                type="float",
+                block_structure=block_structure,
+            ),
+        ),
+    }
+    return QuantizationConfig(config_groups=config_groups)
+
+
+@pytest.mark.parametrize(
+    "rows,cols,block_height,block_width",
+    [
+        (10944, 2048, 128, 128),  # DeepSeek-V2-Lite intermediate_size
+        (2048, 10944, 128, 128),  # DeepSeek-V2-Lite down_proj
+        (256, 256, 128, 128),  # Divisible dimensions (should not pad)
+        (300, 400, 128, 128),  # Both non-divisible
+        (256, 300, 128, 128),  # Only cols non-divisible
+        (300, 256, 128, 128),  # Only rows non-divisible
+    ],
+)
+def test_block_quant_compression_padding(rows, cols, block_height, block_width):
+    """
+    Test that block quantization compresses weights with non-divisible dimensions
+    without changing the original shape
+    """
+    import math
+
+    block_structure = [block_height, block_width]
+
+    # Create scale tensor with ceiling division
+    num_rb = math.ceil(rows / block_height)
+    num_cb = math.ceil(cols / block_width)
+
+    dense_state_dict = {
+        "dummy.weight": torch.rand((rows, cols)),
+        "dummy.weight_scale": torch.rand((num_rb, num_cb)) * 0.01 + 0.001,
+        "dummy.weight_zero_point": torch.zeros((num_rb, num_cb)),
+    }
+
+    quant_config = get_block_quant_config(block_structure)
+    compressor = FloatQuantizationCompressor(config=quant_config)
+    module_name_to_scheme = {"dummy": quant_config.config_groups["group_1"]}
+
+    compressed_state_dict = compressor.compress(
+        dense_state_dict, names_to_scheme=module_name_to_scheme
+    )
+
+    # Check that weight was padded if needed
+    compressed_weight = compressed_state_dict["dummy.weight"]
+
+    # Compressed weight should retain shape of original
+    assert compressed_weight.shape == (
+        rows,
+        cols,
+    ), "Compressed weight shape should be the same as original weight shape"

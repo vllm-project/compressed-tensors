@@ -7,9 +7,12 @@ from compressed_tensors.compressors.quantized_compressors.base import (
     BaseQuantizationCompressor,
 )
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationArgs
+from compressed_tensors.quantization import QuantizationArgs, QuantizationStrategy
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from compressed_tensors.quantization.utils import can_quantize
+from compressed_tensors.quantization.utils import (
+    can_quantize,
+    maybe_pad_tensor_for_block_quant,
+)
 from torch import Tensor
 
 
@@ -83,6 +86,18 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
                 "global_scale is not supported for the NaiveQuantizationCompressor"
             )
 
+        original_weight_shape = weight.shape
+
+        # For block quantization, pad weight to divisible dimensions
+        # This ensures proper scale alignment when layers are merged in vLLM
+        if (
+            quantization_args.strategy == QuantizationStrategy.BLOCK
+            and quantization_args.block_structure is not None
+        ):
+            block_structure = tuple(quantization_args.block_structure)
+
+            weight = maybe_pad_tensor_for_block_quant(weight, block_structure)
+
         if can_quantize(weight, quantization_args):
             quantized_weight = quantize(
                 x=weight,
@@ -98,6 +113,13 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
         if device is not None:
             quantized_weight = quantized_weight.to(device)
 
+        if quantized_weight.shape != original_weight_shape:
+            # return quantized_weight truncated back to original shape
+            return {
+                "weight": quantized_weight[
+                    tuple([slice(v) for v in original_weight_shape])
+                ]
+            }
         return {"weight": quantized_weight}
 
     def decompress_weight(
@@ -116,6 +138,7 @@ class NaiveQuantizationCompressor(BaseQuantizationCompressor):
         scale = compressed_data["weight_scale"]
         zero_point = compressed_data.get("weight_zero_point", None)
         g_idx = compressed_data.get("weight_g_idx", None)
+
         decompressed_weight = dequantize(
             x_q=weight, scale=scale, zero_point=zero_point, g_idx=g_idx
         )
