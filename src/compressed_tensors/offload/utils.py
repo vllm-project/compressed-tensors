@@ -34,7 +34,8 @@ def send_tensors(value: T, *args, **kwargs) -> T:
     """
     match value:
         case torch.Tensor():
-            tensor = value.to(*args, **kwargs)
+            with torch.no_grad():
+                tensor = value.to(*args, **kwargs)
 
             # special case: avoid changing param pointer when possible
             if tensor.data_ptr() == value.data_ptr():
