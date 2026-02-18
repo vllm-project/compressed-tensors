@@ -326,10 +326,10 @@ class ModelCompressor:
 
             self.quantization_compressor = {}
             for format in self.compression_formats:
-                self.quantization_compressor[
-                    format
-                ] = BaseCompressor.load_from_registry(
-                    format, config=quantization_config
+                self.quantization_compressor[format] = (
+                    BaseCompressor.load_from_registry(
+                        format, config=quantization_config
+                    )
                 )
 
     def get_missing_module_keys(self, model: Module) -> list[str]:
@@ -593,7 +593,6 @@ class ModelCompressor:
 
             # remove any existing parameters
             exec_device = get_execution_device(module)
-            offload_device = get_offloaded_device(module)
             for name, _ in list(module.named_parameters(recurse=False)):
                 delattr(module, name)
 
