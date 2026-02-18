@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 import torch
 from compressed_tensors.offload import get_offloaded_device
 from compressed_tensors.offload.convert import to_accelerate
 from compressed_tensors.offload.convert.from_accelerate import _infer_module_device
-from compressed_tensors.offload.load import load_offloaded_model
+from compressed_tensors.offload.load import load_offloaded_model, patch_from_pretrained
 from tests.test_offload.conftest import assert_device_equal, torchrun
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM
@@ -88,3 +90,33 @@ def _get_accelerate_offloaded_device(module: torch.nn.Module) -> str | None:
         return "disk"
 
     return device
+
+
+@pytest.mark.unit
+@patch("compressed_tensors.offload.load.from_accelerate")
+@patch("compressed_tensors.offload.load.is_rank0", return_value=True)
+@patch("compressed_tensors.offload.load.is_distributed", return_value=False)
+def test_patch_forwards_positional_args(
+    mock_distributed, mock_rank0, mock_from_accelerate
+):
+    """Regression: positional args must be forwarded without rebinding to cls."""
+    received = {}
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+            received["cls"] = cls
+            received["path"] = pretrained_model_name_or_path
+            received["model_args"] = model_args
+            received["kwargs"] = kwargs
+            return MagicMock()
+
+    with patch_from_pretrained(FakeModel):
+        FakeModel.from_pretrained(
+            "org/model-name", device_map="cpu", torch_dtype="auto"
+        )
+
+    assert received["cls"] is FakeModel
+    assert received["path"] == "org/model-name"
+    assert received["kwargs"]["device_map"] == "cpu"
+    assert received["kwargs"]["torch_dtype"] == "auto"
