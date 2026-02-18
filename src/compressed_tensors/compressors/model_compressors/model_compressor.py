@@ -37,14 +37,12 @@ from compressed_tensors.quantization import (
 from compressed_tensors.transform import TransformConfig
 from compressed_tensors.utils import (
     align_module_device,
-    delete_offload_parameter,
     get_execution_device,
     get_offloaded_device,
     get_safetensors_folder,
     has_offloaded_params,
     merge_names,
     patch_attr,
-    register_offload_parameter,
     update_parameter_data,
 )
 from compressed_tensors.utils.helpers import (
@@ -514,14 +512,14 @@ class ModelCompressor:
             # remove any existing parameters
             offload_device = get_offloaded_device(module)
             for name, _ in list(module.named_parameters(recurse=False)):
-                delete_offload_parameter(module, name)
+                delattr(module, name)
 
             # replace with compressed parameters
             for name, value in state_dict.items():
                 name = name.removeprefix(f"{prefix}.")
                 value = value.to(onloading_device)
                 param = torch.nn.Parameter(value, requires_grad=False)
-                register_offload_parameter(module, name, param, offload_device)
+                module.register_parameter(name, param, offload_device)
 
             module.quantization_status = QuantizationStatus.COMPRESSED
         # TODO: consider sparse compression to also be compression
@@ -598,14 +596,14 @@ class ModelCompressor:
             exec_device = get_execution_device(module)
             offload_device = get_offloaded_device(module)
             for name, _ in list(module.named_parameters(recurse=False)):
-                delete_offload_parameter(module, name)
+                delattr(module, name)
 
             # replace with decompressed parameters
             for name, value in state_dict.items():
                 name = name.removeprefix(f"{prefix}.")
                 value = value.to(exec_device)
                 param = torch.nn.Parameter(value, requires_grad=False)
-                register_offload_parameter(module, name, param, offload_device)
+                module.register_parameter(name, param)
 
             module.quantization_status = QuantizationStatus.FROZEN
 
@@ -836,7 +834,7 @@ class ModelCompressor:
             delattr(module, param_name)
             requires_grad = data.dtype in (torch.float16, torch.float32, torch.bfloat16)
             param = torch.nn.Parameter(data.to(device), requires_grad=requires_grad)
-            register_offload_parameter(module, param_name, param)
+            module.register_parameter(param_name, param)
 
     def _replace_weights(
         self, dense_weight_generator, model: Module, load_weight_qparams: bool = True
@@ -879,7 +877,7 @@ class ModelCompressor:
                         param = torch.nn.Parameter(
                             param_data.to(device), requires_grad=requires_grad
                         )
-                        register_offload_parameter(module, param_name, param)
+                        module.register_parameter(param_name, param)
                     elif load_weight_qparams:
                         # Should already be registered to the correct device for
                         # for scales/zero-points

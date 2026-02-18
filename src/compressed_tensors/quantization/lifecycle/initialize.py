@@ -30,7 +30,6 @@ from compressed_tensors.utils import (
     get_head_dim,
     get_num_attn_heads,
     get_num_kv_heads,
-    register_offload_parameter,
 )
 from torch.nn import Module, Parameter
 
@@ -178,9 +177,7 @@ def initialize_qparams(
             torch.empty(1, dtype=torch.float32, device=device),
             requires_grad=False,
         )
-        register_offload_parameter(
-            module, f"{base_name}_global_scale", init_global_scale
-        )
+        module.register_parameter(f"{base_name}_global_scale", init_global_scale)
 
     # Skip scale/zp initialization for locally dynamic quantization
     if dynamic == DynamicType.LOCAL:
@@ -214,7 +211,7 @@ def initialize_qparams(
                 torch.full((observed_shape[-1],), -1, device=device, dtype=torch.int),
                 requires_grad=False,
             )
-            register_offload_parameter(module, f"{base_name}_g_idx", init_g_idx)
+            module.register_parameter(f"{base_name}_g_idx", init_g_idx)
 
     elif strategy == QuantizationStrategy.BLOCK:
         assert quantization_args.block_structure is not None
@@ -255,7 +252,7 @@ def initialize_qparams(
         torch.empty(expected_shape, dtype=scale_dtype, device=device),
         requires_grad=False,
     )
-    register_offload_parameter(module, f"{base_name}_scale", init_scale)
+    module.register_parameter(f"{base_name}_scale", init_scale)
 
     if force_zero_point or not quantization_args.symmetric:
         init_zero_point = Parameter(
@@ -264,7 +261,7 @@ def initialize_qparams(
             ),
             requires_grad=False,
         )
-        register_offload_parameter(module, f"{base_name}_zero_point", init_zero_point)
+        module.register_parameter(f"{base_name}_zero_point", init_zero_point)
 
 
 def initialize_attn_qparams(
