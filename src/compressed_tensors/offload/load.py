@@ -52,26 +52,24 @@ def patch_from_pretrained(obj: cls_to_patch):
 
     @wraps(original_func)
     def from_pretrained(cls, *args, **kwargs):
-        args = inspect.signature(original_func).bind(*args).arguments
-        args.update(kwargs)
-        args["device_map"] = args.get("device_map", None)
+        kwargs.setdefault("device_map", None)
 
         # Intercept auto device map options
-        match (args["device_map"], is_distributed()):
+        match (kwargs["device_map"], is_distributed()):
             case "auto", True:
-                if "max_memory" not in args:
+                if "max_memory" not in kwargs:
                     # only sees local device memory
-                    args["max_memory"] = _get_device_memory() | _get_cpu_memory()
+                    kwargs["max_memory"] = _get_device_memory() | _get_cpu_memory()
 
             case "auto_offload", _:
-                args["device_map"] = "auto"
-                if "max_memory" not in args:
-                    args["max_memory"] = _get_cpu_memory()
+                kwargs["device_map"] = "auto"
+                if "max_memory" not in kwargs:
+                    kwargs["max_memory"] = _get_cpu_memory()
 
         # Rank 0 does loading, other ranks init on meta device
         if not is_rank0():
-            args["device_map"] = "meta"
-        model = original_func(cls, **args)
+            kwargs["device_map"] = "meta"
+        model = original_func(cls, *args, **kwargs)
 
         # During conversion, rank 0 shares weights with ranks via offload/broadcast
         from_accelerate(model)
