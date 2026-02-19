@@ -8,7 +8,7 @@ import torch
 from compressed_tensors.config import SparsityCompressionConfig
 from compressed_tensors.quantization import QuantizationArgs, QuantizationConfig
 from compressed_tensors.registry import RegistryMixin
-from compressed_tensors.utils import has_offloaded_params, register_offload_parameter
+from compressed_tensors.utils import has_offloaded_params
 from torch import Tensor
 from torch.nn import Module
 
@@ -180,7 +180,7 @@ class BaseCompressor(RegistryMixin, ABC):
 
         for name in ("weight_scale", "weight_zero_point"):
             if hasattr(module, name):
-                register_offload_parameter(module, name, compressed_data[name])
+                module.register_parameter(name, compressed_data[name])
 
         return decompressed_weight
 
