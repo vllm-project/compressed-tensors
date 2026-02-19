@@ -48,7 +48,9 @@ def load_offloaded_model():
 
 @contextlib.contextmanager
 def patch_from_pretrained(obj: cls_to_patch):
-    original_func = obj.from_pretrained.__func__
+    original_method = obj.from_pretrained
+    # Handle both classmethod (has __func__) and plain function cases
+    original_func = getattr(original_method, '__func__', original_method)
 
     @wraps(original_func)
     def from_pretrained(cls, *args, **kwargs):
@@ -75,9 +77,13 @@ def patch_from_pretrained(obj: cls_to_patch):
         from_accelerate(model)
         return model
 
-    obj.from_pretrained = from_pretrained.__get__(obj)
+    # Restore the same type (classmethod or plain function)
+    if isinstance(original_method, classmethod):
+        obj.from_pretrained = classmethod(from_pretrained)
+    else:
+        obj.from_pretrained = from_pretrained
     yield
-    obj.from_pretrained = original_func.__get__(obj)
+    obj.from_pretrained = original_method
 
 
 def _get_device_memory() -> dict[int, int]:
