@@ -509,18 +509,18 @@ def test_get_unexpected_keys(model, sparsity_config, quantization_config, expect
 @pytest.mark.parametrize(
     "model_stub,comp_stub",
     [
-        # (
-        #     "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-uncompressed",
-        #     "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-compressed",
-        # ),
-        # (
-        #     "nm-testing/llama2.c-stories42M-gsm8k-sparse-only-uncompressed",
-        #     "nm-testing/llama2.c-stories42M-gsm8k-sparse-only-compressed",
-        # ),
-        # (
-        #     "nm-testing/llama2.c-stories42M-gsm8k-stacked-uncompressed",
-        #     "nm-testing/llama2.c-stories42M-gsm8k-stacked-compressed",
-        # ),
+        (
+            "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-uncompressed",
+            "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-compressed",
+        ),
+        (
+            "nm-testing/llama2.c-stories42M-gsm8k-sparse-only-uncompressed",
+            "nm-testing/llama2.c-stories42M-gsm8k-sparse-only-compressed",
+        ),
+        (
+            "nm-testing/llama2.c-stories42M-gsm8k-stacked-uncompressed",
+            "nm-testing/llama2.c-stories42M-gsm8k-stacked-compressed",
+        ),
         (
             "nm-testing/llama2.c-stories15M-ultrachat-mixed-uncompressed",
             "nm-testing/llama2.c-stories15M-ultrachat-mixed-compressed",
@@ -578,31 +578,36 @@ def remove_empty_weight_zero_points(state_dict):
     }
 
 
-# @requires_gpu
-# def test_decompress_model_offloaded():
-#     from transformers.utils.quantization_config import CompressedTensorsConfig
+@requires_gpu
+def test_decompress_model_offloaded():
+    from transformers.utils.quantization_config import CompressedTensorsConfig
 
-#     model_stub = "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-compressed"
-#     exp_perplexity = 4318.7607
-#     model_size = 83464192
+    model_stub = "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-compressed"
+    exp_perplexity = 4318.7607
+    model_size = 83464192
 
-#     model = AutoModelForCausalLM.from_pretrained(model_stub,
-#         quantization_config=CompressedTensorsConfig(run_compressed=False),
-#         torch_dtype=torch.bfloat16,
-#         device_map="auto",
-#         max_memory={0: model_size // 2, "cpu": 1e10},
-#     )
-#     assert get_offloaded_device(model.model.layers[0].self_attn.q_proj) == torch.device("cuda:0")
-#     assert get_offloaded_device(model.model.layers[-1].self_attn.q_proj) == torch.device("cpu")
+    model = AutoModelForCausalLM.from_pretrained(
+        model_stub,
+        quantization_config=CompressedTensorsConfig(run_compressed=False),
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        max_memory={0: model_size // 2, "cpu": 1e10},
+    )
+    assert get_offloaded_device(model.model.layers[0].self_attn.q_proj) == torch.device(
+        "cuda:0"
+    )
+    assert get_offloaded_device(
+        model.model.layers[-1].self_attn.q_proj
+    ) == torch.device("cpu")
 
-#     tokenizer = AutoTokenizer.from_pretrained(model_stub)
-#     prompt = "The capital of France is Paris, the capital of Germany is Berlin"
-#     inputs = tokenizer(prompt, return_tensors="pt")
-#     inputs = {key: value.to(model.device) for key, value in inputs.items()}
-#     labels = inputs["input_ids"]
+    tokenizer = AutoTokenizer.from_pretrained(model_stub)
+    prompt = "The capital of France is Paris, the capital of Germany is Berlin"
+    inputs = tokenizer(prompt, return_tensors="pt")
+    inputs = {key: value.to(model.device) for key, value in inputs.items()}
+    labels = inputs["input_ids"]
 
-#     with torch.no_grad():
-#         outputs = model(**inputs, labels=labels)
-#         perplexity = torch.exp(outputs.loss).cpu()
+    with torch.no_grad():
+        outputs = model(**inputs, labels=labels)
+        perplexity = torch.exp(outputs.loss).cpu()
 
-#     assert pytest.approx(perplexity, abs=100) == exp_perplexity
+    assert pytest.approx(perplexity, abs=100) == exp_perplexity

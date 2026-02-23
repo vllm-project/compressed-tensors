@@ -146,7 +146,13 @@ class PackedQuantizationCompressor(BaseQuantizationCompressor):
         :param quantization_args: quantization parameters for the weight
         :return: tensor of the decompressed weight
         """
-        if any(attr not in compressed_data for attr in ["weight_packed","weight_scale", "weight_shape"]) and "weight" in compressed_data:
+        if (
+            any(
+                attr not in compressed_data
+                for attr in ["weight_packed", "weight_scale", "weight_shape"]
+            )
+            and "weight" in compressed_data
+        ):
             return compressed_data["weight"]
 
         weight = compressed_data["weight_packed"]
