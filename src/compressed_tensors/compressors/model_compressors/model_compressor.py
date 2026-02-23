@@ -26,7 +26,7 @@ from compressed_tensors.config.format import (
     infer_and_set_per_module_quantization_format,
 )
 from compressed_tensors.linear.compressed_linear import CompressedLinear
-from compressed_tensors.offload import get_offloaded_device, update_offload_parameter
+from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_METHOD,
     QuantizationConfig,
@@ -821,7 +821,6 @@ class ModelCompressor:
             'data' is the updated param data
         :param model: The model whose weights are to be updated.
         """
-
         for name, data in tqdm(dense_weight_generator, desc="Decompressing model"):
             split_name = name.split(".")
             prefix, param_name = ".".join(split_name[:-1]), split_name[-1]
@@ -829,7 +828,6 @@ class ModelCompressor:
 
             params_device = next(module.parameters()).device
             device = "cpu" if has_offloaded_params(module) else params_device
-            device = get_offloaded_device(module)
             delattr(module, param_name)
             requires_grad = data.dtype in (torch.float16, torch.float32, torch.bfloat16)
             param = torch.nn.Parameter(data.to(device), requires_grad=requires_grad)
