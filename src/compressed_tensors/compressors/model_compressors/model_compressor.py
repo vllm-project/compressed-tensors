@@ -26,7 +26,8 @@ from compressed_tensors.config.format import (
     infer_and_set_per_module_quantization_format,
 )
 from compressed_tensors.linear.compressed_linear import CompressedLinear
-from compressed_tensors.offload import update_offload_parameter
+from compressed_tensors.offload import align_module_device, update_offload_parameter
+from compressed_tensors.offload.convert import from_accelerate
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_METHOD,
     QuantizationConfig,
@@ -37,10 +38,8 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.transform import TransformConfig
 from compressed_tensors.utils import (
-    align_module_device,
     get_execution_device,
     get_safetensors_folder,
-    has_offloaded_params,
     merge_names,
     patch_attr,
 )
@@ -534,6 +533,9 @@ class ModelCompressor:
 
         :param model: model containing parameters to compress
         """
+        if hasattr(model, "hf_device_map"):
+            from_accelerate(model)
+
         module_to_scheme = map_module_to_scheme(model)
         sparse_compression_targets = [
             module_name
@@ -826,11 +828,9 @@ class ModelCompressor:
             prefix, param_name = ".".join(split_name[:-1]), split_name[-1]
             module = operator.attrgetter(prefix)(model)
 
-            params_device = next(module.parameters()).device
-            device = "cpu" if has_offloaded_params(module) else params_device
             delattr(module, param_name)
             requires_grad = data.dtype in (torch.float16, torch.float32, torch.bfloat16)
-            param = torch.nn.Parameter(data.to(device), requires_grad=requires_grad)
+            param = torch.nn.Parameter(data, requires_grad=requires_grad)
             module.register_parameter(param_name, param)
 
     def _replace_weights(
@@ -853,9 +853,6 @@ class ModelCompressor:
         for mod_path, data in tqdm(dense_weight_generator, desc="Decompressing model"):
             module = operator.attrgetter(mod_path)(model)
 
-            params_device = next(module.parameters()).device
-            device = "cpu" if has_offloaded_params(module) else params_device
-
             for param_name, param_data in data.items():
                 if hasattr(module, param_name):
                     # If compressed, will have an incorrect dtype for transformers >4.49
@@ -872,7 +869,7 @@ class ModelCompressor:
                             torch.bfloat16,
                         )
                         param = torch.nn.Parameter(
-                            param_data.to(device), requires_grad=requires_grad
+                            param_data, requires_grad=requires_grad
                         )
                         module.register_parameter(param_name, param)
                     elif load_weight_qparams:
