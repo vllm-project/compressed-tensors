@@ -8,6 +8,7 @@ import torch
 from compressed_tensors.config import SparsityCompressionConfig
 from compressed_tensors.quantization import QuantizationArgs, QuantizationConfig
 from compressed_tensors.registry import RegistryMixin
+from compressed_tensors.utils import has_offloaded_params
 from torch import Tensor
 from torch.nn import Module
 
@@ -158,12 +159,6 @@ class BaseCompressor(RegistryMixin, ABC):
         :param module: PyTorch module to decompress
         :return: tensor of the decompressed weight, or None if module is not quantized
         """
-        try:
-            from accelerate.utils import has_offloaded_params
-        except ImportError:
-
-            def has_offloaded_params(module):
-                return False
 
         params_device = next(module.parameters()).device
         device = "cpu" if has_offloaded_params(module) else params_device
