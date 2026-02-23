@@ -40,6 +40,7 @@ from compressed_tensors.utils import (
     align_module_device,
     get_execution_device,
     get_safetensors_folder,
+    has_offloaded_params,
     merge_names,
     patch_attr,
 )
@@ -820,12 +821,6 @@ class ModelCompressor:
             'data' is the updated param data
         :param model: The model whose weights are to be updated.
         """
-        try:
-            from accelerate.utils import has_offloaded_params
-        except ImportError:
-
-            def has_offloaded_params(module):
-                return False
 
         for name, data in tqdm(dense_weight_generator, desc="Decompressing model"):
             split_name = name.split(".")
@@ -856,12 +851,6 @@ class ModelCompressor:
             'data' is the updated param data
         :param model: The model whose weights are to be updated.
         """
-        try:
-            from accelerate.utils import has_offloaded_params
-        except ImportError:
-
-            def has_offloaded_params(module):
-                return False
 
         for mod_path, data in tqdm(dense_weight_generator, desc="Decompressing model"):
             module = operator.attrgetter(mod_path)(model)
