@@ -9,7 +9,10 @@ import torch.distributed as dist
 from compressed_tensors.offload.dist_utils import is_distributed
 
 
-__all__ = ["get_tensors", "norm_device"]
+__all__ = ["get_tensors", "norm_device", "DEFAULT_OFFLOAD_DEVICE"]
+
+
+DEFAULT_OFFLOAD_DEVICE = torch.device("cpu")
 
 
 def norm_device(device: str | torch.device | None) -> str | torch.device | None:
@@ -22,6 +25,14 @@ def norm_device(device: str | torch.device | None) -> str | torch.device | None:
         and device.index == dist.get_rank()
     ):
         device = torch.device(type=device.type, index=None)
+
+    if (
+        not is_distributed()
+        and isinstance(device, torch.device)
+        and device.type == "cuda"
+        and device.index is None
+    ):
+        device = torch.device(type=device.type, index=0)
 
     return device
 

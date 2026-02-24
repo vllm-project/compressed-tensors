@@ -6,7 +6,11 @@ from typing import Optional
 
 import torch
 from compressed_tensors.offload.cache import DiskCache, OffloadCache
-from compressed_tensors.offload.convert.helpers import get_tensors
+from compressed_tensors.offload.convert.helpers import (
+    DEFAULT_OFFLOAD_DEVICE,
+    get_tensors,
+    norm_device,
+)
 from compressed_tensors.offload.module import remove_module_offload
 from compressed_tensors.utils import patch_attr
 from loguru import logger
@@ -60,10 +64,10 @@ def to_accelerate_module(
         )
         has_accelerate = False
 
-    offload_device = torch.device("cpu")
+    offload_device = DEFAULT_OFFLOAD_DEVICE
     if has_accelerate and isinstance(module._parameters, OffloadCache):
         cache = module._parameters
-        offload_device = cache.offload_device
+        offload_device = norm_device(cache.offload_device)
         remove_module_offload(module, onload_tensors=False)
 
         # create weights map
