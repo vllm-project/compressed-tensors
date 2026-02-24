@@ -140,24 +140,10 @@ def is_preset_scheme(name: str) -> bool:
     return name.upper() in PRESET_SCHEMES
 
 
-UNQUANTIZED = dict()
+UNQUANTIZED = {}
 
-NVFP4A16 = dict(
-    weights=QuantizationArgs(
-        num_bits=4,
-        type=QuantizationType.FLOAT,
-        strategy=QuantizationStrategy.TENSOR_GROUP,
-        symmetric=True,
-        dynamic=False,
-        group_size=16,
-        scale_dtype=FP8_E4M3_DATA.dtype,
-        zp_dtype=FP8_E4M3_DATA.dtype,
-    )
-)
-
-
-NVFP4 = dict(
-    weights=QuantizationArgs(
+NVFP4A16 = {
+    "weights": QuantizationArgs(
         num_bits=4,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.TENSOR_GROUP,
@@ -167,7 +153,21 @@ NVFP4 = dict(
         scale_dtype=FP8_E4M3_DATA.dtype,
         zp_dtype=FP8_E4M3_DATA.dtype,
     ),
-    input_activations=QuantizationArgs(
+}
+
+
+NVFP4 = {
+    "weights": QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=16,
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=FP8_E4M3_DATA.dtype,
+    ),
+    "input_activations": QuantizationArgs(
         num_bits=4,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.TENSOR_GROUP,
@@ -178,23 +178,10 @@ NVFP4 = dict(
         scale_dtype=FP8_E4M3_DATA.dtype,
         zp_dtype=FP8_E4M3_DATA.dtype,
     ),
-)
+}
 
-MXFP4A16 = dict(
-    weights=QuantizationArgs(
-        num_bits=4,
-        type=QuantizationType.FLOAT,
-        strategy=QuantizationStrategy.GROUP,
-        symmetric=True,
-        dynamic=False,
-        group_size=32,
-        scale_dtype=torch.uint8,
-        zp_dtype=torch.uint8,
-    )
-)
-
-MXFP4 = dict(
-    weights=QuantizationArgs(
+MXFP4A16 = {
+    "weights": QuantizationArgs(
         num_bits=4,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.GROUP,
@@ -204,7 +191,20 @@ MXFP4 = dict(
         scale_dtype=torch.uint8,
         zp_dtype=torch.uint8,
     ),
-    input_activations=QuantizationArgs(
+}
+
+MXFP4 = {
+    "weights": QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+    ),
+    "input_activations": QuantizationArgs(
         num_bits=4,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.GROUP,
@@ -214,41 +214,41 @@ MXFP4 = dict(
         scale_dtype=torch.uint8,
         zp_dtype=torch.uint8,
     ),
-)
+}
 
 
 # 8 bit integer weights and 8 bit activations quantization
-INT8_W8A8 = dict(
-    weights=QuantizationArgs(
+INT8_W8A8 = {
+    "weights": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.INT,
         strategy=QuantizationStrategy.CHANNEL,
         symmetric=True,
         dynamic=False,
     ),
-    input_activations=QuantizationArgs(
+    "input_activations": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.INT,
         strategy=QuantizationStrategy.TOKEN,
         symmetric=True,
         dynamic=True,
     ),
-)
+}
 
 # 8 bit integer weights only quantization
-W8A16 = dict(
-    weights=QuantizationArgs(
+W8A16 = {
+    "weights": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.INT,
         strategy=QuantizationStrategy.CHANNEL,
         symmetric=True,
         dynamic=False,
     ),
-)
+}
 
 # 4 bit integer weights only quantization
-W4A16 = dict(
-    weights=QuantizationArgs(
+W4A16 = {
+    "weights": QuantizationArgs(
         num_bits=4,
         type=QuantizationType.INT,
         strategy=QuantizationStrategy.GROUP,
@@ -256,11 +256,11 @@ W4A16 = dict(
         symmetric=True,
         dynamic=False,
     ),
-)
+}
 
 # 4 bit integer weights only asymmetric quantization
-W4A16_ASYM = dict(
-    weights=QuantizationArgs(
+W4A16_ASYM = {
+    "weights": QuantizationArgs(
         num_bits=4,
         type=QuantizationType.INT,
         strategy=QuantizationStrategy.GROUP,
@@ -268,11 +268,11 @@ W4A16_ASYM = dict(
         symmetric=False,
         dynamic=False,
     ),
-)
+}
 
 # 4 bit integer weights and 8 bit activations quantization
-INT8_W4A8 = dict(
-    weights=QuantizationArgs(
+INT8_W4A8 = {
+    "weights": QuantizationArgs(
         num_bits=4,
         type=QuantizationType.INT,
         group_size=128,
@@ -280,18 +280,18 @@ INT8_W4A8 = dict(
         symmetric=True,
         dynamic=False,
     ),
-    input_activations=QuantizationArgs(
+    "input_activations": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.INT,
         strategy=QuantizationStrategy.TOKEN,
         symmetric=True,
         dynamic=True,
     ),
-)
+}
 
 # 4 bit integer weights and 8 bit FP activations quantization
-W4AFP8 = dict(
-    weights=QuantizationArgs(
+W4AFP8 = {
+    "weights": QuantizationArgs(
         num_bits=4,
         type=QuantizationType.INT,
         strategy=QuantizationStrategy.GROUP,
@@ -299,7 +299,7 @@ W4AFP8 = dict(
         symmetric=True,
         dynamic=False,
     ),
-    input_activations=QuantizationArgs(
+    "input_activations": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.TOKEN,
@@ -307,49 +307,49 @@ W4AFP8 = dict(
         dynamic=True,
         observer=None,
     ),
-)
+}
 
 # FP8 weights and FP8 activations quantization
-FP8 = dict(
-    weights=QuantizationArgs(
+FP8 = {
+    "weights": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.TENSOR,
         symmetric=True,
         dynamic=False,
     ),
-    input_activations=QuantizationArgs(
+    "input_activations": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.TENSOR,
         symmetric=True,
         dynamic=False,
     ),
-)
+}
 
 # FP8 weights and FP8 dynamic activations quantization
-FP8_DYNAMIC = dict(
-    weights=QuantizationArgs(
+FP8_DYNAMIC = {
+    "weights": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.CHANNEL,
         symmetric=True,
         dynamic=False,
     ),
-    input_activations=QuantizationArgs(
+    "input_activations": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.TOKEN,
         symmetric=True,
         dynamic=True,
     ),
-)
+}
 
 # Block‐wise FP8 (deepseekv3-style quantization):
 # static 128x128 per‐block weights and
 # dynamic per‐token‐group activations
-FP8_BLOCK = dict(
-    weights=QuantizationArgs(
+FP8_BLOCK = {
+    "weights": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.BLOCK,
@@ -357,7 +357,7 @@ FP8_BLOCK = dict(
         dynamic=False,
         block_structure=[128, 128],
     ),
-    input_activations=QuantizationArgs(
+    "input_activations": QuantizationArgs(
         num_bits=8,
         type=QuantizationType.FLOAT,
         strategy=QuantizationStrategy.GROUP,
@@ -365,7 +365,7 @@ FP8_BLOCK = dict(
         dynamic=True,
         group_size=128,
     ),
-)
+}
 
 PRESET_SCHEMES = {
     # Unquantized (no-op)

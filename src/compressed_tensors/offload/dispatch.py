@@ -232,7 +232,7 @@ def get_device_memory() -> dict[torch.device, int]:
     :return: mapping from torch device to total memory
     """
     if not torch.cuda.is_available():
-        return dict()
+        return {}
 
     if dist.is_available() and dist.is_initialized():
         logger.info("Detected distributed context. Dispatching to local rank gpu")

@@ -30,7 +30,7 @@ class DiskCache(OffloadCache):
     offload_device = "disk"
 
     # offloaded tensors -> weight info
-    index: dict[torch.Tensor, dict[str, str]] = dict()
+    index: dict[torch.Tensor, dict[str, str]] = {}
 
     # directory where new tensors are written to
     offload_dir: str

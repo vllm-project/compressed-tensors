@@ -111,7 +111,7 @@ def apply_quantization_config(
 
     config = deepcopy(config)
     if config is None:  # see PR #180
-        return dict()
+        return {}
 
     # force zero points during initialization
     force_zero_point = config.quantization_status != QuantizationStatus.COMPRESSED

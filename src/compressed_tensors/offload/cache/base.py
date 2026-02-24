@@ -40,7 +40,7 @@ class OffloadCache(MutableMapping, ABC):
     offloaded_values: dict[str, torch.Tensor]
 
     # offloaded tensors -> onloaded tensors (only when offloading is disabled)
-    keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
+    keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = {}
 
     @classmethod
     def cls_from_device(
@@ -108,7 +108,7 @@ class OffloadCache(MutableMapping, ABC):
     def __init__(self, onload_device: torch.device | str):
         super().__init__()
         self.onload_device = onload_device
-        self.offloaded_values = dict()
+        self.offloaded_values = {}
 
     @abstractmethod
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
