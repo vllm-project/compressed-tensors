@@ -5,7 +5,7 @@ import os
 
 import pytest
 import torch
-from compressed_tensors.offload import from_accelerate, to_accelerate
+from compressed_tensors.offload import disable_onloading, from_accelerate, to_accelerate
 from compressed_tensors.offload.dist_utils import is_rank0
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
@@ -51,18 +51,26 @@ def test_conversion_lifecycle(cuda_device, tmp_path):
     # 1. from_accelerate (oneshot/ load_offloaded_model)
     device_map, _offload_dir = from_accelerate(model)
     assert device_map == exp_device_map
+    with disable_onloading():
+        state_dict = model.state_dict(keep_vars=True)
 
     # 2. to_accelerate (transformers save)
-    # NOTE: converting to accelerate across ranksdoes not duplicate CPU/Disk memory
     hf_device_map = to_accelerate(model)
-    assert (
-        hf_device_map == exp_hf_device_map
-    )  # exp_hf_device_map if is_rank0() else None
+    assert hf_device_map == exp_hf_device_map
 
     # 3. from_accelerate (post-save restore)
-    # NOTE: converting from accelerate across ranks
     device_map, _offload_dir = from_accelerate(model)
     assert device_map == exp_device_map
+
+    # Note that rank 0 tensor pointers remain unchanged:
+    # - no extra gpu/cpu/disk memory is allocated
+    # - disk index remains valid
+    with disable_onloading():
+        assert model.state_dict(keep_vars=True) == state_dict
+
+    # 4. Just for completeness, test final invert (not part of lifecycle)
+    hf_device_map = to_accelerate(model)
+    assert hf_device_map == exp_hf_device_map
 
 
 @pytest.mark.unit

@@ -30,7 +30,8 @@ class DistributedDeviceCache(DeviceCache):
         if dist.get_rank() == 0:
             tensor = super().offload(tensor)
 
-        else:
+        # materialize meta tensor only if necessary
+        elif tensor.device.type == "meta":
             tensor = to_empty(tensor, device=self.offload_device)
 
         dist.broadcast(as_broadcastable(tensor), src=0)

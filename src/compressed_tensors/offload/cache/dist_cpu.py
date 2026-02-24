@@ -37,8 +37,11 @@ class DistributedCPUCache(CPUCache):
         dist.broadcast_object_list(broadcast_obj, src=0)
 
         if dist.get_rank() != 0:
+            # materialize meta tensor only if necessary
+            if tensor.device.type == "meta":
+                tensor = to_empty(tensor, device=self.offload_device)
+
             # reconstruct tensor from shared memory file handle
-            tensor = to_empty(tensor, device=self.offload_device)
             tensor.set_(
                 torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj),
                 storage_offset=tensor.storage_offset(),

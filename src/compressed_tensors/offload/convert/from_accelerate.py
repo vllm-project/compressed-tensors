@@ -26,18 +26,21 @@ if TYPE_CHECKING:
 __all__ = ["from_accelerate", "remove_accelerate", "remove_accelerate_from_module"]
 
 
-def from_accelerate(
-    model: torch.nn.Module, main_process_only=False
-) -> tuple["DeviceMap", str | None]:
+def from_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
     """
     Convert a model from accelerate offloading to compressed-tensors offloading. Often
     called by `load_offloaded_model` to load offloaded models across ranks.
 
-    If in a distributed setting, rank0 is expected to provide an accelerate-offloaded
-    model, and other ranks are expected to provide a meta model with no offloading
+    Rank 0 is always expected to provide an accelerate-offloaded model
+
+    Other ranks (if they exist) may provide a model on any device, with or
+    without accelerate offloading.
+    - If called after `load_offloaded_model()`, other ranks will provide a meta model
+        with no accelerate offloading
+    - If called after `to_accelerate`, other ranks will provide an accelerate-offloaded
+        model shared cpu tensors/file paths.
 
     :param model: accelerate-offloaded model if rank0, meta model otherwise
-    :param main_process_only: if enabled, only converts model on the main proccess
     """
     device_map, offload_dir = remove_accelerate(model)
 
@@ -46,7 +49,6 @@ def from_accelerate(
         dist.broadcast_object_list(broadcast_obj, src=0)
 
     dispatch_with_map(model, *broadcast_obj)
-
     return tuple(broadcast_obj)
 
 
@@ -147,10 +149,10 @@ def remove_accelerate_from_module(
         else:
             raise ValueError(f"Could not find tensor {full_name} in dataset {dataset}")
 
-        # Replace meta tensor with offloaded value (no device movement occurs)
+        # Replace meta tensor with offloaded value (no ptr rematerialization occurs)
         # In the disk case, the tensor remains as the meta tensor
         if not isinstance(offload, (torch.nn.Parameter, torch.nn.Buffer)):
-            to_tensor(offload, getattr(module, local_name))
+            to_tensor(offload, tensor)
         setattr(module, local_name, offload)
 
     # Prevent onloading disk tensors after removing hook
