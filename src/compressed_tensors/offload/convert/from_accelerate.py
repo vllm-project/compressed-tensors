@@ -26,9 +26,7 @@ if TYPE_CHECKING:
 __all__ = ["from_accelerate", "remove_accelerate", "remove_accelerate_from_module"]
 
 
-def from_accelerate(
-    model: torch.nn.Module, main_process_only=False
-) -> tuple["DeviceMap", str | None]:
+def from_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
     """
     Convert a model from accelerate offloading to compressed-tensors offloading. Often
     called by `load_offloaded_model` to load offloaded models across ranks.
@@ -43,7 +41,6 @@ def from_accelerate(
         model shared cpu tensors/file paths.
 
     :param model: accelerate-offloaded model if rank0, meta model otherwise
-    :param main_process_only: if enabled, only converts model on the main proccess
     """
     device_map, offload_dir = remove_accelerate(model)
 
@@ -52,7 +49,6 @@ def from_accelerate(
         dist.broadcast_object_list(broadcast_obj, src=0)
 
     dispatch_with_map(model, *broadcast_obj)
-
     return tuple(broadcast_obj)
 
 
