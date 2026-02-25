@@ -15,7 +15,7 @@ from compressed_tensors.offload.dispatch import (  # noqa: F401
     offload_model,
     remove_dispatch,
 )
-from compressed_tensors.offload.dist_utils import init_dist, is_distributed, is_rank0
+from compressed_tensors.offload.dist_utils import init_dist, is_distributed, is_rank0, maybe_make_tensor_broadcastable
 from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
 from compressed_tensors.offload.utils import get_module_device, move_module_tensor
@@ -50,6 +50,7 @@ __all__ = [
     "is_distributed",
     "is_rank0",
     "init_dist",
+    "maybe_make_tensor_broadcastable",
 ]
 
 
