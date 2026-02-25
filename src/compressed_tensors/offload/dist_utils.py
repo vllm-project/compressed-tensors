@@ -44,6 +44,16 @@ _FP8_DTYPES = (
 
 
 def as_broadcastable(tensor: torch.Tensor) -> torch.Tensor:
+    """Return a view of the tensor that is compatible with ``dist.broadcast``.
+
+    NCCL does not support broadcasting FP8 dtypes on hardware without sm_90
+    (Hopper or later). This function works around the limitation by viewing FP8
+    tensors as ``uint8``, which NCCL can broadcast on any hardware. Non-FP8
+    tensors are returned unchanged.
+
+    :param tensor: the tensor to prepare for broadcasting
+    :return: the original tensor, or a ``uint8`` view if the dtype is FP8
+    """
     if tensor.dtype in _FP8_DTYPES:
         return tensor.data.view(torch.uint8)
     else:
