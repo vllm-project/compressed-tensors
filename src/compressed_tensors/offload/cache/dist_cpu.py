@@ -4,7 +4,7 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.cpu import CPUCache
-from compressed_tensors.offload.utils import to_empty
+from compressed_tensors.offload.utils import send_tensors, to_empty
 
 
 class DistributedCPUCache(CPUCache):
@@ -40,14 +40,17 @@ class DistributedCPUCache(CPUCache):
             # materialize meta tensor only if necessary
             if tensor.device.type == "meta":
                 tensor = to_empty(tensor, device=self.offload_device)
+            else:
+                tensor = send_tensors(tensor, device=self.offload_device)
 
             # reconstruct tensor from shared memory file handle
-            tensor.set_(
-                torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj),
-                storage_offset=tensor.storage_offset(),
-                size=tensor.size(),
-                stride=tensor.stride(),
-            )
+            with torch.no_grad():
+                tensor.set_(
+                    torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj),
+                    storage_offset=tensor.storage_offset(),
+                    size=tensor.size(),
+                    stride=tensor.stride(),
+                )
 
         # ensure that rank 0 does not garbage collect before other ranks reconstruct
         dist.barrier()
