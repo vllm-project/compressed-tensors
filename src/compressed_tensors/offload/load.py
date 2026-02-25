@@ -3,6 +3,8 @@
 
 import contextlib
 import inspect
+import os
+import shutil
 from functools import wraps
 from types import FrameType
 
@@ -11,6 +13,7 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.offload.convert import from_accelerate
 from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
+from loguru import logger
 from transformers import PreTrainedModel
 from transformers.models.auto.modeling_auto import _BaseAutoModelClass
 
@@ -19,6 +22,7 @@ __all__ = ["load_offloaded_model"]
 
 
 cls_to_patch = _BaseAutoModelClass | PreTrainedModel
+CPU_RESERVE_MEMORY = 5e9
 
 
 @contextlib.contextmanager
@@ -54,25 +58,23 @@ def patch_from_pretrained(obj: cls_to_patch):
     def from_pretrained(cls, *args, **kwargs):
         kwargs.setdefault("device_map", None)
 
-        # Intercept auto device map options
-        match (kwargs["device_map"], is_distributed()):
-            case "auto", True:
-                if "max_memory" not in kwargs:
-                    # only sees local device memory
-                    kwargs["max_memory"] = _get_device_memory() | _get_cpu_memory()
-
-            case "auto_offload", _:
-                kwargs["device_map"] = "auto"
-                if "max_memory" not in kwargs:
-                    kwargs["max_memory"] = _get_cpu_memory()
-
         # Rank 0 does loading, other ranks init on meta device
         if not is_rank0():
             kwargs["device_map"] = "meta"
-        model = original_func(cls, *args, **kwargs)
 
-        # During conversion, rank 0 shares weights with ranks via offload/broadcast
-        from_accelerate(model)
+        # Intercept `auto_offload`: same as "auto", but only cpu/disk are visible
+        elif kwargs["device_map"] == "auto_offload":
+            kwargs["device_map"] = "auto"
+            if "max_memory" not in kwargs:
+                kwargs["max_memory"] = _get_cpu_memory()
+
+        # Unless the user specifies, use our memory estimates, which take into
+        # account distributed setups and extra cpu reserved memory
+        elif "max_memory" not in kwargs:
+            kwargs["max_memory"] = _get_device_memory() | _get_cpu_memory()
+
+        model = original_func(cls, *args, **kwargs)
+        from_accelerate(model)  # rank 0 shares weights with ranks via offload/broadcast
         return model
 
     try:
@@ -83,13 +85,35 @@ def patch_from_pretrained(obj: cls_to_patch):
 
 
 def _get_device_memory() -> dict[int, int]:
-    assert is_distributed()
-    device_memory = torch.cuda.get_device_properties(dist.get_rank()).total_memory
-    return {dist.get_rank(): device_memory}
+    # TODO: extend to xpu, ect.
+    if is_distributed():
+        index = dist.get_rank()
+        return {index: torch.cuda.get_device_properties(index).total_memory}
+    else:
+        return {
+            index: torch.cuda.get_device_properties(index).total_memory
+            for index in range(torch.cuda.device_count())
+        }
 
 
 def _get_cpu_memory() -> dict[str, int]:
-    return {"cpu": psutil.virtual_memory().available}
+    if is_distributed():
+        return {"cpu": _get_shared_memory() - CPU_RESERVE_MEMORY}
+    else:
+        return {"cpu": psutil.virtual_memory().available - CPU_RESERVE_MEMORY}
+
+
+def _get_shared_memory() -> int:
+    linux_shm_path = "/dev/shm"
+    if os.path.exists(linux_shm_path):
+        total, _used, _free = shutil.disk_usage(linux_shm_path)
+        return total
+
+    else:
+        logger.warning(
+            "Could not find shared memory at `/dev/shm`. Please add platform suppport"
+        )
+        return psutil.virtual_memory().available
 
 
 def _get_caller_frame() -> FrameType:
