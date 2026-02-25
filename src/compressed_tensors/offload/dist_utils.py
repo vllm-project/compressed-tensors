@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import contextlib
 import os
 
 import torch
@@ -42,6 +41,7 @@ _FP8_DTYPES = (
     torch.float8_e4m3fnuz,
     torch.float8_e5m2fnuz,
 )
+
 
 def as_broadcastable(tensor: torch.Tensor):
     if tensor.dtype in _FP8_DTYPES:

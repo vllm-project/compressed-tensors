@@ -16,10 +16,10 @@ from compressed_tensors.offload.dispatch import (  # noqa: F401
     remove_dispatch,
 )
 from compressed_tensors.offload.dist_utils import (
+    as_broadcastable,
     init_dist,
     is_distributed,
     is_rank0,
-    as_broadcastable,
 )
 from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
