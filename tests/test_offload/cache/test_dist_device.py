@@ -154,11 +154,11 @@ def test_distributed_offload_fp8():
         torch.float8_e4m3fnuz,
         torch.float8_e5m2fnuz,
     ]
-    for dtype in float8_dtypes:    
+    for dtype in float8_dtypes:
         cache = DistributedDeviceCache(ONLOAD_DEVICE)
         tensor = torch.zeros((5, 2), dtype=dtype)
         cache["tensor"] = tensor
-    
+
         result = cache["tensor"].cpu()
         assert result.shape == tensor.shape
         assert result.dtype == dtype
