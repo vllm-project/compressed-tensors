@@ -110,6 +110,7 @@ def remove_accelerate_from_module(
 
     # Hook exists but no active offload (or nothing to consider)
     if not hook.offload or not direct_tensors:
+        hook.offload = False
         remove_hook_from_module(module, recurse=False)
         device = _infer_device_from_tensors(direct_tensors)
         return device, device, None
