@@ -147,8 +147,9 @@ def remove_accelerate_from_module(
             # Copy accelerate's disk index into DiskCache for our later use
             _save_ct_index_entry(dataset, full_name, tensor)
 
+        # Not offloaded, likely a buffer
         else:
-            raise ValueError(f"Could not find tensor {full_name} in dataset {dataset}")
+            offload = tensor
 
         # Replace meta tensor with offloaded value (no ptr rematerialization occurs)
         # In the disk case, the tensor remains as the meta tensor
