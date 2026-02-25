@@ -43,7 +43,7 @@ _FP8_DTYPES = (
 )
 
 
-def as_broadcastable(tensor: torch.Tensor):
+def as_broadcastable(tensor: torch.Tensor) -> torch.Tensor:
     if tensor.dtype in _FP8_DTYPES:
         return tensor.data.view(torch.uint8)
     else:
