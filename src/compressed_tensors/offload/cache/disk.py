@@ -38,6 +38,11 @@ class DiskCache(OffloadCache):
 
     def __init__(self, onload_device: torch.device, offload_dir: Optional[str] = None):
         super().__init__(onload_device)
+        if offload_dir is None:
+            raise ValueError(
+                "Must provide an `offload_dir` to perform disk offloading "
+                "(add `offload_folder` argument to `from_pretrained`)"
+            )
         self.offload_dir = offload_dir or tempfile.mkdtemp()
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
