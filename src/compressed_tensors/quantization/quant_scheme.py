@@ -102,6 +102,24 @@ class QuantizationScheme(BaseModel):
 
         return model
 
+    @model_validator(mode="before")
+    @classmethod
+    def strip_unknown_fields(cls, values: dict) -> dict:
+        if isinstance(values, dict):
+            known = cls.model_fields
+            unknown = set(values) - set(known)
+            if unknown:
+                warnings.warn(
+                    f"Unknown fields {unknown} found in QuantizationScheme config "
+                    "and will be ignored. This may indicate a version mismatch "
+                    "between the config and the current compressed-tensors library.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                for key in unknown:
+                    values.pop(key)
+        return values
+
     model_config = ConfigDict(extra="forbid")
 
 

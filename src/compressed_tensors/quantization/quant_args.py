@@ -396,6 +396,24 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         else:
             raise ValueError(f"Invalid quantization type {self.type}")
 
+    @model_validator(mode="before")
+    @classmethod
+    def strip_unknown_fields(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            known = cls.model_fields
+            unknown = set(values) - set(known)
+            if unknown:
+                warnings.warn(
+                    f"Unknown fields {unknown} found in QuantizationArgs config "
+                    "and will be ignored. This may indicate a version mismatch "
+                    "between the config and the current compressed-tensors library.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                for key in unknown:
+                    values.pop(key)
+        return values
+
     model_config = ConfigDict(extra="forbid")
 
 
