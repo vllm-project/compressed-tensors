@@ -19,6 +19,12 @@ def is_distributed() -> bool:
 
 
 def init_dist():
+    if "TORCHELASTIC_RUN_ID" not in os.environ:
+        raise ValueError(
+            "Cannot find distributed environment. "
+            "Please make sure you are using `torchrun --nproc-per-node ...`."
+        )
+
     rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
