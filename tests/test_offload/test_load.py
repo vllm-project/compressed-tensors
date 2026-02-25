@@ -111,7 +111,7 @@ def test_patch_forwards_positional_args(
             received["kwargs"] = kwargs
             return MagicMock()
 
-    with patch_from_pretrained(FakeModel):
+    with patch_from_pretrained(FakeModel, extra_cpu_mem=0):
         FakeModel.from_pretrained(
             "org/model-name", device_map="cpu", torch_dtype="auto"
         )
