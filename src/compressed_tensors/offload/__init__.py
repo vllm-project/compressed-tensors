@@ -19,7 +19,7 @@ from compressed_tensors.offload.dist_utils import (
     init_dist,
     is_distributed,
     is_rank0,
-    maybe_make_tensor_broadcastable,
+    as_broadcastable,
 )
 from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
@@ -55,7 +55,7 @@ __all__ = [
     "is_distributed",
     "is_rank0",
     "init_dist",
-    "maybe_make_tensor_broadcastable",
+    "as_broadcastable",
 ]
 
 

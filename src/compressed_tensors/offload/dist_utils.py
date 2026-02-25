@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import contextlib
 import os
 
 import torch
@@ -35,17 +36,31 @@ def init_dist():
     dist.barrier()
 
 
-def maybe_make_tensor_broadcastable(x) -> bool:
-    assert isinstance(
-        x, torch.Tensor
-    ), f"is_broadcastable_tensor expects a torch.Tensor but got {type(x)}"
-    # NCCL does not support FP8 dtypes on pre-sm90 GPUs.
-    # View as uint8 (same byte width) for the broadcast.
-    if x.dtype in (
-        torch.float8_e4m3fn,
-        torch.float8_e5m2,
-        torch.float8_e4m3fnuz,
-        torch.float8_e5m2fnuz,
-    ):
-        return x.data.view(torch.uint8)
-    return x
+_FP8_DTYPES = (
+    torch.float8_e4m3fn,
+    torch.float8_e5m2,
+    torch.float8_e4m3fnuz,
+    torch.float8_e5m2fnuz,
+)
+
+
+@contextlib.contextmanager
+def as_broadcastable(tensor: torch.Tensor):
+    """
+    Context manager that yields a NCCL-safe view of a tensor for broadcast.
+    NCCL does not support FP8 dtypes on pre-sm90 GPUs, so FP8 tensors are
+    viewed as uint8 (same byte width) for the broadcast. Since the view shares
+    storage, the broadcast writes directly into the original tensor's memory.
+
+    Usage::
+
+        with as_broadcastable(tensor) as t:
+            dist.broadcast(t, src=0)
+        # tensor is still FP8 with the broadcasted data
+
+    :param tensor: tensor to broadcast
+    """
+    if tensor.dtype in _FP8_DTYPES:
+        yield tensor.data.view(torch.uint8)
+    else:
+        yield tensor

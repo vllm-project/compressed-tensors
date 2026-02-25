@@ -156,13 +156,14 @@ def test_distributed_offload():
     ],
 )
 def test_distributed_offload_fp8(dtype):
-    """FP8 tensors should be viewcast to uint8 before broadcast and succeed"""
+    """FP8 tensors should broadcast successfully and preserve their dtype"""
     cache = DistributedDeviceCache(ONLOAD_DEVICE)
     tensor = torch.zeros((5, 2), dtype=dtype)
     cache["tensor"] = tensor
 
     result = cache["tensor"].cpu()
     assert result.shape == tensor.shape
+    assert result.dtype == dtype
 
 
 @pytest.mark.unit
