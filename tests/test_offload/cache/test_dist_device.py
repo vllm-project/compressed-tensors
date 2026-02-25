@@ -146,6 +146,28 @@ def test_distributed_offload():
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        torch.float8_e4m3fn,
+        torch.float8_e5m2,
+        torch.float8_e4m3fnuz,
+        torch.float8_e5m2fnuz,
+    ],
+)
+def test_distributed_offload_fp8(dtype):
+    """FP8 tensors should be viewcast to uint8 before broadcast and succeed"""
+    cache = DistributedDeviceCache(ONLOAD_DEVICE)
+    tensor = torch.zeros((5, 2), dtype=dtype)
+    cache["tensor"] = tensor
+
+    result = cache["tensor"].cpu()
+    assert result.shape == tensor.shape
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2)
 def test_replicated_device_offload():
     cache = DistributedDeviceCache(ONLOAD_DEVICE)
     tensor = torch.empty((5, 2))

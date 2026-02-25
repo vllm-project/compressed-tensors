@@ -34,8 +34,11 @@ def init_dist():
     )
     dist.barrier()
 
+
 def maybe_make_tensor_broadcastable(x) -> bool:
-    assert isinstance(x, torch.Tensor), f"is_broadcastable_tensor expects a torch.Tensor but got {type(x)}"
+    assert isinstance(
+        x, torch.Tensor
+    ), f"is_broadcastable_tensor expects a torch.Tensor but got {type(x)}"
     # NCCL does not support FP8 dtypes on pre-sm90 GPUs.
     # View as uint8 (same byte width) for the broadcast.
     if x.dtype in (

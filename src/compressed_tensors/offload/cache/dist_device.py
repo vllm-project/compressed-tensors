@@ -4,8 +4,9 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.device import DeviceCache
-from compressed_tensors.offload.utils import to_empty
 from compressed_tensors.offload.dist_utils import maybe_make_tensor_broadcastable
+from compressed_tensors.offload.utils import to_empty
+
 
 class DistributedDeviceCache(DeviceCache):
     """
