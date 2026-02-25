@@ -155,7 +155,7 @@ def remove_accelerate_from_module(
             to_tensor(offload, tensor)
         setattr(module, local_name, offload)
 
-    # Prevent onloading disk tensors after removing hook
+    # Prevent onloading disk tensors while removing hook
     hook.offload = False
     remove_hook_from_module(module, recurse=False)
 

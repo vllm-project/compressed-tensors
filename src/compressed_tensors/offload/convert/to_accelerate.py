@@ -102,6 +102,12 @@ def to_accelerate_module(
         with patch_attr(AlignDevicesHook, "init_hook", lambda self, module: module):
             add_hook_to_module(module, hook)
 
+        # skipping init hook => need to populate `original_devices`
+        hook.original_devices = {
+            name: offload_device if offload_device != "disk" else torch.device("cpu")
+            for name, _ in get_tensors(module, recurse=False)
+        }
+
     return str(offload_device)
 
 
