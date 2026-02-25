@@ -22,11 +22,10 @@ __all__ = ["load_offloaded_model"]
 
 
 cls_to_patch = _BaseAutoModelClass | PreTrainedModel
-CPU_RESERVE_MEMORY = 5e9
 
 
 @contextlib.contextmanager
-def load_offloaded_model():
+def load_offloaded_model(extra_cpu_mem: int = 5e9):
     """
     Context manager used to load a transformers model with offloading implemented by
     compressed-tensors.
@@ -39,19 +38,22 @@ def load_offloaded_model():
     In addition to the standard `device_map` options, this context also supports
     `device_map="auto_offload"`, which means that the model will load as many parameters
     can fit onto the cpu, and any extra parameters will be loaded on disk.
+
+    :param extra_cpu_mem: extra cpu memory to reserve for any operations not related to
+        model loading (bytes). Defaults to 5Gb.
     """
     frame = _get_caller_frame()
 
     with contextlib.ExitStack() as stack:
         for obj in frame.f_globals.values():
             if isinstance(obj, type) and issubclass(obj, cls_to_patch):
-                stack.enter_context(patch_from_pretrained(obj))
+                stack.enter_context(patch_from_pretrained(obj, extra_cpu_mem))
 
         yield
 
 
 @contextlib.contextmanager
-def patch_from_pretrained(obj: cls_to_patch):
+def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
     original_func = obj.from_pretrained.__func__
 
     @wraps(original_func)
@@ -66,12 +68,12 @@ def patch_from_pretrained(obj: cls_to_patch):
         elif kwargs["device_map"] == "auto_offload":
             kwargs["device_map"] = "auto"
             if "max_memory" not in kwargs:
-                kwargs["max_memory"] = _get_cpu_memory()
+                kwargs["max_memory"] = _get_cpu_memory(extra_cpu_mem)
 
         # Unless the user specifies, use our memory estimates, which take into
         # account distributed setups and extra cpu reserved memory
         elif "max_memory" not in kwargs:
-            kwargs["max_memory"] = _get_device_memory() | _get_cpu_memory()
+            kwargs["max_memory"] = _get_device_memory() | _get_cpu_memory(extra_cpu_mem)
 
         model = original_func(cls, *args, **kwargs)
         from_accelerate(model)  # rank 0 shares weights with ranks via offload/broadcast
@@ -96,11 +98,11 @@ def _get_device_memory() -> dict[int, int]:
         }
 
 
-def _get_cpu_memory() -> dict[str, int]:
+def _get_cpu_memory(extra_cpu_mem: int) -> dict[str, int]:
     if is_distributed():
-        return {"cpu": _get_shared_memory() - CPU_RESERVE_MEMORY}
+        return {"cpu": _get_shared_memory() - extra_cpu_mem}
     else:
-        return {"cpu": psutil.virtual_memory().available - CPU_RESERVE_MEMORY}
+        return {"cpu": psutil.virtual_memory().available - extra_cpu_mem}
 
 
 def _get_shared_memory() -> int:
