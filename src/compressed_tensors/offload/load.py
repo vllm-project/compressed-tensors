@@ -75,9 +75,11 @@ def patch_from_pretrained(obj: cls_to_patch):
         from_accelerate(model)
         return model
 
-    obj.from_pretrained = from_pretrained.__get__(obj)
-    yield
-    obj.from_pretrained = original_func.__get__(obj)
+    try:
+        obj.from_pretrained = from_pretrained.__get__(obj)
+        yield
+    finally:
+        obj.from_pretrained = original_func.__get__(obj)
 
 
 def _get_device_memory() -> dict[int, int]:
