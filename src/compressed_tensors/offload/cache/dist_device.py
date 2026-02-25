@@ -32,6 +32,6 @@ class DistributedDeviceCache(DeviceCache):
 
         else:
             tensor = to_empty(tensor, device=self.offload_device)
-        with as_broadcastable(tensor) as t:
-            dist.broadcast(t, src=0)
+
+        dist.broadcast(as_broadcastable(tensor), src=0)
         return tensor
