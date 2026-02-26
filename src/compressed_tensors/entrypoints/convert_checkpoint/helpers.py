@@ -1,7 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 from typing import Iterable, Iterator, Mapping
 
 import torch
 from compressed_tensors.utils.match import _match_name
+
 
 __all__ = [
     "match_quantizable_tensors",

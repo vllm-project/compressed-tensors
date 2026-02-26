@@ -1,9 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import os
 from typing import Iterable
 
+from compressed_tensors.entrypoints.convert_checkpoint.converters import Converter
 from safetensors.torch import load_file, save_file
 
-from compressed_tensors.entrypoints.convert_checkpoint.converters import Converter
 
 __all__ = [
     "validate_file",

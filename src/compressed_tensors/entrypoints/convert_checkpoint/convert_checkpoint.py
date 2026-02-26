@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -5,21 +8,20 @@ from pathlib import Path
 from typing import Iterable
 
 import tqdm
-from loguru import logger
-
-from compressed_tensors.entrypoints.convert_checkpoint.model_utils import (
-    get_checkpoint_files,
-    is_weights_file,
-)
 from compressed_tensors.entrypoints.convert_checkpoint.convert_file import (
     convert_file,
     validate_file,
 )
 from compressed_tensors.entrypoints.convert_checkpoint.converters import Converter
+from compressed_tensors.entrypoints.convert_checkpoint.model_utils import (
+    get_checkpoint_files,
+    is_weights_file,
+)
 from compressed_tensors.entrypoints.convert_checkpoint.save_utils import (
     update_config,
     update_safetensors_index,
 )
+from loguru import logger
 
 
 __all__ = ["convert_checkpoint"]

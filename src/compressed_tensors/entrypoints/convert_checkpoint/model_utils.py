@@ -1,7 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import os
 
 from huggingface_hub import list_repo_files
 from transformers.utils.hub import cached_file
+
 
 __all__ = ["get_checkpoint_files", "is_weights_file"]
 

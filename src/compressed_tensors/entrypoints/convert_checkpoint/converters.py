@@ -1,15 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 from typing import Iterable, Protocol
 
 import torch
-
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.entrypoints.convert_checkpoint.helpers import match_quantizable_tensors
+from compressed_tensors.entrypoints.convert_checkpoint.helpers import (
+    match_quantizable_tensors,
+)
 from compressed_tensors.quantization import QuantizationScheme
 from compressed_tensors.quantization.quant_scheme import FP8_BLOCK, NVFP4
 
+
 class Converter(Protocol):
     """
-    Converter interface, to modify safetensors files based 
+    Converter interface, to modify safetensors files based
     on tensor name and pointer to torch.Tensor
     """
 
@@ -20,8 +25,7 @@ class Converter(Protocol):
         pass
 
     def create_scheme(self) -> QuantizationScheme:
-        pass 
-
+        pass
 
 
 class ModelOptNvfp4Converter(Converter):
@@ -67,7 +71,6 @@ class ModelOptNvfp4Converter(Converter):
                     tensors[f"{module_name}.weight_global_scale"] = 1 / tensors[name]
                     del tensors[name]
 
-
     def validate(self, tensors: dict[str, torch.Tensor]):
         for _, name in match_quantizable_tensors(
             tensors, self.ignore, self.targets, allow_nonquantizable=True
@@ -80,10 +83,10 @@ class ModelOptNvfp4Converter(Converter):
                 "weight_scale",
                 "weight_scale_2",
                 # NOTE: some models like nvidia/Qwen3-32B-NVFP4 have other params
-                # that just need to be passed through. 
+                # that just need to be passed through.
                 # TODO Maybe convert this to a warning_once instead of error
                 "k_scale",
-                "v_scale"
+                "v_scale",
             ):
                 raise RuntimeError(f"Hit unexpected tensor {name}")
 
@@ -95,9 +98,10 @@ class ModelOptNvfp4Converter(Converter):
         )
 
 
-#TODO implement
+# TODO implement
 class AutoAWQConverter(Converter):
     """
     Convert params from AutoAWQ W4A16 to CT W4A16 convention
     """
+
     pass
