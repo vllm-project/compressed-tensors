@@ -9,7 +9,7 @@ from compressed_tensors.entrypoints.convert_checkpoint.helpers import (
     match_quantizable_tensors,
 )
 from compressed_tensors.quantization import QuantizationScheme
-from compressed_tensors.quantization.quant_scheme import FP8_BLOCK, NVFP4
+from compressed_tensors.quantization.quant_scheme import NVFP4
 
 
 class Converter(Protocol):

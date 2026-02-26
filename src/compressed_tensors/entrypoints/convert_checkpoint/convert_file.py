@@ -11,7 +11,6 @@ from safetensors.torch import load_file, save_file
 __all__ = [
     "validate_file",
     "convert_file",
-    "convert_file_microscale_scheme",
 ]
 
 
