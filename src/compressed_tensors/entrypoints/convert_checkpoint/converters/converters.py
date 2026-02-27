@@ -4,10 +4,7 @@
 from typing import Protocol
 
 import torch
-
-from compressed_tensors.quantization import (
-    QuantizationConfig,
-)
+from compressed_tensors.quantization import QuantizationConfig
 
 
 class Converter(Protocol):
