@@ -1,13 +1,11 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-
-from typing import Iterable, Protocol
+from typing import Iterable
 
 import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert_checkpoint.helpers import (
     match_quantizable_tensors,
 )
+from compressed_tensors.entrypoints.convert_checkpoint.converters import Converter
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationConfig,
@@ -15,23 +13,6 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_scheme import NVFP4
-
-
-class Converter(Protocol):
-    """
-    Converter interface, to modify safetensors files based
-    on tensor name and pointer to torch.Tensor
-    """
-
-    def process(self, tensors: dict[str, torch.Tensor]):
-        pass
-
-    def validate(self, tensors: dict[str, torch.Tensor]):
-        pass
-
-    def create_config(self) -> QuantizationConfig:
-        pass
-
 
 class ModelOptNvfp4Converter(Converter):
     """
@@ -112,12 +93,3 @@ class ModelOptNvfp4Converter(Converter):
             format=CompressionFormat.nvfp4_pack_quantized.value,
             quantization_status=QuantizationStatus.COMPRESSED.value,
         )
-
-
-# TODO implement
-class AutoAWQConverter(Converter):
-    """
-    Convert params from AutoAWQ W4A16 to CT W4A16 convention
-    """
-
-    pass

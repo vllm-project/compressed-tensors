@@ -5,7 +5,6 @@ import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable
 
 import tqdm
 from compressed_tensors.entrypoints.convert_checkpoint.convert_file import (
