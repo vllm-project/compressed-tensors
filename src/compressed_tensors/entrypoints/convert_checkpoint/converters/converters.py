@@ -24,12 +24,3 @@ class Converter(Protocol):
 
     def create_config(self) -> QuantizationConfig:
         pass
-
-
-# TODO implement
-class AutoAWQConverter(Converter):
-    """
-    Convert params from AutoAWQ W4A16 to CT W4A16 convention
-    """
-
-    pass

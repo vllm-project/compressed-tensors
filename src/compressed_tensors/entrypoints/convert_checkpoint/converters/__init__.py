@@ -6,3 +6,4 @@
 
 from .converters import *
 from .modelopt_nvfp4 import *
+from .autoawq import *
