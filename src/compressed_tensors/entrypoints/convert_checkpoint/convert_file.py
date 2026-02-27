@@ -16,38 +16,36 @@ __all__ = [
 
 def validate_file(
     file_path: str | os.PathLike,
-    converters: Iterable[Converter],
+    converter: Converter,
 ):
     """
     Validate that each quantizable tensor in a safetensors file can be quantized.
 
     :param file_path: safetensors file to validate
-    :param converter: any converters we wish to apply to the checkpoint,
+    :param converter: converter we wish to apply to the checkpoint,
         e.g. conversion of some layers from some format to compressed-tensors
     """
     tensors = load_file(file_path)
 
-    for converter in converters:
-        converter.validate(tensors)
+    converter.validate(tensors)
 
 
 def convert_file(
     file_path: str | os.PathLike,
     save_path: str | os.PathLike,
-    converters: Iterable[Converter],
+    converter: Converter,
 ) -> tuple[int, dict[str, str]]:
     """
     Convert tensors in a given safetensors file
 
     :param file_path: safetensors file to process
     :param save_path: save path of file with quantized weights
-    :param converters: any converter we wish to apply to the checkpoint,
+    :param converter: converter we wish to apply to the checkpoint,
         e.g. conversion of some layers from some format to compressed-tensors
     """
     tensors = load_file(file_path)
 
-    for converter in converters:
-        converter.process(tensors)
+    converter.process(tensors)
 
     save_file(tensors, save_path)
     total_size = sum(tensor.nbytes for tensor in tensors.values())

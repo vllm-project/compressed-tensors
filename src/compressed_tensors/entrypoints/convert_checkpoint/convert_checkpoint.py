@@ -30,21 +30,21 @@ __all__ = ["convert_checkpoint"]
 def convert_checkpoint(
     model_stub: str | os.PathLike,
     save_directory: str | os.PathLike,
-    converters: Iterable[Converter],
+    converter: Converter,
     max_workers: int = 1,
 ):
     """
-    Convert a model checkpoint without loading it up in memory, instead operating
-    directly on the model safetensors files. This entrypoint operates
-    on a model stub or folder containing weights saved in safetensors files, and
-    updates the corresponding quantization_config field in the config.json. All
-    additional files will be copied to new checkpoint.
+    Convert a model checkpoint to compressed-tensors format without loading it up
+    in memory, instead operating directly on the model safetensors files. This
+    entrypoint operates on a model stub or folder containing weights saved in
+    safetensors files, and updates the corresponding quantization_config field in
+    the config.json. All additional files will be copied to new checkpoint.
 
     :param model_stub: huggingface model hub or path to local weights files
     :param save_directory: new checkpoint will be saved in this directory.
     :param max_workers: number of worker threads to process files with
     :param device: gpu device to accelerate quantization with
-    :param converters: converters we wish to apply to the checkpoint,
+    :param converters: converter we wish to apply to the checkpoint,
         e.g. conversion of some layers from some format to compressed-tensors
     """
     # validate arguments
@@ -57,8 +57,8 @@ def convert_checkpoint(
         save_path = Path(save_directory) / file_path
 
         if file_path.endswith("safetensors"):
-            validate_jobs.append((validate_file, resolved_path, converters))
-            convert_jobs.append((convert_file, resolved_path, save_path, converters))
+            validate_jobs.append((validate_file, resolved_path, converter))
+            convert_jobs.append((convert_file, resolved_path, save_path, converter))
 
         else:
             if is_weights_file(file_path):
@@ -87,5 +87,5 @@ def convert_checkpoint(
             weight_map.update(_weight_map)
 
     # 5. update config and safetensors index
-    update_config(save_directory, converters)
+    update_config(save_directory, converter)
     update_safetensors_index(save_directory, total_size, weight_map)
