@@ -2,14 +2,19 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache import DiskCache
-from compressed_tensors.offload.convert.helpers import get_tensors, norm_device
+from compressed_tensors.offload.convert.helpers import (
+    DEFAULT_OFFLOAD_DEVICE,
+    get_tensors,
+    norm_device,
+)
 from compressed_tensors.offload.dispatch import dispatch_with_map
-from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
+from compressed_tensors.offload.dist_utils import is_distributed
+from compressed_tensors.offload.utils import to_tensor
 from loguru import logger
 
 
@@ -26,15 +31,18 @@ def from_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
     Convert a model from accelerate offloading to compressed-tensors offloading. Often
     called by `load_offloaded_model` to load offloaded models across ranks.
 
-    If in a distributed setting, rank0 is expected to provide an accelerate-offloaded
-    model, and other ranks are expected to provide a meta model with no offloading
+    Rank 0 is always expected to provide an accelerate-offloaded model
+
+    Other ranks (if they exist) may provide a model on any device, with or
+    without accelerate offloading.
+    - If called after `load_offloaded_model()`, other ranks will provide a meta model
+        with no accelerate offloading
+    - If called after `to_accelerate`, other ranks will provide an accelerate-offloaded
+        model shared cpu tensors/file paths.
 
     :param model: accelerate-offloaded model if rank0, meta model otherwise
     """
-    if is_rank0():
-        device_map, offload_dir = remove_accelerate(model)
-    else:
-        device_map, offload_dir = None, None
+    device_map, offload_dir = remove_accelerate(model)
 
     broadcast_obj = [device_map, offload_dir]
     if is_distributed():
@@ -76,9 +84,11 @@ def remove_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
 
 def remove_accelerate_from_module(
     module: torch.nn.Module,
-) -> tuple[torch.device | None, torch.device | str | None, str | None]:
+) -> tuple[torch.device | None, torch.device | Literal["disk"] | None, str | None]:
     """
-    Remove accelerate offloading from a module, if present
+    Remove accelerate offloading from a module, if present.
+    Absolutely no device movement occurs, and parameters/buffers pointers from state
+    dicts coming from `to_accelerate` remain unchanged so as to avoid memory duplication
 
     :param module: module to remove offloading from
     :returns: `(onload_device, offload_device, disk_offload_dir)`
@@ -100,6 +110,7 @@ def remove_accelerate_from_module(
 
     # Hook exists but no active offload (or nothing to consider)
     if not hook.offload or not direct_tensors:
+        hook.offload = False
         remove_hook_from_module(module, recurse=False)
         device = _infer_device_from_tensors(direct_tensors)
         return device, device, None
@@ -108,31 +119,52 @@ def remove_accelerate_from_module(
     prefix, dataset = _unwrap_prefixed_dataset(hook.weights_map, PrefixedDataset)
     assert isinstance(dataset, (OffloadedWeightsLoader, dict))
 
-    offload_device: str | None = None
+    offload_dev: str | None = None
 
     for local_name, tensor in direct_tensors.items():
         full_name = prefix + local_name
 
-        # CPU offload: present in state_dict (OffloadedWeightsLoader) or dict itself
-        if isinstance(dataset, dict) or full_name in dataset.state_dict:
-            offload_device = _set_or_validate_offload(offload_device, "cpu")
+        # Device/CPU offload
+        if isinstance(dataset, dict) and local_name in dataset:
+            offload = dataset[local_name]
+            offload_dev = _set_or_validate_offload(offload_dev, offload.device.type)
 
-        # Disk offload: present in dataset.index
-        elif full_name in dataset.index:
-            offload_device = _set_or_validate_offload(offload_device, "disk")
+        # Device/CPU offload
+        elif (
+            isinstance(dataset, OffloadedWeightsLoader)
+            and full_name in dataset.state_dict
+        ):
+            offload = dataset.state_dict[full_name]
+            offload_dev = _set_or_validate_offload(offload_dev, offload.device.type)
+
+        # Disk offload
+        elif isinstance(dataset, OffloadedWeightsLoader) and full_name in dataset.index:
+            offload = tensor
+            offload_dev = _set_or_validate_offload(offload_dev, "disk")
+            assert offload.device.type == "meta"
+            assert isinstance(offload, (torch.nn.Parameter, torch.nn.Buffer))
 
             # Copy accelerate's disk index into DiskCache for our later use
-            assert tensor.device.type == "meta"
             _save_ct_index_entry(dataset, full_name, tensor)
 
-            # Prevent onloading disk tensors after removing hook
-            hook.offload = False
+        # Not offloaded, likely a buffer
+        else:
+            offload = tensor
 
+        # Replace meta tensor with offloaded value (no ptr rematerialization occurs)
+        # In the disk case, the tensor remains as the meta tensor
+        if not isinstance(offload, (torch.nn.Parameter, torch.nn.Buffer)):
+            to_tensor(offload, tensor)
+        setattr(module, local_name, offload)
+
+    # Prevent onloading disk tensors while removing hook
+    hook.offload = False
     remove_hook_from_module(module, recurse=False)
+
     return (
         norm_device(hook.execution_device),
-        norm_device(offload_device),
-        dataset.save_folder,
+        norm_device(offload_dev if offload_dev is not None else DEFAULT_OFFLOAD_DEVICE),
+        dataset.save_folder if isinstance(dataset, OffloadedWeightsLoader) else None,
     )
 
 

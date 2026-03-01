@@ -8,6 +8,7 @@ from functools import wraps
 from types import FunctionType
 from typing import Any, Callable, Literal, Optional
 
+import pytest
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.utils import send_tensors
@@ -102,3 +103,12 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
         return wrapper
 
     return decorator
+
+
+@pytest.fixture()
+def cuda_device():
+    return (
+        torch.device("cuda")
+        if "TORCHELASTIC_RUN_ID" in os.environ
+        else torch.device("cuda:0")
+    )

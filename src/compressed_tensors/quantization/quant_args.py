@@ -7,7 +7,6 @@ from typing import Any
 
 import torch
 from compressed_tensors.utils import Aliasable
-from compressed_tensors.utils.helpers import deprecated
 from compressed_tensors.utils.type import TorchDtype
 from pydantic import (
     BaseModel,
@@ -396,10 +395,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 return torch.int32
         else:
             raise ValueError(f"Invalid quantization type {self.type}")
-
-    @deprecated("QuantizationArgs.observer")
-    def get_observer(self) -> str:
-        return self.observer
 
     model_config = ConfigDict(extra="forbid")
 

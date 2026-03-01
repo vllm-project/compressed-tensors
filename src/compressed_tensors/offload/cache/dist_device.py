@@ -4,7 +4,8 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.device import DeviceCache
-from compressed_tensors.offload.utils import to_empty
+from compressed_tensors.offload.dist_utils import as_broadcastable
+from compressed_tensors.offload.utils import send_tensors, to_empty
 
 
 class DistributedDeviceCache(DeviceCache):
@@ -29,8 +30,11 @@ class DistributedDeviceCache(DeviceCache):
         if dist.get_rank() == 0:
             tensor = super().offload(tensor)
 
-        else:
+        # materialize meta tensor only if necessary
+        elif tensor.device.type == "meta":
             tensor = to_empty(tensor, device=self.offload_device)
+        else:
+            tensor = send_tensors(tensor, device=self.offload_device)
 
-        dist.broadcast(tensor, src=0)
+        dist.broadcast(as_broadcastable(tensor), src=0)
         return tensor
