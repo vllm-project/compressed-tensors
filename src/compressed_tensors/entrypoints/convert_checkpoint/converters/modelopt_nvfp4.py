@@ -86,7 +86,7 @@ class ModelOptNvfp4Converter(Converter):
     def create_config(self) -> QuantizationConfig:
         return QuantizationConfig(
             config_groups={
-                "group_0": QuantizationScheme(
+                "config_group_0": QuantizationScheme(
                     **NVFP4,
                     targets=self.targets,
                     format=CompressionFormat.nvfp4_pack_quantized.value,
