@@ -1,25 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from compressed_tensors.compressors.naive_quantized.impl import (
-    FloatQuantizationCompressor,
-    IntQuantizationCompressor,
-    NaiveQuantizationCompressor,
-)
 from compressed_tensors.compressors.format_compressor import FormatCompressor
 from compressed_tensors.config import CompressionFormat
 
 
-class NaiveFormatCompressor(FormatCompressor):
+class NaiveQuantizationCompressor(FormatCompressor):
     format = CompressionFormat.naive_quantized.value
 
 
-class IntFormatCompressor(FormatCompressor):
+class IntQuantizationCompressor(FormatCompressor):
     format = CompressionFormat.int_quantized.value
 
 
-class FloatFormatCompressor(FormatCompressor):
+class FloatQuantizationCompressor(FormatCompressor):
     format = CompressionFormat.float_quantized.value
+
+
+# Backward-compatible aliases
+NaiveFormatCompressor = NaiveQuantizationCompressor
+IntFormatCompressor = IntQuantizationCompressor
+FloatFormatCompressor = FloatQuantizationCompressor
 
 __all__ = [
     "NaiveQuantizationCompressor",

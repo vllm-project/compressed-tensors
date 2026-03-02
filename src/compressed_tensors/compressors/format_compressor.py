@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +22,28 @@ class FormatCompressor:
 
     format: str
 
+    _FORMAT_TO_MODULE: dict[str, str] = {
+        "dense": "compressed_tensors.compressors.dense.impl",
+        "naive-quantized": "compressed_tensors.compressors.naive_quantized.impl",
+        "int-quantized": "compressed_tensors.compressors.naive_quantized.impl",
+        "float-quantized": "compressed_tensors.compressors.naive_quantized.impl",
+        "pack-quantized": "compressed_tensors.compressors.pack_quantized.impl",
+        "nvfp4-pack-quantized": "compressed_tensors.compressors.fp4_quantized.impl",
+        "mxfp4-pack-quantized": "compressed_tensors.compressors.fp4_quantized.impl",
+        "marlin-24": "compressed_tensors.compressors.marlin_24.impl",
+        "sparse-bitmask": "compressed_tensors.compressors.sparse_bitmask.impl",
+        "sparse-24-bitmask": "compressed_tensors.compressors.sparse_24_bitmask.impl",
+    }
+
+    @classmethod
+    def _ensure_format_registered(cls):
+        module_name = cls._FORMAT_TO_MODULE.get(cls.format)
+        if module_name is not None:
+            import_module(module_name)
+
     @classmethod
     def _load_impl(cls, config: Any = None) -> BaseCompressor:
+        cls._ensure_format_registered()
         return BaseCompressor.load_from_registry(cls.format, config=config)
 
     @classmethod
