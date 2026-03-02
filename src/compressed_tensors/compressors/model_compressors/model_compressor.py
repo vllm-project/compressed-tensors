@@ -407,6 +407,38 @@ class ModelCompressor:
             )
         )
 
+    def _module_plan(
+        self, model: Module
+    ) -> tuple[dict[str, QuantizationScheme], set[str], list[tuple[str, Module]]]:
+        module_to_scheme = map_module_to_scheme(model)
+        sparse_targets = self._sparse_compression_targets(model)
+        candidates = self._candidate_modules(model, module_to_scheme, sparse_targets)
+        return module_to_scheme, sparse_targets, candidates
+
+    @staticmethod
+    def _state_dict_for_prefix(
+        state_dict: dict[str, Tensor], prefix: str
+    ) -> dict[str, Tensor]:
+        return {
+            key: value
+            for key, value in state_dict.items()
+            if key == prefix or key.startswith(f"{prefix}.")
+        }
+
+    @staticmethod
+    def _replace_prefix_entries(
+        state_dict: dict[str, Tensor],
+        prefix: str,
+        module_state: dict[str, Tensor],
+    ) -> dict[str, Tensor]:
+        state_dict = {
+            key: value
+            for key, value in state_dict.items()
+            if not (key == prefix or key.startswith(f"{prefix}."))
+        }
+        state_dict.update(module_state)
+        return state_dict
+
     def _module_quantization_compressor(self, module: Module) -> BaseCompressor | None:
         if self.quantization_config is None:
             return None
@@ -581,10 +613,8 @@ class ModelCompressor:
 
         :param model: model containing parameters to compress
         """
-        module_to_scheme = map_module_to_scheme(model)
-        sparse_compression_targets = self._sparse_compression_targets(model)
-        candidate_modules = self._candidate_modules(
-            model, module_to_scheme, sparse_compression_targets
+        module_to_scheme, sparse_compression_targets, candidate_modules = (
+            self._module_plan(model)
         )
         enabled, rank, world_size = self._get_dist_context()
         local_compressed: dict[str, dict[str, Tensor]] = {}
@@ -653,10 +683,8 @@ class ModelCompressor:
 
         :param model: model containing parameters to compress
         """
-        module_to_scheme = map_module_to_scheme(model)
-        sparse_compression_targets = self._sparse_compression_targets(model)
-        candidate_modules = self._candidate_modules(
-            model, module_to_scheme, sparse_compression_targets
+        module_to_scheme, sparse_compression_targets, candidate_modules = (
+            self._module_plan(model)
         )
         enabled, rank, world_size = self._get_dist_context()
         local_decompressed: dict[str, dict[str, Tensor]] = {}
@@ -723,19 +751,13 @@ class ModelCompressor:
             state_dict = model.state_dict()
 
         enabled, rank, world_size = self._get_dist_context()
-        module_to_scheme = map_module_to_scheme(model)
-        sparse_compression_targets = self._sparse_compression_targets(model)
-        candidate_modules = self._candidate_modules(
-            model, module_to_scheme, sparse_compression_targets
+        module_to_scheme, sparse_compression_targets, candidate_modules = (
+            self._module_plan(model)
         )
 
         if not enabled or world_size == 1:
             for prefix, module in candidate_modules:
-                module_state = {
-                    key: value
-                    for key, value in state_dict.items()
-                    if key == prefix or key.startswith(f"{prefix}.")
-                }
+                module_state = self._state_dict_for_prefix(state_dict, prefix)
                 if len(module_state) == 0:
                     continue
                 module_state = self._compress_module_state(
@@ -745,23 +767,14 @@ class ModelCompressor:
                     module_to_scheme=module_to_scheme,
                     sparse_targets=sparse_compression_targets,
                 )
-                state_dict = {
-                    key: value
-                    for key, value in state_dict.items()
-                    if not (key == prefix or key.startswith(f"{prefix}."))
-                }
-                state_dict.update(module_state)
+                state_dict = self._replace_prefix_entries(state_dict, prefix, module_state)
         else:
             local_compressed: dict[str, dict[str, Tensor]] = {}
             for module_index, (prefix, module) in enumerate(candidate_modules):
                 if not self._is_local_index(module_index, rank, world_size):
                     continue
 
-                module_state = {
-                    key: value
-                    for key, value in state_dict.items()
-                    if key == prefix or key.startswith(f"{prefix}.")
-                }
+                module_state = self._state_dict_for_prefix(state_dict, prefix)
                 if len(module_state) == 0:
                     continue
                 local_compressed[prefix] = self._compress_module_state(
