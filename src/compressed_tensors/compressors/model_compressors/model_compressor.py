@@ -70,14 +70,12 @@ if TYPE_CHECKING:
 
 class ModelCompressor:
     """
-    Handles compression and decompression of a model with a sparsity config and/or
-    quantization config.
+    Orchestrates format-based compression and decompression from compression configs.
 
     Compression LifeCycle
         - compressor = ModelCompressor.from_pretrained_model(model)
         - compressed_state_dict = compressor.compress(model, state_dict)
-            - compressor.quantization_compressor.compress(model, state_dict)
-            - compressor.sparsity_compressor.compress(model, state_dict)
+            - format compressors compress selected module state dicts
         - model.save_pretrained(output_dir, state_dict=compressed_state_dict)
         - compressor.update_config(output_dir)
 
@@ -85,8 +83,7 @@ class ModelCompressor:
         - compressor = ModelCompressor.from_pretrained(comp_model_path)
         - model = AutoModel.from_pretrained(comp_model_path)
         - compressor.decompress(comp_model_path, model)
-            - compressor.sparsity_compressor.decompress(comp_model_path, model)
-            - compressor.quantization_compressor.decompress(comp_model_path, model)
+            - format compressors rebuild dense weights into the target model
 
     :param sparsity_config: config specifying sparsity compression parameters
     :param quantization_config: config specifying quantization compression parameters

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from compressed_tensors.compressors.sparse_quantized_compressors.marlin_24 import (
+from compressed_tensors.compressors.marlin_24.impl import (
     compress_weight_24,
     marlin_permute_weights,
     pack_scales_24,
