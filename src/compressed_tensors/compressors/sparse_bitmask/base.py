@@ -5,5 +5,12 @@ from compressed_tensors.compressors.sparse_compressors.sparse_bitmask import (
     BitmaskCompressor,
     BitmaskTensor,
 )
+from compressed_tensors.compressors.format_compressor import FormatCompressor
+from compressed_tensors.config import CompressionFormat
 
-__all__ = ["BitmaskCompressor", "BitmaskTensor"]
+
+class SparseBitmaskFormatCompressor(FormatCompressor):
+    format = CompressionFormat.sparse_bitmask.value
+
+
+__all__ = ["BitmaskCompressor", "BitmaskTensor", "SparseBitmaskFormatCompressor"]

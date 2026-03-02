@@ -4,5 +4,12 @@
 from compressed_tensors.compressors.sparse_quantized_compressors.marlin_24 import (
     Marlin24Compressor,
 )
+from compressed_tensors.compressors.format_compressor import FormatCompressor
+from compressed_tensors.config import CompressionFormat
 
-__all__ = ["Marlin24Compressor"]
+
+class Marlin24FormatCompressor(FormatCompressor):
+    format = CompressionFormat.marlin_24.value
+
+
+__all__ = ["Marlin24Compressor", "Marlin24FormatCompressor"]

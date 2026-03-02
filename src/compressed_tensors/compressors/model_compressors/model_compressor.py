@@ -7,6 +7,7 @@ import operator
 import os
 import re
 from copy import deepcopy
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import compressed_tensors
@@ -21,7 +22,6 @@ from compressed_tensors.base import (
     TRANSFORM_CONFIG_NAME,
 )
 from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.compressors.sparse_compressors import DenseCompressor
 from compressed_tensors.config import CompressionFormat, SparsityCompressionConfig
 from compressed_tensors.config.format import (
     infer_and_set_per_module_quantization_format,
@@ -56,10 +56,6 @@ from torch.nn import Module
 from tqdm import tqdm
 from transformers import AutoConfig
 from transformers.file_utils import CONFIG_NAME
-
-
-if TYPE_CHECKING:
-    from compressed_tensors.compressors import BaseQuantizationCompressor
 
 
 __all__ = ["ModelCompressor", "map_module_to_scheme"]
@@ -305,16 +301,12 @@ class ModelCompressor:
         self.quantization_config = quantization_config
         self.transform_config = transform_config
         self.compression_formats = compression_formats
-
-        self.sparsity_compressor = None
-        self.quantization_compressor: dict[
-            str, BaseQuantizationCompressor | DenseCompressor
-        ] = None
-        # no transform compressor is required
+        self.compressors: dict[str, BaseCompressor] = {}
 
         if sparsity_config is not None:
-            self.sparsity_compressor = BaseCompressor.load_from_registry(
-                sparsity_config.format, config=sparsity_config
+            self.compressors[sparsity_config.format] = BaseCompressor.load_from_registry(
+                sparsity_config.format,
+                config=sparsity_config,
             )
 
         if quantization_config is not None:
@@ -324,13 +316,23 @@ class ModelCompressor:
             if not self.compression_formats:
                 self.compression_formats = self._fetch_unique_quantization_formats()
 
-            self.quantization_compressor = {}
             for format in self.compression_formats:
-                self.quantization_compressor[
-                    format
-                ] = BaseCompressor.load_from_registry(
+                self.compressors[format] = BaseCompressor.load_from_registry(
                     format, config=quantization_config
                 )
+
+    @property
+    def sparsity_compressor(self) -> BaseCompressor | None:
+        if self.sparsity_config is None:
+            return None
+        return self.compressors.get(self.sparsity_config.format)
+
+    @property
+    def quantization_compressor(self) -> dict[str, BaseCompressor] | None:
+        if self.quantization_config is None:
+            return None
+        formats = self.compression_formats or []
+        return {format: self.compressors[format] for format in formats}
 
     @staticmethod
     def _get_dist_context() -> tuple[bool, int, int]:
@@ -382,6 +384,92 @@ class ModelCompressor:
             for name, param in module.named_parameters(recurse=False)
         }
 
+    def _sparse_compression_targets(self, model: Module) -> set[str]:
+        if self.sparsity_config is None:
+            return set()
+        return {
+            module_name
+            for module_name, _module in match_named_modules(
+                model=model,
+                targets=self.sparsity_config.targets,
+                ignore=self.sparsity_config.ignore,
+            )
+        }
+
+    def _candidate_modules(
+        self,
+        model: Module,
+        module_to_scheme: dict[str, QuantizationScheme],
+        sparse_targets: set[str],
+    ) -> list[tuple[str, Module]]:
+        return list(
+            match_named_modules(
+                model,
+                [*sparse_targets, *module_to_scheme.keys()],
+                warn_on_fail=True,
+            )
+        )
+
+    def _module_quantization_compressor(self, module: Module) -> BaseCompressor | None:
+        if self.quantization_config is None:
+            return None
+        format = self._resolve_module_format(module, self.compression_formats)
+        return self.compressors.get(format)
+
+    def _primary_quantization_compressor(self) -> BaseCompressor | None:
+        if self.quantization_config is None:
+            return None
+        if not self.compression_formats:
+            return None
+        return self.compressors.get(self.compression_formats[0])
+
+    def _compress_module_state(
+        self,
+        prefix: str,
+        module: Module,
+        module_state: dict[str, Tensor],
+        module_to_scheme: dict[str, QuantizationScheme],
+        sparse_targets: set[str],
+        compression_device: str = "cpu",
+    ) -> dict[str, Tensor]:
+        if prefix in module_to_scheme:
+            quant_compressor = self._module_quantization_compressor(module)
+            module_state = quant_compressor.compress(
+                module_state,
+                names_to_scheme=module_to_scheme,
+                show_progress=False,
+                compression_device=compression_device,
+            )
+
+        if prefix in sparse_targets and self.sparsity_compressor is not None:
+            module_state = self.sparsity_compressor.compress(
+                module_state,
+                compression_targets=sparse_targets,
+                show_progress=False,
+            )
+        return module_state
+
+    def _decompress_module_state(
+        self,
+        prefix: str,
+        module: Module,
+        module_state: dict[str, Tensor],
+        module_to_scheme: dict[str, QuantizationScheme],
+        sparse_targets: set[str],
+    ) -> dict[str, Tensor]:
+        if prefix in sparse_targets and self.sparsity_compressor is not None:
+            generator = self.sparsity_compressor.decompress_from_state_dict(module_state)
+            module_state = {key: value for key, value in generator}
+
+        if prefix in module_to_scheme:
+            quant_compressor = self._module_quantization_compressor(module)
+            module_state = quant_compressor.decompress_module_from_state_dict(
+                prefix,
+                module_state,
+                scheme=module_to_scheme[prefix],
+            )
+        return module_state
+
     def get_missing_module_keys(self, model: Module) -> list[str]:
         """
         Identifies the expected missing weight keys in the compressed state_dict.
@@ -398,7 +486,7 @@ class ModelCompressor:
 
         # Determine missing keys due to sparsity compression
         if (
-            self.sparsity_compressor
+            self.sparsity_config is not None
             and self.sparsity_config.format != CompressionFormat.dense.value
         ):
             sparse_targets = match_named_modules(
@@ -414,9 +502,8 @@ class ModelCompressor:
 
         # Determine missing keys due to pack quantization
         if (
-            self.quantization_compressor
-            and self.quantization_config.format
-            == CompressionFormat.pack_quantized.value
+            self.quantization_config is not None
+            and self.quantization_config.format == CompressionFormat.pack_quantized.value
         ):
             for scheme in self.quantization_config.config_groups.values():
                 quant_targets = match_named_modules(
@@ -454,7 +541,7 @@ class ModelCompressor:
 
         # Identify unexpected keys from sparsity compression
         if (
-            self.sparsity_compressor
+            self.sparsity_config is not None
             and self.sparsity_config.format != CompressionFormat.dense.value
         ):
             sparse_targets = match_named_modules(
@@ -462,21 +549,23 @@ class ModelCompressor:
                 targets=self.sparsity_config.targets,
                 ignore=self.sparsity_config.ignore,
             )
+            sparse_compressor = self.compressors[self.sparsity_config.format]
             unexpected_keys.update(
                 merge_names(target_name, param)
                 for target_name, _module in sparse_targets
-                for param in self.sparsity_compressor.compression_param_names
+                for param in sparse_compressor.compression_param_names
             )
 
         # Identify unexpected keys from quantization compression
-        if self.quantization_compressor:
+        if self.quantization_config is not None:
             for scheme in self.quantization_config.config_groups.values():
                 quant_targets = match_named_modules(
                     model=model,
                     targets=scheme.targets,
                     ignore=self.quantization_config.ignore,
                 )
-                for quant_compressor in self.quantization_compressor.values():
+                for format in self.compression_formats:
+                    quant_compressor = self.compressors[format]
                     unexpected_keys.update(
                         merge_names(target_name, param)
                         for target_name, _module in quant_targets
@@ -496,20 +585,9 @@ class ModelCompressor:
         :param model: model containing parameters to compress
         """
         module_to_scheme = map_module_to_scheme(model)
-        sparse_compression_targets = [
-            module_name
-            for module_name, _module in match_named_modules(
-                model=model,
-                targets=self.sparsity_config.targets if self.sparsity_config else [],
-                ignore=self.sparsity_config.ignore if self.sparsity_config else [],
-            )
-        ]
-        candidate_modules = list(
-            match_named_modules(
-                model,
-                [*sparse_compression_targets, *module_to_scheme.keys()],
-                warn_on_fail=True,
-            )
+        sparse_compression_targets = self._sparse_compression_targets(model)
+        candidate_modules = self._candidate_modules(
+            model, module_to_scheme, sparse_compression_targets
         )
         enabled, rank, world_size = self._get_dist_context()
         local_compressed: dict[str, dict[str, Tensor]] = {}
@@ -531,22 +609,14 @@ class ModelCompressor:
             with align_module_device(module, execution_device=exec_device):
                 state_dict = self._module_parameter_state(prefix, module)
 
-            if prefix in module_to_scheme:
-                format = self._resolve_module_format(module, self.compression_formats)
-                quant_compressor = self.quantization_compressor.get(format)
-                state_dict = quant_compressor.compress(
-                    state_dict,
-                    names_to_scheme=module_to_scheme,
-                    show_progress=False,
-                    compression_device=exec_device,
-                )
-
-            if prefix in sparse_compression_targets:
-                state_dict = self.sparsity_compressor.compress(
-                    state_dict,
-                    compression_targets=sparse_compression_targets,
-                    show_progress=False,
-                )
+            state_dict = self._compress_module_state(
+                prefix=prefix,
+                module=module,
+                module_state=state_dict,
+                module_to_scheme=module_to_scheme,
+                sparse_targets=sparse_compression_targets,
+                compression_device=exec_device,
+            )
 
             local_compressed[prefix] = state_dict
 
@@ -587,21 +657,9 @@ class ModelCompressor:
         :param model: model containing parameters to compress
         """
         module_to_scheme = map_module_to_scheme(model)
-        sparse_compression_targets = [
-            module_name
-            for module_name, _module in match_named_modules(
-                model=model,
-                targets=self.sparsity_config.targets if self.sparsity_config else [],
-                ignore=self.sparsity_config.ignore if self.sparsity_config else [],
-            )
-        ]
-
-        candidate_modules = list(
-            match_named_modules(
-                model,
-                [*sparse_compression_targets, *module_to_scheme.keys()],
-                warn_on_fail=True,
-            )
+        sparse_compression_targets = self._sparse_compression_targets(model)
+        candidate_modules = self._candidate_modules(
+            model, module_to_scheme, sparse_compression_targets
         )
         enabled, rank, world_size = self._get_dist_context()
         local_decompressed: dict[str, dict[str, Tensor]] = {}
@@ -615,18 +673,13 @@ class ModelCompressor:
             with align_module_device(module, execution_device="cpu"):
                 state_dict = self._module_parameter_state(prefix, module)
 
-            if prefix in sparse_compression_targets:
-                generator = self.sparsity_compressor.decompress_from_state_dict(state_dict)
-                state_dict = {key: value for key, value in generator}
-
-            if prefix in module_to_scheme:
-                format = self._resolve_module_format(module, self.compression_formats)
-                quant_compressor = self.quantization_compressor.get(format)
-                state_dict = quant_compressor.decompress_module_from_state_dict(
-                    prefix,
-                    state_dict,
-                    scheme=module_to_scheme[prefix],
-                )
+            state_dict = self._decompress_module_state(
+                prefix=prefix,
+                module=module,
+                module_state=state_dict,
+                module_to_scheme=module_to_scheme,
+                sparse_targets=sparse_compression_targets,
+            )
 
             local_decompressed[prefix] = state_dict
 
@@ -673,59 +726,35 @@ class ModelCompressor:
             state_dict = model.state_dict()
 
         enabled, rank, world_size = self._get_dist_context()
+        module_to_scheme = map_module_to_scheme(model)
+        sparse_compression_targets = self._sparse_compression_targets(model)
+        candidate_modules = self._candidate_modules(
+            model, module_to_scheme, sparse_compression_targets
+        )
+
         if not enabled or world_size == 1:
-            if self.quantization_compressor is not None:
-                module_to_scheme = map_module_to_scheme(model)
-                # Note - compress only supports one compression format atm
-                quant_compressor = next(iter(self.quantization_compressor.values()))
-                state_dict = quant_compressor.compress(
-                    state_dict,
-                    names_to_scheme=module_to_scheme,
-                    show_progress=show_progress,
-                )
-
-                # TODO: consider sparse compression to also be compression
-                if self.quantization_config.format != CompressionFormat.dense.value:
-                    self.quantization_config.quantization_status = (
-                        QuantizationStatus.COMPRESSED
-                    )
-
-            if self.sparsity_compressor is not None:
-                sparse_compression_targets: set[str] = {
-                    module_name
-                    for module_name, _module in match_named_modules(
-                        model=model,
-                        targets=self.sparsity_config.targets,
-                        ignore=self.sparsity_config.ignore,
-                    )
+            for prefix, module in candidate_modules:
+                module_state = {
+                    key: value
+                    for key, value in state_dict.items()
+                    if key == prefix or key.startswith(f"{prefix}.")
                 }
-                state_dict = self.sparsity_compressor.compress(
-                    state_dict,
-                    compression_targets=sparse_compression_targets,
-                    show_progress=show_progress,
+                if len(module_state) == 0:
+                    continue
+                module_state = self._compress_module_state(
+                    prefix=prefix,
+                    module=module,
+                    module_state=module_state,
+                    module_to_scheme=module_to_scheme,
+                    sparse_targets=sparse_compression_targets,
                 )
+                state_dict = {
+                    key: value
+                    for key, value in state_dict.items()
+                    if not (key == prefix or key.startswith(f"{prefix}."))
+                }
+                state_dict.update(module_state)
         else:
-            module_to_scheme = map_module_to_scheme(model)
-            sparse_compression_targets = (
-                {
-                    module_name
-                    for module_name, _module in match_named_modules(
-                        model=model,
-                        targets=self.sparsity_config.targets,
-                        ignore=self.sparsity_config.ignore,
-                    )
-                }
-                if self.sparsity_config is not None
-                else set()
-            )
-            candidate_modules = list(
-                match_named_modules(
-                    model,
-                    [*sparse_compression_targets, *module_to_scheme.keys()],
-                    warn_on_fail=True,
-                )
-            )
-
             local_compressed: dict[str, dict[str, Tensor]] = {}
             for module_index, (prefix, module) in enumerate(candidate_modules):
                 if not self._is_local_index(module_index, rank, world_size):
@@ -738,24 +767,13 @@ class ModelCompressor:
                 }
                 if len(module_state) == 0:
                     continue
-
-                if prefix in module_to_scheme:
-                    format = self._resolve_module_format(module, self.compression_formats)
-                    quant_compressor = self.quantization_compressor.get(format)
-                    module_state = quant_compressor.compress(
-                        module_state,
-                        names_to_scheme=module_to_scheme,
-                        show_progress=False,
-                    )
-
-                if prefix in sparse_compression_targets:
-                    module_state = self.sparsity_compressor.compress(
-                        module_state,
-                        compression_targets=sparse_compression_targets,
-                        show_progress=False,
-                    )
-
-                local_compressed[prefix] = module_state
+                local_compressed[prefix] = self._compress_module_state(
+                    prefix=prefix,
+                    module=module,
+                    module_state=module_state,
+                    module_to_scheme=module_to_scheme,
+                    sparse_targets=sparse_compression_targets,
+                )
 
             compressed_by_module = self._merge_dicts_across_ranks(local_compressed)
             compressed_prefixes = set(compressed_by_module.keys())
@@ -770,13 +788,13 @@ class ModelCompressor:
             for module_state in compressed_by_module.values():
                 state_dict.update(module_state)
 
-            if (
-                self.quantization_config is not None
-                and self.quantization_config.format != CompressionFormat.dense.value
-            ):
-                self.quantization_config.quantization_status = (
-                    QuantizationStatus.COMPRESSED
-                )
+        if (
+            self.quantization_config is not None
+            and self.quantization_config.format != CompressionFormat.dense.value
+        ):
+            self.quantization_config.quantization_status = (
+                QuantizationStatus.COMPRESSED
+            )
 
         # HACK: Override the dtype_byte_size function in transformers to
         # support float8 types. Fix is posted upstream
@@ -787,7 +805,9 @@ class ModelCompressor:
 
     # ----- disk decompression pathways ----- #
 
-    def decompress(self, model_path: str | dict[str, Tensor], model: Module):
+    def decompress(
+        self, model_path: str | Path | dict[str, Tensor], model: Module
+    ):
         """
         Overwrites the weights in model with weights decompressed from model_path
 
@@ -802,14 +822,10 @@ class ModelCompressor:
         only return the decompressed weight.
 
         """
-        if isinstance(model_path, str):
-            model_path = get_safetensors_folder(model_path)
+        if isinstance(model_path, (str, Path)):
+            model_path = get_safetensors_folder(str(model_path))
         sparse_decompressed = False
-        quant_compressor = (
-            next(iter(self.quantization_compressor.values()))
-            if self.quantization_compressor is not None
-            else None
-        )
+        quant_compressor = self._primary_quantization_compressor()
 
         if (
             self.sparsity_compressor is not None
@@ -852,10 +868,11 @@ class ModelCompressor:
                 # Load activation scales/zp or any other quantization parameters
                 # Conditionally load the weight quantization parameters if we have a
                 # dense compressor or if a sparsity compressor has already been applied
-                load_weight_qparams = sparse_decompressed or isinstance(
-                    quant_compressor, DenseCompressor
+                load_weight_qparams = (
+                    sparse_decompressed
+                    or quant_compressor.config.format == CompressionFormat.dense.value
                 )
-                if isinstance(model_path, str):
+                if isinstance(model_path, (str, Path)):
                     load_pretrained_quantization_parameters(
                         model,
                         model_path,
