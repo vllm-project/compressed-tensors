@@ -6,6 +6,7 @@ The `compressed_tensors.offload` module provides a transparent, flexible system 
 
 - **Transparency**: offloading logic is invisible to the model's forward pass — no code changes needed in model implementations.
 - **Flexibility**: supports CPU offload, disk offload, multi-GPU dispatch, and distributed (multi-process) setups via a single unified interface.
+- **Performance**: lazy onloading of individual parameters and buffers means that device movement workload is minimized, while the provided utilities encourage keeping offloaded tensors on their offloaded device. 
 - **Interoperability**: can convert to and from HuggingFace `accelerate` offloading, making it compatible with `transformers` loading and saving workflows.
 
 ---
