@@ -55,7 +55,7 @@ def find_file_path(
         file_names = [file_names]
 
     for file_name in file_names:
-        if os.path.exists((file_path := os.path.join(save_directory, file_name))):
+        if os.path.exists(file_path := os.path.join(save_directory, file_name)):
             return file_path
 
     return None

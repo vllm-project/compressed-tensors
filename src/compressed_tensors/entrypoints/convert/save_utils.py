@@ -18,6 +18,11 @@ def update_config(
     save_directory: str | os.PathLike,
     converter: Converter,
 ):
+    """
+    Update Quantization config for model stub in save_directory,
+    based on the converter that was used.
+    Quantization config is considered stale and re-written entirely.
+    """
     quant_config = converter.create_config()
 
     quant_config_data = quant_config.model_dump()
