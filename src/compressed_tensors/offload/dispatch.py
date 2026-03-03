@@ -206,23 +206,22 @@ def dispatch_model(
         logger.warning("Forced to offload modules due to insufficient gpu resources")
 
     # dispatch
-    finally:
-        assert len(dispatch) == len(sizes)
+    assert len(dispatch) == len(sizes)
 
-        dispatch_dict = {
-            submodule: (onload, offload)
-            for module, onload, offload in dispatch
-            for submodule in module.modules()
-        }
+    dispatch_dict = {
+        submodule: (onload, offload)
+        for module, onload, offload in dispatch
+        for submodule in module.modules()
+    }
 
-        for module in model.modules():
-            remove_module_offload(module, onload_tensors=True)
-            if module in dispatch_dict:
-                onload, offload = dispatch_dict[module]
-                offload_module(module, onload, offload)
+    for module in model.modules():
+        remove_module_offload(module, onload_tensors=True)
+        if module in dispatch_dict:
+            onload, offload = dispatch_dict[module]
+            offload_module(module, onload, offload)
 
-        logger.debug(f"Dispatched model with {extra_memory} bytes of extra memory")
-        return model
+    logger.debug(f"Dispatched model with {extra_memory} bytes of extra memory")
+    return model
 
 
 def get_device_memory() -> dict[torch.device, int]:
