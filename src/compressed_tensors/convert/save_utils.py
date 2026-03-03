@@ -6,7 +6,7 @@ import os
 
 from compressed_tensors import __version__ as ct_version
 from compressed_tensors.base import COMPRESSION_VERSION_NAME, QUANTIZATION_CONFIG_NAME
-from compressed_tensors.entrypoints.convert_checkpoint.converters.converters import (
+from compressed_tensors.convert import (
     Converter,
 )
 from loguru import logger

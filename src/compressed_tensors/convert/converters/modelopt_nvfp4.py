@@ -5,10 +5,7 @@ from typing import Iterable
 
 import torch
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.entrypoints.convert_checkpoint.converters import Converter
-from compressed_tensors.entrypoints.convert_checkpoint.helpers import (
-    match_quantizable_tensors,
-)
+from compressed_tensors.convert import Converter
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationConfig,
@@ -16,6 +13,7 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_scheme import NVFP4
+from compressed_tensors.utils.match import match_quantizable_tensors
 
 
 class ModelOptNvfp4Converter(Converter):

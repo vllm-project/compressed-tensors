@@ -27,14 +27,14 @@ def get_checkpoint_files(model_stub: str | os.PathLike) -> dict[str, str]:
     # In the future, this function can accept and pass download kwargs to cached_file
 
     if os.path.exists(model_stub):
-        file_paths = walk_file_paths(model_stub, ignore=".cache")
+        file_paths = _walk_file_paths(model_stub, ignore=".cache")
     else:
         file_paths = list_repo_files(model_stub)
 
     return {file_path: cached_file(model_stub, file_path) for file_path in file_paths}
 
 
-def walk_file_paths(root_dir: str, ignore: str | None = None) -> list[str]:
+def _walk_file_paths(root_dir: str, ignore: str | None = None) -> list[str]:
     """
     Return all file paths relative to the root directory
     """
