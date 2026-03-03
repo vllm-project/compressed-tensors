@@ -25,15 +25,17 @@ The central design decision is that offloading is implemented by **replacing a `
 Because PyTorch accesses module parameters through `module._parameters[name]` during a forward pass, this substitution is fully transparent — PyTorch naturally triggers onloading whenever it accesses a weight, and offloading occurs automatically when weights are assigned or after the forward pass completes.
 
 ```
-Normal module:                   Offloaded module:
-┌─────────────────────────┐      ┌─────────────────────────┐
-│ module._parameters      │      │ module._parameters       │
-│   = { "weight": tensor  │  →   │   = OffloadCache {       │
-│       on cuda:0 }       │      │       offload: cpu       │
-└─────────────────────────┘      │       onload: cuda:0     │
-                                 │       "weight": <cpu>    │
-                                 │     }                    │
-                                 └─────────────────────────┘
+Normal module:                            Offloaded module:
+┌────────────────────────────────┐        ┌────────────────────────────────┐
+│ module._parameters             │        │ module._parameters             │
+│   = { "weight": <cuda tensor>} │   →    │   = OffloadCache {             │
+└────────────────────────────────┘        │       offload: cpu             │
+                                          │       onload: cuda:0           │
+                                          │       offloaded_values: {      │
+                                          │        "weight": <cpu tensor>  │
+                                          │       }                        │
+                                          │     }                          │
+                                          └────────────────────────────────┘
 ```
 
 ### The Forward Wrapper
