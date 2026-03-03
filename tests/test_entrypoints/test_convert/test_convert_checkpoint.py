@@ -1,15 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import json
-import pytest
 
-from compressed_tensors.quantization import QuantizationConfig
-from compressed_tensors.quantization.quant_scheme import NVFP4
+import pytest
 from compressed_tensors.entrypoints.convert import (
-    convert_checkpoint,
     ModelOptNvfp4Converter,
+    convert_checkpoint,
 )
-from compressed_tensors.quantization import QuantizationArgs, QuantizationType
+from compressed_tensors.quantization import (
+    QuantizationArgs,
+    QuantizationConfig,
+    QuantizationType,
+)
+from compressed_tensors.quantization.quant_scheme import NVFP4
 
 
 def test_convert_checkpoint(tmp_path):

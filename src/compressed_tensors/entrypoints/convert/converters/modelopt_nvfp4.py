@@ -85,10 +85,12 @@ class ModelOptNvfp4Converter(Converter):
         if self.kv_cache_scheme is not None:
             allowed_names += ["k_scale", "v_scale"]
 
-        
-        targeted_names = [name for _, name in match_quantizable_tensors(
-            tensors, self.ignore, self.targets, allow_nonquantizable=True
-        )]
+        targeted_names = [
+            name
+            for _, name in match_quantizable_tensors(
+                tensors, self.ignore, self.targets, allow_nonquantizable=True
+            )
+        ]
         for name in targeted_names:
             param_name = name.rsplit(".", 1)[-1]
 
@@ -96,13 +98,14 @@ class ModelOptNvfp4Converter(Converter):
                 raise ValueError(f"Hit unexpected targeted tensor {name}")
 
         disallowed_names = ["input_scale", "weight_scale", "weight_scale_2"]
-        untargeted_names = [name for name in tensors.keys() if name not in targeted_names]
+        untargeted_names = [
+            name for name in tensors.keys() if name not in targeted_names
+        ]
         for name in untargeted_names:
             param_name = name.rsplit(".", 1)[-1]
 
             if param_name in disallowed_names:
                 raise ValueError(f"Hit unexpected non-targeted tensor {name}")
-            
 
     def create_config(self) -> QuantizationConfig:
         return QuantizationConfig(
