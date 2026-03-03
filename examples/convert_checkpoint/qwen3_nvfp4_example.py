@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from compressed_tensors.entrypoints.convert_checkpoint import (
+from compressed_tensors.entrypoints.convert import (
     convert_checkpoint,
     ModelOptNvfp4Converter,
 )

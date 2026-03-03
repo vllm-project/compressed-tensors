@@ -7,14 +7,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import tqdm
-from compressed_tensors.entrypoints.convert import (
-    Converter,
+from compressed_tensors.entrypoints.convert.convert_file import (
     convert_file,
+    validate_file,
+)
+from compressed_tensors.entrypoints.convert.converters import Converter
+from compressed_tensors.entrypoints.convert.file_utils import (
     get_checkpoint_files,
     is_weights_file,
+)
+from compressed_tensors.entrypoints.convert.save_utils import (
     update_config,
     update_safetensors_index,
-    validate_file,
 )
 from loguru import logger
 
