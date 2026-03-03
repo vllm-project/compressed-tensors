@@ -21,6 +21,7 @@ __all__ = [
     "match_named_parameters",
     "match_targets",
     "match_modules_set",
+    "match_quantizable_tensors",
     "get_lowest_common_ancestor_name",
     "is_match",
     "is_narrow_match",

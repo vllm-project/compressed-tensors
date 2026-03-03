@@ -14,10 +14,12 @@ from compressed_tensors.utils import (
     is_match,
     is_narrow_match,
     match_modules_set,
+    match_name,
     match_named_modules,
     match_named_parameters,
+    match_quantizable_tensors,
 )
-from compressed_tensors.utils.match import _match_class, match_name
+from compressed_tensors.utils.match import _match_class
 from transformers import AutoModelForCausalLM
 
 
