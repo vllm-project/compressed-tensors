@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import tqdm
-from compressed_tensors.convert import (
+from compressed_tensors.entrypoints.convert import (
     Converter,
     convert_file,
     get_checkpoint_files,

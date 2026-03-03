@@ -5,7 +5,7 @@ from typing import Iterable
 
 import torch
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.convert import Converter
+from compressed_tensors.entrypoints.convert import Converter
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationConfig,

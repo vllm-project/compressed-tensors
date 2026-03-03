@@ -3,7 +3,7 @@
 
 import os
 
-from compressed_tensors.convert import Converter
+from compressed_tensors.entrypoints.convert import Converter
 from safetensors.torch import load_file, save_file
 
 

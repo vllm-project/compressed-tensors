@@ -6,7 +6,7 @@ import os
 
 from compressed_tensors import __version__ as ct_version
 from compressed_tensors.base import COMPRESSION_VERSION_NAME, QUANTIZATION_CONFIG_NAME
-from compressed_tensors.convert import Converter
+from compressed_tensors.entrypoints.convert import Converter, find_file_path
 from loguru import logger
 from transformers.file_utils import CONFIG_NAME
 
@@ -62,16 +62,3 @@ def update_safetensors_index(
             indent=2,
             sort_keys=True,
         )
-
-
-def find_file_path(
-    save_directory: str | os.PathLike, file_names: str | list[str]
-) -> str | None:
-    if isinstance(file_names, str):
-        file_names = [file_names]
-
-    for file_name in file_names:
-        if os.path.exists((file_path := os.path.join(save_directory, file_name))):
-            return file_path
-
-    return None

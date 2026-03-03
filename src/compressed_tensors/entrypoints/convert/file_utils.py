@@ -7,7 +7,7 @@ from huggingface_hub import list_repo_files
 from transformers.utils.hub import cached_file
 
 
-__all__ = ["get_checkpoint_files", "is_weights_file"]
+__all__ = ["get_checkpoint_files", "is_weights_file", "find_file_path"]
 
 
 def is_weights_file(file_name: str) -> bool:
@@ -46,3 +46,16 @@ def _walk_file_paths(root_dir: str, ignore: str | None = None) -> list[str]:
             if not (ignore and rel_path.startswith(ignore)):
                 all_files.append(rel_path)
     return all_files
+
+
+def find_file_path(
+    save_directory: str | os.PathLike, file_names: str | list[str]
+) -> str | None:
+    if isinstance(file_names, str):
+        file_names = [file_names]
+
+    for file_name in file_names:
+        if os.path.exists((file_path := os.path.join(save_directory, file_name))):
+            return file_path
+
+    return None
