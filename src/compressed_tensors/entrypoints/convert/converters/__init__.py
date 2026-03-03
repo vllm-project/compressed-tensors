@@ -4,5 +4,5 @@
 # flake8: noqa
 # isort: skip_file
 
-from .converters import *
+from .base import *
 from .modelopt_nvfp4 import *
