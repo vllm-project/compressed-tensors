@@ -20,12 +20,12 @@ def test_convert_checkpoint(tmp_path):
     convert_outdir = tmp_path / "convert_out"
 
     right_targets = [
-        "re:.*mlp.*\.(gate_up|gate|up|down)_proj$",
-        "re:.*self_attn.*\.(q|k|v|o)_proj$",
+        r"re:.*mlp.*\.(gate_up|gate|up|down)_proj$",
+        r"re:.*self_attn.*\.(q|k|v|o)_proj$",
     ]
     wrong_targets = [
-        "re:.*mlp.*\.(gate_up|gate|up|down)_proj$",
-        "re:.*self_attn.*\.(q|k|o)_proj$",
+        r"re:.*mlp.*\.(gate_up|gate|up|down)_proj$",
+        r"re:.*self_attn.*\.(q|k|o)_proj$",
     ]
     right_kv_cache_scheme = QuantizationArgs(
         num_bits=8, dynamic=False, type=QuantizationType.FLOAT
