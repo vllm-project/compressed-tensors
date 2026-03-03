@@ -35,6 +35,14 @@ class ModelOptNvfp4Converter(Converter):
         self.kv_cache_scheme = kv_cache_scheme
 
     def process(self, tensors: dict[str, torch.Tensor]):
+        """
+        Map the modelopt NVFP4 tensors to the appropriate compressed-tensors
+        NVFP4 format.
+        Some tensors require rename, some require inversion
+        - 1 / input_scale -> input_global_scale
+        - weight -> weight_packed
+        - 1 / weight_scale_2 -> weight_global_scale
+        """
         for module_name, name in match_quantizable_tensors(
             tensors, self.ignore, self.targets, allow_nonquantizable=True
         ):
@@ -71,6 +79,9 @@ class ModelOptNvfp4Converter(Converter):
                     )
 
     def validate(self, tensors: dict[str, torch.Tensor]):
+        """
+        Ensure all tensor names of targeted layers are expected
+        """
         allowed_names = ["input_scale", "weight", "weight_scale", "weight_scale_2"]
         if self.kv_cache_scheme is not None:
             allowed_names += ["k_scale", "v_scale"]
