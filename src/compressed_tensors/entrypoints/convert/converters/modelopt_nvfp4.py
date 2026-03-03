@@ -78,19 +78,31 @@ class ModelOptNvfp4Converter(Converter):
 
     def validate(self, tensors: dict[str, torch.Tensor]):
         """
-        Ensure all tensor names of targeted layers are expected
+        Ensure all tensor names of targeted layers are expected and no
+        untargeted layers have unexpected tensor names
         """
         allowed_names = ["input_scale", "weight", "weight_scale", "weight_scale_2"]
         if self.kv_cache_scheme is not None:
             allowed_names += ["k_scale", "v_scale"]
 
-        for _, name in match_quantizable_tensors(
+        
+        targeted_names = [name for _, name in match_quantizable_tensors(
             tensors, self.ignore, self.targets, allow_nonquantizable=True
-        ):
+        )]
+        for name in targeted_names:
             param_name = name.rsplit(".", 1)[-1]
 
             if param_name not in allowed_names:
-                raise RuntimeError(f"Hit unexpected tensor {name}")
+                raise ValueError(f"Hit unexpected targeted tensor {name}")
+
+        disallowed_names = ["input_scale", "weight_scale", "weight_scale_2"]
+        untargeted_names = [name for name in tensors.keys() if name not in targeted_names]
+        for name in untargeted_names:
+            param_name = name.rsplit(".", 1)[-1]
+
+            if param_name in disallowed_names:
+                raise ValueError(f"Hit unexpected non-targeted tensor {name}")
+            
 
     def create_config(self) -> QuantizationConfig:
         return QuantizationConfig(
