@@ -4,6 +4,7 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.disk import DiskCache
+from compressed_tensors.offload.cache.stats import OffloadStats
 from compressed_tensors.offload.utils import send_tensors
 
 
@@ -13,6 +14,7 @@ class DistributedDiskCache(DiskCache):
     `compressed_tensors.offload.cache.disk_cache::DiskCache`.
     """
 
+    @OffloadStats.track_offload
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Synchronously write tensor data to disk

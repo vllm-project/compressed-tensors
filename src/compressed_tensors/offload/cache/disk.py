@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.cache.stats import OffloadStats
 from compressed_tensors.offload.dist_utils import is_rank0
 from compressed_tensors.offload.utils import send_tensors, to_tensor
 from safetensors import safe_open
@@ -41,6 +42,7 @@ class DiskCache(OffloadCache):
         super().__init__(onload_device)
         self.offload_dir = offload_dir or tempfile.mkdtemp()
 
+    @OffloadStats.track_onload
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Onload a tensor from disk/meta to device
@@ -62,6 +64,7 @@ class DiskCache(OffloadCache):
             onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
             return onloaded
 
+    @OffloadStats.track_offload
     def offload(
         self, tensor: torch.Tensor | None, offloaded: Optional[torch.Tensor] = None
     ) -> torch.Tensor | None:
@@ -109,6 +112,7 @@ class DiskCache(OffloadCache):
         del self.index[offloaded]
         super().__delitem__(key)
 
+    @OffloadStats.track_update
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
         Write new param data to file that already exists.
