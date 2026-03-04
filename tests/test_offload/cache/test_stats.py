@@ -214,7 +214,7 @@ def test_format_summary():
     summary = OffloadStats.format_summary(unit="KB")
 
     # Verify it contains expected strings
-    assert "OffloadCache Statistics" in summary
+    assert "Offload Statistics" in summary
     assert "Onload" in summary
     assert "Offload" in summary
     assert "Update" in summary
@@ -385,7 +385,7 @@ def test_format_summary_with_devices():
     summary = OffloadStats.format_summary(unit="KB", show_devices=True)
 
     # Verify it contains expected strings
-    assert "OffloadCache Statistics" in summary
+    assert "Offload Statistics" in summary
     assert "Device Movement Breakdown" in summary
     assert "Source" in summary
     assert "Dest" in summary
@@ -469,15 +469,15 @@ def test_device_pair_stats_summary():
 def test_enable_disable():
     """Test that enable/disable controls stat collection"""
     # Initially disabled by default (but fixture enables it)
-    assert OffloadStats.is_enabled()
+    assert OffloadStats.enabled
 
     # Disable stats
     OffloadStats.disable()
-    assert not OffloadStats.is_enabled()
+    assert not OffloadStats.enabled
 
     # Enable stats
     OffloadStats.enable()
-    assert OffloadStats.is_enabled()
+    assert OffloadStats.enabled
 
 
 @pytest.mark.unit
@@ -528,3 +528,178 @@ def test_enabled_stats_are_collected():
     assert OffloadStats.onload.count == 1
     assert OffloadStats.offload.bytes_moved == expected_bytes
     assert OffloadStats.onload.bytes_moved == expected_bytes
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_track_context_manager():
+    """Test that track context manager enables tracking and returns stats"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Disable stats and reset
+    OffloadStats.disable()
+    OffloadStats.reset()
+
+    # Use track context manager
+    with OffloadStats.track() as stats:
+        # Stats should be enabled inside context
+        assert OffloadStats.enabled
+
+        # Perform operations
+        tensor = torch.randn(10, 10, device=device)
+        expected_bytes = tensor.element_size() * tensor.numel()
+        cache["test"] = tensor
+        _ = cache["test"]
+
+    # After context, stats should be populated
+    assert "onload" in stats
+    assert "offload" in stats
+    assert "update" in stats
+    assert stats["onload"].count == 1
+    assert stats["offload"].count == 1
+    assert stats["onload"].bytes_moved == expected_bytes
+    assert stats["offload"].bytes_moved == expected_bytes
+
+    # Stats should be disabled after context exits
+    assert not OffloadStats.enabled
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_track_context_manager_restores_enabled_state():
+    """Test that track context manager restores the original enabled state"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Enable stats before using track
+    OffloadStats.enable()
+    OffloadStats.reset()
+
+    # Use track context manager
+    with OffloadStats.track() as stats:
+        # Stats should be enabled inside context
+        assert OffloadStats.enabled
+
+        # Perform operations
+        tensor = torch.randn(10, 10, device=device)
+        cache["test"] = tensor
+
+    # Stats should still be enabled after context exits (restored to original state)
+    assert OffloadStats.enabled
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_track_context_manager_with_reset():
+    """Test that track context manager captures only operations within the context"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Enable and perform some operations before track
+    OffloadStats.enable()
+    OffloadStats.reset()
+    tensor1 = torch.randn(10, 10, device=device)
+    cache["before"] = tensor1
+
+    # Reset before using track
+    OffloadStats.reset()
+
+    # Use track context manager
+    with OffloadStats.track() as stats:
+        tensor2 = torch.randn(20, 20, device=device)
+        expected_bytes = tensor2.element_size() * tensor2.numel()
+        cache["during"] = tensor2
+        _ = cache["during"]
+
+    # Stats should only include operations from within the context
+    assert stats["offload"].count == 1
+    assert stats["onload"].count == 1
+    assert stats["offload"].bytes_moved == expected_bytes
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_track_context_manager_multiple_operations():
+    """Test that track context manager correctly tracks multiple operations"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Disable stats and reset
+    OffloadStats.disable()
+    OffloadStats.reset()
+
+    # Use track context manager with multiple operations
+    with OffloadStats.track() as stats:
+        tensors = {
+            "t1": torch.randn(10, 10, device=device),
+            "t2": torch.randn(20, 20, device=device),
+            "t3": torch.randn(30, 30, device=device),
+        }
+
+        # Offload all tensors
+        for name, tensor in tensors.items():
+            cache[name] = tensor
+
+        # Onload some tensors
+        _ = cache["t1"]
+        _ = cache["t2"]
+
+        # Update one tensor
+        cache["t1"] = torch.randn(10, 10, device=device)
+
+    # Verify all operations were tracked
+    assert stats["offload"].count == 3
+    assert stats["onload"].count == 2
+    assert stats["update"].count == 1
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_track_context_manager_exception_handling():
+    """Test that track context manager restores state even on exception"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Disable stats before using track
+    OffloadStats.disable()
+    OffloadStats.reset()
+
+    # Use track context manager with an exception
+    try:
+        with OffloadStats.track() as stats:
+            # Stats should be enabled inside context
+            assert OffloadStats.enabled
+
+            # Perform some operations
+            tensor = torch.randn(10, 10, device=device)
+            cache["test"] = tensor
+
+            # Raise an exception
+            raise ValueError("Test exception")
+    except ValueError:
+        pass
+
+    # Stats should be restored to disabled after exception
+    assert not OffloadStats.enabled
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_track_context_manager_empty_operations():
+    """Test that track context manager works with no operations"""
+    # Disable stats and reset
+    OffloadStats.disable()
+    OffloadStats.reset()
+
+    # Use track context manager without performing any operations
+    with OffloadStats.track() as stats:
+        pass
+
+    # Stats should be populated but with zero counts
+    assert "onload" in stats
+    assert "offload" in stats
+    assert "update" in stats
+    assert stats["onload"].count == 0
+    assert stats["offload"].count == 0
+    assert stats["update"].count == 0

@@ -25,14 +25,14 @@ def main():
     tensor3 = torch.randn(200, 200, device=device)
 
     print("=" * 60)
-    print("OffloadCache Statistics Example")
+    print("Offload Statistics Example")
     print("=" * 60)
     print()
 
     # Enable statistics collection (disabled by default for performance)
     print("Enabling statistics collection...")
     OffloadStats.enable()
-    print(f"Statistics enabled: {OffloadStats.is_enabled()}")
+    print(f"Statistics enabled: {OffloadStats.enabled}")
     print()
 
     # Reset statistics to start fresh
@@ -126,7 +126,7 @@ def main():
     # Demonstrate disabling statistics collection
     print("Disabling statistics collection...")
     OffloadStats.disable()
-    print(f"Statistics enabled: {OffloadStats.is_enabled()}")
+    print(f"Statistics enabled: {OffloadStats.enabled}")
     OffloadStats.reset()
     print()
 

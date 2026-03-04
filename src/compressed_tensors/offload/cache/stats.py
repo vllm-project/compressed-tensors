@@ -3,10 +3,12 @@
 
 import functools
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import torch
+from compressed_tensors.utils import patch_attr
 
 
 @dataclass
@@ -121,13 +123,12 @@ class OffloadStats:
     """
 
     # Class-level statistics
-    _enabled: bool = False
+    enabled: bool = False
     onload: OperationStats = OperationStats()
     offload: OperationStats = OperationStats()
     update: OperationStats = OperationStats()
 
     def __init__(self):
-        """Prevent instantiation of this class"""
         raise RuntimeError(
             "OffloadStats should not be instantiated. "
             "Use class methods directly (e.g., OffloadStats.get_stats())"
@@ -193,21 +194,22 @@ class OffloadStats:
     @classmethod
     def enable(cls):
         """Enable statistics collection"""
-        cls._enabled = True
+        cls.enabled = True
 
     @classmethod
     def disable(cls):
         """Disable statistics collection"""
-        cls._enabled = False
+        cls.enabled = False
 
     @classmethod
-    def is_enabled(cls) -> bool:
-        """
-        Check if statistics collection is enabled
+    @contextmanager
+    def track(cls):
+        """Context manager for tracking values"""
+        stats = dict()
+        with patch_attr(cls, "enabled", True):
+            yield stats
 
-        :return: True if statistics collection is enabled, False otherwise
-        """
-        return cls._enabled
+        stats.update(cls.get_stats())
 
     @classmethod
     def format_summary(cls, unit: str = "MB", show_devices: bool = False) -> str:
@@ -235,7 +237,7 @@ class OffloadStats:
 
         # Format summary
         lines = [
-            "OffloadCache Statistics",
+            "Offload Statistics",
             "=" * 50,
             f"{'Operation':<12} {'Count':>8} {'No-ops':>8} {'Data Moved':>12}",
             "-" * 50,
@@ -307,7 +309,7 @@ class OffloadStats:
         @functools.wraps(func)
         def wrapper(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
             result = func(self, offloaded)
-            if cls._enabled:
+            if cls.enabled:
                 cls.onload.record(input_tensor=offloaded, result_tensor=result)
             return result
 
@@ -325,7 +327,7 @@ class OffloadStats:
         @functools.wraps(func)
         def wrapper(self, tensor: torch.Tensor | None, *args, **kwargs) -> Any:
             result = func(self, tensor, *args, **kwargs)
-            if cls._enabled:
+            if cls.enabled:
                 cls.offload.record(input_tensor=tensor, result_tensor=result)
             return result
 
@@ -344,7 +346,7 @@ class OffloadStats:
         def wrapper(self, offloaded: torch.Tensor, data: torch.Tensor | None) -> Any:
             result = func(self, offloaded, data)
             # For updates, input is new data, result is offloaded tensor
-            if cls._enabled:
+            if cls.enabled:
                 cls.update.record(input_tensor=data, result_tensor=offloaded)
             return result
 
