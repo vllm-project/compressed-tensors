@@ -16,7 +16,7 @@ from compressed_tensors.utils.match import match_quantizable_tensors
 
 class FP8BlockToBfloat16Converter(Converter):
     """
-    Convert FP8 quant_method block-quantized to bfloat16
+    Upconvert block-quantized FP8 quant_method to bfloat16
     """
 
     def __init__(
@@ -85,7 +85,7 @@ class FP8BlockToBfloat16Converter(Converter):
             if param_name in disallowed_names:
                 raise ValueError(f"Found unexpected non-targeted tensor {name}")
 
-    def create_config(self) -> QuantizationConfig:
+    def create_config(self) -> QuantizationConfig | None:
         return None
 
     def create_bfloat16_weight(

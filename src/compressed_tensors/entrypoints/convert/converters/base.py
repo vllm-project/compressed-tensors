@@ -41,5 +41,7 @@ class Converter(Protocol):
         """
         Create compressed-tensors QuantizationConfig so that it can be set in the
         new model checkpoint's config.json.
+        If the converter is moving checkpoint to full-precision, have this function
+        return None, and quantization_config will be removed from config.json
         """
         pass

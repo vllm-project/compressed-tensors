@@ -34,11 +34,14 @@ def convert_checkpoint(
     max_workers: int = 1,
 ):
     """
-    Convert a model checkpoint to compressed-tensors format without loading it up
-    in memory, instead operating directly on the model safetensors files. This
-    entrypoint operates on a model stub or folder containing weights saved in
-    safetensors files, and updates the corresponding quantization_config field in
-    the config.json. All additional files will be copied to new checkpoint.
+    Convert a model checkpoint to either:
+    - its equivalent quantized format in compressed-tensors
+    - the unquantized format
+    without loading it up in memory, instead operating directly on the model
+    safetensors files. This entrypoint operates on a model stub or folder containing
+    weights saved in safetensors files, and updates the corresponding
+    quantization_config field in the config.json. All additional files will be
+    copied to new checkpoint.
 
     :param model_stub: huggingface model hub or path to local weights files
     :param save_directory: new checkpoint will be saved in this directory.
