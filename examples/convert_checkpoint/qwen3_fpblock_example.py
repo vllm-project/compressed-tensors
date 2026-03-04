@@ -19,6 +19,7 @@ convert_checkpoint(
             "re:.*mlp.*\.(gate_up|gate|up|down)_proj$",
             "re:.*self_attn.*\.(q|k|v|o)_proj$",
         ],
+        weight_block_size=[128, 128],
     ),
     max_workers=8,
 )

@@ -27,9 +27,10 @@ def update_config(
     Quantization config is considered stale and re-written entirely.
     """
     quant_config = converter.create_config()
-
-    quant_config_data = quant_config.model_dump()
-    quant_config_data[COMPRESSION_VERSION_NAME] = ct_version
+    quant_config_data = None
+    if quant_config is not None:
+        quant_config_data = quant_config.model_dump()
+        quant_config_data[COMPRESSION_VERSION_NAME] = ct_version
 
     # write results to config.json or params.json file
     config_file_path = find_config_path(save_directory)
@@ -37,7 +38,10 @@ def update_config(
         with open(config_file_path, "r") as file:
             config_data = json.load(file)
 
-        config_data[QUANTIZATION_CONFIG_NAME] = quant_config_data
+        if quant_config_data is None:
+            del config_data[QUANTIZATION_CONFIG_NAME]
+        else:
+            config_data[QUANTIZATION_CONFIG_NAME] = quant_config_data
 
         with open(config_file_path, "w") as file:
             json.dump(config_data, file, indent=2, sort_keys=True)
