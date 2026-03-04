@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from functools import wraps
 from math import ceil
 
 import torch
@@ -342,7 +341,6 @@ def set_linear_forward_quantized(module: torch.nn.Linear):
     :param module: linear module whose forward function will be replaced
     """
 
-    @wraps(module.forward)
     def quantized_forward(self: torch.nn.Linear, input: torch.Tensor) -> torch.Tensor:
         scheme: QuantizationScheme | None = getattr(self, "quantization_scheme", None)
         status: QuantizationStatus | None = getattr(self, "quantization_status", None)
