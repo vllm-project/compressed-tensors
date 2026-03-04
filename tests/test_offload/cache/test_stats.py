@@ -14,10 +14,12 @@ from tests.testing_utils import requires_gpu
 
 @pytest.fixture(autouse=True)
 def reset_stats():
-    """Reset statistics before each test"""
+    """Reset statistics and enable collection before each test"""
     OffloadStats.reset()
+    OffloadStats.enable()
     yield
     OffloadStats.reset()
+    OffloadStats.disable()
 
 
 @pytest.mark.unit
@@ -298,3 +300,231 @@ def test_get_stats():
     assert stats["onload"].count == 0
     assert stats["offload"].count == 0
     assert stats["update"].count == 0
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_device_tracking():
+    """Test that device movements are tracked correctly"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Create and offload a tensor
+    tensor = torch.randn(10, 10, device=device)
+    tensor_device_str = str(tensor.device)
+    cache["test"] = tensor
+
+    # Check offload device movement
+    assert (tensor_device_str, "cpu") in OffloadStats.offload.device_stats
+    offload_stats = OffloadStats.offload.device_stats[(tensor_device_str, "cpu")]
+    assert offload_stats.count == 1
+    assert offload_stats.noop_count == 0
+    assert offload_stats.bytes_moved == 400
+    assert offload_stats.noop_bytes == 0
+
+    # Onload the tensor
+    retrieved = cache["test"]
+
+    # Check onload device movement
+    assert ("cpu", tensor_device_str) in OffloadStats.onload.device_stats
+    onload_stats = OffloadStats.onload.device_stats[("cpu", tensor_device_str)]
+    assert onload_stats.count == 1
+    assert onload_stats.noop_count == 0
+    assert onload_stats.bytes_moved == 400
+    assert onload_stats.noop_bytes == 0
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_get_device_stats():
+    """Test get_device_stats method"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Perform some operations
+    tensor = torch.randn(10, 10, device=device)
+    tensor_device_str = str(tensor.device)
+    cache["test"] = tensor
+    _ = cache["test"]
+
+    # Get device stats
+    device_stats = OffloadStats.get_device_stats()
+
+    assert "onload" in device_stats
+    assert "offload" in device_stats
+    assert "update" in device_stats
+
+    # Check offload stats
+    assert (tensor_device_str, "cpu") in device_stats["offload"]
+    assert device_stats["offload"][(tensor_device_str, "cpu")]["count"] == 1
+    assert device_stats["offload"][(tensor_device_str, "cpu")]["noop_count"] == 0
+    assert device_stats["offload"][(tensor_device_str, "cpu")]["bytes_moved"] == 400
+    assert device_stats["offload"][(tensor_device_str, "cpu")]["noop_bytes"] == 0
+
+    # Check onload stats
+    assert ("cpu", tensor_device_str) in device_stats["onload"]
+    assert device_stats["onload"][("cpu", tensor_device_str)]["count"] == 1
+    assert device_stats["onload"][("cpu", tensor_device_str)]["noop_count"] == 0
+    assert device_stats["onload"][("cpu", tensor_device_str)]["bytes_moved"] == 400
+    assert device_stats["onload"][("cpu", tensor_device_str)]["noop_bytes"] == 0
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_format_summary_with_devices():
+    """Test format_summary with device breakdown"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Perform some operations
+    tensor = torch.randn(10, 10, device=device)
+    cache["test"] = tensor
+    _ = cache["test"]
+
+    # Get summary with devices
+    summary = OffloadStats.format_summary(unit="KB", show_devices=True)
+
+    # Verify it contains expected strings
+    assert "OffloadCache Statistics" in summary
+    assert "Device Movement Breakdown" in summary
+    assert "Source" in summary
+    assert "Dest" in summary
+    assert "Onload" in summary
+    assert "Offload" in summary
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_device_tracking_with_update():
+    """Test that update operations track devices correctly"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Create and offload a tensor
+    tensor = torch.randn(10, 10, device=device)
+    cache["test"] = tensor
+
+    # Reset to focus on update
+    OffloadStats.reset()
+
+    # Update the tensor
+    new_tensor = torch.randn(10, 10, device=device)
+    tensor_device_str = str(new_tensor.device)
+    cache["test"] = new_tensor
+
+    # Check update device movement (from device to cpu for the offloaded tensor)
+    assert (tensor_device_str, "cpu") in OffloadStats.update.device_stats
+    update_stats = OffloadStats.update.device_stats[(tensor_device_str, "cpu")]
+    assert update_stats.count == 1
+    assert update_stats.noop_count == 0
+    assert update_stats.bytes_moved == 400
+    assert update_stats.noop_bytes == 0
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_device_pair_noop_tracking():
+    """Test that no-ops are tracked correctly per device pair"""
+    device = torch.device("cuda")
+    cache = DeviceCache(onload_device=device)
+
+    # Create a tensor on device - offload to same device should be noop
+    tensor = torch.randn(10, 10, device=device)
+    tensor_device_str = str(tensor.device)
+    cache["test"] = tensor
+
+    # DeviceCache offloads to the same device, which is a no-op
+    assert (tensor_device_str, tensor_device_str) in OffloadStats.offload.device_stats
+    offload_stats = OffloadStats.offload.device_stats[
+        (tensor_device_str, tensor_device_str)
+    ]
+    assert offload_stats.count == 1
+    assert offload_stats.noop_count == 1
+    assert offload_stats.bytes_moved == 0
+    assert offload_stats.noop_bytes == 400  # Would have moved 400 bytes if not a no-op
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_device_pair_stats_summary():
+    """Test that device pair stats are included in summary"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Perform some operations
+    tensor = torch.randn(10, 10, device=device)
+    cache["test"] = tensor
+    _ = cache["test"]
+
+    # Get summary with devices
+    summary = OffloadStats.format_summary(unit="KB", show_devices=True)
+
+    # Verify new columns are present
+    assert "No-ops" in summary
+    assert "Moved" in summary
+    assert "No-op Data" in summary
+
+
+@pytest.mark.unit
+def test_enable_disable():
+    """Test that enable/disable controls stat collection"""
+    # Initially disabled by default (but fixture enables it)
+    assert OffloadStats.is_enabled()
+
+    # Disable stats
+    OffloadStats.disable()
+    assert not OffloadStats.is_enabled()
+
+    # Enable stats
+    OffloadStats.enable()
+    assert OffloadStats.is_enabled()
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_disabled_stats_not_collected():
+    """Test that statistics are not collected when disabled"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Disable stats collection
+    OffloadStats.disable()
+    OffloadStats.reset()
+
+    # Perform operations
+    tensor = torch.randn(10, 10, device=device)
+    cache["test"] = tensor
+    _ = cache["test"]
+
+    # Verify no stats were collected
+    assert OffloadStats.offload.count == 0
+    assert OffloadStats.onload.count == 0
+    assert OffloadStats.offload.bytes_moved == 0
+    assert OffloadStats.onload.bytes_moved == 0
+
+    # Re-enable for cleanup
+    OffloadStats.enable()
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_enabled_stats_are_collected():
+    """Test that statistics are collected when enabled"""
+    device = torch.device("cuda")
+    cache = CPUCache(onload_device=device)
+
+    # Explicitly enable stats collection
+    OffloadStats.enable()
+    OffloadStats.reset()
+
+    # Perform operations
+    tensor = torch.randn(10, 10, device=device)
+    expected_bytes = tensor.element_size() * tensor.numel()
+    cache["test"] = tensor
+    _ = cache["test"]
+
+    # Verify stats were collected
+    assert OffloadStats.offload.count == 1
+    assert OffloadStats.onload.count == 1
+    assert OffloadStats.offload.bytes_moved == expected_bytes
+    assert OffloadStats.onload.bytes_moved == expected_bytes

@@ -2,10 +2,21 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import functools
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import torch
+
+
+@dataclass
+class DevicePairStats:
+    """Statistics for a specific device pair (source, destination)"""
+
+    count: int = 0  # Total operations for this device pair
+    noop_count: int = 0  # No-op operations for this device pair
+    bytes_moved: int = 0  # Actual bytes transferred (excluding no-ops)
+    noop_bytes: int = 0  # Bytes that would have moved in no-ops (tensor size)
 
 
 @dataclass
@@ -15,6 +26,9 @@ class OperationStats:
     count: int = 0
     bytes_moved: int = 0
     noop_count: int = 0
+    device_stats: defaultdict[tuple[str, str], DevicePairStats] = field(
+        default_factory=lambda: defaultdict(DevicePairStats)
+    )
 
     def record(
         self,
@@ -27,34 +41,40 @@ class OperationStats:
         :param input_tensor: input tensor to the operation
         :param result_tensor: result tensor from the operation
         """
-        self.count += 1
+        is_noop = input_tensor is result_tensor
 
-        if input_tensor is result_tensor:
+        # Get device information
+        src_device = self._get_device_str(input_tensor)
+        dst_device = self._get_device_str(result_tensor)
+        pair_stats = self.device_stats[(src_device, dst_device)]
+
+        # track counts (both top-level and per-device-pair)
+        self.count += 1
+        pair_stats.count += 1
+        if is_noop:
             self.noop_count += 1
-        elif result_tensor is not None:
-            self.bytes_moved += result_tensor.element_size() * result_tensor.numel()
+            pair_stats.noop_count += 1
+
+        # track bytes (both top-level and per-device-pair)
+        if result_tensor is not None:
+            bytes_transferred = result_tensor.element_size() * result_tensor.numel()
+            if is_noop:
+                pair_stats.noop_bytes += bytes_transferred
+            else:
+                self.bytes_moved += bytes_transferred
+                pair_stats.bytes_moved += bytes_transferred
 
     @staticmethod
-    def _is_noop(
-        input_tensor: torch.Tensor | None,
-        result_tensor: torch.Tensor | None,
-    ) -> bool:
+    def _get_device_str(tensor: torch.Tensor | None) -> str:
         """
-        Determine if an operation was a no-op (no actual data movement)
+        Get a string representation of the tensor's device
 
-        :param input_tensor: input tensor
-        :param result_tensor: result tensor
-        :return: True if the operation was a no-op
+        :param tensor: tensor to get device from
+        :return: device string (e.g., 'cuda:0', 'cpu', 'meta', or 'none')
         """
-        # None tensors are always no-ops
-        if input_tensor is None or result_tensor is None:
-            return True
-
-        # Check if data pointer and device are the same (no actual movement)
-        return (
-            result_tensor.data_ptr() == input_tensor.data_ptr()
-            and result_tensor.device == input_tensor.device
-        )
+        if tensor is None:
+            return "none"
+        return str(tensor.device)
 
 
 class OffloadStats:
@@ -67,7 +87,13 @@ class OffloadStats:
     Tracks the number of onload, offload, and update operations, as well as
     the number of bytes affected and whether operations were no-ops.
 
+    Statistics collection is disabled by default to avoid runtime overhead.
+    Use enable() to turn on collection and disable() to turn it off.
+
     Example usage:
+        # Enable statistics collection
+        OffloadStats.enable()
+
         # Statistics are collected automatically when decorators are applied
         stats = OffloadStats.get_stats()
         print(stats)
@@ -78,9 +104,13 @@ class OffloadStats:
         # Get formatted summary
         summary = OffloadStats.format_summary()
         print(summary)
+
+        # Disable statistics collection
+        OffloadStats.disable()
     """
 
     # Class-level statistics
+    _enabled: bool = False
     onload: OperationStats = OperationStats()
     offload: OperationStats = OperationStats()
     update: OperationStats = OperationStats()
@@ -106,6 +136,43 @@ class OffloadStats:
         }
 
     @classmethod
+    def get_device_stats(
+        cls,
+    ) -> dict[str, dict[tuple[str, str], dict[str, int]]]:
+        """
+        Get device-specific movement statistics
+
+        :return: nested dictionary with structure:
+            {
+                'onload': {
+                    (source_device, dest_device): {
+                        'count': int,
+                        'noop_count': int,
+                        'bytes_moved': int,
+                        'noop_bytes': int
+                    }
+                },
+                'offload': {...},
+                'update': {...}
+            }
+        """
+        result = {}
+        for op_name, op_stats in [
+            ("onload", cls.onload),
+            ("offload", cls.offload),
+            ("update", cls.update),
+        ]:
+            result[op_name] = {}
+            for device_pair, pair_stats in op_stats.device_stats.items():
+                result[op_name][device_pair] = {
+                    "count": pair_stats.count,
+                    "noop_count": pair_stats.noop_count,
+                    "bytes_moved": pair_stats.bytes_moved,
+                    "noop_bytes": pair_stats.noop_bytes,
+                }
+        return result
+
+    @classmethod
     def reset(cls):
         """Reset all statistics to zero"""
         cls.onload = OperationStats()
@@ -113,11 +180,31 @@ class OffloadStats:
         cls.update = OperationStats()
 
     @classmethod
-    def format_summary(cls, unit: str = "MB") -> str:
+    def enable(cls):
+        """Enable statistics collection"""
+        cls._enabled = True
+
+    @classmethod
+    def disable(cls):
+        """Disable statistics collection"""
+        cls._enabled = False
+
+    @classmethod
+    def is_enabled(cls) -> bool:
+        """
+        Check if statistics collection is enabled
+
+        :return: True if statistics collection is enabled, False otherwise
+        """
+        return cls._enabled
+
+    @classmethod
+    def format_summary(cls, unit: str = "MB", show_devices: bool = False) -> str:
         """
         Generate a formatted summary of device movement statistics
 
         :param unit: unit for displaying bytes ('B', 'KB', 'MB', or 'GB')
+        :param show_devices: whether to include device-specific breakdown
         :return: formatted summary string
         """
         # Conversion factors
@@ -156,6 +243,45 @@ class OffloadStats:
             "=" * 50,
         ]
 
+        if show_devices:
+            lines.extend(["", cls._format_device_breakdown(unit)])
+
+        return "\n".join(lines)
+
+    @classmethod
+    def _format_device_breakdown(cls, unit: str) -> str:
+        """
+        Generate a formatted breakdown of device movements
+
+        :param unit: unit for displaying bytes
+        :return: formatted device breakdown string
+        """
+        divisor = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}[unit]
+
+        lines = [
+            "Device Movement Breakdown",
+            "=" * 105,
+            f"{'Operation':<12} {'Source':>12} {'Dest':>12} {'Count':>8} "
+            f"{'No-ops':>8} {'Moved':>12} {'No-op Data':>12}",
+            "-" * 105,
+        ]
+
+        # Collect all device movements
+        for op_name, op_stats in [
+            ("Onload", cls.onload),
+            ("Offload", cls.offload),
+            ("Update", cls.update),
+        ]:
+            if op_stats.device_stats:
+                for (src, dst), pair_stats in sorted(op_stats.device_stats.items()):
+                    lines.append(
+                        f"{op_name:<12} {src:>12} {dst:>12} {pair_stats.count:>8} "
+                        f"{pair_stats.noop_count:>8} "
+                        f"{pair_stats.bytes_moved / divisor:>10.2f} {unit} "
+                        f"{pair_stats.noop_bytes / divisor:>10.2f} {unit}"
+                    )
+
+        lines.append("=" * 105)
         return "\n".join(lines)
 
     @classmethod
@@ -170,7 +296,8 @@ class OffloadStats:
         @functools.wraps(func)
         def wrapper(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
             result = func(self, offloaded)
-            cls.onload.record(input_tensor=offloaded, result_tensor=result)
+            if cls._enabled:
+                cls.onload.record(input_tensor=offloaded, result_tensor=result)
             return result
 
         return wrapper
@@ -187,7 +314,8 @@ class OffloadStats:
         @functools.wraps(func)
         def wrapper(self, tensor: torch.Tensor | None, *args, **kwargs) -> Any:
             result = func(self, tensor, *args, **kwargs)
-            cls.offload.record(input_tensor=tensor, result_tensor=result)
+            if cls._enabled:
+                cls.offload.record(input_tensor=tensor, result_tensor=result)
             return result
 
         return wrapper
@@ -205,7 +333,8 @@ class OffloadStats:
         def wrapper(self, offloaded: torch.Tensor, data: torch.Tensor | None) -> Any:
             result = func(self, offloaded, data)
             # For updates, the input is the new data and the result is the offloaded tensor
-            cls.update.record(input_tensor=data, result_tensor=offloaded)
+            if cls._enabled:
+                cls.update.record(input_tensor=data, result_tensor=offloaded)
             return result
 
         return wrapper
