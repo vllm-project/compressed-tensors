@@ -101,8 +101,8 @@ class FP8BlockToBfloat16Converter(Converter):
         """
         if self.weight_block_size is None:
             # No block quantization, apply scales directly
-            # Convert weight to float32 first for division
-            return (weight.to(torch.float32) / weight_scale_inv.to(torch.float32)).to(
+            # Convert weight to float32 first for multiplication
+            return (weight.to(torch.float32) * weight_scale_inv.to(torch.float32)).to(
                 torch.bfloat16
             )
 
@@ -130,9 +130,9 @@ class FP8BlockToBfloat16Converter(Converter):
         # Expand to: (num_rows_blocks, num_cols_blocks, 1, 1)
         scale_inv_expanded = weight_scale_inv.unsqueeze(-1).unsqueeze(-1)
 
-        # Dequantize: weight_bf16 = weight_fp8 / weight_scale_inv
+        # Dequantize: weight_bf16 = weight_fp8 * weight_scale_inv
         dequantized_blocks = (
-            weight_blocks.to(torch.float32) / scale_inv_expanded.to(torch.float32)
+            weight_blocks.to(torch.float32) * scale_inv_expanded.to(torch.float32)
         ).to(torch.bfloat16)
 
         # Restore padded shape
