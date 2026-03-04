@@ -196,7 +196,7 @@ def test_set_forward_quantized_with_weight_quantization(
     assert output.shape == (2, 4)
 
 
-def test_set_forward_quantized_frozen_status(
+def test_set_forward_quantized_compressed_status(
     mock_per_tensor_calibration, create_quantization_scheme
 ):
     """Test that weight quantization is skipped when status is FROZEN"""
@@ -211,7 +211,7 @@ def test_set_forward_quantized_frozen_status(
 
     # initialize_module_for_quantization calls set_forward_quantized
     initialize_module_for_quantization(layer, quantization_scheme)
-    layer.quantization_status = QuantizationStatus.FROZEN
+    layer.quantization_status = QuantizationStatus.COMPRESSED
 
     # Calibrate weights
     mock_per_tensor_calibration(layer, "weight", value=layer.weight.data)
