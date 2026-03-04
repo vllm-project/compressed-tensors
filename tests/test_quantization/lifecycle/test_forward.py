@@ -37,6 +37,199 @@ def test_set_linear_forward_quantized():
     assert not func_forward == layer.forward.__func__
 
 
+def test_set_linear_forward_quantized_no_quantization():
+    """Test forward pass when quantization is disabled or scheme is not set"""
+    layer = Linear(4, 4)
+    set_linear_forward_quantized(layer)
+
+    input_tensor = torch.randn(2, 4)
+    expected_output = torch.nn.functional.linear(input_tensor, layer.weight, layer.bias)
+
+    # Without quantization scheme, should behave like normal linear
+    output = layer(input_tensor)
+    assert torch.allclose(output, expected_output)
+
+
+def test_set_linear_forward_quantized_disabled():
+    """Test forward pass when quantization_enabled is False"""
+    layer = Linear(4, 4)
+    set_linear_forward_quantized(layer)
+
+    # Set up quantization but disable it
+    layer.quantization_enabled = False
+    layer.quantization_scheme = torch.nn.Module()  # dummy scheme
+    layer.quantization_status = QuantizationStatus.INITIALIZED
+
+    input_tensor = torch.randn(2, 4)
+    expected_output = torch.nn.functional.linear(input_tensor, layer.weight, layer.bias)
+
+    # With quantization disabled, should behave like normal linear
+    output = layer(input_tensor)
+    assert torch.allclose(output, expected_output)
+
+
+@pytest.mark.parametrize(
+    "quantization_status",
+    [
+        QuantizationStatus.INITIALIZED,
+        QuantizationStatus.CALIBRATION,
+        QuantizationStatus.FROZEN,
+    ],
+)
+def test_set_linear_forward_quantized_with_input_activations(
+    mock_per_tensor_calibration, create_quantization_scheme, quantization_status
+):
+    """Test forward pass with input activation quantization"""
+    num_bits = 8
+    layer = Linear(4, 4)
+    layer.weight.data *= 10
+
+    quantization_scheme = create_quantization_scheme(
+        targets=["*"],
+        input_activations=QuantizationArgs(num_bits=num_bits, symmetric=True),
+    )
+
+    # initialize_module_for_quantization calls set_linear_forward_quantized
+    initialize_module_for_quantization(layer, quantization_scheme)
+    layer.quantization_status = quantization_status
+
+    # Calibrate input activations
+    input_tensor = torch.randn(2, 4)
+    mock_per_tensor_calibration(layer, "input", value=input_tensor)
+
+    # Forward pass should quantize inputs
+    output = layer(input_tensor)
+    assert output.shape == (2, 4)
+    # Output should be different from unquantized forward
+    unquantized_output = torch.nn.functional.linear(
+        input_tensor, layer.weight, layer.bias
+    )
+    assert not torch.allclose(output, unquantized_output, atol=1e-3)
+
+
+@pytest.mark.parametrize(
+    "quantization_status",
+    [
+        QuantizationStatus.INITIALIZED,
+        QuantizationStatus.CALIBRATION,
+    ],
+)
+def test_set_linear_forward_quantized_with_weight_quantization(
+    mock_per_tensor_calibration, create_quantization_scheme, quantization_status
+):
+    """Test forward pass with weight quantization (non-FROZEN status)"""
+    num_bits = 8
+    layer = Linear(4, 4)
+    layer.weight.data *= 10
+
+    quantization_scheme = create_quantization_scheme(
+        targets=["*"],
+        weights=QuantizationArgs(num_bits=num_bits, symmetric=True),
+    )
+
+    # initialize_module_for_quantization calls set_linear_forward_quantized
+    initialize_module_for_quantization(layer, quantization_scheme)
+    layer.quantization_status = quantization_status
+
+    # Calibrate weights
+    mock_per_tensor_calibration(layer, "weight", value=layer.weight.data)
+
+    # Forward pass should quantize weights
+    input_tensor = torch.randn(2, 4)
+    output = layer(input_tensor)
+    assert output.shape == (2, 4)
+
+
+def test_set_linear_forward_quantized_frozen_status(
+    mock_per_tensor_calibration, create_quantization_scheme
+):
+    """Test that weight quantization is skipped when status is FROZEN"""
+    num_bits = 8
+    layer = Linear(4, 4)
+    layer.weight.data *= 10
+
+    quantization_scheme = create_quantization_scheme(
+        targets=["*"],
+        weights=QuantizationArgs(num_bits=num_bits, symmetric=True),
+    )
+
+    # initialize_module_for_quantization calls set_linear_forward_quantized
+    initialize_module_for_quantization(layer, quantization_scheme)
+    layer.quantization_status = QuantizationStatus.FROZEN
+
+    # Calibrate weights
+    mock_per_tensor_calibration(layer, "weight", value=layer.weight.data)
+
+    # Forward pass should NOT quantize weights due to FROZEN status
+    input_tensor = torch.randn(2, 4)
+    output = layer(input_tensor)
+    expected_output = torch.nn.functional.linear(input_tensor, layer.weight, layer.bias)
+    assert torch.allclose(output, expected_output)
+
+
+def test_set_linear_forward_quantized_with_output_activations(
+    mock_per_tensor_calibration, create_quantization_scheme
+):
+    """Test forward pass with output activation quantization"""
+    num_bits = 8
+    layer = Linear(4, 4)
+    layer.weight.data *= 10
+
+    quantization_scheme = create_quantization_scheme(
+        targets=["*"],
+        output_activations=QuantizationArgs(num_bits=num_bits, symmetric=True),
+    )
+
+    # initialize_module_for_quantization calls set_linear_forward_quantized
+    initialize_module_for_quantization(layer, quantization_scheme)
+    layer.quantization_status = QuantizationStatus.CALIBRATION
+
+    # Need to calibrate output activations
+    input_tensor = torch.randn(2, 4)
+    output_sample = torch.nn.functional.linear(input_tensor, layer.weight, layer.bias)
+    mock_per_tensor_calibration(layer, "output", value=output_sample)
+
+    # Forward pass should quantize outputs
+    output = layer(input_tensor)
+    assert output.shape == (2, 4)
+
+
+def test_set_linear_forward_quantized_full_quantization(
+    mock_per_tensor_calibration, create_quantization_scheme
+):
+    """Test forward pass with input, weight, and output quantization enabled"""
+    num_bits = 8
+    layer = Linear(4, 4)
+    layer.weight.data *= 10
+
+    quantization_scheme = create_quantization_scheme(
+        targets=["*"],
+        input_activations=QuantizationArgs(num_bits=num_bits, symmetric=True),
+        weights=QuantizationArgs(num_bits=num_bits, symmetric=True),
+        output_activations=QuantizationArgs(num_bits=num_bits, symmetric=True),
+    )
+
+    # initialize_module_for_quantization calls set_linear_forward_quantized
+    initialize_module_for_quantization(layer, quantization_scheme)
+    layer.quantization_status = QuantizationStatus.CALIBRATION
+
+    # Calibrate all components
+    input_tensor = torch.randn(2, 4)
+    mock_per_tensor_calibration(layer, "weight", value=layer.weight.data)
+    mock_per_tensor_calibration(layer, "input", value=input_tensor)
+    output_sample = torch.nn.functional.linear(input_tensor, layer.weight, layer.bias)
+    mock_per_tensor_calibration(layer, "output", value=output_sample)
+
+    # Forward pass should quantize all components
+    output = layer(input_tensor)
+    assert output.shape == (2, 4)
+    # Should be significantly different from unquantized
+    unquantized_output = torch.nn.functional.linear(
+        input_tensor, layer.weight, layer.bias
+    )
+    assert not torch.allclose(output, unquantized_output, atol=1e-2)
+
+
 @pytest.mark.parametrize("quantization_status", ["initialized", "calibration"])
 def test_forward_quantize(
     mock_per_tensor_calibration, create_quantization_scheme, quantization_status
