@@ -78,7 +78,51 @@ def initialize_module_for_quantization(
         initialize_linear_qparams(module, scheme, force_zero_point)
 
     else:
-        raise ValueError(f"Quantization of module type {type(module)} is not supported")
+        # Support for other module types (e.g., Embedding) that have a weight attribute
+        _LOGGER.warning(f"Attempting to quantize module of type {type(module)}")
+
+        # use weight to determine observed shapes and dtype
+        if not hasattr(module, "weight"):
+            # Note that a weight is required for both weight and activation
+            # quantization in order to know the dtype of activation scales
+            _LOGGER.warning(
+                f"module type {type(module)} targeted for quantization but "
+                f"has no attribute weight, skipping quantization for {type(module)}"
+            )
+            return
+
+        weight = module.weight
+        assert isinstance(weight, torch.Tensor)
+
+        if scheme.input_activations is not None:
+            initialize_qparams(
+                module,
+                "input",
+                scheme.input_activations,
+                observed_shape=weight.shape[-1:],
+                observed_dtype=weight.dtype,
+                force_zero_point=force_zero_point,
+            )
+
+        if scheme.weights is not None:
+            initialize_qparams(
+                module,
+                "weight",
+                scheme.weights,
+                observed_shape=weight.shape,
+                observed_dtype=weight.dtype,
+                force_zero_point=force_zero_point,
+            )
+
+        if scheme.output_activations is not None:
+            initialize_qparams(
+                module,
+                "output",
+                scheme.output_activations,
+                observed_shape=weight.shape[:-1],
+                observed_dtype=weight.dtype,
+                force_zero_point=force_zero_point,
+            )
 
     module.quantization_scheme = scheme
     module.quantization_status = QuantizationStatus.INITIALIZED
@@ -104,6 +148,9 @@ def initialize_linear_qparams(
     :param force_zero_point: whether to add a zero point qparam, regardless of whether
         the quantization is symmetric. Used during decompression
     """
+    # Avoid importing CompressedLinear at module level to prevent circular imports
+    from compressed_tensors.linear.compressed_linear import CompressedLinear
+
     with disable_onloading():
         weight = module.weight
 
@@ -137,8 +184,11 @@ def initialize_linear_qparams(
             force_zero_point=force_zero_point,
         )
 
-    with unwrap_offload_forward(module):
-        set_linear_forward_quantized(module)
+    # CompressedLinear has its own forward method that handles decompression
+    # Don't override it with the quantized forward
+    if not isinstance(module, CompressedLinear):
+        with unwrap_offload_forward(module):
+            set_linear_forward_quantized(module)
 
 
 def initialize_qparams(

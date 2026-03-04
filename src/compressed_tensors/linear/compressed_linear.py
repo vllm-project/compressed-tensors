@@ -79,8 +79,11 @@ class CompressedLinear(Linear):
 
     def forward(self, input: Tensor) -> Tensor:
         """
-        Decompresses the weight, then runs the wrapped forward pass
+        Decompresses the weight, then runs the quantized forward pass
         """
+        # Import here to avoid circular dependency
+        from compressed_tensors.quantization.lifecycle.forward import forward_quantize
+
         if self.quantization_status == QuantizationStatus.COMPRESSED:
             weight_data = self.compressor.decompress_module(self)
             param = Parameter(weight_data, requires_grad=False)
@@ -88,4 +91,28 @@ class CompressedLinear(Linear):
 
             self.quantization_status = QuantizationStatus.FROZEN
 
-        return linear(input, self.weight, self.bias)
+        # Apply quantization if enabled
+        scheme = getattr(self, "quantization_scheme", None)
+        status = getattr(self, "quantization_status", None)
+        enabled = (
+            getattr(self, "quantization_enabled", True)
+            and scheme is not None
+            and status is not None
+        )
+        weight = self.weight
+        bias = self.bias
+
+        if enabled:
+            if scheme.input_activations is not None:
+                input = forward_quantize(self, input, "input", scheme.input_activations)
+
+            # Don't quantize weight for FROZEN status (already quantized during compression)
+            if scheme.weights is not None and status is not QuantizationStatus.FROZEN:
+                weight = forward_quantize(self, weight, "weight", scheme.weights)
+
+        output = linear(input, weight, bias)
+
+        if enabled and scheme.output_activations is not None:
+            output = forward_quantize(self, output, "output", scheme.output_activations)
+
+        return output
