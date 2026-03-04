@@ -25,7 +25,7 @@ __all__ = [
     "quantize",
     "dequantize",
     "fake_quantize",
-    "wrap_module_forward_quantized",
+    "set_linear_forward_quantized",
     "forward_quantize",
 ]
 
@@ -335,60 +335,39 @@ def _process_quantization(
     return output
 
 
-def wrap_module_forward_quantized(module: Module, scheme: QuantizationScheme):
-    # expects a module already initialized and injected with the parameters in
-    # initialize_module_for_quantization
-    if hasattr(module.forward, "__func__"):
-        forward_func_orig = module.forward.__func__
-    else:
-        forward_func_orig = module.forward.func
+def set_linear_forward_quantized(module: torch.nn.Linear):
+    """
+    Replace a linear module's forward function with one that performs on-the-fly QDQ
 
-    @wraps(forward_func_orig)  # ensures docstring, names, etc are propagated
-    def wrapped_forward(self, *args, **kwargs):
-        if not getattr(self, "quantization_enabled", True):
-            # quantization is disabled on forward passes, return baseline
-            # forward call
-            return forward_func_orig.__get__(self, self.__class__)(*args, **kwargs)
+    :param module: linear module whose forward function will be replaced
+    """
 
-        input_ = args[0]
-
-        compressed = self.quantization_status == QuantizationStatus.COMPRESSED
-
-        if scheme.input_activations is not None:
-            # prehook should calibrate activations before forward call
-            input_ = forward_quantize(self, input_, "input", scheme.input_activations)
-
-        if scheme.weights is not None and not compressed:
-            # calibrate and (fake) quantize weights when applicable
-            unquantized_weight = self.weight.data.clone()
-            self.weight.data = forward_quantize(
-                self, self.weight, "weight", scheme.weights
-            )
-
-        # perform wrapped forward call
-        output = forward_func_orig.__get__(self, self.__class__)(
-            input_, *args[1:], **kwargs
+    @wraps(module.forward)
+    def quantized_forward(self: torch.nn.Linear, input: torch.Tensor) -> torch.Tensor:
+        scheme: QuantizationScheme | None = getattr(self, "quantization_scheme", None)
+        status: QuantizationStatus | None = getattr(self, "quantization_status", None)
+        enabled: bool = (
+            getattr(self, "quantization_enabled", True)
+            and scheme is not None
+            and status is not None
         )
+        weight = self.weight
+        bias = self.bias
 
-        # restore back to unquantized_value
-        if scheme.weights is not None and not compressed:
-            self.weight.data = unquantized_weight
+        if enabled:
+            if scheme.input_activations is not None:
+                input = forward_quantize(self, input, "input", scheme.input_activations)
 
-        if scheme.output_activations is not None:
-            # forward-hook should calibrate/forward_quantize
-            if (
-                self.quantization_status == QuantizationStatus.CALIBRATION
-                and not scheme.output_activations.dynamic
-            ):
-                return output
+            if scheme.weights is not None and status is not QuantizationStatus.FROZEN:
+                weight = forward_quantize(self, weight, "weight", scheme.weights)
 
+        output = torch.nn.functional.linear(input, weight, bias)
+
+        if enabled and scheme.output_activations is not None:
             output = forward_quantize(self, output, "output", scheme.output_activations)
         return output
 
-    # bind wrapped forward to module class so reference to `self` is correct
-    bound_wrapped_forward = wrapped_forward.__get__(module, module.__class__)
-    # set forward to wrapped forward
-    setattr(module, "forward", bound_wrapped_forward)
+    module.forward = quantized_forward.__get__(module)
 
 
 def forward_quantize(

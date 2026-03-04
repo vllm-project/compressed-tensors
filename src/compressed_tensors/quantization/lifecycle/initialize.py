@@ -11,7 +11,7 @@ from compressed_tensors.modeling import (
     QuantizedAttentionImpl,
     QuantizedKVCache,
 )
-from compressed_tensors.offload import unwrap_offload_forward
+from compressed_tensors.offload import disable_onloading, unwrap_offload_forward
 from compressed_tensors.quantization import (
     ActivationOrdering,
     DynamicType,
@@ -22,7 +22,7 @@ from compressed_tensors.quantization import (
     QuantizationStrategy,
 )
 from compressed_tensors.quantization.lifecycle.forward import (
-    wrap_module_forward_quantized,
+    set_linear_forward_quantized,
 )
 from compressed_tensors.quantization.utils import strategy_cdiv
 from compressed_tensors.utils import (
@@ -39,6 +39,7 @@ __all__ = [
     "is_attention_module",
     "initialize_qparams",
     "initialize_attn_qparams",
+    "initialize_linear_qparams",
 ]
 
 
@@ -71,60 +72,13 @@ def initialize_module_for_quantization(
     QuantizationMetadata.clear_all_qparams(module)
 
     if is_attention_module(module):
-        # quantized actions based on calltime status
         initialize_attn_qparams(module, scheme, force_zero_point)
 
+    elif isinstance(module, torch.nn.Linear):
+        initialize_linear_qparams(module, scheme, force_zero_point)
+
     else:
-        if not isinstance(module, torch.nn.Linear):
-            _LOGGER.warning(f"Attempting to quantize module of type {type(module)}")
-
-        # use weight to determine observed shapes and dtype
-        if hasattr(module, "weight"):
-            weight = module.weight
-            assert isinstance(weight, torch.Tensor)
-        else:
-            # Note that a weight is required for both weight and activation
-            # quantization in order to know the dtype of activation scales
-            _LOGGER.warning(
-                f"module type {type(module)} targeted for quantization but "
-                f"has no attribute weight, skipping quantization for {type(module)}"
-            )
-            return
-
-        if scheme.input_activations is not None:
-            initialize_qparams(
-                module,
-                "input",
-                scheme.input_activations,
-                observed_shape=weight.shape[-1:],
-                observed_dtype=weight.dtype,
-                force_zero_point=force_zero_point,
-            )
-
-        if scheme.weights is not None:
-            initialize_qparams(
-                module,
-                "weight",
-                scheme.weights,
-                observed_shape=weight.shape,
-                observed_dtype=weight.dtype,
-                force_zero_point=force_zero_point,
-            )
-
-        if scheme.output_activations is not None:
-            initialize_qparams(
-                module,
-                "output",
-                scheme.output_activations,
-                observed_shape=weight.shape[:-1],
-                observed_dtype=weight.dtype,
-                force_zero_point=force_zero_point,
-            )
-
-        with unwrap_offload_forward(module):
-            # wrap forward call of module to perform
-            # quantized actions based on calltime status
-            wrap_module_forward_quantized(module, scheme)
+        raise ValueError(f"Quantization of module type {type(module)} is not supported")
 
     module.quantization_scheme = scheme
     module.quantization_status = QuantizationStatus.INITIALIZED
@@ -137,6 +91,54 @@ def is_attention_module(module: Module):
         or hasattr(module, "qkv_proj")
         or hasattr(module, "kv_b_proj")
     )
+
+
+def initialize_linear_qparams(
+    module: torch.nn.Linear, scheme: QuantizationScheme, force_zero_point: bool = True
+):
+    """
+    Initialize quantization parameters for a linear module
+
+    :param module: linear module to register qparams to
+    :param scheme: quantization scheme being applied
+    :param force_zero_point: whether to add a zero point qparam, regardless of whether
+        the quantization is symmetric. Used during decompression
+    """
+    with disable_onloading():
+        weight = module.weight
+
+    if scheme.input_activations is not None:
+        initialize_qparams(
+            module,
+            "input",
+            scheme.input_activations,
+            observed_shape=weight.shape[-1:],
+            observed_dtype=weight.dtype,
+            force_zero_point=force_zero_point,
+        )
+
+    if scheme.weights is not None:
+        initialize_qparams(
+            module,
+            "weight",
+            scheme.weights,
+            observed_shape=weight.shape,
+            observed_dtype=weight.dtype,
+            force_zero_point=force_zero_point,
+        )
+
+    if scheme.output_activations is not None:
+        initialize_qparams(
+            module,
+            "output",
+            scheme.output_activations,
+            observed_shape=weight.shape[:-1],
+            observed_dtype=weight.dtype,
+            force_zero_point=force_zero_point,
+        )
+
+    with unwrap_offload_forward(module):
+        set_linear_forward_quantized(module)
 
 
 def initialize_qparams(

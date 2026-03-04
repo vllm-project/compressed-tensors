@@ -9,7 +9,7 @@ from compressed_tensors.quantization.lifecycle.forward import (
     _process_quantization,
     fake_quantize,
     forward_quantize,
-    wrap_module_forward_quantized,
+    set_linear_forward_quantized,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
@@ -28,20 +28,12 @@ def make_dummy_g_idx(columns: int, group_size: int) -> torch.Tensor:
     return torch.tensor([index // group_size for index in range(columns)])[perm]
 
 
-def test_wrap_module_forward_quantized(create_quantization_scheme):
-    num_bits = 8
-    quantization_scheme = create_quantization_scheme(
-        targets=["*"],
-        weights=QuantizationArgs(num_bits=num_bits, symmetric=True),
-        input_activations=QuantizationArgs(num_bits=num_bits, symmetric=False),
-    )
+def test_set_linear_forward_quantized():
     layer = Linear(4, 4)
-
     func_forward = layer.forward.__func__
 
     # check that the forward call is overwritten
-    wrap_module_forward_quantized(layer, quantization_scheme)
-
+    set_linear_forward_quantized(layer)
     assert not func_forward == layer.forward.__func__
 
 
