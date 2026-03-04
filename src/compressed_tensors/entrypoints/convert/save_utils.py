@@ -6,7 +6,11 @@ import os
 
 from compressed_tensors import __version__ as ct_version
 from compressed_tensors.base import COMPRESSION_VERSION_NAME, QUANTIZATION_CONFIG_NAME
-from compressed_tensors.entrypoints.convert import Converter, find_file_path
+from compressed_tensors.entrypoints.convert import (
+    Converter,
+    find_config_path,
+    find_safetensors_index_path,
+)
 from loguru import logger
 from transformers.file_utils import CONFIG_NAME
 
@@ -29,7 +33,7 @@ def update_config(
     quant_config_data[COMPRESSION_VERSION_NAME] = ct_version
 
     # write results to config.json or params.json file
-    config_file_path = find_file_path(save_directory, (CONFIG_NAME, "params.json"))
+    config_file_path = find_config_path(save_directory)
     if config_file_path is not None:
         with open(config_file_path, "r") as file:
             config_data = json.load(file)
@@ -51,7 +55,7 @@ def update_safetensors_index(
     total_size: int,
     weight_map: dict[str, str],
 ):
-    file_path = find_file_path(save_directory, "safetensors.index.json")
+    file_path = find_safetensors_index_path(save_directory)
     if file_path is None:
         return
 

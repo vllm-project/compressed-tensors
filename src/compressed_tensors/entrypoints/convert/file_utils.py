@@ -4,10 +4,16 @@
 import os
 
 from huggingface_hub import list_repo_files
+from transformers.file_utils import CONFIG_NAME
 from transformers.utils.hub import cached_file
 
 
-__all__ = ["get_checkpoint_files", "is_weights_file", "find_file_path"]
+__all__ = [
+    "get_checkpoint_files",
+    "is_weights_file",
+    "find_config_path",
+    "find_safetensors_index_path",
+]
 
 
 def is_weights_file(file_name: str) -> bool:
@@ -48,14 +54,17 @@ def _walk_file_paths(root_dir: str, ignore: str | None = None) -> list[str]:
     return all_files
 
 
-def find_file_path(
-    save_directory: str | os.PathLike, file_names: str | list[str]
-) -> str | None:
-    if isinstance(file_names, str):
-        file_names = [file_names]
+def find_safetensors_index_path(save_directory: str | os.PathLike) -> str | None:
+    for file_name in os.listdir(save_directory):
+        if file_name.endswith("safetensors.index.json"):
+            return os.path.join(save_directory, file_name)
 
-    for file_name in file_names:
-        if os.path.exists(file_path := os.path.join(save_directory, file_name)):
-            return file_path
+    return None
+
+
+def find_config_path(save_directory: str | os.PathLike) -> str | None:
+    for file_name in os.listdir(save_directory):
+        if file_name in (CONFIG_NAME, "params.json"):
+            return os.path.join(save_directory, file_name)
 
     return None

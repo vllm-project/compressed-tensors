@@ -3,6 +3,7 @@
 
 import os
 import shutil
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from compressed_tensors.entrypoints.convert.save_utils import (
 from loguru import logger
 
 
-__all__ = ["convert_checkpoint"]
+__all__ = ["convert_checkpoint", "exec_jobs"]
 
 
 def convert_checkpoint(
@@ -66,25 +67,37 @@ def convert_checkpoint(
             logger.info(f"Copying {file_path} {save_path}")
             shutil.copyfile(resolved_path, save_path)
 
-    with ThreadPoolExecutor(max_workers) as executor:
-        # 1. validate quantizable tensors fail fast before long-running quantization
-        futures = [executor.submit(*job) for job in validate_jobs]
-        for future in tqdm.tqdm(
-            as_completed(futures), total=len(futures), desc="Validating"
-        ):
-            future.result()
+    # 1. validate quantizable tensors fail fast before long-running quantization
+    exec_jobs(validate_jobs, max_workers, desc="Validating")
 
-        # 2-5. quantize and compress weights
-        total_size = 0
-        weight_map = dict()
-        futures = [executor.submit(*job) for job in convert_jobs]
-        for future in tqdm.tqdm(
-            as_completed(futures), total=len(futures), desc="Converting"
-        ):
-            _total_size, _weight_map = future.result()
-            total_size += _total_size
-            weight_map.update(_weight_map)
+    # 2-5. quantize and compress weights
+    total_size = 0
+    weight_map = dict()
+    convert_results = exec_jobs(convert_jobs, max_workers, desc="Converting")
+    for _total_size, _weight_map in convert_results:
+        total_size += _total_size
+        weight_map.update(_weight_map)
 
     # 5. update config and safetensors index
     update_config(save_directory, converter)
     update_safetensors_index(save_directory, total_size, weight_map)
+
+
+def exec_jobs(
+    jobs: list[tuple[Callable, ...]], max_workers: int = 1, desc: str = "Executing Jobs"
+) -> list:
+    """
+    Execute jobs in parallel, using ThreadPoolExecutor
+
+    :param jobs: list of tuples, the first entry of which is the callable,
+        and the remaining elements are the inputs args to the callable
+    :param max_workers: number of workers to use
+    :param desc: tqdm description
+    """
+    results = []
+    with ThreadPoolExecutor(max_workers) as executor:
+        futures = [executor.submit(*job) for job in jobs]
+        for future in tqdm.tqdm(as_completed(futures), total=len(futures), desc=desc):
+            results.append(future.result())
+
+    return results
