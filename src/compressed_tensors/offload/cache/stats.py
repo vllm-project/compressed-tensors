@@ -53,12 +53,14 @@ class OperationStats:
         :param input_tensor: input tensor to the operation
         :param result_tensor: result tensor from the operation
         """
-        is_noop = input_tensor is result_tensor
+        if input_tensor is None or result_tensor is None:
+            return
 
         # Get device information
         src_device = self._get_device_str(input_tensor)
         dst_device = self._get_device_str(result_tensor)
         pair_stats = self.device_stats[(src_device, dst_device)]
+        is_noop = input_tensor is result_tensor
 
         # Track counts per device pair
         pair_stats.count += 1
