@@ -7,7 +7,7 @@ from compressed_tensors.entrypoints.convert import (
 )
 
 MODEL_ID = "qwen-community/Qwen3-4B-FP8"
-SAVE_DIR = MODEL_ID.rstrip("/").split("/")[-1]
+SAVE_DIR = MODEL_ID.rstrip("/").split("/")[-1].rstrip("-FP8")
 
 # Convert modelopt nvfp4 example to compressed-tensors format
 convert_checkpoint(
