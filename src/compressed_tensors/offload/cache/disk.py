@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
-import tempfile
 from typing import TYPE_CHECKING, Optional
 
 import torch
@@ -43,7 +42,7 @@ class DiskCache(OffloadCache):
                 "Must provide an `offload_dir` to perform disk offloading "
                 "(add `offload_folder` argument to `from_pretrained`)"
             )
-        self.offload_dir = offload_dir or tempfile.mkdtemp()
+        self.offload_dir = offload_dir
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
