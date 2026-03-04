@@ -41,7 +41,7 @@ def test_basic_tracking():
     assert OffloadStats.offload.noop_count == 0
 
     # Onload (should be tracked)
-    retrieved = cache["test"]
+    _ = cache["test"]
 
     assert OffloadStats.onload.count == 1
     assert OffloadStats.onload.bytes_moved == expected_bytes
@@ -88,10 +88,10 @@ def test_none_tensor_tracking():
     assert OffloadStats.offload.noop_count == 1
     assert OffloadStats.offload.bytes_moved == 0
 
-    # Retrieve None (note: __getitem__ returns early for None, so onload is not called)
-    retrieved = cache["none_test"]
+    # Retrieve None (note: __getitem__ returns early for None)
+    _ = cache["none_test"]
 
-    # Onload is not tracked because __getitem__ returns None early without calling onload()
+    # Onload not tracked: __getitem__ returns None without onload()
     assert OffloadStats.onload.count == 0
     assert OffloadStats.onload.noop_count == 0
     assert OffloadStats.onload.bytes_moved == 0
@@ -274,7 +274,7 @@ def test_disk_cache_tracking():
         assert OffloadStats.offload.bytes_moved == expected_bytes
 
         # Onload the tensor
-        retrieved = cache["test"]
+        _ = cache["test"]
 
         assert OffloadStats.onload.count == 1
         assert OffloadStats.onload.bytes_moved == expected_bytes
@@ -323,7 +323,7 @@ def test_device_tracking():
     assert offload_stats.noop_bytes == 0
 
     # Onload the tensor
-    retrieved = cache["test"]
+    _ = cache["test"]
 
     # Check onload device movement
     assert ("cpu", tensor_device_str) in OffloadStats.onload.device_stats

@@ -23,12 +23,24 @@ class DevicePairStats:
 class OperationStats:
     """Statistics for a single operation type (onload, offload, or update)"""
 
-    count: int = 0
-    bytes_moved: int = 0
-    noop_count: int = 0
     device_stats: defaultdict[tuple[str, str], DevicePairStats] = field(
         default_factory=lambda: defaultdict(DevicePairStats)
     )
+
+    @property
+    def count(self) -> int:
+        """Total number of operations across all device pairs"""
+        return sum(stats.count for stats in self.device_stats.values())
+
+    @property
+    def bytes_moved(self) -> int:
+        """Total bytes moved across all device pairs (excluding no-ops)"""
+        return sum(stats.bytes_moved for stats in self.device_stats.values())
+
+    @property
+    def noop_count(self) -> int:
+        """Total number of no-op operations across all device pairs"""
+        return sum(stats.noop_count for stats in self.device_stats.values())
 
     def record(
         self,
@@ -48,20 +60,17 @@ class OperationStats:
         dst_device = self._get_device_str(result_tensor)
         pair_stats = self.device_stats[(src_device, dst_device)]
 
-        # track counts (both top-level and per-device-pair)
-        self.count += 1
+        # Track counts per device pair
         pair_stats.count += 1
         if is_noop:
-            self.noop_count += 1
             pair_stats.noop_count += 1
 
-        # track bytes (both top-level and per-device-pair)
+        # Track bytes per device pair
         if result_tensor is not None:
             bytes_transferred = result_tensor.element_size() * result_tensor.numel()
             if is_noop:
                 pair_stats.noop_bytes += bytes_transferred
             else:
-                self.bytes_moved += bytes_transferred
                 pair_stats.bytes_moved += bytes_transferred
 
     @staticmethod
@@ -332,7 +341,7 @@ class OffloadStats:
         @functools.wraps(func)
         def wrapper(self, offloaded: torch.Tensor, data: torch.Tensor | None) -> Any:
             result = func(self, offloaded, data)
-            # For updates, the input is the new data and the result is the offloaded tensor
+            # For updates, input is new data, result is offloaded tensor
             if cls._enabled:
                 cls.update.record(input_tensor=data, result_tensor=offloaded)
             return result
