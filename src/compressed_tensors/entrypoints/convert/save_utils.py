@@ -12,7 +12,6 @@ from compressed_tensors.entrypoints.convert import (
     find_safetensors_index_path,
 )
 from loguru import logger
-from transformers.file_utils import CONFIG_NAME
 
 
 __all__ = ["update_config", "update_safetensors_index"]
