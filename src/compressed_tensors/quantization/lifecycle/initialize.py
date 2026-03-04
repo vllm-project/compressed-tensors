@@ -21,9 +21,7 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
     QuantizationStrategy,
 )
-from compressed_tensors.quantization.lifecycle.forward import (
-    set_linear_forward_quantized,
-)
+from compressed_tensors.quantization.lifecycle.forward import set_forward_quantized
 from compressed_tensors.quantization.utils import strategy_cdiv
 from compressed_tensors.utils import (
     get_execution_device,
@@ -39,7 +37,6 @@ __all__ = [
     "is_attention_module",
     "initialize_qparams",
     "initialize_attn_qparams",
-    "initialize_linear_qparams",
 ]
 
 
@@ -65,6 +62,8 @@ def initialize_module_for_quantization(
     :param force_zero_point: whether to force initialization of a zero point for
         symmetric quantization
     """
+    from compressed_tensors.linear.compressed_linear import CompressedLinear  # circ dep
+
     scheme = scheme or getattr(module, "quantization_scheme", None)
     if scheme is None:
         return
@@ -74,25 +73,9 @@ def initialize_module_for_quantization(
     if is_attention_module(module):
         initialize_attn_qparams(module, scheme, force_zero_point)
 
-    elif isinstance(module, torch.nn.Linear):
-        initialize_linear_qparams(module, scheme, force_zero_point)
-
-    else:
-        # Support for other module types (e.g., Embedding) that have a weight attribute
-        _LOGGER.warning(f"Attempting to quantize module of type {type(module)}")
-
-        # use weight to determine observed shapes and dtype
-        if not hasattr(module, "weight"):
-            # Note that a weight is required for both weight and activation
-            # quantization in order to know the dtype of activation scales
-            _LOGGER.warning(
-                f"module type {type(module)} targeted for quantization but "
-                f"has no attribute weight, skipping quantization for {type(module)}"
-            )
-            return
-
-        weight = module.weight
-        assert isinstance(weight, torch.Tensor)
+    elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+        with disable_onloading():
+            weight = module.weight
 
         if scheme.input_activations is not None:
             initialize_qparams(
@@ -124,6 +107,15 @@ def initialize_module_for_quantization(
                 force_zero_point=force_zero_point,
             )
 
+        # CompressedLinear has its own forward method that handles decompression
+        # Don't override it with the quantized forward
+        if not isinstance(module, CompressedLinear):
+            with unwrap_offload_forward(module):
+                set_forward_quantized(module)
+
+    else:
+        raise ValueError(f"Quantization of module type {type(module)} is not supported")
+
     module.quantization_scheme = scheme
     module.quantization_status = QuantizationStatus.INITIALIZED
 
@@ -135,60 +127,6 @@ def is_attention_module(module: Module):
         or hasattr(module, "qkv_proj")
         or hasattr(module, "kv_b_proj")
     )
-
-
-def initialize_linear_qparams(
-    module: torch.nn.Linear, scheme: QuantizationScheme, force_zero_point: bool = True
-):
-    """
-    Initialize quantization parameters for a linear module
-
-    :param module: linear module to register qparams to
-    :param scheme: quantization scheme being applied
-    :param force_zero_point: whether to add a zero point qparam, regardless of whether
-        the quantization is symmetric. Used during decompression
-    """
-    # Avoid importing CompressedLinear at module level to prevent circular imports
-    from compressed_tensors.linear.compressed_linear import CompressedLinear
-
-    with disable_onloading():
-        weight = module.weight
-
-    if scheme.input_activations is not None:
-        initialize_qparams(
-            module,
-            "input",
-            scheme.input_activations,
-            observed_shape=weight.shape[-1:],
-            observed_dtype=weight.dtype,
-            force_zero_point=force_zero_point,
-        )
-
-    if scheme.weights is not None:
-        initialize_qparams(
-            module,
-            "weight",
-            scheme.weights,
-            observed_shape=weight.shape,
-            observed_dtype=weight.dtype,
-            force_zero_point=force_zero_point,
-        )
-
-    if scheme.output_activations is not None:
-        initialize_qparams(
-            module,
-            "output",
-            scheme.output_activations,
-            observed_shape=weight.shape[:-1],
-            observed_dtype=weight.dtype,
-            force_zero_point=force_zero_point,
-        )
-
-    # CompressedLinear has its own forward method that handles decompression
-    # Don't override it with the quantized forward
-    if not isinstance(module, CompressedLinear):
-        with unwrap_offload_forward(module):
-            set_linear_forward_quantized(module)
 
 
 def initialize_qparams(

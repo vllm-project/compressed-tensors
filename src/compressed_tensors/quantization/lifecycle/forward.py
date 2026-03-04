@@ -5,6 +5,7 @@ from functools import wraps
 from math import ceil
 
 import torch
+from compressed_tensors.offload import disable_onloading
 from compressed_tensors.quantization.quant_args import (
     DynamicType,
     QuantizationArgs,
@@ -25,7 +26,7 @@ __all__ = [
     "quantize",
     "dequantize",
     "fake_quantize",
-    "set_linear_forward_quantized",
+    "set_forward_quantized",
     "forward_quantize",
 ]
 
@@ -335,39 +336,81 @@ def _process_quantization(
     return output
 
 
-def set_linear_forward_quantized(module: torch.nn.Linear):
+def quantized_forward(
+    self: torch.nn.Linear | torch.nn.Embedding, input: torch.Tensor
+) -> torch.Tensor:
     """
-    Replace a linear module's forward function with one that performs on-the-fly QDQ
+    Quantized forward pass of a linear or embedding module
 
-    :param module: linear module whose forward function will be replaced
+    :param self: instance of linear or embedding module
+    :param input: input activations to this module
+    :return: linear or embedding output
     """
+    scheme: QuantizationScheme | None = getattr(self, "quantization_scheme", None)
+    status: QuantizationStatus | None = getattr(self, "quantization_status", None)
+    enabled: bool = (
+        getattr(self, "quantization_enabled", True)
+        and scheme is not None
+        and status is not None
+    )
 
-    @wraps(module.forward.__func__)
-    def quantized_forward(self: torch.nn.Linear, input: torch.Tensor) -> torch.Tensor:
-        scheme: QuantizationScheme | None = getattr(self, "quantization_scheme", None)
-        status: QuantizationStatus | None = getattr(self, "quantization_status", None)
-        enabled: bool = (
-            getattr(self, "quantization_enabled", True)
-            and scheme is not None
-            and status is not None
-        )
-        weight = self.weight
-        bias = self.bias
+    # Process input activations if needed
+    if enabled and scheme.input_activations is not None:
+        input = forward_quantize(self, input, "input", scheme.input_activations)
 
-        if enabled:
-            if scheme.input_activations is not None:
-                input = forward_quantize(self, input, "input", scheme.input_activations)
+    # Process weight quantization if needed
+    if (
+        enabled
+        and scheme.weights is not None
+        and status is not QuantizationStatus.FROZEN
+    ):
+        # Temporarily replace weight data with quantized version
+        with disable_onloading():
+            original_weight_data = self.weight.data
+            quantized_weight = forward_quantize(
+                self, self.weight, "weight", scheme.weights
+            )
+            self.weight.data = quantized_weight
 
-            if scheme.weights is not None and status is not QuantizationStatus.FROZEN:
-                weight = forward_quantize(self, weight, "weight", scheme.weights)
+        try:
+            output = self.__class__.forward(self, input)
+        finally:
+            # Restore original weight data
+            with disable_onloading():
+                self.weight.data = original_weight_data
+    else:
+        # No weight quantization needed
+        with disable_onloading():
+            output = self.__class__.forward(self, input)
 
-        output = torch.nn.functional.linear(input, weight, bias)
+    # Process output activations if needed
+    if enabled and scheme.output_activations is not None:
+        output = forward_quantize(self, output, "output", scheme.output_activations)
 
-        if enabled and scheme.output_activations is not None:
-            output = forward_quantize(self, output, "output", scheme.output_activations)
-        return output
+    return output
 
-    module.forward = quantized_forward.__get__(module)
+
+def set_forward_quantized(module: torch.nn.Linear | torch.nn.Embedding):
+    """
+    Replace a linear or embedding module's forward function with one that
+    performs on-the-fly QDQ
+
+    :param module: linear or embedding module whose forward function will be
+        replaced
+    """
+    # Create a wrapper that preserves the original forward's metadata
+    # We need to wrap the function before binding to avoid Python 3.13
+    # compatibility issues
+    original_forward = module.forward.__func__
+
+    def wrapped_forward(self, input):
+        return quantized_forward(self, input)
+
+    # Copy metadata from original forward to the wrapper
+    wrapped_forward = wraps(original_forward)(wrapped_forward)
+
+    # Bind the wrapped function to the module instance
+    module.forward = wrapped_forward.__get__(module)
 
 
 def forward_quantize(

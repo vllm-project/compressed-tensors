@@ -9,7 +9,7 @@ from compressed_tensors.quantization.lifecycle.forward import (
     _process_quantization,
     fake_quantize,
     forward_quantize,
-    set_linear_forward_quantized,
+    set_forward_quantized,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
@@ -20,7 +20,7 @@ from compressed_tensors.quantization.quant_args import (
 )
 from compressed_tensors.quantization.quant_config import QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import calculate_range
-from torch.nn import Linear
+from torch.nn import Embedding, Linear
 
 
 def make_dummy_g_idx(columns: int, group_size: int) -> torch.Tensor:
@@ -28,19 +28,75 @@ def make_dummy_g_idx(columns: int, group_size: int) -> torch.Tensor:
     return torch.tensor([index // group_size for index in range(columns)])[perm]
 
 
-def test_set_linear_forward_quantized():
+def test_set_forward_quantized():
     layer = Linear(4, 4)
     func_forward = layer.forward.__func__
 
     # check that the forward call is overwritten
-    set_linear_forward_quantized(layer)
+    set_forward_quantized(layer)
     assert not func_forward == layer.forward.__func__
 
 
-def test_set_linear_forward_quantized_no_quantization():
+def test_set_forward_quantized_embedding():
+    """Test that set_forward_quantized works with Embedding modules"""
+    embedding = Embedding(num_embeddings=10, embedding_dim=4)
+    func_forward = embedding.forward.__func__
+
+    # check that the forward call is overwritten
+    set_forward_quantized(embedding)
+    assert not func_forward == embedding.forward.__func__
+
+
+def test_set_forward_quantized_embedding_no_quantization():
+    """
+    Test forward pass of Embedding when quantization is disabled or
+    scheme is not set
+    """
+    embedding = Embedding(num_embeddings=10, embedding_dim=4)
+    set_forward_quantized(embedding)
+
+    input_indices = torch.tensor([0, 1, 2, 3])
+    expected_output = torch.nn.functional.embedding(input_indices, embedding.weight)
+
+    # Without quantization scheme, should behave like normal embedding
+    output = embedding(input_indices)
+    assert torch.allclose(output, expected_output)
+
+
+def test_set_forward_quantized_embedding_with_weight_quantization(
+    mock_per_tensor_calibration, create_quantization_scheme
+):
+    """Test forward pass with weight quantization on Embedding module"""
+    num_bits = 8
+    embedding = Embedding(num_embeddings=10, embedding_dim=4)
+    embedding.weight.data *= 10
+
+    quantization_scheme = create_quantization_scheme(
+        targets=["*"],
+        weights=QuantizationArgs(num_bits=num_bits, symmetric=True),
+    )
+
+    # initialize_module_for_quantization calls set_forward_quantized
+    initialize_module_for_quantization(embedding, quantization_scheme)
+    embedding.quantization_status = QuantizationStatus.CALIBRATION
+
+    # Calibrate weights
+    mock_per_tensor_calibration(embedding, "weight", value=embedding.weight.data)
+
+    # Forward pass should quantize weights
+    input_indices = torch.tensor([0, 1, 2, 3])
+    output = embedding(input_indices)
+    assert output.shape == (4, 4)
+
+    # Output should be different from unquantized forward
+    unquantized_output = torch.nn.functional.embedding(input_indices, embedding.weight)
+    assert not torch.allclose(output, unquantized_output, atol=1e-3)
+
+
+def test_set_forward_quantized_no_quantization():
     """Test forward pass when quantization is disabled or scheme is not set"""
     layer = Linear(4, 4)
-    set_linear_forward_quantized(layer)
+    set_forward_quantized(layer)
 
     input_tensor = torch.randn(2, 4)
     expected_output = torch.nn.functional.linear(input_tensor, layer.weight, layer.bias)
@@ -50,10 +106,10 @@ def test_set_linear_forward_quantized_no_quantization():
     assert torch.allclose(output, expected_output)
 
 
-def test_set_linear_forward_quantized_disabled():
+def test_set_forward_quantized_disabled():
     """Test forward pass when quantization_enabled is False"""
     layer = Linear(4, 4)
-    set_linear_forward_quantized(layer)
+    set_forward_quantized(layer)
 
     # Set up quantization but disable it
     layer.quantization_enabled = False
@@ -76,7 +132,7 @@ def test_set_linear_forward_quantized_disabled():
         QuantizationStatus.FROZEN,
     ],
 )
-def test_set_linear_forward_quantized_with_input_activations(
+def test_set_forward_quantized_with_input_activations(
     mock_per_tensor_calibration, create_quantization_scheme, quantization_status
 ):
     """Test forward pass with input activation quantization"""
@@ -89,7 +145,7 @@ def test_set_linear_forward_quantized_with_input_activations(
         input_activations=QuantizationArgs(num_bits=num_bits, symmetric=True),
     )
 
-    # initialize_module_for_quantization calls set_linear_forward_quantized
+    # initialize_module_for_quantization calls set_forward_quantized
     initialize_module_for_quantization(layer, quantization_scheme)
     layer.quantization_status = quantization_status
 
@@ -114,7 +170,7 @@ def test_set_linear_forward_quantized_with_input_activations(
         QuantizationStatus.CALIBRATION,
     ],
 )
-def test_set_linear_forward_quantized_with_weight_quantization(
+def test_set_forward_quantized_with_weight_quantization(
     mock_per_tensor_calibration, create_quantization_scheme, quantization_status
 ):
     """Test forward pass with weight quantization (non-FROZEN status)"""
@@ -127,7 +183,7 @@ def test_set_linear_forward_quantized_with_weight_quantization(
         weights=QuantizationArgs(num_bits=num_bits, symmetric=True),
     )
 
-    # initialize_module_for_quantization calls set_linear_forward_quantized
+    # initialize_module_for_quantization calls set_forward_quantized
     initialize_module_for_quantization(layer, quantization_scheme)
     layer.quantization_status = quantization_status
 
@@ -140,7 +196,7 @@ def test_set_linear_forward_quantized_with_weight_quantization(
     assert output.shape == (2, 4)
 
 
-def test_set_linear_forward_quantized_frozen_status(
+def test_set_forward_quantized_frozen_status(
     mock_per_tensor_calibration, create_quantization_scheme
 ):
     """Test that weight quantization is skipped when status is FROZEN"""
@@ -153,7 +209,7 @@ def test_set_linear_forward_quantized_frozen_status(
         weights=QuantizationArgs(num_bits=num_bits, symmetric=True),
     )
 
-    # initialize_module_for_quantization calls set_linear_forward_quantized
+    # initialize_module_for_quantization calls set_forward_quantized
     initialize_module_for_quantization(layer, quantization_scheme)
     layer.quantization_status = QuantizationStatus.FROZEN
 
@@ -167,7 +223,7 @@ def test_set_linear_forward_quantized_frozen_status(
     assert torch.allclose(output, expected_output)
 
 
-def test_set_linear_forward_quantized_with_output_activations(
+def test_set_forward_quantized_with_output_activations(
     mock_per_tensor_calibration, create_quantization_scheme
 ):
     """Test forward pass with output activation quantization"""
@@ -180,7 +236,7 @@ def test_set_linear_forward_quantized_with_output_activations(
         output_activations=QuantizationArgs(num_bits=num_bits, symmetric=True),
     )
 
-    # initialize_module_for_quantization calls set_linear_forward_quantized
+    # initialize_module_for_quantization calls set_forward_quantized
     initialize_module_for_quantization(layer, quantization_scheme)
     layer.quantization_status = QuantizationStatus.CALIBRATION
 
@@ -194,7 +250,7 @@ def test_set_linear_forward_quantized_with_output_activations(
     assert output.shape == (2, 4)
 
 
-def test_set_linear_forward_quantized_full_quantization(
+def test_set_forward_quantized_full_quantization(
     mock_per_tensor_calibration, create_quantization_scheme
 ):
     """Test forward pass with input, weight, and output quantization enabled"""
@@ -209,7 +265,7 @@ def test_set_linear_forward_quantized_full_quantization(
         output_activations=QuantizationArgs(num_bits=num_bits, symmetric=True),
     )
 
-    # initialize_module_for_quantization calls set_linear_forward_quantized
+    # initialize_module_for_quantization calls set_forward_quantized
     initialize_module_for_quantization(layer, quantization_scheme)
     layer.quantization_status = QuantizationStatus.CALIBRATION
 
