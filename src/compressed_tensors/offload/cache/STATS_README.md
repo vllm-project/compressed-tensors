@@ -1,4 +1,4 @@
-# OffloadCache Statistics Tracking
+# Offload Statistics Tracking
 
 The `OffloadStats` class provides automatic tracking of device movement operations for all `OffloadCache` subclasses.
 
@@ -24,11 +24,11 @@ import torch
 OffloadStats.enable()
 
 # Check if stats are enabled
-print(f"Stats enabled: {OffloadStats.is_enabled()}")  # True
+print(f"Stats enabled: {OffloadStats.enabled}")  # True
 
 # Disable statistics collection when done
 OffloadStats.disable()
-print(f"Stats enabled: {OffloadStats.is_enabled()}")  # False
+print(f"Stats enabled: {OffloadStats.enabled}")  # False
 ```
 
 When statistics collection is disabled, operations are not tracked, reducing runtime overhead. This is the recommended state for production use unless you specifically need to analyze device movement.
@@ -103,7 +103,7 @@ print(OffloadStats.format_summary(unit="MB", show_devices=True))
 This will display both the overall statistics and a detailed breakdown by device pair:
 
 ```
-OffloadCache Statistics
+Offload Statistics
 ==================================================
 Operation       Count   No-ops   Data Moved
 --------------------------------------------------
@@ -149,7 +149,7 @@ print(OffloadStats.format_summary(unit="GB"))  # Gigabytes
 ### Example Output
 
 ```
-OffloadCache Statistics
+Offload Statistics
 ==================================================
 Operation        Count   No-ops   Data Moved
 --------------------------------------------------
