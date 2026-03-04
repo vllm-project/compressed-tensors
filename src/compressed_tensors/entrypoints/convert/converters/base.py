@@ -37,7 +37,7 @@ class Converter(Protocol):
         """
         pass
 
-    def create_config(self) -> QuantizationConfig:
+    def create_config(self) -> QuantizationConfig | None:
         """
         Create compressed-tensors QuantizationConfig so that it can be set in the
         new model checkpoint's config.json.
