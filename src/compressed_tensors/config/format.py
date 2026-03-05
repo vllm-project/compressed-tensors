@@ -24,6 +24,7 @@ COMPRESSION_FORMAT_PRIORITY: List[CompressionFormat] = [
     CompressionFormat.int_quantized,
     CompressionFormat.float_quantized,
     CompressionFormat.naive_quantized,
+    CompressionFormat.dense,
 ]
 
 
@@ -51,9 +52,9 @@ def infer_set_module_format(
     :param quantization_format: optional global format to override
         the per module formats
     """
-    from compressed_tensors.quantization import (  # avoid circular import
-        QuantizationScheme,
-    )
+    # avoid circular imports
+    from compressed_tensors.compressors import BaseCompressor
+    from compressed_tensors.quantization import QuantizationScheme
 
     formats = set()
 
@@ -61,8 +62,15 @@ def infer_set_module_format(
         if not is_module_quantized(module):
             continue
 
+        # infer format using priority list
         scheme: QuantizationScheme = module.quantization_scheme
-        format = _infer_format(name, module)
+        format = next(
+            (
+                fmt
+                for fmt in COMPRESSION_FORMAT_PRIORITY
+                if BaseCompressor.get_value_from_registry(fmt.value).match(module)
+            )
+        )
 
         # user provides a global override format
         if force_compression_format is not None:
@@ -85,21 +93,3 @@ def infer_set_module_format(
         formats.add(format)
 
     return list(formats)
-
-
-def _infer_format(name: str, module: torch.nn.Module) -> CompressionFormat:
-    from compressed_tensors.compressors import BaseCompressor  # circ dep
-
-    formats = [
-        format
-        for format in COMPRESSION_FORMAT_PRIORITY
-        if BaseCompressor.get_value_from_registry(format.value).match(module)
-    ]
-    if len(formats) < 1:
-        return CompressionFormat.dense
-    if len(formats) > 1:
-        logger.warning(
-            f"{name} can be compressed using mutliple formats. The module will be "
-            f"compressed with the first of {formats}"
-        )
-    return formats[0]

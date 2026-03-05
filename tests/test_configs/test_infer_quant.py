@@ -5,25 +5,20 @@ from collections import OrderedDict
 
 import pytest
 import torch
-from compressed_tensors.config.format import (
-    get_model_compression_formats,
-    infer_set_module_format,
-)
+from compressed_tensors.config.format import infer_set_module_format
 from compressed_tensors.quantization import preset_name_to_scheme
 
 
 @pytest.mark.parametrize(
-    "preset,sparsity_structure,expected_format",
+    "preset,expected_format",
     [
-        ["W8A8", "unstructured", "int-quantized"],
-        ["W8A16", "unstructured", "pack-quantized"],
-        ["W8A16", "2:4", "marlin-24"],
-        ["W4A16", "unstructured", "pack-quantized"],
-        ["W4A16", "2:4", "marlin-24"],
-        ["FP8", "unstructured", "float-quantized"],
+        ["W8A8", "int-quantized"],
+        ["W8A16", "pack-quantized"],
+        ["W4A16", "pack-quantized"],
+        ["FP8", "float-quantized"],
     ],
 )
-def test_infer_quant_format(preset, sparsity_structure, expected_format):
+def test_infer_quant_format(preset, expected_format):
     quant_scheme = preset_name_to_scheme(preset, targets=["Linear"])
 
     dummy_model = torch.nn.Sequential(
@@ -47,8 +42,8 @@ def test_infer_quant_format(preset, sparsity_structure, expected_format):
     )
 
     for _, module in dummy_model.named_modules():
-        module.quantization_scheme = quant_scheme
+        if isinstance(module, torch.nn.Linear):
+            module.quantization_scheme = quant_scheme
 
-    infer_set_module_format(dummy_model, sparsity_structure=sparsity_structure)
-    inferred_formats = get_model_compression_formats(dummy_model)
-    assert inferred_formats[0] == expected_format
+    inferred_formats = infer_set_module_format(dummy_model)
+    assert inferred_formats[0].value == expected_format

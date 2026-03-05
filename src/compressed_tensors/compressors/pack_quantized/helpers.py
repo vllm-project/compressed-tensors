@@ -1,6 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+"""
+Helper functions for packing and unpacking quantized weights into int32 format.
+
+These functions enable efficient storage of sub-8-bit quantized weights by packing
+multiple values into 32-bit integers.
+"""
+
 import math
 from typing import Literal
 
