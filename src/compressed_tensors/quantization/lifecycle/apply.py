@@ -5,7 +5,6 @@ from collections import OrderedDict
 from copy import deepcopy
 
 import torch
-from compressed_tensors.config import CompressionFormat
 from compressed_tensors.modeling import (
     initialize_hooked_attention,
     initialize_hooked_kv_cache,
@@ -21,7 +20,6 @@ from compressed_tensors.quantization.quant_config import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
-from compressed_tensors.utils.helpers import replace_module
 from compressed_tensors.utils.match import (
     is_narrow_match,
     match_named_modules,
@@ -107,8 +105,6 @@ def apply_quantization_config(
     :param run_compressed: Whether the model will be run in compressed mode or
         decompressed fully on load
     """
-    from compressed_tensors.linear.compressed_linear import CompressedLinear
-
     config = deepcopy(config)
     if config is None:  # see PR #180
         return dict()
@@ -140,32 +136,12 @@ def apply_quantization_config(
         # target matched - add layer and scheme to target list
         submodule.quantization_scheme = scheme
 
-        # replace with run compressed if applicable
-        # FUTURE: move this to model compressor
-        if (
-            run_compressed
-            and isinstance(submodule, torch.nn.Linear)
-            and config.format != CompressionFormat.dense.value
+        if is_attention_module(submodule) and is_narrow_match(
+            model, scheme.targets, name
         ):
-            # TODO: expand to more module types
-            compressed_linear = CompressedLinear.from_linear(
-                submodule,
-                quantization_scheme=scheme,
-                quantization_format=config.format,
-            )
-            replace_module(model, name, compressed_linear)
+            initialize_hooked_attention(model, submodule)
 
-        else:
-            if is_attention_module(submodule) and is_narrow_match(
-                model, scheme.targets, name
-            ):
-                initialize_hooked_attention(model, submodule)
-
-            initialize_module_for_quantization(
-                submodule,
-                force_zero_point=force_zero_point,
-            )
-
+        initialize_module_for_quantization(submodule, force_zero_point=force_zero_point)
         submodule.quantization_status = config.quantization_status
 
 

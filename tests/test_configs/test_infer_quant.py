@@ -6,7 +6,8 @@ from collections import OrderedDict
 import pytest
 import torch
 from compressed_tensors.config.format import (
-    infer_and_set_per_module_quantization_format,
+    get_model_compression_formats,
+    infer_set_module_format,
 )
 from compressed_tensors.quantization import preset_name_to_scheme
 
@@ -48,7 +49,6 @@ def test_infer_quant_format(preset, sparsity_structure, expected_format):
     for _, module in dummy_model.named_modules():
         module.quantization_scheme = quant_scheme
 
-    inferred_format = infer_and_set_per_module_quantization_format(
-        dummy_model, sparsity_structure=sparsity_structure
-    )
-    assert inferred_format[0] == expected_format
+    infer_set_module_format(dummy_model, sparsity_structure=sparsity_structure)
+    inferred_formats = get_model_compression_formats(dummy_model)
+    assert inferred_formats[0] == expected_format
