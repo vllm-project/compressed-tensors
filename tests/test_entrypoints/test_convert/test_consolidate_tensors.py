@@ -101,7 +101,7 @@ class TestConsolidateTensors:
 
     @pytest.mark.unit
     def test_consolidation_to_new_directory(self, temp_dir):
-        """Test consolidation to a new output directory"""
+        """Test consolidation to a new output directory with all files copied"""
         weight_map = {
             "model.layer1.weight": "model-00001-of-00002.safetensors",
             "model.layer1.bias": "model-00002-of-00002.safetensors",  # Split!
@@ -112,6 +112,12 @@ class TestConsolidateTensors:
         input_dir.mkdir()
 
         original_tensors = self._create_test_checkpoint(str(input_dir), weight_map, create_index=True)
+
+        # Create additional files that should be copied
+        config_file = input_dir / "config.json"
+        config_file.write_text('{"model_type": "test"}')
+        tokenizer_file = input_dir / "tokenizer.json"
+        tokenizer_file.write_text('{"version": "1.0"}')
 
         # Consolidate to new directory
         consolidate_tensors(input_dir, output_dir)
@@ -137,6 +143,12 @@ class TestConsolidateTensors:
         index_path = output_dir / "model.safetensors.index.json"
         assert index_path.exists()
 
+        # Verify all other files were copied
+        assert (output_dir / "config.json").exists()
+        assert (output_dir / "config.json").read_text() == '{"model_type": "test"}'
+        assert (output_dir / "tokenizer.json").exists()
+        assert (output_dir / "tokenizer.json").read_text() == '{"version": "1.0"}'
+
         # Verify tensor values are preserved
         assert torch.equal(
             file1_tensors["model.layer1.weight"],
@@ -146,6 +158,29 @@ class TestConsolidateTensors:
             file1_tensors["model.layer1.bias"],
             original_tensors["model-00002-of-00002.safetensors"]["model.layer1.bias"],
         )
+
+    @pytest.mark.unit
+    def test_consolidation_same_directory_explicit(self, temp_dir):
+        """Test that explicitly passing same directory as both args works as in-place"""
+        weight_map = {
+            "model.layer1.weight": "model-00001-of-00002.safetensors",
+            "model.layer1.bias": "model-00002-of-00002.safetensors",
+        }
+
+        self._create_test_checkpoint(temp_dir, weight_map, create_index=False)
+
+        # Pass same directory for both parameters
+        consolidate_tensors(temp_dir, temp_dir)
+
+        # Should work like in-place consolidation
+        file1_path = Path(temp_dir) / "model-00001-of-00002.safetensors"
+        file1_tensors = load_file(file1_path)
+        assert "model.layer1.weight" in file1_tensors
+        assert "model.layer1.bias" in file1_tensors
+
+        # Empty file should be removed
+        file2_path = Path(temp_dir) / "model-00002-of-00002.safetensors"
+        assert not file2_path.exists()
 
     @pytest.mark.unit
     def test_complex_module_names(self, temp_dir):

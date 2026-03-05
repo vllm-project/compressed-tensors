@@ -41,17 +41,18 @@ def consolidate_tensors(
     current file.
 
     :param model_stub: directory containing the input safetensors files
-    :param save_directory: directory to save consolidated files to. If None, consolidates
-        in-place by modifying model_stub directory
+    :param save_directory: directory to save consolidated files to. If None or same as
+        model_stub, consolidates in-place by modifying model_stub directory
     """
-    input_path = Path(model_stub)
+    input_path = Path(model_stub).resolve()
 
-    # If save_directory not provided, consolidate in-place
+    # If save_directory not provided or same as model_stub, consolidate in-place
     if save_directory is None:
         save_directory = model_stub
         in_place = True
     else:
-        in_place = False
+        save_path_resolved = Path(save_directory).resolve()
+        in_place = input_path == save_path_resolved
 
     save_path = Path(save_directory)
 
@@ -129,13 +130,13 @@ def consolidate_tensors(
         for tensor_name in current_tensors.keys():
             weight_map[tensor_name] = current_filename
 
-    # Write all files to save directory
+    # Write all safetensors files to save directory
     for filename, tensors in files_to_save.items():
         output_file = save_path / filename
         save_file(tensors, output_file)
         logger.info(f"Saved {filename} with {len(tensors)} tensors")
 
-    # Delete empty files when operating in-place
+    # Delete empty safetensors files when operating in-place
     if in_place:
         for filename in files_to_skip:
             file_path = save_path / filename
@@ -143,10 +144,14 @@ def consolidate_tensors(
                 file_path.unlink()
                 logger.info(f"Removed empty file {filename}")
 
-    # Copy non-safetensors files to save directory (if not in-place)
+    # Copy all non-safetensors files to save directory (if not in-place)
     if not in_place:
         for file_path in input_path.iterdir():
-            if file_path.is_file() and not file_path.name.endswith(".safetensors"):
+            if file_path.is_file():
+                # Skip safetensors files (already handled) and the index (will be updated)
+                if file_path.name.endswith(".safetensors"):
+                    continue
+
                 dest_path = save_path / file_path.name
                 shutil.copy2(file_path, dest_path)
                 logger.info(f"Copied {file_path.name} to save directory")
