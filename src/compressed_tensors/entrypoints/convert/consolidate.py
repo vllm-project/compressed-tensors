@@ -5,6 +5,7 @@ from pathlib import Path
 
 from compressed_tensors.entrypoints.convert.file_utils import (
     find_safetensors_index_path,
+    get_checkpoint_files,
 )
 from compressed_tensors.entrypoints.convert.save_utils import (
     update_safetensors_index,
@@ -29,7 +30,7 @@ def get_module_name(tensor_name: str) -> str:
 
 def consolidate_tensors(
     model_stub: str | os.PathLike,
-    save_directory: str | os.PathLike | None = None,
+    save_directory: str | os.PathLike,
 ):
     """
     Consolidate tensors from the same module into a single safetensors file.
@@ -40,28 +41,35 @@ def consolidate_tensors(
     module's tensors appear in the next file, and if so, moves them back to the
     current file.
 
-    :param model_stub: directory containing the input safetensors files
-    :param save_directory: directory to save consolidated files to. If None or same as
-        model_stub, consolidates in-place by modifying model_stub directory
+    :param model_stub: huggingface model hub ID or path to local directory containing
+        the input safetensors files
+    :param save_directory: directory to save consolidated files to. If None, consolidates
+        in-place (model_stub must be a local directory)
     """
-    input_path = Path(model_stub).resolve()
 
-    # If save_directory not provided or same as model_stub, consolidate in-place
-    if save_directory is None:
-        save_directory = model_stub
-        in_place = True
+    # Determine if in-place based on resolved paths
+    if os.path.exists(model_stub):
+        in_place = str(model_stub) == str(save_directory)
     else:
-        save_path_resolved = Path(save_directory).resolve()
-        in_place = input_path == save_path_resolved
+        in_place = False
+
+    # Get all checkpoint files (handles both local paths and HF hub)
+    model_files = get_checkpoint_files(model_stub)
 
     save_path = Path(save_directory)
 
     # Create save directory if it doesn't exist
     save_path.mkdir(parents=True, exist_ok=True)
 
-    # Find all safetensors files (excluding index file) in input directory
+    # Filter to safetensors files (excluding index) and sort by filename
     safetensors_files = sorted(
-        [f for f in input_path.glob("*.safetensors") if not f.name.endswith(".index.json")]
+        [
+            (file_path, resolved_path)
+            for file_path, resolved_path in model_files.items()
+            if file_path.endswith(".safetensors")
+            and not file_path.endswith(".index.json")
+        ],
+        key=lambda x: x[0],  # Sort by relative path
     )
 
     if not safetensors_files:
@@ -77,29 +85,29 @@ def consolidate_tensors(
 
     # Process files in pairs (current file, next file)
     for i in range(len(safetensors_files)):
-        current_file = safetensors_files[i]
-        current_filename = current_file.name
+        current_file_path, current_resolved_path = safetensors_files[i]
+        current_filename = os.path.basename(current_file_path)
 
         # Skip if file was marked for removal in a previous iteration
         if current_filename in files_to_skip:
             continue
 
-        # Load current file from input directory
-        current_tensors = load_file(current_file)
+        # Load current file from resolved path
+        current_tensors = load_file(current_resolved_path)
 
         # Get all modules in current file
         current_modules = {get_module_name(name) for name in current_tensors.keys()}
 
         # Check if there's a next file
         if i + 1 < len(safetensors_files):
-            next_file = safetensors_files[i + 1]
-            next_filename = next_file.name
+            next_file_path, next_resolved_path = safetensors_files[i + 1]
+            next_filename = os.path.basename(next_file_path)
 
             # Skip if next file was already marked for removal
             if next_filename in files_to_skip:
                 continue
 
-            next_tensors = load_file(next_file)
+            next_tensors = load_file(next_resolved_path)
 
             # Find tensors in next file that belong to modules in current file
             tensors_to_move = {}
@@ -146,19 +154,20 @@ def consolidate_tensors(
 
     # Copy all non-safetensors files to save directory (if not in-place)
     if not in_place:
-        for file_path in input_path.iterdir():
-            if file_path.is_file():
-                # Skip safetensors files (already handled) and the index (will be updated)
-                if file_path.name.endswith(".safetensors"):
-                    continue
+        for file_path, resolved_path in model_files.items():
+            # Skip safetensors files (already handled) and the index (will be updated)
+            if file_path.endswith(".safetensors"):
+                continue
 
-                dest_path = save_path / file_path.name
-                shutil.copy2(file_path, dest_path)
-                logger.info(f"Copied {file_path.name} to save directory")
+            dest_path = save_path / file_path
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(resolved_path, dest_path)
+            logger.info(f"Copied {file_path} to save directory")
 
     # Update safetensors index
-    index_path = find_safetensors_index_path(input_path)
-    if index_path is not None or len(safetensors_files) > 1:
+    # For HF hub models, check if index exists in model_files
+    has_index = any(fp.endswith("safetensors.index.json") for fp in model_files.keys())
+    if has_index or len(safetensors_files) > 1:
         # Calculate total size
         total_size = 0
         for file_name in set(weight_map.values()):

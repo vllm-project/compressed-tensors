@@ -261,3 +261,12 @@ class TestConsolidateTensors:
             for tensor in file_tensors.values()
         )
         assert updated_index["metadata"]["total_size"] == expected_size
+
+    @pytest.mark.unit
+    def test_non_local_path_requires_save_directory(self):
+        """Test that non-local path without save_directory raises an error"""
+        # Use a path that doesn't exist locally
+        non_local_path = "some-org/some-model"
+
+        with pytest.raises(ValueError, match="save_directory is required"):
+            consolidate_tensors(non_local_path, save_directory=None)
