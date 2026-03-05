@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from compressed_tensors.compressors import ModelCompressor
 from compressed_tensors.config import CompressionFormat, SparsityCompressionConfig
+from compressed_tensors.offload import get_offloaded_device
 from compressed_tensors.quantization import (
     FP8_E4M3_DATA,
     QuantizationArgs,
@@ -17,8 +18,8 @@ from compressed_tensors.quantization import (
     QuantizationScheme,
 )
 from safetensors.torch import save_file
-from tests.testing_utils import induce_sparsity, requires_hf_quantizer
-from transformers import AutoModelForCausalLM
+from tests.testing_utils import induce_sparsity, requires_gpu, requires_hf_quantizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def sparsity_config():
@@ -575,3 +576,38 @@ def remove_empty_weight_zero_points(state_dict):
         for name, value in state_dict.items()
         if not (name.endswith("weight_zero_point") and torch.all(value == 0))
     }
+
+
+@requires_gpu
+def test_decompress_model_offloaded():
+    from transformers.utils.quantization_config import CompressedTensorsConfig
+
+    model_stub = "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-compressed"
+    exp_perplexity = 4318.7607
+    model_size = 83464192
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_stub,
+        quantization_config=CompressedTensorsConfig(run_compressed=False),
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        max_memory={0: model_size // 2, "cpu": 1e10},
+    )
+    assert get_offloaded_device(model.model.layers[0].self_attn.q_proj) == torch.device(
+        "cuda:0"
+    )
+    assert get_offloaded_device(
+        model.model.layers[-1].self_attn.q_proj
+    ) == torch.device("cpu")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_stub)
+    prompt = "The capital of France is Paris, the capital of Germany is Berlin"
+    inputs = tokenizer(prompt, return_tensors="pt")
+    inputs = {key: value.to(model.device) for key, value in inputs.items()}
+    labels = inputs["input_ids"]
+
+    with torch.no_grad():
+        outputs = model(**inputs, labels=labels)
+        perplexity = torch.exp(outputs.loss).cpu()
+
+    assert pytest.approx(perplexity, abs=100) == exp_perplexity
