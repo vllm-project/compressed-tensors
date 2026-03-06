@@ -66,13 +66,17 @@ def convert_checkpoint(
         else:
             if is_weights_file(file_path):
                 logger.warning(f"Skip processing for weights file {file_path}")
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Copying {file_path} {save_path}")
-            shutil.copyfile(resolved_path, save_path)
+            print("FILE", file_path, type(file_path))
+            print("SAVE", save_path, type(save_path))
+            if resolved_path != str(save_path):
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Copying {file_path} {save_path}")
+                shutil.copyfile(resolved_path, save_path)
 
     # 1. validate quantizable tensors fail fast before long-running quantization
     exec_jobs(validate_jobs, max_workers, desc="Validating")
 
+    return
     # 2-5. quantize and compress weights
     total_size = 0
     weight_map = dict()
@@ -98,6 +102,12 @@ def exec_jobs(
     :param desc: tqdm description
     """
     results = []
+    if max_workers == 1:
+        for idx, job in tqdm.tqdm(enumerate(jobs), desc=desc + " Single Thread"):
+            results.append([job[0](*job[1:])])
+            print("DONE ", idx)
+        return results
+
     with ThreadPoolExecutor(max_workers) as executor:
         futures = [executor.submit(*job) for job in jobs]
         for future in tqdm.tqdm(as_completed(futures), total=len(futures), desc=desc):

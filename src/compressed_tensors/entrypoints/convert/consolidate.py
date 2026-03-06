@@ -13,7 +13,7 @@ from compressed_tensors.entrypoints.convert.save_utils import (
 from loguru import logger
 from safetensors.torch import load_file, save_file
 
-__all__ = ["consolidate_tensors"]
+__all__ = ["consolidate_checkpoint_tensors"]
 
 
 def get_module_name(tensor_name: str) -> str:
@@ -28,18 +28,19 @@ def get_module_name(tensor_name: str) -> str:
     return parts[0] if len(parts) > 1 else tensor_name
 
 
-def consolidate_tensors(
+def consolidate_checkpoint_tensors(
     model_stub: str | os.PathLike,
     save_directory: str | os.PathLike,
 ):
     """
-    Consolidate tensors from the same module into a single safetensors file.
+    Consolidate tensors from the same module into a single safetensors file. This
+    should be idempotent.
 
-    This function processes safetensors files in sorted order and consolidates tensors
-    for each module. It assumes that if a module's tensors are split, they will be
-    in a file and the immediately next file. For each file, it checks if any of its
-    module's tensors appear in the next file, and if so, moves them back to the
-    current file.
+    This function processes every safetensor file in the checkpoint in sorted order
+    and consolidates tensors for each module. It assumes that if a module's tensors
+    are split, they will be in a file and the immediately next file. For each file,
+    it checks if any of its module's tensors appear in the next file, and if so, moves
+    them back to the current file.
 
     :param model_stub: huggingface model hub ID or path to local directory containing
         the input safetensors files

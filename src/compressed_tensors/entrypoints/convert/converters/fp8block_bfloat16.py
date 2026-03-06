@@ -3,6 +3,7 @@
 
 from typing import Iterable
 
+from loguru import logger
 import torch
 from compressed_tensors.entrypoints.convert.converters import Converter
 from compressed_tensors.quantization import (
@@ -68,9 +69,16 @@ class FP8BlockToBfloat16Converter(Converter):
             module_name, param_name = name.rsplit(".", 1)
 
             if param_name == "weight":
-                if f"{module_name}.weight_scale_inv" not in targeted_names:
-                    raise ValueError(
+                if f"{module_name}.weight_scale_inv" not in tensors:
+                    # NOTE: sometimes models split weights across different files
+                    logger.warning(
                         f"Found weight without corresponding weight_scale_inv {name}"
+                    )
+            elif param_name == "weight_scale_inv":
+                if f"{module_name}.weight" not in tensors:
+                    # NOTE: sometimes models split weights across different files
+                    logger.warning(
+                        f"Found weight_scale_inv without corresponding weight {name}"
                     )
             elif param_name not in allowed_names:
                 raise ValueError(f"Found unexpected targeted tensor {name}")
