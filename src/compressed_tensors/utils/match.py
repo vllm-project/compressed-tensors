@@ -6,6 +6,7 @@ import os
 import re
 from collections import defaultdict
 from collections.abc import Generator, Iterable, Mapping
+from typing import Iterator
 
 import torch
 from compressed_tensors.utils.internal import InternalModule
@@ -15,10 +16,12 @@ _LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
 __all__ = [
+    "match_name",
     "match_named_modules",
     "match_named_parameters",
     "match_targets",
     "match_modules_set",
+    "match_quantizable_tensors",
     "get_lowest_common_ancestor_name",
     "is_match",
     "is_narrow_match",
@@ -97,10 +100,10 @@ def match_named_parameters(
         for param_name, param in module.named_parameters(recurse=False):
             param_fqn = f"{module_name}.{param_name}"
             for target in targets:
-                if _match_name(param_fqn, target, fused):
+                if match_name(param_fqn, target, fused):
                     unmatched_targets -= {target}
 
-                    if not any(_match_name(param_fqn, ign, fused) for ign in ignore):
+                    if not any(match_name(param_fqn, ign, fused) for ign in ignore):
                         yield param_fqn, module, param
 
     if warn_on_fail:
@@ -138,7 +141,7 @@ def match_targets(
     targets = sorted(targets, key=lambda x: ("re:" in x, x))
     matched_targets = []
     for target in targets:
-        if _match_name(name, target):
+        if match_name(name, target):
             matched_targets.append(target)
 
     for target in targets:
@@ -369,11 +372,11 @@ def is_match(
 
     return not isinstance(module, InternalModule) and (
         any(
-            _match_name(name, target, fused) or _match_class(module, target)
+            match_name(name, target, fused) or _match_class(module, target)
             for target in targets
         )
         and not any(
-            _match_name(name, ign, fused) or _match_class(module, ign) for ign in ignore
+            match_name(name, ign, fused) or _match_class(module, ign) for ign in ignore
         )
     )
 
@@ -406,7 +409,7 @@ def is_narrow_match(
     )
 
 
-def _match_name(name: str, target: str, fused: FusedMappping | None = None) -> bool:
+def match_name(name: str, target: str, fused: FusedMappping | None = None) -> bool:
     """
     Returns true if target string begins with "re:" and regex matches or if target
     string exactly matches name. If the name refers to a fused module defined by vLLM,
@@ -422,7 +425,7 @@ def _match_name(name: str, target: str, fused: FusedMappping | None = None) -> b
             if name.endswith(fused_suffix):
                 name_stripped = name.removesuffix(fused_suffix)
                 return any(
-                    _match_name(name_stripped + shard_suffix, target)
+                    match_name(name_stripped + shard_suffix, target)
                     for shard_suffix in fused[fused_suffix]
                 )
 
@@ -451,3 +454,44 @@ def _match_class(module: torch.nn.Module, target: str) -> bool:
         )
         for cls in module.__class__.__mro__
     )
+
+
+def match_quantizable_tensors(
+    tensors: Mapping[str, torch.Tensor],
+    ignore: Iterable[str],
+    targets: Iterable[str] = tuple(),
+    allow_nonquantizable: bool = False,
+) -> Iterator[tuple[str, str]]:
+    """
+    Match all quantizable tensors that are not ignored and are
+    targeted
+
+    :param tensors: Mapping of name in safetensors file to actual tensor
+    :param ignore: ignore individual tensor if any match is found with
+        elements in ignore (regex allowed)
+    :param targets: include if any match is found with elements in targets
+        (regex allowed). Unlike model-based matching utils, this only checks
+        names, not classes. If empty or if "Linear" is included, assume targets
+        is all-inclusive.
+    :param allow_nonquantizable: Override to include non-quantizable tensors,
+        useful when performing other processing on tensors beyond quantization.
+
+    :return: iterator of module_name and full tensor name meeting filtering
+        criterion.
+    """
+    for name in list(tensors.keys()):
+        module_name, param_name = name.rsplit(".", 1)
+
+        is_quantizable = allow_nonquantizable or (
+            (param_name == "weight") and not module_name.endswith("norm")
+        )
+
+        if len(targets) == 0 or "Linear" in targets:
+            is_targeted = True
+        else:
+            is_targeted = any((match_name(module_name, target)) for target in targets)
+
+        is_ignored = any(match_name(module_name, ign) for ign in ignore)
+
+        if is_quantizable and is_targeted and not is_ignored:
+            yield module_name, name
