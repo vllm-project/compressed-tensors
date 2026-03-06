@@ -1,18 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import torch
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import (
-    QuantizationArgs,
-    QuantizationScheme,
-    QuantizationType,
-)
 from compressed_tensors.quantization.utils import is_module_quantized
 from compressed_tensors.utils import deprecated
 from loguru import logger
+
+
+if TYPE_CHECKING:
+    from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
 
 
 __all__ = [
@@ -65,7 +64,7 @@ def infer_set_module_formats(
             continue
 
         # infer format using priority list
-        scheme: QuantizationScheme = module.quantization_scheme
+        scheme: "QuantizationScheme" = module.quantization_scheme
         format = get_module_format(type(module), scheme)
 
         # user provides a global override format
@@ -92,7 +91,7 @@ def infer_set_module_formats(
 
 
 def get_module_format(
-    module_type: type, scheme: QuantizationScheme
+    module_type: type, scheme: "QuantizationScheme"
 ) -> CompressionFormat:
     """
     Infer the module's compression format using the module's type and quant scheme
@@ -117,8 +116,8 @@ def get_module_format(
 
 @deprecated("get_module_format")
 def _get_quant_compression_format(
-    input_args: Optional[QuantizationArgs],
-    weight_args: Optional[QuantizationArgs],
+    input_args: Optional["QuantizationArgs"],
+    weight_args: Optional["QuantizationArgs"],
     sparsity_structure: Optional[str] = None,
 ) -> CompressionFormat:
     """
@@ -132,6 +131,8 @@ def _get_quant_compression_format(
         structure
     :return CompresssionFormat for the module
     """
+    from compressed_tensors.quantization import QuantizationType
+
     is_weight_only = weight_args is not None and input_args is None
 
     if weight_args.num_bits == 4 and weight_args.type == QuantizationType.FLOAT.value:
