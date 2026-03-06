@@ -36,16 +36,23 @@ def consolidate_checkpoint_tensors(
     Consolidate tensors from the same module into a single safetensors file. This
     should be idempotent.
 
+<<<<<<< Updated upstream
     This function processes every safetensor file in the checkpoint in sorted order
     and consolidates tensors for each module. It assumes that if a module's tensors
     are split, they will be in a file and the immediately next file. For each file,
     it checks if any of its module's tensors appear in the next file, and if so, moves
     them back to the current file.
+=======
+    This function processes safetensors files in sorted order and consolidates tensors
+    for each module. For each file, it scans all subsequent files to find any tensors
+    belonging to the same modules, and moves them into the current file. This ensures
+    that all tensors for a given module (e.g., "model.layers.60.mlp.experts.84.up_proj")
+    are stored together in a single safetensors file.
+>>>>>>> Stashed changes
 
     :param model_stub: huggingface model hub ID or path to local directory containing
         the input safetensors files
-    :param save_directory: directory to save consolidated files to. If None, consolidates
-        in-place (model_stub must be a local directory)
+    :param save_directory: directory to save consolidated files to
     """
 
     # Determine if in-place based on resolved paths
@@ -80,70 +87,74 @@ def consolidate_checkpoint_tensors(
     logger.info(f"Found {len(safetensors_files)} safetensors files to process")
 
     # Track which files will be written and which should be skipped
-    files_to_save = {}  # filename -> tensor dict
     files_to_skip = set()  # filenames that will be empty/removed
     weight_map = {}
 
-    # Process files in pairs (current file, next file)
-    for i in range(len(safetensors_files)):
-        current_file_path, current_resolved_path = safetensors_files[i]
-        current_filename = os.path.basename(current_file_path)
+    # Create a mapping of filename to (file_path, resolved_path) for easy lookup
+    file_paths_map = {
+        os.path.basename(file_path): (file_path, resolved_path)
+        for file_path, resolved_path in safetensors_files
+    }
+    filenames = sorted(file_paths_map.keys())
 
+    # Process each file and consolidate its modules from all subsequent files
+    for i, current_filename in enumerate(filenames):
         # Skip if file was marked for removal in a previous iteration
         if current_filename in files_to_skip:
             continue
 
-        # Load current file from resolved path
+        # Load current file
+        _, current_resolved_path = file_paths_map[current_filename]
         current_tensors = load_file(current_resolved_path)
 
         # Get all modules in current file
         current_modules = {get_module_name(name) for name in current_tensors.keys()}
 
-        # Check if there's a next file
-        if i + 1 < len(safetensors_files):
-            next_file_path, next_resolved_path = safetensors_files[i + 1]
-            next_filename = os.path.basename(next_file_path)
+        # Check all subsequent files for matching module tensors
+        for j in range(i + 1, len(filenames)):
+            other_filename = filenames[j]
 
-            # Skip if next file was already marked for removal
-            if next_filename in files_to_skip:
+            # Skip if already marked for removal
+            if other_filename in files_to_skip:
                 continue
 
-            next_tensors = load_file(next_resolved_path)
+            # Load other file
+            _, other_resolved_path = file_paths_map[other_filename]
+            other_tensors = load_file(other_resolved_path)
 
-            # Find tensors in next file that belong to modules in current file
+            # Find tensors in other file that belong to modules in current file
             tensors_to_move = {}
-            for tensor_name in list(next_tensors.keys()):
+            for tensor_name in list(other_tensors.keys()):
                 module_name = get_module_name(tensor_name)
                 if module_name in current_modules:
-                    tensors_to_move[tensor_name] = next_tensors[tensor_name]
-                    del next_tensors[tensor_name]
+                    tensors_to_move[tensor_name] = other_tensors[tensor_name]
+                    del other_tensors[tensor_name]
 
-            # Move tensors to current file
+            # Move tensors to current file and save/remove other file
             if tensors_to_move:
                 logger.info(
-                    f"Moving {len(tensors_to_move)} tensors from {next_filename} to {current_filename}"
+                    f"Moving {len(tensors_to_move)} tensors from {other_filename} to {current_filename}"
                 )
                 current_tensors.update(tensors_to_move)
 
-                # Save updated next file or mark for removal if empty
-                if len(next_tensors) > 0:
-                    files_to_save[next_filename] = next_tensors
+                # Save or mark other file for removal
+                if len(other_tensors) == 0:
+                    files_to_skip.add(other_filename)
+                    logger.info(f"Marking {other_filename} for removal (now empty)")
                 else:
-                    files_to_skip.add(next_filename)
-                    logger.info(f"Skipping empty file {next_filename}")
+                    # Save the modified other file immediately
+                    other_output_file = save_path / other_filename
+                    save_file(other_tensors, other_output_file)
+                    logger.info(f"Saved {other_filename} with {len(other_tensors)} tensors")
 
         # Save current file
-        files_to_save[current_filename] = current_tensors
+        current_output_file = save_path / current_filename
+        save_file(current_tensors, current_output_file)
+        logger.info(f"Saved {current_filename} with {len(current_tensors)} tensors")
 
         # Update weight map
         for tensor_name in current_tensors.keys():
             weight_map[tensor_name] = current_filename
-
-    # Write all safetensors files to save directory
-    for filename, tensors in files_to_save.items():
-        output_file = save_path / filename
-        save_file(tensors, output_file)
-        logger.info(f"Saved {filename} with {len(tensors)} tensors")
 
     # Delete empty safetensors files when operating in-place
     if in_place:
@@ -169,11 +180,12 @@ def consolidate_checkpoint_tensors(
     # For HF hub models, check if index exists in model_files
     has_index = any(fp.endswith("safetensors.index.json") for fp in model_files.keys())
     if has_index or len(safetensors_files) > 1:
-        # Calculate total size
+        # Calculate total size from saved files
         total_size = 0
         for file_name in set(weight_map.values()):
             file_path = save_path / file_name
             if file_path.exists():
+                # Load file to calculate size
                 tensors = load_file(file_path)
                 total_size += sum(tensor.nbytes for tensor in tensors.values())
 
