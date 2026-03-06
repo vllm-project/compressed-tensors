@@ -133,4 +133,4 @@ compressed_state_dict = compressor.compress(model)
 model.save_pretrained(output_dir, state_dict=compressed_state_dict)
 ```
 
-For more in-depth tutorial on quantization compression, refer to the [notebook](./examples/quantize_and_pack_int4.ipynb).
+For a more in-depth tutorial on quantization compression, refer to the [notebook](./examples/quantize_and_pack_int4.ipynb).
