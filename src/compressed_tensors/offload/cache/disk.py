@@ -110,8 +110,7 @@ class DiskCache(OffloadCache):
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
-        Write new param data to file. If the file already existed (ie, the param has
-        already been modified at least once), then the file is overwritten.
+        Write new param data to file that already exists.
 
         :param offloaded: meta tensors representating parameter to update
         :param data: new data
