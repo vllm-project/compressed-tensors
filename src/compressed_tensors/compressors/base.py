@@ -3,13 +3,11 @@
 
 from abc import ABC
 from itertools import chain
-from typing import Tuple
 
 import torch
-from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
+from compressed_tensors.quantization import QuantizationScheme
 from compressed_tensors.registry import RegistryMixin
 from compressed_tensors.utils import TensorStateDict
-from compressed_tensors.utils.helpers import getattr_chain
 
 
 __all__ = ["BaseCompressor"]
@@ -98,36 +96,18 @@ class BaseCompressor(RegistryMixin, ABC):
         _replace_direct_state_dict(module, decompressed_state_dict)
 
     @classmethod
-    def match(cls, module: torch.nn.Module) -> bool:
+    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """
-        Determine if this compressor is applicable for the given module.
+        Determine if this compressor is applicable for the given module type and scheme.
 
-        Examines the module's quantization scheme and determines whether this
+        Examines the module type and quantization scheme and determines whether this
         compressor can handle the module's compression requirements.
 
-        :param module: the module to check for compatibility
+        :param module_type: the type of the module to check for compatibility
+        :param scheme: the quantization scheme to check for compatibility
         :return: True if this compressor can handle the module, False otherwise
         """
         raise NotImplementedError(f"{cls.__name__} does not implement match")
-
-    @classmethod
-    def _unpack_quantization(
-        cls, module: torch.nn.Module
-    ) -> Tuple[type, QuantizationArgs | None, QuantizationArgs | None]:
-        """
-        Extract quantization information from a module.
-
-        Helper method to retrieve the module type and its quantization parameters
-        for input activations and weights.
-
-        :param module: the module to extract quantization info from
-        :return: tuple of (module_type, input_quantization, weight_quantization)
-        """
-        return (
-            type(module),
-            getattr_chain(module, "quantization_scheme.input_activations", None),
-            getattr_chain(module, "quantization_scheme.weights", None),
-        )
 
 
 def _get_direct_state_dict(module: torch.nn.Module) -> TensorStateDict:

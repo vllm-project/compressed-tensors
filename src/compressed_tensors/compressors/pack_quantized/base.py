@@ -120,13 +120,11 @@ class PackedQuantizationCompressor(BaseCompressor):
         return state_dict
 
     @classmethod
-    def match(cls, module: torch.nn.Module) -> bool:
-        module_type, input_args, weight_args = cls._unpack_quantization(module)
-
+    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         return (
             module_type == torch.nn.Linear
-            and input_args is None
-            and weight_args is not None
-            and weight_args.num_bits in (4, 8)
-            and weight_args.type == QuantizationType.INT.value
+            and scheme.input_activations is None
+            and scheme.weights is not None
+            and scheme.weights.num_bits in (4, 8)
+            and scheme.weights.type == QuantizationType.INT.value
         )

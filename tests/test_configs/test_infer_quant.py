@@ -5,7 +5,7 @@ from collections import OrderedDict
 
 import pytest
 import torch
-from compressed_tensors.config.format import infer_set_module_format
+from compressed_tensors.config.format import infer_set_module_formats
 from compressed_tensors.quantization import preset_name_to_scheme
 
 
@@ -45,5 +45,5 @@ def test_infer_quant_format(preset, expected_format):
         if isinstance(module, torch.nn.Linear):
             module.quantization_scheme = quant_scheme
 
-    inferred_formats = infer_set_module_format(dummy_model)
+    inferred_formats = infer_set_module_formats(dummy_model)
     assert inferred_formats[0].value == expected_format

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import torch
 from compressed_tensors.compressors.base import BaseCompressor
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import QuantizationScheme
@@ -49,6 +48,6 @@ class DenseCompressor(BaseCompressor):
         return state_dict
 
     @classmethod
-    def match(cls, module: torch.nn.Module) -> bool:
+    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Dense compressor matches when there's no weight quantization."""
         return True

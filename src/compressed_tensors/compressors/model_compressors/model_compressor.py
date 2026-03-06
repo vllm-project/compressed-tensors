@@ -16,7 +16,7 @@ from compressed_tensors.base import (
 )
 from compressed_tensors.compressors.base import BaseCompressor
 from compressed_tensors.config import CompressionFormat, SparsityCompressionConfig
-from compressed_tensors.config.format import flatten_formats, infer_set_module_format
+from compressed_tensors.config.format import flatten_formats, infer_set_module_formats
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_METHOD,
     QuantizationConfig,
@@ -143,7 +143,7 @@ class ModelCompressor:
         :param model: model whose parameters should be compressed in place
         """
         # infer and set which format each module should be compressed with
-        formats = infer_set_module_format(model, self.force_compression_format)
+        formats = infer_set_module_formats(model, self.force_compression_format)
 
         # update quantization config format for better UX when reading config.json
         if self.quantization_config is not None:

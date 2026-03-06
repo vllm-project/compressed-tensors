@@ -49,14 +49,12 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
         raise NotImplementedError("MXFP4 decompression is currently not supported")
 
     @classmethod
-    def match(cls, module: torch.nn.Module) -> bool:
+    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """MXFP4 matches FP4 with group_size=32."""
-        module_type, input_args, weight_args = cls._unpack_quantization(module)
-
         return (
             module_type == torch.nn.Linear
-            and weight_args is not None
-            and weight_args.num_bits == 4
-            and weight_args.type == QuantizationType.FLOAT.value
-            and weight_args.group_size == 32
+            and scheme.weights is not None
+            and scheme.weights.num_bits == 4
+            and scheme.weights.type == QuantizationType.FLOAT.value
+            and scheme.weights.group_size == 32
         )

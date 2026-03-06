@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import torch
 from compressed_tensors.compressors.base import BaseCompressor
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
@@ -113,13 +112,12 @@ class NaiveQuantizationCompressor(BaseCompressor):
         return state_dict
 
     @classmethod
-    def match(cls, module: torch.nn.Module) -> bool:
+    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """
         Naive quantization is the fallback compressor - it matches any quantized
         scheme that doesn't match a more specific compressor.
         """
-        _, _, weight_args = cls._unpack_quantization(module)
-        return weight_args is not None
+        return scheme.weights is not None
 
 
 @BaseCompressor.register(name=CompressionFormat.int_quantized.value)
@@ -127,14 +125,12 @@ class IntQuantizationCompressor(NaiveQuantizationCompressor):
     """Alias for integer quantized models."""
 
     @classmethod
-    def match(cls, module: torch.nn.Module) -> bool:
+    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Int quantized matches w8a8 int quantization."""
-        _, input_args, weight_args = cls._unpack_quantization(module)
-
         return (
-            weight_args is not None
-            and input_args is not None
-            and weight_args.type == QuantizationType.INT.value
+            scheme.weights is not None
+            and scheme.input_activations is not None
+            and scheme.weights.type == QuantizationType.INT.value
         )
 
 
@@ -143,13 +139,11 @@ class FloatQuantizationCompressor(NaiveQuantizationCompressor):
     """Alias for fp quantized models."""
 
     @classmethod
-    def match(cls, module: torch.nn.Module) -> bool:
+    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Float quantized matches w8a8 float quantization."""
-        _, input_args, weight_args = cls._unpack_quantization(module)
-
         return (
-            weight_args is not None
-            and input_args is not None
-            and weight_args.type == QuantizationType.FLOAT.value
-            and weight_args.num_bits == 8
+            scheme.weights is not None
+            and scheme.input_activations is not None
+            and scheme.weights.type == QuantizationType.FLOAT.value
+            and scheme.weights.num_bits == 8
         )
