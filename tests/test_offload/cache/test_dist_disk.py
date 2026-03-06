@@ -24,79 +24,85 @@ from tests.test_offload.conftest import assert_tensor_equal, torchrun
 from tests.testing_utils import requires_gpu
 
 
-ONLOAD_DEVICE = torch.device("cuda")
-OFFLOAD_DEVICE = "disk"
+@pytest.fixture()
+def onload_device():
+    return torch.device("cuda")
+
+
+@pytest.fixture()
+def offload_device():
+    return "disk"
 
 
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_delete():
-    _test_delete(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_delete(offload_device, onload_device, offload_cache):
+    _test_delete(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_disable_offloading():
-    _test_disable_offloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_disable_offloading(offload_device, onload_device, offload_cache):
+    _test_disable_offloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_disable_onloading():
-    _test_disable_onloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_disable_onloading(offload_device, onload_device, offload_cache):
+    _test_disable_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_garbage_collect():
-    _test_garbage_collect(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_garbage_collect(offload_device, onload_device, offload_cache):
+    _test_garbage_collect(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_offload():
-    _test_offload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_offload(offload_device, onload_device, offload_cache):
+    _test_offload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_onload():
-    _test_onload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_onload(offload_device, onload_device, offload_cache):
+    _test_onload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_onloading():
-    _test_onloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_onloading(offload_device, onload_device, offload_cache):
+    _test_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_shared_attributes():
-    _test_shared_attributes(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_shared_attributes(offload_device, onload_device, offload_cache):
+    _test_shared_attributes(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_distributed_offload(tmp_path):
+def test_distributed_offload(onload_device, tmp_path):
     offload_dir = tmp_path / "offload_dir"
     os.mkdir(offload_dir)
 
-    cache = DistributedDiskCache(ONLOAD_DEVICE, offload_dir=str(offload_dir))
+    cache = DistributedDiskCache(onload_device, offload_dir=str(offload_dir))
     tensor = torch.zeros((5, 2))
     cache["tensor"] = tensor
 
     # check tensor construction
-    assert torch.equal(cache["tensor"], tensor.to(ONLOAD_DEVICE))
+    assert torch.equal(cache["tensor"], tensor.to(onload_device))
     with disable_onloading():
         assert_tensor_equal(cache["tensor"], tensor.to("meta"))
 
@@ -105,7 +111,7 @@ def test_distributed_offload(tmp_path):
     cache["tensor"] = tensor
 
     # check tensor construction
-    assert torch.equal(cache["tensor"], tensor.to(ONLOAD_DEVICE))
+    assert torch.equal(cache["tensor"], tensor.to(onload_device))
     with disable_onloading():
         assert_tensor_equal(cache["tensor"], tensor.to("meta"))
 
