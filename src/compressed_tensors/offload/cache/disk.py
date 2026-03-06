@@ -116,8 +116,13 @@ class DiskCache(OffloadCache):
         :param offloaded: meta tensors representating parameter to update
         :param data: new data
         """
-        # write new data to disk using `offloaded` as the key
-        DiskCache.offload(self, data, offloaded)
+        assert offloaded in self.index, "Cannot find offload to update"
+        weight_info = self.index[offloaded]
+
+        file_path = weight_info["safetensors_file"]
+        dtype = getattr(torch, weight_info["dtype"])
+
+        save_file({"weight": data.reshape_as(offloaded).to(dtype=dtype)}, file_path)
 
 
 def _get_safe_open_device(device: "DeviceLikeType") -> str | int:
