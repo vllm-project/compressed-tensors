@@ -120,6 +120,7 @@ class DiskCache(OffloadCache):
         assert offloaded in self.index, "Cannot find offload to update"
         weight_info = self.index[offloaded]
         file_path = weight_info["safetensors_file"]
+        weight_name = weight_info["weight_name"]
         dtype = getattr(torch, weight_info["dtype"])
 
         # create new file if old file was a symlink to a checkpoint file
@@ -127,8 +128,8 @@ class DiskCache(OffloadCache):
             assert os.path.basename(file_path).startswith(self._new_file_prefix)
             os.unlink(file_path)
 
-        # save with data
-        save_file({"weight": data.reshape_as(offloaded).to(dtype=dtype)}, file_path)
+        # save with data using original weight_name
+        save_file({weight_name: data.reshape_as(offloaded).to(dtype=dtype)}, file_path)
 
     @classmethod
     def create_checkpoint_symlink(
