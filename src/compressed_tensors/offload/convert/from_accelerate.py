@@ -145,7 +145,6 @@ def remove_accelerate_from_module(
             assert isinstance(offload, (torch.nn.Parameter, torch.nn.Buffer))
 
             # Copy accelerate's disk index into DiskCache for our later use
-            assert dataset.save_folder is not None
             _save_ct_index_entry(dataset, full_name, tensor, dataset.save_folder)
 
         # Not offloaded, likely a buffer
@@ -173,7 +172,7 @@ def _save_ct_index_entry(
     dataset: "OffloadedWeightsLoader",
     name: str,
     offloaded: torch.Tensor,
-    offload_folder: str | os.PathLike,
+    offload_folder: str | os.PathLike | None,
 ):
     entry: dict = dataset.index[name]
 
