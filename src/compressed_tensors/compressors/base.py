@@ -135,7 +135,9 @@ def compress_module(
     if not isinstance(scheme, QuantizationScheme):
         return
 
-    scheme.format = format or scheme.format or infer_module_format(type(module), scheme)
+    scheme.format = CompressionFormat(
+        format or scheme.format or infer_module_format(type(module), scheme)
+    )
     compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
     compressor.compress_module(module)
 
@@ -159,6 +161,8 @@ def decompress_module(
     if not isinstance(scheme, QuantizationScheme):
         return
 
-    scheme.format = format or scheme.format or infer_module_format(type(module), scheme)
+    scheme.format = CompressionFormat(
+        format or scheme.format or infer_module_format(type(module), scheme)
+    )
     compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
     compressor.decompress_module(module)
