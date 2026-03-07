@@ -341,7 +341,7 @@ def set_forward_quantized(module: torch.nn.Linear | torch.nn.Embedding):
     Replace a linear or embedding module's forward function with one that performs
     on-the-fly QDQ. Note that weight quantiation will be skipped for compressed modules.
 
-    All QDQ operations can be skipped by setting `module.quantization_status = True`
+    All QDQ operations can be skipped by setting `module.quantization_enabled = False`
 
     :param module: linear or embedding module whose forward function will be replaced
     """
@@ -364,7 +364,7 @@ def set_forward_quantized(module: torch.nn.Linear | torch.nn.Embedding):
             and scheme is not None
             and status is not None
         )
-        weight: torch.nn.Parameter = self.weight
+        weight = self.weight  # onload once
         weight_data = weight.data
 
         if enabled and scheme.input_activations:
