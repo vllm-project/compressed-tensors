@@ -208,3 +208,35 @@ def test_offload_and_dispatch_model(model_id):
     model = dispatch_model(model, device_memory=device_memory, extra_memory=0)
     dispatched_logits = model(**sample).logits
     assert torch.allclose(dispatched_logits, true_logits)
+
+
+@pytest.mark.unit
+def test_get_device_memory_cpu_fallback():
+    with patch("compressed_tensors.offload.dispatch.torch.cuda") as mock_cuda:
+        mock_cuda.is_available.return_value = False
+        device_memory = get_device_memory()
+
+    assert len(device_memory) == 1
+    assert torch.device("cpu") in device_memory
+    assert device_memory[torch.device("cpu")] > 0
+
+
+@pytest.mark.unit
+def test_dispatch_cpu_only():
+    model = Model()
+    cpu_memory = module_size(model) * 2
+    device_memory = {torch.device("cpu"): cpu_memory}
+
+    dispatch_model(model, device_memory=device_memory, extra_memory=0)
+    assert_module_on_device(model, "cpu")
+
+
+@pytest.mark.unit
+def test_dispatch_cpu_only_via_fallback():
+    model = Model()
+
+    with patch("compressed_tensors.offload.dispatch.torch.cuda") as mock_cuda:
+        mock_cuda.is_available.return_value = False
+        dispatch_model(model, extra_memory=0)
+
+    assert_module_on_device(model, "cpu")
