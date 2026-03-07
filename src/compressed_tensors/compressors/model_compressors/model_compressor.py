@@ -170,6 +170,10 @@ class ModelCompressor:
             if is_module_quantized(module):
                 decompress_module(module)
 
+        # decompression hook is no longer necessary
+        self.remove_decompression_hook(model)
+
+
     def update_config(self, save_directory: str):
         """
         Update the model config located at save_directory with compression configs
@@ -209,8 +213,13 @@ class ModelCompressor:
             json.dump(config_data, config_file, indent=2, sort_keys=True)
 
     def add_decompress_hook(self, model: torch.nn.Module):
-        def decompress_hook(model, args):
+        def ct_decompress_hook(model, args):
             self.decompress_model(model)
-            model.decompress_hook.remove()
+            model.ct_decompress_hook.remove()
 
-        model.decompress_hook = model.register_forward_pre_hook(decompress_hook)
+        model.ct_decompress_hook = model.register_forward_pre_hook(ct_decompress_hook)
+
+    def remove_decompression_hook(self, model: torch.nn.Module):
+        if hasattr(model, "ct_decompress_hook"):
+            model.ct_decompress_hook.remove()
+            delattr(model, "ct_decompress_hook")

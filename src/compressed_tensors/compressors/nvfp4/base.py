@@ -118,5 +118,5 @@ class NVFP4PackedCompressor(BaseCompressor):
             and scheme.weights is not None
             and scheme.weights.num_bits == 4
             and scheme.weights.type == QuantizationType.FLOAT.value
-            and scheme.weights.group_size != 32
+            and scheme.weights.group_size == 16
         )

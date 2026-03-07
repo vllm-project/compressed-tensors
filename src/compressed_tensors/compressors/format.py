@@ -41,7 +41,7 @@ def flatten_formats(formats: list[CompressionFormat]) -> CompressionFormat:
 def infer_set_module_formats(
     model: torch.nn.Module,
     force_compression_format: Optional[str] = None,
-) -> None:
+) -> list[str]:
     """
     Infers the quantization format for a model based on its state and provided
     compression arguments. Updates the quantization_scheme.format value

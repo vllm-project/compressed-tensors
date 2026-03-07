@@ -112,22 +112,36 @@ class BaseCompressor(RegistryMixin, ABC):
 
 
 def compress_module(module: torch.nn.Module):
+    """
+    Compress a module which has had quantization applied to it
+
+    :param module: module to compress inplace
+    """
     scheme = getattr(module, "quantization_scheme", None)
     if not isinstance(scheme, QuantizationScheme):
         return
 
-    format = scheme.format or get_module_format(module, scheme)
-    compressor = BaseCompressor.get_value_from_registry(format.value)
+    if scheme.format is None:
+        scheme.format = get_module_format(type(module), scheme)
+
+    compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
     compressor.compress_module(module)
 
 
 def decompress_module(module: torch.nn.Module):
+    """
+    Compress a module which has had quantization applied to it
+
+    :param module: module to compress inplace
+    """
     scheme = getattr(module, "quantization_scheme", None)
     if not isinstance(scheme, QuantizationScheme):
         return
+    
+    if scheme.format is None:
+        scheme.format = get_module_format(type(module), scheme)
 
-    format = scheme.format or get_module_format(module, scheme)
-    compressor = BaseCompressor.get_value_from_registry(format.value)
+    compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
     compressor.decompress_module(module)
 
 
