@@ -77,15 +77,16 @@ def test_update_tracking():
 @pytest.mark.unit
 @requires_gpu
 def test_none_tensor_tracking():
-    """Test that None tensors are tracked as no-ops"""
+    """Test that None tensors are not tracked"""
     device = torch.device("cuda")
     cache = CPUCache(onload_device=device)
 
     # Offload None
     cache["none_test"] = None
 
-    assert OffloadStats.offload.count == 1
-    assert OffloadStats.offload.noop_count == 1
+    # None tensors are not tracked
+    assert OffloadStats.offload.count == 0
+    assert OffloadStats.offload.noop_count == 0
     assert OffloadStats.offload.bytes_moved == 0
 
     # Retrieve None (note: __getitem__ returns early for None)
@@ -577,7 +578,7 @@ def test_track_context_manager_restores_enabled_state():
     OffloadStats.reset()
 
     # Use track context manager
-    with OffloadStats.track() as stats:
+    with OffloadStats.track():
         # Stats should be enabled inside context
         assert OffloadStats.enabled
 
@@ -667,7 +668,7 @@ def test_track_context_manager_exception_handling():
 
     # Use track context manager with an exception
     try:
-        with OffloadStats.track() as stats:
+        with OffloadStats.track():
             # Stats should be enabled inside context
             assert OffloadStats.enabled
 
