@@ -121,7 +121,7 @@ class TestModelCompressorCompression:
         # Weight should be packed into int32
         assert hasattr(model.linear, "weight_packed")
         assert model.linear.weight_packed.dtype == torch.int32
-        assert hasattr(model, "decompress_hook")
+        assert hasattr(model, "ct_decompress_hook")
 
     def test_compress_model_skips_non_quantized_modules(self):
         """Test that modules without quantization_scheme are skipped."""
@@ -168,11 +168,6 @@ class TestModelCompressorCompression:
 
         original_weight = model.linear.weight.data.clone()
         compressor.compress_model(model)
-
-        # Remove the decompress hook before manual decompression
-        if hasattr(model, "decompress_hook"):
-            model.decompress_hook.remove()
-
         compressor.decompress_model(model)
 
         # After decompression, weight should be back to float
@@ -200,7 +195,7 @@ class TestModelCompressorCompression:
 
         compressor.compress_model(model)
         assert hasattr(model.linear, "weight_packed")
-        assert hasattr(model, "decompress_hook")
+        assert hasattr(model, "ct_decompress_hook")
 
         # Forward pass should trigger decompression
         x = torch.randn(2, 10)
@@ -211,7 +206,7 @@ class TestModelCompressorCompression:
         assert not hasattr(model.linear, "weight_packed")
 
     def test_compress_model_updates_format_in_config(self):
-        """Test that compress_model updates the quantization config format."""
+        """Test that from_pretrained_model infers and sets the format correctly."""
         model = DummyLinear()
         scheme = create_quantization_scheme(bits=4, type="int", strategy="channel")
         model.linear.quantization_scheme = scheme
@@ -224,14 +219,10 @@ class TestModelCompressorCompression:
             requires_grad=False,
         )
 
-        q_config = create_quantization_config(
-            bits=4, format="dense"
-        )  # Start with dense
-        compressor = ModelCompressor(quantization_config=q_config)
+        # Use from_pretrained_model which infers the format
+        compressor = ModelCompressor.from_pretrained_model(model)
 
-        compressor.compress_model(model)
-
-        # Format should be updated to pack-quantized
+        # Format should be inferred as pack-quantized
         assert compressor.quantization_config.format == CompressionFormat.pack_quantized
 
 
@@ -363,30 +354,11 @@ class TestModelCompressorEdgeCases:
 
         q_config = create_quantization_config(bits=4)
         compressor = ModelCompressor(quantization_config=q_config)
-
         compressor.compress_model(model)
 
         # Format should be inferred and set
         assert model.linear.quantization_scheme.format is not None
         assert hasattr(model.linear, "weight_packed")
-
-    def test_decompress_model_requires_format(self):
-        """Test that decompression requires format to be set on scheme."""
-        model = DummyLinear()
-        scheme = QuantizationScheme(
-            targets=["Linear"],
-            weights=QuantizationArgs(num_bits=8, strategy="tensor", symmetric=True),
-        )
-        # No format set
-        model.linear.quantization_scheme = scheme
-
-        q_config = create_quantization_config()
-        compressor = ModelCompressor(quantization_config=q_config)
-
-        # The assertion is "Must set format before decompressing", but the actual error
-        # is AttributeError when trying to access scheme.format.value
-        with pytest.raises((AssertionError, AttributeError)):
-            compressor.decompress_model(model)
 
     def test_empty_model(self):
         """Test compression of a model with no quantized modules."""

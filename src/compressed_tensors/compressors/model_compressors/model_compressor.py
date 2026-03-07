@@ -221,7 +221,7 @@ class ModelCompressor:
 
         def ct_decompress_hook(model, args):
             self.decompress_model(model)
-            model.ct_decompress_hook.remove()
+            # decompress_model already removes the hook via remove_decompression_hook
 
         model.ct_decompress_hook = model.register_forward_pre_hook(ct_decompress_hook)
 
