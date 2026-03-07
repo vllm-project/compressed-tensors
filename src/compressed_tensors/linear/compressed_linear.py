@@ -9,7 +9,6 @@ class CompressedLinear(torch.nn.Linear):
     """
     Wrapper module for running a compressed forward pass of a quantized Linear module.
     The wrapped layer will decompressed on each forward call.
-
     """
 
     @classmethod
