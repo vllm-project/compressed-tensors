@@ -5,7 +5,7 @@ from collections.abc import Generator
 from pathlib import Path
 
 import torch
-from compressed_tensors.config import CompressionFormat, SparsityCompressionConfig
+from compressed_tensors.config import CompressionFormat
 from compressed_tensors.utils import deprecated
 from torch import Tensor
 
@@ -29,7 +29,7 @@ def save_compressed(
 @deprecated("LLM Compressor's `model_free_ptq` pathway")
 def load_compressed(
     compressed_tensors: str | Path,
-    compression_config: SparsityCompressionConfig = None,
+    compression_config: object = None,
     device: str | None = "cpu",
 ) -> Generator[tuple[str, Tensor], None, None]:
     raise NotImplementedError()

@@ -1,17 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import List, Optional
 
 import torch
 from compressed_tensors.config import CompressionFormat
+from compressed_tensors.quantization import QuantizationScheme
 from compressed_tensors.quantization.utils import is_module_quantized
-from compressed_tensors.utils import deprecated
 from loguru import logger
-
-
-if TYPE_CHECKING:
-    from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
 
 
 __all__ = [
@@ -60,7 +56,7 @@ def infer_set_module_formats(
     """
     formats = set()
 
-    for name, module in model.named_modules(remove_duplicate=True):
+    for _, module in model.named_modules(remove_duplicate=True):
         if not is_module_quantized(module):
             continue
 
@@ -114,54 +110,3 @@ def get_module_format(
             )
         )
     )
-
-
-@deprecated("get_module_format")
-def _get_quant_compression_format(
-    input_args: Optional["QuantizationArgs"],
-    weight_args: Optional["QuantizationArgs"],
-    sparsity_structure: Optional[str] = None,
-) -> CompressionFormat:
-    """
-    Using the weight and input quantization args as well as an optional
-    sparsity structure, determine the compression format that should be
-    applied to a given module
-
-    :param input_args: input quantization parameters
-    :param weight_args: weight quantization parameters
-    :param sparsity_structure: optional (global) modle sparsity
-        structure
-    :return CompresssionFormat for the module
-    """
-    from compressed_tensors.quantization import QuantizationType
-
-    if sparsity_structure is not None:
-        logger.warning("Sparsity is no longer supported")
-
-    is_weight_only = weight_args is not None and input_args is None
-
-    if weight_args.num_bits == 4 and weight_args.type == QuantizationType.FLOAT.value:
-        if weight_args.group_size == 32:
-            return CompressionFormat.mxfp4_pack_quantized
-        return CompressionFormat.nvfp4_pack_quantized
-
-    if is_weight_only:  # w4a16 and w8a16
-        is_valid_pack = (
-            weight_args.num_bits in [4, 8]
-            and weight_args.type == QuantizationType.INT.value
-        )
-        if not is_valid_pack:  # packing only valid for int4 and int 8
-            return CompressionFormat.naive_quantized
-
-        return CompressionFormat.pack_quantized
-
-    else:  # w8a8 float and int
-        if (
-            weight_args.type == QuantizationType.FLOAT.value
-            and weight_args.num_bits == 8
-        ):
-            return CompressionFormat.float_quantized
-        if weight_args.type == QuantizationType.INT.value:
-            return CompressionFormat.int_quantized
-
-        return CompressionFormat.naive_quantized

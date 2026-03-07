@@ -5,12 +5,13 @@ from abc import ABC
 from itertools import chain
 
 import torch
+from compressed_tensors.compressors.format import get_module_format
 from compressed_tensors.quantization import QuantizationScheme
 from compressed_tensors.registry import RegistryMixin
 from compressed_tensors.utils import TensorStateDict
 
 
-__all__ = ["BaseCompressor"]
+__all__ = ["BaseCompressor", "compress_module", "decompress_module"]
 
 
 class BaseCompressor(RegistryMixin, ABC):
@@ -108,6 +109,26 @@ class BaseCompressor(RegistryMixin, ABC):
         :return: True if this compressor can handle the module, False otherwise
         """
         raise NotImplementedError(f"{cls.__name__} does not implement match")
+
+
+def compress_module(module: torch.nn.Module):
+    scheme = getattr(module, "quantization_scheme", None)
+    if not isinstance(scheme, QuantizationScheme):
+        return
+
+    format = scheme.format or get_module_format(module, scheme)
+    compressor = BaseCompressor.get_value_from_registry(format.value)
+    compressor.compress_module(module)
+
+
+def decompress_module(module: torch.nn.Module):
+    scheme = getattr(module, "quantization_scheme", None)
+    if not isinstance(scheme, QuantizationScheme):
+        return
+
+    format = scheme.format or get_module_format(module, scheme)
+    compressor = BaseCompressor.get_value_from_registry(format.value)
+    compressor.decompress_module(module)
 
 
 def _get_direct_state_dict(module: torch.nn.Module) -> TensorStateDict:

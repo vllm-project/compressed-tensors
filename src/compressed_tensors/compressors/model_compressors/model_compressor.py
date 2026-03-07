@@ -14,13 +14,16 @@ from compressed_tensors.base import (
     SPARSITY_CONFIG_NAME,
     TRANSFORM_CONFIG_NAME,
 )
-from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.config.format import flatten_formats, infer_set_module_formats
+from compressed_tensors.compressors.base import compress_module, decompress_module
+from compressed_tensors.compressors.format import (
+    flatten_formats,
+    infer_set_module_formats,
+)
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_METHOD,
     QuantizationConfig,
-    QuantizationScheme,
 )
+from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
 from loguru import logger
 from tqdm import tqdm
@@ -144,13 +147,8 @@ class ModelCompressor:
         # compress modules
         modules = model.named_modules(remove_duplicate=True)
         for _, module in tqdm(list(modules), desc="Compressing model"):
-            scheme = getattr(module, "quantization_scheme", None)
-            if not isinstance(scheme, QuantizationScheme):
-                continue
-
-            assert scheme.format is not None, "Must set format before decompressing"
-            compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
-            compressor.compress_module(module)
+            if is_module_quantized(module):
+                compress_module(module)
 
         # attempting to perform forward passes with a compressed model
         # will cause to the model to decompress. This allows for generation
@@ -169,13 +167,8 @@ class ModelCompressor:
         # decompress modules
         modules = model.named_modules(remove_duplicate=True)
         for _, module in tqdm(list(modules), desc="Decompressing model"):
-            scheme = getattr(module, "quantization_scheme", None)
-            if not isinstance(scheme, QuantizationScheme):
-                continue
-
-            assert scheme.format is not None, "Must set format before decompressing"
-            compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
-            compressor.decompress_module(module)
+            if is_module_quantized(module):
+                decompress_module(module)
 
     def update_config(self, save_directory: str):
         """

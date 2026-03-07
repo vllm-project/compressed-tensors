@@ -5,7 +5,7 @@ from collections import OrderedDict
 
 import pytest
 import torch
-from compressed_tensors.config.format import infer_set_module_formats
+from compressed_tensors.compressors.format import infer_set_module_formats
 from compressed_tensors.quantization import preset_name_to_scheme
 
 
