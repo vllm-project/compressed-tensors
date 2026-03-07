@@ -1,6 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+"""
+Helper functions for packing and unpacking FP4 (E2M1) quantized weights.
+
+FP4 E2M1 format uses 1 sign bit, 2 exponent bits, and 1 mantissa bit,
+supporting 8 positive and 8 negative values. This module provides efficient
+packing of two FP4 values into a single uint8 for storage.
+"""
+
 import torch
 
 

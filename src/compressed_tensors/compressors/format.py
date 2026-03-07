@@ -30,6 +30,15 @@ COMPRESSION_FORMAT_PRIORITY: List[CompressionFormat] = [
 
 
 def flatten_formats(formats: list[CompressionFormat]) -> CompressionFormat:
+    """
+    Reduce a list of compression formats to a single summary format.
+
+    Returns dense if the list is empty, the single format if there's only one,
+    or mixed_precision if there are multiple different formats.
+
+    :param formats: list of compression formats found in the model
+    :return: single compression format representing the overall model
+    """
     if len(formats) <= 0:
         return CompressionFormat.dense
     if len(formats) == 1:
@@ -61,7 +70,7 @@ def infer_set_module_formats(
             continue
 
         # infer format using priority list
-        scheme: "QuantizationScheme" = module.quantization_scheme
+        scheme: QuantizationScheme = module.quantization_scheme
         format = get_module_format(type(module), scheme)
 
         # user provides a global override format
@@ -89,7 +98,7 @@ def infer_set_module_formats(
 
 
 def get_module_format(
-    module_type: type, scheme: "QuantizationScheme"
+    module_type: type, scheme: QuantizationScheme
 ) -> CompressionFormat:
     """
     Infer the module's compression format using the module's type and quant scheme

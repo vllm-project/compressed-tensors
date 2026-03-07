@@ -22,7 +22,7 @@ def save_compressed(
     tensors: dict[str, Tensor],
     save_path: str | Path,
     compression_format: CompressionFormat | None = None,
-):
+) -> None:
     raise NotImplementedError()
 
 
@@ -41,5 +41,5 @@ def save_compressed_model(
     filename: str,
     compression_format: CompressionFormat | None = None,
     force_contiguous: bool = True,
-):
+) -> None:
     raise NotImplementedError()

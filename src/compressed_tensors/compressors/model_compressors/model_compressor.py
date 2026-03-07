@@ -127,7 +127,7 @@ class ModelCompressor:
         self.transform_config = transform_config
         self.force_compression_format = force_compression_format
 
-    def compress_model(self, model: torch.nn.Module):
+    def compress_model(self, model: torch.nn.Module) -> None:
         """
         Compress the model's parameters in memory.
 
@@ -155,7 +155,7 @@ class ModelCompressor:
         # without requiring CT to handle quantized kernels
         self.add_decompress_hook(model)
 
-    def decompress_model(self, model: torch.nn.Module):
+    def decompress_model(self, model: torch.nn.Module) -> None:
         """
         Decompress the model's parameters in memory.
 
@@ -173,8 +173,7 @@ class ModelCompressor:
         # decompression hook is no longer necessary
         self.remove_decompression_hook(model)
 
-
-    def update_config(self, save_directory: str):
+    def update_config(self, save_directory: str) -> None:
         """
         Update the model config located at save_directory with compression configs
 
@@ -213,6 +212,15 @@ class ModelCompressor:
             json.dump(config_data, config_file, indent=2, sort_keys=True)
 
     def add_decompress_hook(self, model: torch.nn.Module):
+        """
+        Register a forward pre-hook that decompresses the model on first forward pass.
+
+        The hook automatically removes itself after decompression, allowing the model
+        to run in decompressed state for inference.
+
+        :param model: model to attach the decompression hook to
+        """
+
         def ct_decompress_hook(model, args):
             self.decompress_model(model)
             model.ct_decompress_hook.remove()
@@ -220,6 +228,14 @@ class ModelCompressor:
         model.ct_decompress_hook = model.register_forward_pre_hook(ct_decompress_hook)
 
     def remove_decompression_hook(self, model: torch.nn.Module):
+        """
+        Remove the decompression hook from the model if it exists.
+
+        Called after manual decompression to clean up the hook that would
+        otherwise trigger on the next forward pass.
+
+        :param model: model to remove the decompression hook from
+        """
         if hasattr(model, "ct_decompress_hook"):
             model.ct_decompress_hook.remove()
             delattr(model, "ct_decompress_hook")
