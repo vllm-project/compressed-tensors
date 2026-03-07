@@ -5,7 +5,6 @@ import json
 import tempfile
 from pathlib import Path
 
-import pytest
 import torch
 import torch.nn as nn
 from compressed_tensors import ModelCompressor
