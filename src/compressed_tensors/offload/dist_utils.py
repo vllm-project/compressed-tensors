@@ -7,18 +7,34 @@ import torch
 import torch.distributed as dist
 
 
-__all__ = ["is_distributed", "is_rank0"]
+__all__ = ["is_distributed", "is_rank0", "init_dist"]
 
 
 def is_rank0() -> bool:
+    """
+    Checks if this is the main process. This means rank 0 in distributed contexts,
+    otherwise true if not distributed.
+
+    :return: true if this process is the main process
+    """
     return not is_distributed() or dist.get_rank() == 0
 
 
 def is_distributed() -> bool:
+    """
+    Checks if process is running in a torch distributed context
+    (called after `init_dist`)
+
+    :return: true if in a distributed context, false otherwise
+    """
     return dist.is_available() and dist.is_initialized()
 
 
 def init_dist():
+    """
+    Initialize rank-parallel distributed context. Assumes that each rank as its own
+    distinct cuda device which it uses to perform collective operations.
+    """
     if "TORCHELASTIC_RUN_ID" not in os.environ:
         raise ValueError(
             "Cannot find distributed environment. "

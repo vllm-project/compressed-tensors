@@ -36,7 +36,9 @@ class DiskCache(OffloadCache):
     offload_dir: str
     _new_file_prefix = "ct_disk_cache"
 
-    def __init__(self, onload_device: torch.device, offload_dir: Optional[str] = None):
+    def __init__(
+        self, onload_device: "DeviceLikeType", offload_dir: Optional[str] = None
+    ):
         super().__init__(onload_device)
         self.offload_dir = offload_dir or tempfile.mkdtemp()
 

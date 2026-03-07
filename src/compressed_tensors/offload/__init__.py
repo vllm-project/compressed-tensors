@@ -3,7 +3,7 @@
 
 import contextlib
 from collections.abc import Iterable
-from typing import Literal
+from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
@@ -25,6 +25,10 @@ from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
 from compressed_tensors.offload.utils import get_module_device, move_module_tensor
 from compressed_tensors.utils.helpers import patch_attr
+
+
+if TYPE_CHECKING:
+    from torch._prims_common import DeviceLikeType
 
 
 __all__ = [
@@ -126,8 +130,8 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
 
 
 def get_execution_device(
-    module: torch.nn.Module, default: torch.device | None = None
-) -> torch.device | Literal["disk"]:
+    module: torch.nn.Module, default: Optional["DeviceLikeType"] = None
+) -> torch.device:
     """
     Get the device which inputs should be moved to before module execution.
 
@@ -142,7 +146,7 @@ def get_execution_device(
 
 
 def get_offloaded_device(
-    module: torch.nn.Module, default: torch.device | None = None
+    module: torch.nn.Module, default: Optional["DeviceLikeType"] = None
 ) -> torch.device | Literal["disk"]:
     """
     :param module: module to check
@@ -176,7 +180,7 @@ def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.M
 @contextlib.contextmanager
 def align_modules(
     modules: torch.nn.Module | Iterable[torch.nn.Module],
-    execution_device: torch.device | None = None,
+    execution_device: Optional["DeviceLikeType"] = None,
 ):
     """
     Context manager for onloading modules to a device, and disabling onload and offload
@@ -193,7 +197,7 @@ def align_modules(
 
 @contextlib.contextmanager
 def align_module_device(
-    module: torch.nn.Module, execution_device: torch.device | None = None
+    module: torch.nn.Module, execution_device: Optional["DeviceLikeType"] = None
 ):
     """
     Context manager that moves a module's parameters to the specified execution device.

@@ -4,7 +4,7 @@
 from collections.abc import Container
 from copy import deepcopy
 from functools import partial
-from typing import Any, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
@@ -20,6 +20,9 @@ from compressed_tensors.utils.binary_search import SearchFailureError, max_binar
 from loguru import logger
 from transformers import PreTrainedModel
 
+
+if TYPE_CHECKING:
+    from torch._prims_common import DeviceLikeType
 
 __all__ = [
     "offload_model",
@@ -37,7 +40,7 @@ DeviceMap = dict[str, tuple[torch.device | None, torch.device | str | None]]
 
 def offload_model(
     model: ModelType,
-    onload_device: torch.device | str,
+    onload_device: "DeviceLikeType",
     offload_device: Any = None,
 ) -> ModelType:
     """
@@ -93,7 +96,7 @@ def dispatch_with_map(
 
 
 def get_device_map(
-    model: torch.nn.Module, default_device: torch.device = torch.device("cpu")
+    model: torch.nn.Module, default_device: "DeviceLikeType" = torch.device("cpu")
 ) -> DeviceMap:
     """
     Get the device map of a CT-offloaded model
