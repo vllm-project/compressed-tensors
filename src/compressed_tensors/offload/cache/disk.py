@@ -133,9 +133,13 @@ class DiskCache(OffloadCache):
 
     @classmethod
     def create_checkpoint_symlink(
-        cls, offloaded: torch.Tensor, weight_info: dict, offload_dir: str
+        cls,
+        offloaded: torch.Tensor,
+        weight_info: dict,
+        offload_dir: str | os.PathLike | None,
     ) -> None:
         assert is_rank0(), "Must call on rank 0 to avoid id collisions between ranks"
+        offload_dir = offload_dir or tempfile.mkdtemp()
         file_name = f"{cls._new_file_prefix}{id(offloaded)}.safetensors"
         file_path = os.path.join(offload_dir, file_name)
 

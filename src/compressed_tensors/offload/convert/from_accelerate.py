@@ -176,7 +176,7 @@ def _save_ct_index_entry(
 ):
     entry: dict = dataset.index[name]
 
-    if "safetensors_file" in entry:
+    if "safetensors_file" in entry and offloaded not in DiskCache.index:
         # typical case: model is loaded from safetensors file
         # create a symlink that points to the model safetensor file
         # if the value is ever updated, the symlink is broken and a real file
