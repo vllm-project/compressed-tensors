@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import torch
 from compressed_tensors.compressors.base import BaseCompressor
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
@@ -117,7 +118,7 @@ class NaiveQuantizationCompressor(BaseCompressor):
         Naive quantization is the fallback compressor - it matches any quantized
         scheme that doesn't match a more specific compressor.
         """
-        return scheme.weights is not None
+        return module_type == torch.nn.Linear and scheme.weights is not None
 
 
 @BaseCompressor.register(name=CompressionFormat.int_quantized.value)
@@ -128,8 +129,9 @@ class IntQuantizationCompressor(NaiveQuantizationCompressor):
     def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Int quantized matches w8a8 int quantization."""
         return (
-            scheme.weights is not None
+            module_type == torch.nn.Linear
             and scheme.input_activations is not None
+            and scheme.weights is not None
             and scheme.weights.type == QuantizationType.INT.value
         )
 
@@ -142,8 +144,8 @@ class FloatQuantizationCompressor(NaiveQuantizationCompressor):
     def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Float quantized matches w8a8 float quantization."""
         return (
-            scheme.weights is not None
+            module_type == torch.nn.Linear
             and scheme.input_activations is not None
+            and scheme.weights is not None
             and scheme.weights.type == QuantizationType.FLOAT.value
-            and scheme.weights.num_bits == 8
         )

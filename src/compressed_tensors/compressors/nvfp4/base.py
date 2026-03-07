@@ -113,10 +113,10 @@ class NVFP4PackedCompressor(BaseCompressor):
     @classmethod
     def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """NVFP4 matches FP4 with group_size != 32 (or None)."""
-        if scheme.weights is None:
-            return False
         return (
-            scheme.weights.num_bits == 4
+            module_type == torch.nn.Linear
+            and scheme.weights is not None
+            and scheme.weights.num_bits == 4
             and scheme.weights.type == QuantizationType.FLOAT.value
             and scheme.weights.group_size != 32
         )

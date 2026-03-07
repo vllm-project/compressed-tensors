@@ -15,7 +15,6 @@ from compressed_tensors.base import (
     TRANSFORM_CONFIG_NAME,
 )
 from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.config import CompressionFormat, SparsityCompressionConfig
 from compressed_tensors.config.format import flatten_formats, infer_set_module_formats
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_METHOD,
@@ -87,7 +86,7 @@ class ModelCompressor:
     def from_pretrained_model(
         cls,
         model: torch.nn.Module,
-        sparsity_config_or_format: Optional[SparsityCompressionConfig] = None,
+        sparsity_config_or_format: Optional[object] = None,
         quantization_format: Optional[str] = None,
     ):
         """
@@ -103,14 +102,7 @@ class ModelCompressor:
             for all quantized modules
         """
         if sparsity_config_or_format is not None:
-            logger.warning(
-                "Passing sparsity config or format to `ModelCompressor` is no longer "
-                "supported."
-            )
-
-        force_compression_format = quantization_format
-        if force_compression_format == CompressionFormat.dense.value:
-            force_compression_format = None
+            logger.warning("Passing sparsity config or format is no longer supported")
 
         # reconstruct qconfig from qschemes that are attached to the model
         quantization_config = QuantizationConfig.from_pretrained(model)
@@ -119,7 +111,7 @@ class ModelCompressor:
         return cls(
             quantization_config=quantization_config,
             transform_config=transform_config,
-            force_compression_format=force_compression_format,
+            force_compression_format=quantization_format,
         )
 
     def __init__(

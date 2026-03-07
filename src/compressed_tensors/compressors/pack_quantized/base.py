@@ -121,10 +121,11 @@ class PackedQuantizationCompressor(BaseCompressor):
 
     @classmethod
     def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
+        """Pack quantized matches weight-only INT quantization with 4 or 8 bits."""
         return (
             module_type == torch.nn.Linear
-            and scheme.input_activations is None
             and scheme.weights is not None
+            and scheme.input_activations is None
             and scheme.weights.num_bits in (4, 8)
             and scheme.weights.type == QuantizationType.INT.value
         )

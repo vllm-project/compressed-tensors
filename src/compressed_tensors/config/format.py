@@ -34,12 +34,12 @@ COMPRESSION_FORMAT_PRIORITY: List[CompressionFormat] = [
 
 
 def flatten_formats(formats: list[CompressionFormat]) -> CompressionFormat:
-    if len(formats) >= 2:
-        return CompressionFormat.mixed_precision
+    if len(formats) <= 0:
+        return CompressionFormat.dense
     if len(formats) == 1:
         return formats[0]
-    else:
-        return CompressionFormat.dense
+    if len(formats) >= 2:
+        return CompressionFormat.mixed_precision
 
 
 def infer_set_module_formats(
@@ -56,6 +56,7 @@ def infer_set_module_formats(
     :param model: model to check for quantization
     :param quantization_format: optional global format to override
         the per module formats
+    :return: list of formats applied to modules (excluding dense format)
     """
     formats = set()
 
@@ -85,7 +86,8 @@ def infer_set_module_formats(
             format = scheme.format
 
         scheme.format = CompressionFormat(format)
-        formats.add(format)
+        if format != CompressionFormat.dense:
+            formats.add(format)
 
     return list(formats)
 
@@ -132,6 +134,9 @@ def _get_quant_compression_format(
     :return CompresssionFormat for the module
     """
     from compressed_tensors.quantization import QuantizationType
+
+    if sparsity_structure is not None:
+        logger.warning("Sparsity is no longer supported")
 
     is_weight_only = weight_args is not None and input_args is None
 
