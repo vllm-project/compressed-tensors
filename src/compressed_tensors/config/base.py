@@ -12,7 +12,7 @@ __all__ = ["SparsityCompressionConfig", "CompressionFormat", "SparsityStructure"
 
 
 @unique
-class CompressionFormat(Enum):
+class CompressionFormat(str, Enum):
     dense = "dense"
     sparse_bitmask = "sparse-bitmask"  # legacy format
     sparse_24_bitmask = "sparse-24-bitmask"  # legacy format
