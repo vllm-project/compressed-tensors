@@ -126,3 +126,38 @@ def _test_tensor_subclass(offload_device, onload_device):
         assert_tensor_equal(cache["tensor"], tensor, offload_device)
         assert_tensor_equal(cache["param"], param, offload_device)
         assert_tensor_equal(cache["buffer"], buffer, offload_device)
+
+
+def _test_update_offload(offload_device, onload_device):
+    cache = OffloadCache.cls_from_device(offload_device)(onload_device)
+
+    # Create initial tensor and offload it
+    initial_data = torch.ones(10, device=onload_device)
+    cache["weight"] = initial_data
+
+    # Verify initial value
+    onloaded = cache["weight"]
+    assert_tensor_equal(onloaded, initial_data, onload_device)
+
+    # Update with new data
+    new_data = torch.ones(10, device=onload_device) * 2.0
+    cache["weight"] = new_data
+
+    # Verify update worked
+    updated_onloaded = cache["weight"]
+    assert_tensor_equal(updated_onloaded, new_data, onload_device)
+
+    # Verify offloaded tensor was updated in place (not replaced)
+    with cache.disable_onloading():
+        offloaded = cache["weight"]
+        assert_tensor_equal(offloaded, new_data, offload_device)
+
+    # Test update with disable_offloading context
+    with cache.disable_offloading():
+        cache["weight"] = torch.ones(10, device=onload_device) * 3.0
+        cached_onloaded = cache["weight"]
+        assert_tensor_equal(cached_onloaded, torch.ones(10) * 3.0, onload_device)
+
+    # Verify update persisted after context exit
+    final_onloaded = cache["weight"]
+    assert_tensor_equal(final_onloaded, torch.ones(10) * 3.0, onload_device)

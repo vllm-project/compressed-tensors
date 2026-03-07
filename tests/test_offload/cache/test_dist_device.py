@@ -115,7 +115,8 @@ def test_shared_attributes():
 
 
 @pytest.mark.unit
-@requires_gpu
+@requires_gpu(2)
+@torchrun(world_size=2)
 def test_tensor_subclass():
     _test_tensor_subclass(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 

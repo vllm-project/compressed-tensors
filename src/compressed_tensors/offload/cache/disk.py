@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.dist_utils import is_rank0
 from compressed_tensors.offload.utils import send_tensors, to_tensor
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -110,14 +111,44 @@ class DiskCache(OffloadCache):
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
-        Write new param data to file. If the file already existed (ie, the param has
-        already been modified at least once), then the file is overwritten.
+        Write new param data to file that already exists.
 
         :param offloaded: meta tensors representating parameter to update
         :param data: new data
         """
-        # write new data to disk using `offloaded` as the key
-        DiskCache.offload(self, data, offloaded)
+        # get weight info from index
+        assert offloaded in self.index, "Cannot find offload to update"
+        weight_info = self.index[offloaded]
+        file_path = weight_info["safetensors_file"]
+        weight_name = weight_info["weight_name"]
+        dtype = getattr(torch, weight_info["dtype"])
+
+        # create new file if old file was a symlink to a checkpoint file
+        if os.path.islink(file_path):
+            assert os.path.basename(file_path).startswith(self._new_file_prefix)
+            os.unlink(file_path)
+
+        # save with data using original weight_name
+        save_file({weight_name: data.reshape_as(offloaded).to(dtype=dtype)}, file_path)
+
+    @classmethod
+    def create_checkpoint_symlink(
+        cls,
+        offloaded: torch.Tensor,
+        weight_info: dict,
+        offload_dir: str | os.PathLike | None,
+    ) -> None:
+        assert is_rank0(), "Must call on rank 0 to avoid id collisions between ranks"
+        offload_dir = offload_dir or tempfile.mkdtemp()
+        file_name = f"{cls._new_file_prefix}{id(offloaded)}.safetensors"
+        file_path = os.path.join(offload_dir, file_name)
+
+        os.symlink(weight_info["safetensors_file"], file_path)
+        cls.index[offloaded] = {
+            "safetensors_file": file_path,
+            "weight_name": weight_info["weight_name"],
+            "dtype": weight_info["dtype"],
+        }
 
 
 def _get_safe_open_device(device: "DeviceLikeType") -> str | int:
