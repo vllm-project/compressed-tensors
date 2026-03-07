@@ -2,9 +2,11 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from abc import ABC
+from typing import Optional
 
 import torch
-from compressed_tensors.compressors.format import get_module_format
+from compressed_tensors.compressors.format import infer_module_format
+from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import QuantizationScheme
 from compressed_tensors.registry import RegistryMixin
 from compressed_tensors.utils import (
@@ -114,35 +116,49 @@ class BaseCompressor(RegistryMixin, ABC):
         raise NotImplementedError(f"{cls.__name__} does not implement match")
 
 
-def compress_module(module: torch.nn.Module):
+def compress_module(
+    module: torch.nn.Module, format: Optional[CompressionFormat] = None
+):
     """
-    Compress a module which has had quantization applied to it
+    Compress a module which has had quantization applied to it. Sets the
+    module's quantization format attribute to whichever format was used to compress.
+
+    The format used to compress will be found from one of the following locations:
+    1. the `format` argument passed to this function
+    2. the attached `quantization_scheme.format` attribute
+    3. format inferred from `infer_module_format`
 
     :param module: module to compress inplace
+    :param format: force override for compression format
     """
     scheme = getattr(module, "quantization_scheme", None)
     if not isinstance(scheme, QuantizationScheme):
         return
 
-    if scheme.format is None:
-        scheme.format = get_module_format(type(module), scheme)
-
+    scheme.format = format or scheme.format or infer_module_format(type(module), scheme)
     compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
     compressor.compress_module(module)
 
 
-def decompress_module(module: torch.nn.Module):
+def decompress_module(
+    module: torch.nn.Module, format: Optional[CompressionFormat] = None
+):
     """
-    Decompress a module which has had quantization applied to it
+    Decompress a module which has had quantization applied to it. Sets the
+    module's quantization format attribute to whichever format was used to decompress.
+
+    The format used to decompress will be found from one of the following locations:
+    1. the `format` argument passed to this function
+    2. the attached `quantization_scheme.format` attribute
+    3. format inferred from `infer_module_format`
 
     :param module: module to decompress inplace
+    :param format: force override for decompression format
     """
     scheme = getattr(module, "quantization_scheme", None)
     if not isinstance(scheme, QuantizationScheme):
         return
 
-    if scheme.format is None:
-        scheme.format = get_module_format(type(module), scheme)
-
+    scheme.format = format or scheme.format or infer_module_format(type(module), scheme)
     compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
     compressor.decompress_module(module)

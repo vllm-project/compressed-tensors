@@ -10,10 +10,7 @@ from compressed_tensors.quantization.utils import is_module_quantized
 from loguru import logger
 
 
-__all__ = [
-    "flatten_formats",
-    "infer_set_module_formats",
-]
+__all__ = ["infer_model_format", "infer_module_format"]
 
 
 # Priority order for compression format matching
@@ -29,32 +26,12 @@ COMPRESSION_FORMAT_PRIORITY: List[CompressionFormat] = [
 ]
 
 
-def flatten_formats(formats: list[CompressionFormat]) -> CompressionFormat:
-    """
-    Reduce a list of compression formats to a single summary format.
-
-    Returns dense if the list is empty, the single format if there's only one,
-    or mixed_precision if there are multiple different formats.
-
-    :param formats: list of compression formats found in the model
-    :return: single compression format representing the overall model
-    """
-    if len(formats) <= 0:
-        return CompressionFormat.dense
-    if len(formats) == 1:
-        return formats[0]
-    if len(formats) >= 2:
-        return CompressionFormat.mixed_precision
-
-
-def infer_set_module_formats(
+def infer_model_format(
     model: torch.nn.Module,
     force_compression_format: Optional[str] = None,
-) -> list[str]:
+) -> CompressionFormat:
     """
-    Infers the quantization format for a model based on its state and provided
-    compression arguments. Updates the quantization_scheme.format value
-    based on the inferred format.
+    Infers the quantization format for a model based on its modules
 
     For a summary of the formats, see `docs/guides/compression_formats.md`.
 
@@ -71,7 +48,7 @@ def infer_set_module_formats(
 
         # infer format using priority list
         scheme: QuantizationScheme = module.quantization_scheme
-        format = get_module_format(type(module), scheme)
+        format = infer_module_format(type(module), scheme)
 
         # user provides a global override format
         if force_compression_format is not None:
@@ -94,10 +71,10 @@ def infer_set_module_formats(
         if format != CompressionFormat.dense:
             formats.add(format)
 
-    return list(formats)
+    return _flatten_formats(formats)
 
 
-def get_module_format(
+def infer_module_format(
     module_type: type, scheme: QuantizationScheme
 ) -> CompressionFormat:
     """
@@ -119,3 +96,21 @@ def get_module_format(
             )
         )
     )
+
+
+def _flatten_formats(formats: set[CompressionFormat]) -> CompressionFormat:
+    """
+    Reduce a list of compression formats to a single summary format.
+
+    Returns dense if the list is empty, the single format if there's only one,
+    or mixed_precision if there are multiple different formats.
+
+    :param formats: list of compression formats found in the model
+    :return: single compression format representing the overall model
+    """
+    if len(formats) <= 0:
+        return CompressionFormat.dense
+    if len(formats) == 1:
+        return list(formats)[0]
+    if len(formats) >= 2:
+        return CompressionFormat.mixed_precision

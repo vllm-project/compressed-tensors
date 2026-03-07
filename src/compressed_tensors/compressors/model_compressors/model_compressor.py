@@ -10,19 +10,15 @@ import torch
 from compressed_tensors.base import (
     COMPRESSION_VERSION_NAME,
     QUANTIZATION_CONFIG_NAME,
+    QUANTIZATION_METHOD,
     QUANTIZATION_METHOD_NAME,
     SPARSITY_CONFIG_NAME,
     TRANSFORM_CONFIG_NAME,
 )
 from compressed_tensors.compressors.base import compress_module, decompress_module
-from compressed_tensors.compressors.format import (
-    flatten_formats,
-    infer_set_module_formats,
-)
-from compressed_tensors.quantization import (
-    DEFAULT_QUANTIZATION_METHOD,
-    QuantizationConfig,
-)
+from compressed_tensors.compressors.format import infer_model_format
+from compressed_tensors.config import CompressionFormat
+from compressed_tensors.quantization import QuantizationConfig
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
 from loguru import logger
@@ -39,10 +35,11 @@ class ModelCompressor:
     Orchestrates compression and decompression of a quantized model.
 
     Compression Lifecycle
-        - compressor = ModelCompressor.from_pretrained_model(model)
-        - compressor.compress_model(model)
-        - model.save_pretrained(quantized_path)
-        - compressor.update_config(quantized_path)
+        - model.save_pretrained_wrapper(quantized_path)
+            - compressor = ModelCompressor.from_pretrained_model(model)
+            - compressor.compress_model(model)
+            - model.save_pretrained(quantized_path)
+            - compressor.update_config(quantized_path)
 
     Decompression Lifecycle
         - model = AutoModelForCausalLM.from_pretrained(quantized_path)
@@ -59,7 +56,7 @@ class ModelCompressor:
     # during `_process_model_before_weight_loading`
     quantization_config: QuantizationConfig | None
     transform_config: TransformConfig | None
-    force_compression_format: str | None
+    force_compression_format: CompressionFormat | None
 
     @classmethod
     def from_compression_config(cls, compression_config: CompressedTensorsConfig):
@@ -111,6 +108,10 @@ class ModelCompressor:
         quantization_config = QuantizationConfig.from_pretrained(model)
         transform_config = getattr(model, TRANSFORM_CONFIG_NAME, None)
 
+        # update quantization config format for better UX when reading config.json
+        if quantization_config is not None:
+            quantization_config.format = infer_model_format(model, quantization_format)
+
         return cls(
             quantization_config=quantization_config,
             transform_config=transform_config,
@@ -125,7 +126,11 @@ class ModelCompressor:
     ):
         self.quantization_config = quantization_config
         self.transform_config = transform_config
-        self.force_compression_format = force_compression_format
+        self.force_compression_format = (
+            CompressionFormat(force_compression_format)
+            if force_compression_format is not None
+            else None
+        )
 
     def compress_model(self, model: torch.nn.Module) -> None:
         """
@@ -137,18 +142,11 @@ class ModelCompressor:
 
         :param model: model whose parameters should be compressed in place
         """
-        # infer and set which format each module should be compressed with
-        formats = infer_set_module_formats(model, self.force_compression_format)
-
-        # update quantization config format for better UX when reading config.json
-        if self.quantization_config is not None:
-            self.quantization_config.format = flatten_formats(formats)
-
         # compress modules
         modules = model.named_modules(remove_duplicate=True)
         for _, module in tqdm(list(modules), desc="Compressing model"):
             if is_module_quantized(module):
-                compress_module(module)
+                compress_module(module, self.force_compression_format)
 
         # attempting to perform forward passes with a compressed model
         # will cause to the model to decompress. This allows for generation
@@ -168,7 +166,7 @@ class ModelCompressor:
         modules = model.named_modules(remove_duplicate=True)
         for _, module in tqdm(list(modules), desc="Decompressing model"):
             if is_module_quantized(module):
-                decompress_module(module)
+                decompress_module(module, self.force_compression_format)
 
         # decompression hook is no longer necessary
         self.remove_decompression_hook(model)
@@ -202,7 +200,7 @@ class ModelCompressor:
 
         config_data[QUANTIZATION_CONFIG_NAME] = {
             COMPRESSION_VERSION_NAME: compressed_tensors.__version__,
-            QUANTIZATION_METHOD_NAME: DEFAULT_QUANTIZATION_METHOD,
+            QUANTIZATION_METHOD_NAME: QUANTIZATION_METHOD,
             SPARSITY_CONFIG_NAME: {},  # sparsity is removed for now
             TRANSFORM_CONFIG_NAME: tconfig_data,
             **qconfig_data,
