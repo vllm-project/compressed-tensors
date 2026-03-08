@@ -37,7 +37,7 @@ def offload_module(
 
     cache_cls = OffloadCache.cls_from_device(offload_device)
     module._parameters = cache_cls.from_mapping(
-        module._parameters, onload_device, offload_device=offload_device, **kwargs
+        module._parameters, onload_device, offload_device, **kwargs
     )
     module._buffers = cache_cls.from_mapping(
         module._buffers, onload_device, offload_device=offload_device, **kwargs
