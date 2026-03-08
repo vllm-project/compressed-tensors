@@ -10,6 +10,7 @@ from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
 )
 from compressed_tensors.quantization.quant_args import FP8_E4M3_DATA
+from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
@@ -46,6 +47,7 @@ def test_compress_model(frozen_stub, q_format, compressed_stub):
         assert torch.equal(compressed[key], true_compressed[key])
 
 
+@pytest.mark.filterwarnings("ignore::UserWarning")
 @pytest.mark.parametrize(
     "model_stub,q_format,compressed_stub",
     [
@@ -130,6 +132,7 @@ def test_multiple_quant_compressors():
     assert model[1].quantization_scheme.format == scheme_nvfp4.format
 
 
+@requires_gpu
 def test_compressed_model_inference_with_hook():
     model_stub = "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-compressed"
 
