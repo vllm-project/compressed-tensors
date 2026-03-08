@@ -3,7 +3,7 @@
 
 import os
 import tempfile
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
@@ -36,8 +36,13 @@ class DiskCache(OffloadCache):
     offload_dir: str
     _new_file_prefix = "ct_disk_cache"
 
-    def __init__(self, onload_device: torch.device, offload_dir: Optional[str] = None):
-        super().__init__(onload_device)
+    def __init__(
+        self,
+        onload_device: torch.device,
+        offload_device: Optional["DeviceLikeType | Literal['disk']"] = None,
+        offload_dir: Optional[str] = None,
+    ):
+        super().__init__(onload_device, offload_device=offload_device)
         self.offload_dir = offload_dir or tempfile.mkdtemp()
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
