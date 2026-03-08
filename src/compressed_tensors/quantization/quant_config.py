@@ -84,6 +84,7 @@ LIFECYCLE_ORDER = [
     QuantizationStatus.CALIBRATION,
     QuantizationStatus.FROZEN,
     QuantizationStatus.COMPRESSED,
+    QuantizationStatus.DECOMPRESSED,
 ]
 
 DEFAULT_QUANTIZATION_METHOD = "compressed-tensors"

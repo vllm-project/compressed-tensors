@@ -352,13 +352,13 @@ def wrap_module_forward_quantized(module: Module, scheme: QuantizationScheme):
 
         input_ = args[0]
 
-        weight_qdq = self.quantization_status < QuantizationStatus.COMPRESSED
+        compressed = self.quantization_status >= QuantizationStatus.COMPRESSED
 
         if scheme.input_activations is not None:
             # prehook should calibrate activations before forward call
             input_ = forward_quantize(self, input_, "input", scheme.input_activations)
 
-        if scheme.weights is not None and not weight_qdq:
+        if scheme.weights is not None and not compressed:
             # calibrate and (fake) quantize weights when applicable
             unquantized_weight = self.weight.data.clone()
             self.weight.data = forward_quantize(
@@ -371,7 +371,7 @@ def wrap_module_forward_quantized(module: Module, scheme: QuantizationScheme):
         )
 
         # restore back to unquantized_value
-        if scheme.weights is not None and not weight_qdq:
+        if scheme.weights is not None and not compressed:
             self.weight.data = unquantized_weight
 
         if scheme.output_activations is not None:
@@ -398,7 +398,7 @@ def forward_quantize(
     # in compressed mode, the weight is already compressed and quantized so we don't
     # need to run fake quantization
     if (
-        module.quantization_status < QuantizationStatus.COMPRESSED
+        module.quantization_status >= QuantizationStatus.COMPRESSED
         and base_name == "weight"
     ):
         return value

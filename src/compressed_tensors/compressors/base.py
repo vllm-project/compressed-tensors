@@ -103,7 +103,7 @@ class BaseCompressor(RegistryMixin, ABC):
         decompressed_state_dict = cls.decompress(state_dict, scheme)
         replace_direct_state_dict(module, decompressed_state_dict)
 
-        module.quantization_status = QuantizationStatus.FROZEN
+        module.quantization_status = QuantizationStatus.DECOMPRESSED
 
     @classmethod
     def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
