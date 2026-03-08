@@ -18,7 +18,7 @@ from compressed_tensors.base import (
 from compressed_tensors.compressors.base import compress_module, decompress_module
 from compressed_tensors.compressors.format import infer_model_format
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationConfig
+from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
 from loguru import logger
@@ -148,6 +148,10 @@ class ModelCompressor:
             if is_module_quantized(module):
                 compress_module(module, self.force_compression_format)
 
+        # update config status to reflect compression
+        if self.quantization_config is not None:
+            self.quantization_config.quantization_status = QuantizationStatus.COMPRESSED
+
         # attempting to perform forward passes with a compressed model
         # will cause to the model to decompress. This allows for generation
         # without requiring CT to handle quantized kernels
@@ -167,6 +171,12 @@ class ModelCompressor:
         for _, module in tqdm(list(modules), desc="Decompressing model"):
             if is_module_quantized(module):
                 decompress_module(module, self.force_compression_format)
+
+        # update config status to reflect decompression
+        if self.quantization_config is not None:
+            self.quantization_config.quantization_status = (
+                QuantizationStatus.DECOMPRESSED
+            )
 
         # decompression hook is no longer necessary
         self.remove_decompression_hook(model)

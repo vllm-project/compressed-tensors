@@ -7,7 +7,7 @@ from typing import Optional
 import torch
 from compressed_tensors.compressors.format import infer_module_format
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationScheme
+from compressed_tensors.quantization import QuantizationScheme, QuantizationStatus
 from compressed_tensors.registry import RegistryMixin
 from compressed_tensors.utils import (
     TensorStateDict,
@@ -37,7 +37,7 @@ class BaseCompressor(RegistryMixin, ABC):
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
         """
-        Compress a per-module state dict.
+        Compress a per-module state dict. Consumes `state_dict` argument.
 
         Keys are *local* names (``weight``, ``weight_scale``, …), not prefixed
         with the module path.
@@ -55,7 +55,7 @@ class BaseCompressor(RegistryMixin, ABC):
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
         """
-        Decompress a per-module state dict.
+        Decompress a per-module state dict. Consumes `state_dict` argument.
 
         Keys are *local* names (``weight_packed``, ``weight_scale``, …).
 
@@ -79,10 +79,12 @@ class BaseCompressor(RegistryMixin, ABC):
         :param module: the module to compress in-place
         """
         scheme = getattr(module, "quantization_scheme")
+
         state_dict = get_direct_state_dict(module)
         compressed_state_dict = cls.compress(state_dict, scheme)
-        del state_dict
         replace_direct_state_dict(module, compressed_state_dict)
+
+        module.quantization_status = QuantizationStatus.COMPRESSED
 
     @classmethod
     def decompress_module(cls, module: torch.nn.Module) -> None:
@@ -96,10 +98,12 @@ class BaseCompressor(RegistryMixin, ABC):
         :param module: the module to decompress in-place
         """
         scheme = getattr(module, "quantization_scheme")
+
         state_dict = get_direct_state_dict(module)
         decompressed_state_dict = cls.decompress(state_dict, scheme)
-        del state_dict
         replace_direct_state_dict(module, decompressed_state_dict)
+
+        module.quantization_status = QuantizationStatus.FROZEN
 
     @classmethod
     def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:

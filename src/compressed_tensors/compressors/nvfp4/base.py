@@ -51,7 +51,6 @@ class NVFP4PackedCompressor(BaseCompressor):
         :param scheme: quantization scheme for the weight
         :return: compressed state dict
         """
-        state_dict = state_dict.copy()
         weight = state_dict.pop("weight")
         scale = state_dict.pop("weight_scale")
         global_scale = state_dict.get("weight_global_scale", None)

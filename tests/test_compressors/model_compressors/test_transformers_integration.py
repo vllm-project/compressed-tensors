@@ -10,7 +10,7 @@ from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
 )
 from compressed_tensors.quantization.quant_args import FP8_E4M3_DATA
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 @pytest.mark.parametrize(
@@ -128,3 +128,30 @@ def test_multiple_quant_compressors():
     assert compressor.quantization_config.format == CompressionFormat.mixed_precision
     assert model[0].quantization_scheme.format == scheme_fp8.format
     assert model[1].quantization_scheme.format == scheme_nvfp4.format
+
+
+def test_compressed_model_inference_with_hook():
+    model_stub = "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-compressed"
+
+    # Load compressed model
+    model = AutoModelForCausalLM.from_pretrained(
+        model_stub, dtype="auto", device_map="auto"
+    )
+    tokenizer = AutoTokenizer.from_pretrained(model_stub)
+
+    # Model should have the decompression hook attached
+    assert hasattr(model, "ct_decompress_hook")
+
+    # Run a forward pass to trigger the hook
+    prompt = "The quick brown fox jumps over the lazy dog"
+    inputs = tokenizer(prompt, return_tensors="pt")
+    input_ids = inputs["input_ids"].to(device=model.device)
+
+    with torch.no_grad():
+        outputs = model(input_ids=input_ids, labels=input_ids)
+
+    # After forward pass, hook should have triggered and been removed
+    assert not hasattr(model, "ct_decompress_hook")
+
+    # Check perplexity is reasonable
+    assert torch.exp(outputs.loss) <= 500.0

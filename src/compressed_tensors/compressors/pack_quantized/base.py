@@ -49,7 +49,6 @@ class PackedQuantizationCompressor(BaseCompressor):
         :param device: device to move compressed tensors to
         :return: compressed state dict
         """
-        state_dict = state_dict.copy()
         weight = state_dict.pop("weight")
         scale = state_dict.get("weight_scale")
         zero_point = state_dict.get("weight_zero_point", None)
