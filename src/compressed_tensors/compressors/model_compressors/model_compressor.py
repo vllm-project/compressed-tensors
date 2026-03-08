@@ -134,11 +134,7 @@ class ModelCompressor:
 
     def compress_model(self, model: torch.nn.Module) -> None:
         """
-        Compress the model's parameters in memory.
-
-        Supports ``torch.distributed``: each rank compresses its own shard of
-        modules (round-robin by sorted module names) and then all compressed
-        parameters are broadcast to the remaining ranks.
+        Compress the model's parameters in memory
 
         :param model: model whose parameters should be compressed in place
         """
@@ -159,10 +155,7 @@ class ModelCompressor:
 
     def decompress_model(self, model: torch.nn.Module) -> None:
         """
-        Decompress the model's parameters in memory.
-
-        Supports ``torch.distributed``: mirrors the ``compress_model`` structure
-        with rank-sharded work and a broadcast step at the end.
+        Decompress the model's parameters in memory
 
         :param model: model whose parameters should be decompressed in place
         """
