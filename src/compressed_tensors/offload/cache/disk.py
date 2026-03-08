@@ -3,17 +3,14 @@
 
 import os
 import tempfile
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.utils import send_tensors, to_tensor
 from safetensors import safe_open
 from safetensors.torch import save_file
-
-
-if TYPE_CHECKING:
-    from torch._prims_common import DeviceLikeType
+from torch._prims_common import DeviceLikeType
 
 
 class DiskCache(OffloadCache):
@@ -36,7 +33,9 @@ class DiskCache(OffloadCache):
     offload_dir: str
     _new_file_prefix = "ct_disk_cache"
 
-    def __init__(self, onload_device: torch.device, offload_dir: Optional[str] = None):
+    def __init__(
+        self, onload_device: DeviceLikeType, offload_dir: Optional[str] = None
+    ):
         super().__init__(onload_device)
         self.offload_dir = offload_dir or tempfile.mkdtemp()
 
@@ -120,7 +119,7 @@ class DiskCache(OffloadCache):
         DiskCache.offload(self, data, offloaded)
 
 
-def _get_safe_open_device(device: "DeviceLikeType") -> str | int:
+def _get_safe_open_device(device: DeviceLikeType) -> str | int:
     """
     `safetensors.safe_open` does not accept `torch.device` as argument, so
     we must convert from torch.device to a string, while considering "cuda" resolution
