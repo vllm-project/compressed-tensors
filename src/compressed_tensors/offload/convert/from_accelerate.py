@@ -16,12 +16,12 @@ from compressed_tensors.offload.dispatch import dispatch_with_map
 from compressed_tensors.offload.dist_utils import is_distributed
 from compressed_tensors.offload.utils import to_tensor
 from loguru import logger
+from torch._prims_common import DeviceLikeType
 
 
 if TYPE_CHECKING:
     from accelerate.utils import OffloadedWeightsLoader
     from compressed_tensors.offload.dispatch import DeviceMap
-    from torch._prims_common import DeviceLikeType
 
 
 __all__ = ["from_accelerate", "remove_accelerate", "remove_accelerate_from_module"]
@@ -85,9 +85,7 @@ def remove_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
 
 def remove_accelerate_from_module(
     module: torch.nn.Module,
-) -> tuple[
-    "DeviceLikeType" | None, "DeviceLikeType" | Literal["disk"] | None, str | None
-]:
+) -> tuple[DeviceLikeType | None, DeviceLikeType | Literal["disk"] | None, str | None]:
     """
     Remove accelerate offloading from a module, if present.
     Absolutely no device movement occurs, and parameters/buffers pointers from state

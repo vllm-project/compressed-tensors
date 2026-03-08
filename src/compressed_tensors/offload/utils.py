@@ -4,14 +4,11 @@
 from collections.abc import Container
 from dataclasses import fields, is_dataclass
 from itertools import chain
-from typing import TYPE_CHECKING, Optional, TypeVar
+from typing import Optional, TypeVar
 
 import torch
 from loguru import logger
-
-
-if TYPE_CHECKING:
-    from torch._prims_common import DeviceLikeType
+from torch._prims_common import DeviceLikeType
 
 
 __all__ = [
@@ -66,7 +63,7 @@ def send_tensors(value: T, *args, **kwargs) -> T:
 
 
 def get_module_device(
-    module: torch.nn.Module, default: Optional["DeviceLikeType"] = None
+    module: torch.nn.Module, default: Optional[DeviceLikeType] = None
 ) -> torch.device:
     """
     Infer the device of a module using the first
@@ -92,7 +89,7 @@ def get_module_device(
 def move_module_tensor(
     module: torch.nn.Module,
     name: str,
-    device: "DeviceLikeType",
+    device: DeviceLikeType,
 ):
     """
     Move a module's tensor to a new device

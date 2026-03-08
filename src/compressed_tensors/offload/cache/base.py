@@ -4,14 +4,11 @@
 import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import MutableMapping
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import ClassVar, Literal
 
 import torch
 import torch.distributed as dist
-
-
-if TYPE_CHECKING:
-    from torch._prims_common import DeviceLikeType
+from torch._prims_common import DeviceLikeType
 
 
 class OffloadCache(MutableMapping, ABC):
@@ -33,8 +30,8 @@ class OffloadCache(MutableMapping, ABC):
     info, see `compressed_tensors.offload::(disable_offloading|disable_onloading)`
     """
 
-    onload_device: "DeviceLikeType"
-    offload_device: "DeviceLikeType" | Literal["disk"]
+    onload_device: DeviceLikeType
+    offload_device: DeviceLikeType | Literal["disk"]
 
     # global flags for disabling
     offloading_disabled: ClassVar[bool] = False
@@ -48,7 +45,7 @@ class OffloadCache(MutableMapping, ABC):
 
     @classmethod
     def cls_from_device(
-        cls, device: "DeviceLikeType" | Literal["disk"]
+        cls, device: DeviceLikeType | Literal["disk"]
     ) -> type["OffloadCache"]:
         """
         Get the subclass which implements offloading for the given `offload_device`.
@@ -90,7 +87,7 @@ class OffloadCache(MutableMapping, ABC):
     def from_mapping(
         cls,
         mapping: MutableMapping[str, torch.Tensor | None],
-        onload_device: "DeviceLikeType",
+        onload_device: DeviceLikeType,
         **kwargs,
     ):
         """
@@ -108,7 +105,7 @@ class OffloadCache(MutableMapping, ABC):
 
         return instance
 
-    def __init__(self, onload_device: "DeviceLikeType"):
+    def __init__(self, onload_device: DeviceLikeType):
         super().__init__()
         self.onload_device = onload_device
         self.offloaded_values = dict()
