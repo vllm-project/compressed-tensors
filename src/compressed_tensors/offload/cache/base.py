@@ -105,7 +105,7 @@ class OffloadCache(MutableMapping, ABC):
 
         return instance
 
-    def __init__(self, onload_device: torch.device | str, offload_device=None):
+    def __init__(self, onload_device: torch.device | str, offload_device: Optional["DeviceLikeType" | Literal["Disk"]]):
         super().__init__()
         self.onload_device = onload_device
         self.offloaded_values = dict()
