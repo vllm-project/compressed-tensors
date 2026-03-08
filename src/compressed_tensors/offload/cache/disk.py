@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
@@ -39,7 +39,7 @@ class DiskCache(OffloadCache):
     def __init__(
         self,
         onload_device: torch.device,
-        offload_device=None,
+        offload_device: Optional["DeviceLikeType | Literal['disk']"] = None,
         offload_dir: Optional[str] = None,
     ):
         super().__init__(onload_device, offload_device=offload_device)
