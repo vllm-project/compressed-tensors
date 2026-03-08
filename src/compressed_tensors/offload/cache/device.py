@@ -18,7 +18,7 @@ class DeviceCache(OffloadCache):
     tensors is typically a no-op (except onload device has been modified).
     """
 
-    def __init__(self, onload_device: "DeviceLikeType", offload_device=None):
+    def __init__(self, onload_device: "DeviceLikeType", offload_device: Optional["DeviceLikeType" | Literal["disk"]] = None):
         super().__init__(onload_device, offload_device=offload_device)
         if offload_device is not None:
             self.offload_device = torch.device(offload_device)
