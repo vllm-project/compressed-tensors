@@ -36,8 +36,16 @@ class DiskCache(OffloadCache):
     offload_dir: str
     _new_file_prefix = "ct_disk_cache"
 
-    def __init__(self, onload_device: torch.device, offload_dir: Optional[str] = None):
-        super().__init__(onload_device)
+    def __init__(
+        self,
+        onload_device: torch.device,
+        offload_device=None,
+        offload_dir: Optional[str] = None,
+    ):
+        super().__init__(onload_device, offload_device=offload_device)
+        if offload_device is not None:
+            assert str(offload_device) == str(self.offload_device)
+
         if offload_dir is None:
             raise ValueError(
                 "Must provide an `offload_dir` to perform disk offloading "

@@ -40,7 +40,7 @@ def offload_module(
         module._parameters, onload_device, offload_device, **kwargs
     )
     module._buffers = cache_cls.from_mapping(
-        module._buffers, onload_device, offload_device=offload_device, **kwargs
+        module._buffers, onload_device, offload_device, **kwargs
     )
 
     original_forward_func = module.forward.__func__

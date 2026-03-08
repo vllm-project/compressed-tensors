@@ -38,7 +38,7 @@ DeviceMap = dict[str, tuple[torch.device | None, torch.device | str | None]]
 def offload_model(
     model: ModelType,
     onload_device: torch.device | str,
-    offload_device: Optional[torch.device | str] = None,
+    offload_device: Any = None,
 ) -> ModelType:
     """
     Modify the dispatch of a model to onload to the provided `onload_device`. Existing
@@ -47,22 +47,23 @@ def offload_model(
 
     :param model: model to dispatch
     :param onload_device: device to move weights to during forward pass
-    :param offload_device: device to offload weights to. If None, each module is
-        offloaded to its current device.
+    :param offload_device: device to offload weights to, if not already offloaded
     :return: dispatched model
     """
+    if offload_device is not None:
+        logger.warning(
+            "`offload_model` now keeps the same offload device that model was loaded "
+            "on. Please specify offload by loading the model on its offload device(s)"
+        )
+
     # offload modules in place
     for module in model.modules():
         if isinstance(module._parameters, OffloadCache):
             module._parameters.onload_device = onload_device
             module._buffers.onload_device = onload_device
         else:
-            target = (
-                offload_device
-                if offload_device is not None
-                else get_module_device(module, torch.device("cpu"))
-            )
-            offload_module(module, onload_device, target)
+            offload_device = get_module_device(module, torch.device("cpu"))
+            offload_module(module, onload_device, offload_device)
 
     return model
 
