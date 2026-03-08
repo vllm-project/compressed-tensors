@@ -15,8 +15,6 @@ class CPUCache(OffloadCache):
 
     def __init__(self, onload_device: torch.device | str, offload_device=None):
         super().__init__(onload_device, offload_device=offload_device)
-        if offload_device is not None:
-            assert str(offload_device) == str(self.offload_device)
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """

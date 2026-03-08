@@ -123,6 +123,12 @@ class OffloadCache(MutableMapping, ABC):
         self.onload_device = onload_device
         self.offloaded_values = dict()
 
+        # Validate offload_device for subclasses with a fixed offload_device
+        # (CPUCache, DiskCache). DeviceCache sets offload_device after super().__init__
+        # so this check only applies when offload_device is a class attribute.
+        if offload_device is not None and hasattr(type(self), "offload_device"):
+            assert str(offload_device) == str(self.offload_device)
+
     @abstractmethod
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """

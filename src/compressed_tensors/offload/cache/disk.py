@@ -43,8 +43,6 @@ class DiskCache(OffloadCache):
         offload_dir: Optional[str] = None,
     ):
         super().__init__(onload_device, offload_device=offload_device)
-        if offload_device is not None:
-            assert str(offload_device) == str(self.offload_device)
         self.offload_dir = offload_dir or tempfile.mkdtemp()
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
