@@ -1,197 +1,172 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from abc import ABC, abstractmethod
-from collections.abc import Generator
+from abc import ABC
+from typing import Optional
 
 import torch
-from compressed_tensors.config import SparsityCompressionConfig
-from compressed_tensors.quantization import QuantizationArgs, QuantizationConfig
+from compressed_tensors.compressors.format import infer_module_format
+from compressed_tensors.config import CompressionFormat
+from compressed_tensors.quantization import QuantizationScheme, QuantizationStatus
 from compressed_tensors.registry import RegistryMixin
-from compressed_tensors.utils import has_offloaded_params
-from torch import Tensor
-from torch.nn import Module
+from compressed_tensors.utils import (
+    TensorStateDict,
+    get_direct_state_dict,
+    replace_direct_state_dict,
+)
 
 
-__all__ = ["BaseCompressor"]
+__all__ = ["BaseCompressor", "compress_module", "decompress_module"]
 
 
 class BaseCompressor(RegistryMixin, ABC):
     """
-    Base class representing a model compression algorithm. Each child class should
-    implement compression_param_info, compress_weight and decompress_weight.
+    Base class representing a model compression algorithm.
 
-    Compressors support compressing/decompressing a full module state dict or a single
-    quantized PyTorch leaf module.
+    New quantization compressors (dense, naive_quantized, pack_quantized, nvfp4,
+    mxfp4) use the classmethod interface — they are never instantiated. Look up
+    via BaseCompressor.get_value_from_registry(format) and call compress/decompress
+    directly on the returned class.
 
-    Model Load Lifecycle (run_compressed=False):
-        - ModelCompressor.decompress()
-            - apply_quantization_config()
-            - BaseCompressor.decompress()
-
-    Model Save Lifecycle:
-        - ModelCompressor.compress()
-            - BaseCompressor.compress()
-
-
-    Module Lifecycle (run_compressed=True):
-        - apply_quantization_config()
-        - compressed_module = CompressedLinear(module)
-            - initialize_module_for_quantization()
-            - BaseCompressor.compression_param_info()
-            - register_parameters()
-        - compressed_module.forward()
-            -compressed_module.decompress()
-
-
-    :param config: config specifying compression parameters
+    Legacy sparse compressors (sparse_bitmask, sparse_24_bitmask, marlin_24) still
+    use the instance-based interface and are instantiated via load_from_registry.
     """
 
-    def __init__(
-        self, config: SparsityCompressionConfig | QuantizationConfig | None = None
-    ):
-        self.config = config
-
-    def compression_param_info(
-        self,
-        weight_shape: torch.Size,
-        quantization_args: QuantizationArgs | None = None,
-    ) -> dict[str, tuple[torch.Size, torch.dtype]]:
-        """
-        Creates a dictionary of expected shapes and dtypes for each compression
-            parameter used by the compressor
-
-        :param weight_shape: uncompressed weight shape
-        :param quantization_args: quantization parameters for the weight
-        :return: dictionary mapping compressed parameter names to shape and dtype
-        """
-        raise NotImplementedError()
-
-    @property
-    @abstractmethod
-    def compression_param_names(self) -> tuple[str, ...]:
-        """
-        Returns a tuple of compression parameter names introduced by
-        the compressor during compression
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
+    @classmethod
     def compress(
-        self,
-        model_state: dict[str, Tensor],
-        **kwargs,
-    ) -> dict[str, Tensor]:
+        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
+    ) -> TensorStateDict:
         """
-        Compresses a dense state dict
+        Compress a per-module state dict. Consumes `state_dict` argument.
 
-        :param model_state: state dict of uncompressed model
-        :param kwargs: additional arguments for compression
-        :return: compressed state dict
+        Keys are *local* names (``weight``, ``weight_scale``, …), not prefixed
+        with the module path.
+
+        :param state_dict: per-module state dict with local parameter names
+        :param scheme: quantization scheme containing quantization parameters
+        :return: compressed per-module state dict
         """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def decompress(
-        self,
-        path_to_model_or_tensors: str,
-        device: str = "cpu",
-        **kwargs,
-    ) -> Generator[tuple[str, Tensor], None, None]:
-        """
-        Reads a compressed state dict located at path_to_model_or_tensors
-        and returns a generator for sequentially decompressing back to a
-        dense state dict
-
-        :param path_to_model_or_tensors: path to compressed safetensors model (directory
-            with one or more safetensors files) or compressed tensors file
-        :param names_to_scheme: quantization args for each quantized weight
-        :param device: optional device to load intermediate weights into
-        :return: compressed state dict
-        """
-        raise NotImplementedError()
-
-    def compress_module(self, module: Module) -> dict[str, torch.Tensor] | None:
-        """
-        Compresses a single quantized leaf PyTorch module. If the module is not
-        quantized, this function has no effect.
-
-        :param module: PyTorch module to compress
-        :return: dictionary of compressed weight data, or None if module is not
-            quantized
-        """
-        if not hasattr(module, "quantization_scheme"):
-            return None  # module is not quantized
-        quantization_scheme = module.quantization_scheme
-        if not hasattr(quantization_scheme, "weights"):
-            return None  # weights are not quantized
-
-        quantization_args = quantization_scheme.weights
-        weight = getattr(module, "weight", None)
-        weight_scale = getattr(module, "weight_scale", None)
-        weight_zero_point = getattr(module, "weight_zero_point", None)
-
-        return self.compress_weight(
-            weight=weight,
-            scale=weight_scale,
-            zero_point=weight_zero_point,
-            quantization_args=quantization_args,
+        raise NotImplementedError(
+            f"{cls.__name__} does not implement the classmethod compress interface"
         )
 
-    def compress_weight(
-        self,
-        weight: Tensor,
-        **kwargs,
-    ) -> dict[str, torch.Tensor]:
+    @classmethod
+    def decompress(
+        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
+    ) -> TensorStateDict:
         """
-        Compresses a single uncompressed weight
+        Decompress a per-module state dict. Consumes `state_dict` argument.
 
-        :param weight: uncompressed weight tensor
-        :param kwargs: additional arguments for compression
+        Keys are *local* names (``weight_packed``, ``weight_scale``, …).
+
+        :param state_dict: compressed per-module state dict with local parameter names
+        :param scheme: quantization scheme containing quantization parameters
+        :return: decompressed per-module state dict
         """
-        raise NotImplementedError()
+        raise NotImplementedError(
+            f"{cls.__name__} does not implement the classmethod decompress interface"
+        )
 
-    def decompress_module(self, module: Module):
+    @classmethod
+    def compress_module(cls, module: torch.nn.Module) -> None:
         """
-        Decompresses a single compressed leaf PyTorch module. If the module is not
-        quantized, this function has no effect.
+        Compress a module in-place by compressing its state dict.
 
-        :param module: PyTorch module to decompress
-        :return: tensor of the decompressed weight, or None if module is not quantized
+        Extracts the module's parameters and buffers, compresses them using the
+        compress classmethod, and replaces the module's state with the compressed
+        version.
+
+        :param module: the module to compress in-place
         """
+        scheme = getattr(module, "quantization_scheme")
 
-        params_device = next(module.parameters()).device
-        device = "cpu" if has_offloaded_params(module) else params_device
+        state_dict = get_direct_state_dict(module)
+        compressed_state_dict = cls.compress(state_dict, scheme)
+        replace_direct_state_dict(module, compressed_state_dict)
 
-        if not hasattr(module, "quantization_scheme"):
-            return None  # module is not quantized
-        quantization_scheme = module.quantization_scheme
-        if not hasattr(quantization_scheme, "weights"):
-            return None  # weights are not quantized
+        module.quantization_status = QuantizationStatus.COMPRESSED
 
-        quantization_args = quantization_scheme.weights
-        compressed_data = {}
-        for name, parameter in module.named_parameters():
-            compressed_data[name] = parameter
-
-        decompressed_weight = self.decompress_weight(
-            compressed_data=compressed_data, quantization_args=quantization_args
-        ).to(device)
-
-        for name in ("weight_scale", "weight_zero_point"):
-            if hasattr(module, name):
-                module.register_parameter(name, compressed_data[name])
-
-        return decompressed_weight
-
-    def decompress_weight(
-        self, compressed_data: dict[str, Tensor], **kwargs
-    ) -> torch.Tensor:
+    @classmethod
+    def decompress_module(cls, module: torch.nn.Module) -> None:
         """
-        Decompresses a single compressed weight
+        Decompress a module in-place by decompressing its state dict.
 
-        :param compressed_data: dictionary of data needed for decompression
-        :param kwargs: additional arguments for decompression
-        :return: tensor of the decompressed weight
+        Extracts the module's parameters and buffers, decompresses them using the
+        decompress classmethod, and replaces the module's state with the decompressed
+        version.
+
+        :param module: the module to decompress in-place
         """
-        raise NotImplementedError()
+        scheme = getattr(module, "quantization_scheme")
+
+        state_dict = get_direct_state_dict(module)
+        decompressed_state_dict = cls.decompress(state_dict, scheme)
+        replace_direct_state_dict(module, decompressed_state_dict)
+
+        module.quantization_status = QuantizationStatus.DECOMPRESSED
+
+    @classmethod
+    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
+        """
+        Determine if this compressor is applicable for the given module type and scheme.
+
+        Examines the module type and quantization scheme and determines whether this
+        compressor can handle the module's compression requirements.
+
+        :param module_type: the type of the module to check for compatibility
+        :param scheme: the quantization scheme to check for compatibility
+        :return: True if this compressor can handle the module, False otherwise
+        """
+        raise NotImplementedError(f"{cls.__name__} does not implement match")
+
+
+def compress_module(
+    module: torch.nn.Module, format: Optional[CompressionFormat] = None
+):
+    """
+    Compress a module which has had quantization applied to it. Sets the
+    module's quantization format attribute to whichever format was used to compress.
+
+    The format used to compress will be found from one of the following locations:
+    1. the `format` argument passed to this function
+    2. the attached `quantization_scheme.format` attribute
+    3. format inferred from `infer_module_format`
+
+    :param module: module to compress inplace
+    :param format: force override for compression format
+    """
+    scheme = getattr(module, "quantization_scheme", None)
+    if not isinstance(scheme, QuantizationScheme):
+        return
+
+    scheme.format = CompressionFormat(
+        format or scheme.format or infer_module_format(type(module), scheme)
+    )
+    compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
+    compressor.compress_module(module)
+
+
+def decompress_module(
+    module: torch.nn.Module, format: Optional[CompressionFormat] = None
+):
+    """
+    Decompress a module which has had quantization applied to it. Sets the
+    module's quantization format attribute to whichever format was used to decompress.
+
+    The format used to decompress will be found from one of the following locations:
+    1. the `format` argument passed to this function
+    2. the attached `quantization_scheme.format` attribute
+    3. format inferred from `infer_module_format`
+
+    :param module: module to decompress inplace
+    :param format: force override for decompression format
+    """
+    scheme = getattr(module, "quantization_scheme", None)
+    if not isinstance(scheme, QuantizationScheme):
+        return
+
+    scheme.format = CompressionFormat(
+        format or scheme.format or infer_module_format(type(module), scheme)
+    )
+    compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
+    compressor.decompress_module(module)
