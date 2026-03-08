@@ -431,6 +431,7 @@ def forward_quantize(
     )
 
 
+@torch.compile(mode="max-autotune")
 @torch.no_grad()
 def _quantize(
     x: torch.Tensor,
@@ -463,7 +464,7 @@ def _quantize(
 
     return quantized_value
 
-
+@torch.compile(mode="max-autotune")
 @torch.no_grad()
 def _dequantize(
     x_q: torch.Tensor,
