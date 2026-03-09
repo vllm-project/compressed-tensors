@@ -142,23 +142,22 @@ class ModelCompressor:
 
         :param model: model whose parameters should be compressed in place
         """
+        # Get all quantized modules
+        quantized_modules = [
+            module
+            for _, module in model.named_modules(remove_duplicate=True)
+            if is_module_quantized(module)
+        ]
+
+        # Compress modules using distributed or sequential approach
         if is_distributed():
-            modules = [
-                module
-                for _, module in model.named_modules(remove_duplicate=True)
-                if is_module_quantized(module)
-            ]
             apply_fn = partial(
                 compress_module, force_compression_format=self.force_compression_format
             )
-            apply_module_parallel(modules, apply_fn, module_size)
-
+            apply_module_parallel(quantized_modules, apply_fn, module_size)
         else:
-            # compress modules
-            modules = model.named_modules(remove_duplicate=True)
-            for _, module in tqdm(list(modules), desc="Compressing model"):
-                if is_module_quantized(module):
-                    compress_module(module, self.force_compression_format)
+            for module in tqdm(quantized_modules, desc="Compressing model"):
+                compress_module(module, self.force_compression_format)
 
         # update config status to reflect compression
         if self.quantization_config is not None:
