@@ -83,6 +83,11 @@ def dispatch_with_map(
     for name, (onload_device, offload_device) in device_map.items():
         module = model.get_submodule(name)
 
+        # TODO from_accelerate is being called twice somehow. maybe double-wrapped .from_pretrained?
+        if isinstance(module._parameters, OffloadCache):
+            print(f"Previously offloaded module {module}")
+            continue
+
         if offload_device == "disk":
             offload_module(
                 module, onload_device, offload_device, offload_dir=offload_dir

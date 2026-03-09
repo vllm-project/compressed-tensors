@@ -1,95 +1,30 @@
 import math
-from dataclasses import dataclass
-from typing import Tuple, Optional, Literal
+from typing import Tuple, Optional
 
 import torch
 from torch import nn
+from torch.nn import Linear
 import torch.nn.functional as F
 import torch.distributed as dist
 
-from .kernel import act_quant, fp8_gemm, fp8_index
+from .kernel import act_quant, fp8_index
+from .config import ModelConfig
+from transformers.models.deepseek_v3 import DeepseekV3ForCausalLM
 
+from transformers import PreTrainedModel
+import torch.nn.init as init
+from transformers.modeling_outputs import (
+    BaseModelOutputWithPast,
+    CausalLMOutputWithPast,
+)
+from transformers.processing_utils import Unpack
+from transformers.utils import TransformersKwargs
+from transformers.cache_utils import Cache
+from transformers.generation import GenerationMixin
 
 world_size = 1
 rank = 0
 block_size = 128
-
-
-@dataclass
-class ModelArgs:
-    """
-    Data class for defining model arguments and hyperparameters.
-
-    Attributes:
-        max_batch_size (int): Maximum batch size.
-        max_seq_len (int): Maximum sequence length.
-        dtype (Literal["bf16", "fp8"]): Data type for computations.
-        scale_fmt (Optional[str]): Format for quantization scale.
-        vocab_size (int): Vocabulary size.
-        dim (int): Model dimension.
-        inter_dim (int): Intermediate dimension for MLP layers.
-        moe_inter_dim (int): Intermediate dimension for MoE layers.
-        n_layers (int): Number of transformer layers.
-        n_dense_layers (int): Number of dense layers in the model.
-        n_heads (int): Number of attention heads.
-        n_routed_experts (int): Number of routed experts for MoE layers.
-        n_shared_experts (int): Number of shared experts for MoE layers.
-        n_activated_experts (int): Number of activated experts in MoE layers.
-        n_expert_groups (int): Number of expert groups.
-        n_limited_groups (int): Number of limited groups for MoE routing.
-        score_func (Literal["softmax", "sigmoid"]): Scoring function for MoE routing.
-        route_scale (float): Scaling factor for routing scores.
-        q_lora_rank (int): LoRA rank for query projections.
-        kv_lora_rank (int): LoRA rank for key-value projections.
-        qk_nope_head_dim (int): Dimension for query-key projections without positional embeddings.
-        qk_rope_head_dim (int): Dimension for query-key projections with rotary embeddings.
-        v_head_dim (int): Dimension for value projections.
-        original_seq_len (int): Original sequence length.
-        rope_theta (float): Base for rotary positional encoding.
-        rope_factor (float): Scaling factor for extended sequence lengths.
-        beta_fast (int): Fast beta correction factor.
-        beta_slow (int): Slow beta correction factor.
-        mscale (float): Scaling factor for extended attention.
-        index_head_dim (int): Dimension for index head.
-        index_topk (int): Top-k for index head.
-    """
-
-    max_batch_size: int = 8
-    max_seq_len: int = 4096 * 4
-    dtype: Literal["bf16", "fp8"] = "bf16"
-    scale_fmt: Optional[str] = None
-    vocab_size: int = 102400
-    dim: int = 2048
-    inter_dim: int = 10944
-    moe_inter_dim: int = 1408
-    n_layers: int = 27
-    n_dense_layers: int = 1
-    n_heads: int = 16
-    # moe
-    n_routed_experts: int = 64
-    n_shared_experts: int = 2
-    n_activated_experts: int = 6
-    n_expert_groups: int = 1
-    n_limited_groups: int = 1
-    score_func: Literal["softmax", "sigmoid"] = "softmax"
-    route_scale: float = 1.0
-    # mla
-    q_lora_rank: int = 0
-    kv_lora_rank: int = 512
-    qk_nope_head_dim: int = 128
-    qk_rope_head_dim: int = 64
-    v_head_dim: int = 128
-    # yarn
-    original_seq_len: int = 4096
-    rope_theta: float = 10000.0
-    rope_factor: float = 40
-    beta_fast: int = 32
-    beta_slow: int = 1
-    mscale: float = 1.0
-    # index
-    index_n_heads: int = 64
-    index_head_dim: int = 128
-    index_topk: int = 2048
 
 
 class ParallelEmbedding(nn.Module):
@@ -137,92 +72,92 @@ class ParallelEmbedding(nn.Module):
         return y
 
 
-def linear(
-    x: torch.Tensor,
-    weight: torch.Tensor,
-    bias: Optional[torch.Tensor] = None,
-    scale_fmt: Optional[str] = None,
-) -> torch.Tensor:
-    """
-    Applies a linear transformation to the incoming data: y = xA^T + b.
-    This function supports specialized implementations based on quantization
-    and tensor formats.
+# def linear(
+#     x: torch.Tensor,
+#     weight: torch.Tensor,
+#     bias: Optional[torch.Tensor] = None,
+#     scale_fmt: Optional[str] = None,
+# ) -> torch.Tensor:
+#     """
+#     Applies a linear transformation to the incoming data: y = xA^T + b.
+#     This function supports specialized implementations based on quantization
+#     and tensor formats.
 
-    Args:
-        x (torch.Tensor): The input tensor.
-        weight (torch.Tensor): The weight tensor. It may be quantized and
-            requires dequantization for certain cases.
-        bias (Optional[torch.Tensor]): The bias tensor to be added. Default is None.
-        scale_fmt (Optional[str]): The format of scaling factors.
+#     Args:
+#         x (torch.Tensor): The input tensor.
+#         weight (torch.Tensor): The weight tensor. It may be quantized and
+#             requires dequantization for certain cases.
+#         bias (Optional[torch.Tensor]): The bias tensor to be added. Default is None.
+#         scale_fmt (Optional[str]): The format of scaling factors.
 
-    Returns:
-        torch.Tensor: The result of the linear transformation, which may involve
-        quantization-aware computations depending on the input parameters.
+#     Returns:
+#         torch.Tensor: The result of the linear transformation, which may involve
+#         quantization-aware computations depending on the input parameters.
 
-    Notes:
-        - If `weight` is quantized (e.g., `element_size() == 1`), a dequantized version
-          is used for computation.
-        - For other cases, the function applies quantization to `x` and uses `fp8_gemm` for computation.
-    """
-    assert bias is None
+#     Notes:
+#         - If `weight` is quantized (e.g., `element_size() == 1`), a dequantized version
+#           is used for computation.
+#         - For other cases, the function applies quantization to `x` and uses `fp8_gemm` for computation.
+#     """
+#     assert bias is None
 
-    if weight.dtype != torch.float8_e4m3fn:
-        return F.linear(x, weight)
-    else:
-        x, scale = act_quant(x, block_size, scale_fmt)
-        return fp8_gemm(x, scale, weight, weight.scale)
-
-
-class Linear(nn.Module):
-    """
-    Custom linear layer with support for quantized weights and optional bias.
-
-    Args:
-        in_features (int): Number of input features.
-        out_features (int): Number of output features.
-        bias (bool): Whether to include a bias term. Defaults to False.
-        dtype (optional): Data type for the layer. Defaults to `torch.bfloat16`.
-    """
-
-    dtype = torch.bfloat16
-    scale_fmt: Optional[str] = None
-
-    def __init__(
-        self, in_features: int, out_features: int, bias: bool = False, dtype=None
-    ):
-        super().__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.weight = nn.Parameter(
-            torch.empty(out_features, in_features, dtype=dtype or Linear.dtype)
-        )
-        if self.weight.element_size() == 1:
-            scale_out_features = (out_features + block_size - 1) // block_size
-            scale_in_features = (in_features + block_size - 1) // block_size
-            self.weight.scale = self.scale = nn.Parameter(
-                torch.empty(scale_out_features, scale_in_features, dtype=torch.float32)
-            )
-        else:
-            self.register_parameter("scale", None)
-        if bias:
-            self.bias = nn.Parameter(torch.empty(out_features))
-        else:
-            self.register_parameter("bias", None)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass for the custom linear layer.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: Transformed tensor after linear computation.
-        """
-        return linear(x, self.weight, self.bias, self.scale_fmt)
+#     if weight.dtype != torch.float8_e4m3fn:
+#         return F.linear(x, weight)
+#     else:
+#         x, scale = act_quant(x, block_size, scale_fmt)
+#         return fp8_gemm(x, scale, weight, weight.scale)
 
 
-class ColumnParallelLinear(Linear):
+# class Linear(nn.Module):
+#     """
+#     Custom linear layer with support for quantized weights and optional bias.
+
+#     Args:
+#         in_features (int): Number of input features.
+#         out_features (int): Number of output features.
+#         bias (bool): Whether to include a bias term. Defaults to False.
+#         dtype (optional): Data type for the layer. Defaults to `torch.bfloat16`.
+#     """
+
+#     dtype = torch.bfloat16
+#     scale_fmt: Optional[str] = None
+
+#     def __init__(
+#         self, in_features: int, out_features: int, bias: bool = False, dtype=None
+#     ):
+#         super().__init__()
+#         self.in_features = in_features
+#         self.out_features = out_features
+#         self.weight = nn.Parameter(
+#             torch.empty(out_features, in_features, dtype=dtype or Linear.dtype)
+#         )
+#         if self.weight.element_size() == 1:
+#             scale_out_features = (out_features + block_size - 1) // block_size
+#             scale_in_features = (in_features + block_size - 1) // block_size
+#             self.weight.scale = self.scale = nn.Parameter(
+#                 torch.empty(scale_out_features, scale_in_features, dtype=torch.float32)
+#             )
+#         else:
+#             self.register_parameter("scale", None)
+#         if bias:
+#             self.bias = nn.Parameter(torch.empty(out_features))
+#         else:
+#             self.register_parameter("bias", None)
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         """
+#         Forward pass for the custom linear layer.
+
+#         Args:
+#             x (torch.Tensor): Input tensor.
+
+#         Returns:
+#             torch.Tensor: Transformed tensor after linear computation.
+#         """
+#         return linear(x, self.weight, self.bias, self.scale_fmt)
+
+
+class ColumnParallelLinear(nn.Linear):
     """
     Linear layer with column parallelism, splitting output features across distributed processes.
 
@@ -252,11 +187,11 @@ class ColumnParallelLinear(Linear):
         Returns:
             torch.Tensor: Transformed tensor with column-parallel computation.
         """
-        y = linear(x, self.weight, self.bias, self.scale_fmt)
+        y = F.linear(x, self.weight, self.bias)
         return y
 
 
-class RowParallelLinear(Linear):
+class RowParallelLinear(nn.Linear):
     """
     Linear layer with row parallelism, splitting input features across distributed processes.
 
@@ -292,7 +227,7 @@ class RowParallelLinear(Linear):
         Returns:
             torch.Tensor: Transformed tensor with row-parallel computation.
         """
-        y = linear(x, self.weight, None, self.scale_fmt)
+        y = F.linear(x, self.weight)
         if self.reduce_output and world_size > 1:
             y = y.float()
             dist.all_reduce(y)
@@ -357,12 +292,12 @@ class LayerNorm(nn.Module):
         ).type_as(x)
 
 
-def precompute_freqs_cis(args: ModelArgs) -> torch.Tensor:
+def precompute_freqs_cis(args: ModelConfig) -> torch.Tensor:
     """
     Precomputes frequency-based complex exponential values for rotary positional embeddings.
 
     Args:
-        args (ModelArgs): Model arguments containing positional embedding parameters.
+        args (ModelConfig): Model arguments containing positional embedding parameters.
 
     Returns:
         torch.Tensor: Precomputed complex exponential values for positional embeddings.
@@ -486,7 +421,7 @@ def rotate_activation(x: torch.Tensor) -> torch.Tensor:
 
 
 class Indexer(torch.nn.Module):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: ModelConfig):
         super().__init__()
         self.dim: int = args.dim
         self.n_heads: int = args.index_n_heads
@@ -614,7 +549,7 @@ class MLA(nn.Module):
         softmax_scale (float): Scaling factor for softmax in attention computation.
     """
 
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: ModelConfig):
         super().__init__()
         self.dim = args.dim
         self.n_heads = args.n_heads
@@ -626,17 +561,19 @@ class MLA(nn.Module):
         self.qk_head_dim = args.qk_nope_head_dim + args.qk_rope_head_dim
         self.v_head_dim = args.v_head_dim
 
-        self.wq_a = Linear(self.dim, self.q_lora_rank)
-        self.q_norm = RMSNorm(self.q_lora_rank)
-        self.wq_b = ColumnParallelLinear(
+        self.q_a_proj = Linear(self.dim, self.q_lora_rank)
+        self.q_a_layernorm = RMSNorm(self.q_lora_rank)
+        self.q_b_proj = ColumnParallelLinear(
             self.q_lora_rank, self.n_heads * self.qk_head_dim
         )
-        self.wkv_a = Linear(self.dim, self.kv_lora_rank + self.qk_rope_head_dim)
-        self.kv_norm = RMSNorm(self.kv_lora_rank)
-        self.wkv_b = ColumnParallelLinear(
+        self.kv_a_proj_with_mqa = Linear(
+            self.dim, self.kv_lora_rank + self.qk_rope_head_dim
+        )
+        self.kv_a_layernorm = RMSNorm(self.kv_lora_rank)
+        self.kv_b_proj = ColumnParallelLinear(
             self.kv_lora_rank, self.n_heads * (self.qk_nope_head_dim + self.v_head_dim)
         )
-        self.wo = RowParallelLinear(self.n_heads * self.v_head_dim, self.dim)
+        self.o_proj = RowParallelLinear(self.n_heads * self.v_head_dim, self.dim)
         self.softmax_scale = self.qk_head_dim**-0.5
         self.scale_fmt = args.scale_fmt
         if args.max_seq_len > args.original_seq_len:
@@ -678,16 +615,16 @@ class MLA(nn.Module):
         """
         bsz, seqlen, _ = x.size()
         end_pos = start_pos + seqlen
-        qr = self.q_norm(self.wq_a(x))
-        q = self.wq_b(qr)
+        qr = self.q_a_layernorm(self.q_a_proj(x))
+        q = self.q_b_proj(qr)
         q = q.view(bsz, seqlen, self.n_local_heads, self.qk_head_dim)
         q_nope, q_pe = torch.split(
             q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
         )
         q_pe = apply_rotary_emb(q_pe, freqs_cis)
-        kv = self.wkv_a(x)
+        kv = self.kv_a_proj_with_mqa(x)
         kv, k_pe = torch.split(kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
-        kv = self.kv_norm(kv)
+        kv = self.kv_a_layernorm(kv)
         k_pe = apply_rotary_emb(k_pe.unsqueeze(2), freqs_cis)
         # we use fp8 kv cache in actual deployment, so here we simulate the precision by casting kv to fp8 and then back to bf16.
         kv_fp8, kv_scale = act_quant(kv, block_size, self.scale_fmt)
@@ -700,7 +637,7 @@ class MLA(nn.Module):
         self.pe_cache[:bsz, start_pos:end_pos] = k_pe.squeeze(2)
         if mask is not None:  # MHA prefill
             q = torch.cat([q_nope, q_pe], dim=-1)
-            kv = self.wkv_b(kv)
+            kv = self.kv_b_proj(kv)
             kv = kv.view(
                 bsz, seqlen, self.n_local_heads, self.qk_nope_head_dim + self.v_head_dim
             )
@@ -721,14 +658,18 @@ class MLA(nn.Module):
             scores = scores.softmax(dim=-1)
             x = torch.einsum("bsht,bthd->bshd", scores, v)
         else:  # MQA decode
-            if self.dequant_wkv_b is None and self.wkv_b.scale is not None:
-                self.dequant_wkv_b = weight_dequant(self.wkv_b.weight, self.wkv_b.scale)
-            wkv_b = (
-                self.wkv_b.weight if self.dequant_wkv_b is None else self.dequant_wkv_b
+            if self.dequant_wkv_b is None and self.kv_b_proj.scale is not None:
+                self.dequant_wkv_b = weight_dequant(
+                    self.kv_b_proj.weight, self.kv_b_proj.scale
+                )
+            kv_b_proj = (
+                self.kv_b_proj.weight
+                if self.dequant_wkv_b is None
+                else self.dequant_wkv_b
             )
-            wkv_b = wkv_b.view(self.n_local_heads, -1, self.kv_lora_rank)
+            kv_b_proj = kv_b_proj.view(self.n_local_heads, -1, self.kv_lora_rank)
             q_nope = torch.einsum(
-                "bshd,hdc->bshc", q_nope, wkv_b[:, : self.qk_nope_head_dim]
+                "bshd,hdc->bshc", q_nope, kv_b_proj[:, : self.qk_nope_head_dim]
             )
             scores = (
                 torch.einsum("bshc,btc->bsht", q_nope, self.kv_cache[:bsz, :end_pos])
@@ -744,8 +685,8 @@ class MLA(nn.Module):
 
             scores = scores.softmax(dim=-1)
             x = torch.einsum("bsht,btc->bshc", scores, self.kv_cache[:bsz, :end_pos])
-            x = torch.einsum("bshc,hdc->bshd", x, wkv_b[:, -self.v_head_dim :])
-        x = self.wo(x.flatten(2))
+            x = torch.einsum("bshc,hdc->bshd", x, kv_b_proj[:, -self.v_head_dim :])
+        x = self.o_proj(x.flatten(2))
         return x
 
 
@@ -754,9 +695,9 @@ class MLP(nn.Module):
     Multi-Layer Perceptron (MLP) used as a feed-forward layer.
 
     Attributes:
-        w1 (nn.Module): Linear layer for input-to-hidden transformation.
-        w2 (nn.Module): Linear layer for hidden-to-output transformation.
-        w3 (nn.Module): Additional linear layer for feature transformation.
+        gate_proj (nn.Module): Linear layer for input-to-hidden transformation.
+        down_proj (nn.Module): Linear layer for hidden-to-output transformation.
+        up_proj (nn.Module): Additional linear layer for feature transformation.
     """
 
     def __init__(self, dim: int, inter_dim: int, reduce_output: bool = True):
@@ -768,9 +709,9 @@ class MLP(nn.Module):
             inter_dim (int): Hidden layer dimensionality.
         """
         super().__init__()
-        self.w1 = ColumnParallelLinear(dim, inter_dim)
-        self.w2 = RowParallelLinear(inter_dim, dim, reduce_output=reduce_output)
-        self.w3 = ColumnParallelLinear(dim, inter_dim)
+        self.gate_proj = ColumnParallelLinear(dim, inter_dim)
+        self.down_proj = RowParallelLinear(inter_dim, dim, reduce_output=reduce_output)
+        self.up_proj = ColumnParallelLinear(dim, inter_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -782,7 +723,9 @@ class MLP(nn.Module):
         Returns:
             torch.Tensor: Output tensor after MLP computation.
         """
-        return self.w2((F.silu(self.w1(x).float()) * self.w3(x).float()).type_as(x))
+        return self.down_proj(
+            (F.silu(self.gate_proj(x).float()) * self.up_proj(x).float()).type_as(x)
+        )
 
 
 class Gate(nn.Module):
@@ -800,12 +743,12 @@ class Gate(nn.Module):
         bias (Optional[torch.nn.Parameter]): Optional bias term for the gate.
     """
 
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: ModelConfig):
         """
         Initializes the Gate module.
 
         Args:
-            args (ModelArgs): Model arguments containing gating parameters.
+            args (ModelConfig): Model arguments containing gating parameters.
         """
         super().__init__()
         self.dim = args.dim
@@ -831,7 +774,7 @@ class Gate(nn.Module):
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: Routing weights and selected expert indices.
         """
-        scores = linear(x.float(), self.weight.float())
+        scores = F.linear(x.float(), self.weight.float())
         if self.score_func == "softmax":
             scores = scores.softmax(dim=-1)
         else:
@@ -863,9 +806,9 @@ class Expert(nn.Module):
     Expert layer for Mixture-of-Experts (MoE) models.
 
     Attributes:
-        w1 (nn.Module): Linear layer for input-to-hidden transformation.
-        w2 (nn.Module): Linear layer for hidden-to-output transformation.
-        w3 (nn.Module): Additional linear layer for feature transformation.
+        gate_proj (nn.Module): Linear layer for input-to-hidden transformation.
+        down_proj (nn.Module): Linear layer for hidden-to-output transformation.
+        up_proj (nn.Module): Additional linear layer for feature transformation.
     """
 
     def __init__(self, dim: int, inter_dim: int):
@@ -877,9 +820,9 @@ class Expert(nn.Module):
             inter_dim (int): Hidden layer dimensionality.
         """
         super().__init__()
-        self.w1 = Linear(dim, inter_dim)
-        self.w2 = Linear(inter_dim, dim)
-        self.w3 = Linear(dim, inter_dim)
+        self.gate_proj = Linear(dim, inter_dim)
+        self.down_proj = Linear(inter_dim, dim)
+        self.up_proj = Linear(dim, inter_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -891,7 +834,9 @@ class Expert(nn.Module):
         Returns:
             torch.Tensor: Output tensor after expert computation.
         """
-        return self.w2((F.silu(self.w1(x).float()) * self.w3(x).float()).type_as(x))
+        return self.down_proj(
+            (F.silu(self.gate_proj(x).float()) * self.up_proj(x).float()).type_as(x)
+        )
 
 
 class MoE(nn.Module):
@@ -908,12 +853,12 @@ class MoE(nn.Module):
         shared_experts (nn.Module): Shared experts applied to all inputs.
     """
 
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: ModelConfig):
         """
         Initializes the MoE module.
 
         Args:
-            args (ModelArgs): Model arguments containing MoE parameters.
+            args (ModelConfig): Model arguments containing MoE parameters.
         """
         super().__init__()
         self.dim = args.dim
@@ -974,29 +919,29 @@ class Block(nn.Module):
     Transformer block combining attention and feed-forward layers.
 
     Attributes:
-        attn (nn.Module): Attention layer (MLA).
-        ffn (nn.Module): Feed-forward network (MLP or MoE).
-        attn_norm (nn.Module): Layer normalization for attention.
-        ffn_norm (nn.Module): Layer normalization for feed-forward network.
+        self_attn (nn.Module): Attention layer (MLA).
+        mlp (nn.Module): Feed-forward network (MLP or MoE).
+        input_layernorm (nn.Module): Layer normalization for attention.
+        post_attention_layernorm (nn.Module): Layer normalization for feed-forward network.
     """
 
-    def __init__(self, layer_id: int, args: ModelArgs):
+    def __init__(self, layer_id: int, args: ModelConfig):
         """
         Initializes the Transformer block.
 
         Args:
             layer_id (int): Layer index in the transformer.
-            args (ModelArgs): Model arguments containing block parameters.
+            args (ModelConfig): Model arguments containing block parameters.
         """
         super().__init__()
-        self.attn = MLA(args)
-        self.ffn = (
+        self.self_attn = MLA(args)
+        self.mlp = (
             MLP(args.dim, args.inter_dim)
             if layer_id < args.n_dense_layers
             else MoE(args)
         )
-        self.attn_norm = RMSNorm(args.dim)
-        self.ffn_norm = RMSNorm(args.dim)
+        self.input_layernorm = RMSNorm(args.dim)
+        self.post_attention_layernorm = RMSNorm(args.dim)
 
     def forward(
         self,
@@ -1019,12 +964,12 @@ class Block(nn.Module):
             torch.Tensor: Output tensor after block computation.
         """
         if residual is None:
-            x, residual = self.attn_norm(x), x
+            x, residual = self.input_layernorm(x), x
         else:
-            x, residual = self.attn_norm(x, residual)
-        x = self.attn(x, start_pos, freqs_cis, mask)
-        x, residual = self.ffn_norm(x, residual)
-        x = self.ffn(x)
+            x, residual = self.input_layernorm(x, residual)
+        x = self.self_attn(x, start_pos, freqs_cis, mask)
+        x, residual = self.post_attention_layernorm(x, residual)
+        x = self.mlp(x)
         return x, residual
 
 
@@ -1034,72 +979,183 @@ class Transformer(nn.Module):
 
     Attributes:
         max_seq_len (int): Maximum sequence length for the transformer.
-        embed (nn.Module): Embedding layer for input tokens.
+        embed_tokens (nn.Module): Embedding layer for input tokens.
         layers (torch.nn.ModuleList): List of transformer blocks.
         norm (nn.Module): Layer normalization applied after all blocks.
-        head (nn.Module): Output projection layer mapping to vocabulary size.
+        lm_head (nn.Module): Output projection layer mapping to vocabulary size.
         freqs_cis (torch.Tensor): Precomputed complex exponential values for rotary embeddings.
     """
 
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: ModelConfig):
         """
         Initializes the Transformer model.
 
         Args:
-            args (ModelArgs): Model arguments containing transformer parameters.
+            args (ModelConfig): Model arguments containing transformer parameters.
         """
         global world_size, rank
         world_size = dist.get_world_size() if dist.is_initialized() else 1
         rank = dist.get_rank() if dist.is_initialized() else 0
-        Linear.dtype = torch.float8_e4m3fn if args.dtype == "fp8" else torch.bfloat16
-        Linear.scale_fmt = args.scale_fmt
+        # Linear.dtype = torch.float8_e4m3fn if args.dtype == "fp8" else torch.bfloat16
+        # Linear.scale_fmt = args.scale_fmt
         super().__init__()
         self.max_seq_len = args.max_seq_len
-        self.embed = ParallelEmbedding(args.vocab_size, args.dim)
+        self.embed_tokens = ParallelEmbedding(args.vocab_size, args.dim)
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.n_layers):
             self.layers.append(Block(layer_id, args))
         self.norm = RMSNorm(args.dim)
-        # lm_head in the checkpoint is stored in bf16, while the parameter here is stored in fp32 for easier computation of logits later.
-        self.head = ColumnParallelLinear(args.dim, args.vocab_size, dtype=torch.float32)
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
     @torch.inference_mode()
-    def forward(self, tokens: torch.Tensor, start_pos: int = 0):
+    def forward(self, input_ids: torch.Tensor, start_pos: int = 0):
         """
         Forward pass for the Transformer model.
 
         Args:
-            tokens (torch.Tensor): Input tensor of token IDs with shape (batch_size, seq_len).
+            input_ids (torch.Tensor): Input tensor of token IDs with shape (batch_size, seq_len).
             start_pos (int, optional): Starting position in the sequence for rotary embeddings. Defaults to 0.
 
         Returns:
             torch.Tensor: Logits tensor of shape (batch_size, vocab_size).
         """
-        seqlen = tokens.size(1)
+        seqlen = input_ids.size(1)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
         mask = (
-            torch.full((seqlen, seqlen), float("-inf"), device=tokens.device).triu_(1)
+            torch.full((seqlen, seqlen), float("-inf"), device=input_ids.device).triu_(
+                1
+            )
             if seqlen > 1
             else None
         )
-        h, residual = self.embed(tokens), None
+        h, residual = self.embed_tokens(input_ids), None
         for layer in self.layers:
             h, residual = layer(h, residual, start_pos, freqs_cis, mask)
         h, _ = self.norm(h, residual)
-        logits = self.head(h[:, -1].float())
-        if world_size > 1:
-            all_logits = [torch.empty_like(logits) for _ in range(world_size)]
-            dist.all_gather(all_logits, logits)
-            logits = torch.cat(all_logits, dim=-1)
-        return logits
+        return h
+
+
+class DeepseekV32PreTrainedModel(PreTrainedModel):
+    config: ModelConfig
+    base_model_prefix = "model"
+    supports_gradient_checkpointing = True
+    _no_split_modules = ["Block"]
+    _skip_keys_device_placement = ["past_key_values"]
+    _supports_flash_attn = True
+    _supports_sdpa = True
+    _supports_flex_attn = True
+
+    _can_compile_fullgraph = True
+    _supports_attention_backend = True
+    _can_record_outputs = {
+        "hidden_states": Block,
+        "attentions": MLA,
+    }
+    # _keep_in_fp32_modules_strict = ["e_score_correction_bias"]
+    _keys_to_ignore_on_load_unexpected = [r"model\.layers\.61.*", r"model.*.bias"]
+    _keys_to_ignore_on_load_missing = [r"model.*.bias"]
+
+    # @torch.no_grad()
+    # def _init_weights(self, module):
+    #     super()._init_weights(module)
+    #     # if isinstance(module, DeepseekV3TopkRouter):
+    #     #     init.normal_(module.weight, mean=0.0, std=self.config.initializer_range)
+    #     #     init.zeros_(module.e_score_correction_bias)
+    #     # elif isinstance(module, DeepseekV3NaiveMoe):
+    #     #     init.normal_(
+    #     #         module.gate_up_proj, mean=0.0, std=self.config.initializer_range
+    #     #     )
+    #     #     init.normal_(module.down_proj, mean=0.0, std=self.config.initializer_range)
+
+
+class DeepseekV32ForCausalLM(DeepseekV32PreTrainedModel, GenerationMixin):
+
+    config: ModelConfig
+
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
+    _tp_plan = {"lm_head": "colwise_gather_output"}
+    _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.model = Transformer(config)
+        self.vocab_size = config.vocab_size
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        labels: torch.LongTensor | None = None,
+        use_cache: bool | None = None,
+        logits_to_keep: int | torch.Tensor = 0,
+        **kwargs: Unpack[TransformersKwargs],
+    ) -> CausalLMOutputWithPast:
+        r"""
+        Example:
+
+        ```python
+        >>> from transformers import AutoTokenizer, DeepseekV3ForCausalLM
+
+        >>> model = DeepseekV3ForCausalLM.from_pretrained("meta-deepseek_v3/DeepseekV3-2-7b-hf")
+        >>> tokenizer = AutoTokenizer.from_pretrained("meta-deepseek_v3/DeepseekV3-2-7b-hf")
+
+        >>> prompt = "Hey, are you conscious? Can you talk to me?"
+        >>> inputs = tokenizer(prompt, return_tensors="pt")
+
+        >>> # Generate
+        >>> generate_ids = model.generate(inputs.input_ids, max_length=30)
+        >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+        "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
+        ```"""
+        outputs: BaseModelOutputWithPast = self.model(
+            input_ids=input_ids,
+            # attention_mask=attention_mask,
+            # position_ids=position_ids,
+            # past_key_values=past_key_values,
+            # inputs_embeds=inputs_embeds,
+            # use_cache=use_cache,
+            # **kwargs,
+        )
+
+        hidden_states = outputs.last_hidden_state
+        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+        slice_indices = (
+            slice(-logits_to_keep, None)
+            if isinstance(logits_to_keep, int)
+            else logits_to_keep
+        )
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
+
+        loss = None
+        if labels is not None:
+            loss = self.loss_function(
+                logits=logits,
+                labels=labels,
+                vocab_size=self.config.vocab_size,
+                **kwargs,
+            )
+
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+        )
 
 
 if __name__ == "__main__":
     torch.set_default_dtype(torch.bfloat16)
     torch.set_default_device("cuda")
     torch.manual_seed(0)
-    args = ModelArgs()
+    args = ModelConfig()
     x = torch.randint(0, args.vocab_size, (2, 128))
     model = Transformer(args)
     print(model(x).size())

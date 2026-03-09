@@ -56,6 +56,8 @@ def load_offloaded_model(extra_cpu_mem: int = 5e9):
 def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
     original_func = obj.from_pretrained.__func__
 
+    print("PATCHING OBJ", id(obj), obj)
+
     @wraps(original_func)
     def from_pretrained(cls, *args, **kwargs):
         kwargs.setdefault("device_map", None)
@@ -76,6 +78,7 @@ def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
             kwargs["max_memory"] = _get_device_memory() | _get_cpu_memory(extra_cpu_mem)
 
         model = original_func(cls, *args, **kwargs)
+        print("CALLING FROM_ACCELERATE")
         from_accelerate(model)  # rank 0 shares weights with ranks via offload/broadcast
         return model
 

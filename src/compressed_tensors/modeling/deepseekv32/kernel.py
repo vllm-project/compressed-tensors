@@ -9,7 +9,7 @@ tilelang.set_log_level("WARNING")
 pass_configs = {
     tilelang.PassConfigKey.TL_DISABLE_WARP_SPECIALIZED: True,
     tilelang.PassConfigKey.TL_DISABLE_TMA_LOWER: True,
-    tilelang.PassConfigKey.TL_DISABLE_FAST_MATH: True,
+    tilelang.PassConfigKey.TL_ENABLE_FAST_MATH: False,
 }
 
 FP8 = "float8_e4m3"

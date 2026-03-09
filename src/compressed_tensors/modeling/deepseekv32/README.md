@@ -1,0 +1,9 @@
+This module was created with the following actions:
+- copy over model.py and kernel.py from checkpoint (https://huggingface.co/deepseek-ai/DeepSeek-V3.2/tree/main/inference)
+- ModelArgs -> ModelConfig subclasses PretrainedConfig
+- Add DeepseekV32PreTrainedModel and DeepseekV32ForCausalLM classes that wrap Transformer as model field, instead of DeepseekV3Model
+- replace names corresponding to convert.py (https://huggingface.co/deepseek-ai/DeepSeek-V3.2/blob/main/inference/convert.py#L12-L33) but NOT for Indexer class
+- merge into config.json any fields not already existing in https://huggingface.co/deepseek-ai/DeepSeek-V3.2/blob/main/inference/config_671B_v3.2.json
+- change `tilelang.PassConfigKey.TL_DISABLE_FAST_MATH: True` to `tilelang.PassConfigKey.TL_ENABLE_FAST_MATH: False`
+- drop Linear class, use torch.nn.Linear instead, update RowParallel/ColumnParallelLinear classes
+- Rename Transformer inputs from tokens to input_ids
