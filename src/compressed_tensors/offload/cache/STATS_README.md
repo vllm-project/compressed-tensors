@@ -134,6 +134,44 @@ The "No-op Data" column shows the amount of data that would have been transferre
 OffloadStats.reset()
 ```
 
+### Context Manager for Temporary Tracking
+
+Use the `track()` context manager to temporarily enable statistics collection and automatically capture results:
+
+```python
+from compressed_tensors.offload.cache import CPUCache, OffloadStats
+import torch
+
+# Stats are disabled initially
+OffloadStats.disable()
+
+device = torch.device("cuda")
+cache = CPUCache(onload_device=device)
+
+# Use context manager to track specific operations
+with OffloadStats.track() as stats:
+    # Statistics are automatically enabled within the context
+    tensor = torch.randn(100, 100, device=device)
+    cache["tensor"] = tensor
+    _ = cache["tensor"]
+
+# After the context exits:
+# - Statistics are automatically restored to their previous state (disabled)
+# - The stats dict is populated with the collected statistics
+
+print(f"Onload operations: {stats['onload'].count}")
+print(f"Offload operations: {stats['offload'].count}")
+print(f"Bytes moved: {stats['offload'].bytes_moved}")
+```
+
+**Key benefits:**
+- **Automatic state management**: Enabled state is automatically restored after the context exits
+- **Isolated tracking**: Statistics from previous operations don't affect the context results
+- **Exception safe**: The original enabled state is restored even if an exception occurs
+- **Convenient**: No need to manually call `enable()`, `disable()`, or `get_stats()`
+
+**Note**: The context manager does not automatically call `reset()`. If you want to track only operations within the context, call `OffloadStats.reset()` before entering the context.
+
 ### Formatting Options
 
 The `format_summary()` method supports different units:

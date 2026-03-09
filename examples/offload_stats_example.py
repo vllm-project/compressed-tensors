@@ -11,6 +11,7 @@ This example shows how to:
 3. Reset statistics
 4. Get statistics summary
 5. Track bytes moved and no-ops
+6. Use the track() context manager for temporary tracking
 """
 
 import torch
@@ -137,6 +138,39 @@ def main():
     print()
     print(OffloadStats.format_summary(unit="MB"))
     print("(Notice: no new operations tracked)")
+    print()
+
+    # Demonstrate track() context manager
+    print("=" * 60)
+    print("Context Manager Example")
+    print("=" * 60)
+    print()
+    print("Using track() context manager for isolated tracking...")
+    print(f"Stats currently enabled: {OffloadStats.enabled}")
+    print()
+
+    # Use context manager to track specific operations
+    with OffloadStats.track() as stats:
+        print(f"Inside context - stats enabled: {OffloadStats.enabled}")
+
+        # Perform some operations
+        tensor_cm1 = torch.randn(150, 150, device=device)
+        tensor_cm2 = torch.randn(75, 75, device=device)
+
+        cache["cm_tensor1"] = tensor_cm1
+        cache["cm_tensor2"] = tensor_cm2
+        _ = cache["cm_tensor1"]
+        print()
+
+    # Context automatically restores previous state and populates stats dict
+    print(f"After context - stats enabled: {OffloadStats.enabled}")
+    print()
+    print("Statistics captured by context manager:")
+    print(f"  Onload operations: {stats['onload'].count}")
+    print(f"  Offload operations: {stats['offload'].count}")
+    print(f"  Onload bytes: {stats['onload'].bytes_moved / 1024:.2f} KB")
+    print(f"  Offload bytes: {stats['offload'].bytes_moved / 1024:.2f} KB")
+    print()
 
 
 if __name__ == "__main__":
