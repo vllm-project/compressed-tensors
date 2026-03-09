@@ -72,170 +72,6 @@ class ParallelEmbedding(nn.Module):
         return y
 
 
-# def linear(
-#     x: torch.Tensor,
-#     weight: torch.Tensor,
-#     bias: Optional[torch.Tensor] = None,
-#     scale_fmt: Optional[str] = None,
-# ) -> torch.Tensor:
-#     """
-#     Applies a linear transformation to the incoming data: y = xA^T + b.
-#     This function supports specialized implementations based on quantization
-#     and tensor formats.
-
-#     Args:
-#         x (torch.Tensor): The input tensor.
-#         weight (torch.Tensor): The weight tensor. It may be quantized and
-#             requires dequantization for certain cases.
-#         bias (Optional[torch.Tensor]): The bias tensor to be added. Default is None.
-#         scale_fmt (Optional[str]): The format of scaling factors.
-
-#     Returns:
-#         torch.Tensor: The result of the linear transformation, which may involve
-#         quantization-aware computations depending on the input parameters.
-
-#     Notes:
-#         - If `weight` is quantized (e.g., `element_size() == 1`), a dequantized version
-#           is used for computation.
-#         - For other cases, the function applies quantization to `x` and uses `fp8_gemm` for computation.
-#     """
-#     assert bias is None
-
-#     if weight.dtype != torch.float8_e4m3fn:
-#         return F.linear(x, weight)
-#     else:
-#         x, scale = act_quant(x, block_size, scale_fmt)
-#         return fp8_gemm(x, scale, weight, weight.scale)
-
-
-# class Linear(nn.Module):
-#     """
-#     Custom linear layer with support for quantized weights and optional bias.
-
-#     Args:
-#         in_features (int): Number of input features.
-#         out_features (int): Number of output features.
-#         bias (bool): Whether to include a bias term. Defaults to False.
-#         dtype (optional): Data type for the layer. Defaults to `torch.bfloat16`.
-#     """
-
-#     dtype = torch.bfloat16
-#     scale_fmt: Optional[str] = None
-
-#     def __init__(
-#         self, in_features: int, out_features: int, bias: bool = False, dtype=None
-#     ):
-#         super().__init__()
-#         self.in_features = in_features
-#         self.out_features = out_features
-#         self.weight = nn.Parameter(
-#             torch.empty(out_features, in_features, dtype=dtype or Linear.dtype)
-#         )
-#         if self.weight.element_size() == 1:
-#             scale_out_features = (out_features + block_size - 1) // block_size
-#             scale_in_features = (in_features + block_size - 1) // block_size
-#             self.weight.scale = self.scale = nn.Parameter(
-#                 torch.empty(scale_out_features, scale_in_features, dtype=torch.float32)
-#             )
-#         else:
-#             self.register_parameter("scale", None)
-#         if bias:
-#             self.bias = nn.Parameter(torch.empty(out_features))
-#         else:
-#             self.register_parameter("bias", None)
-
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         """
-#         Forward pass for the custom linear layer.
-
-#         Args:
-#             x (torch.Tensor): Input tensor.
-
-#         Returns:
-#             torch.Tensor: Transformed tensor after linear computation.
-#         """
-#         return linear(x, self.weight, self.bias, self.scale_fmt)
-
-
-class ColumnParallelLinear(nn.Linear):
-    """
-    Linear layer with column parallelism, splitting output features across distributed processes.
-
-    Args:
-        in_features (int): Number of input features.
-        out_features (int): Total number of output features.
-        bias (bool): Whether to include a bias term. Defaults to False.
-        dtype (optional): Data type for the layer. Defaults to `torch.bfloat16`.
-    """
-
-    def __init__(
-        self, in_features: int, out_features: int, bias: bool = False, dtype=None
-    ):
-        assert (
-            out_features % world_size == 0
-        ), f"Output features must be divisible by world size (world_size={world_size})"
-        self.part_out_features = out_features // world_size
-        super().__init__(in_features, self.part_out_features, bias, dtype)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass for column parallel linear layer.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: Transformed tensor with column-parallel computation.
-        """
-        y = F.linear(x, self.weight, self.bias)
-        return y
-
-
-class RowParallelLinear(nn.Linear):
-    """
-    Linear layer with row parallelism, splitting input features across distributed processes.
-
-    Args:
-        in_features (int): Total number of input features.
-        out_features (int): Number of output features.
-        bias (bool): Whether to include a bias term. Defaults to False.
-        dtype (optional): Data type for the layer. Defaults to `torch.bfloat16`.
-    """
-
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        bias: bool = False,
-        reduce_output=True,
-        dtype=None,
-    ):
-        assert (
-            in_features % world_size == 0
-        ), f"Input features must be divisible by world size (world_size={world_size})"
-        self.part_in_features = in_features // world_size
-        self.reduce_output = reduce_output
-        super().__init__(self.part_in_features, out_features, bias, dtype)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass for row parallel linear layer.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: Transformed tensor with row-parallel computation.
-        """
-        y = F.linear(x, self.weight)
-        if self.reduce_output and world_size > 1:
-            y = y.float()
-            dist.all_reduce(y)
-        if self.bias is not None:
-            y += self.bias
-        return y.type_as(x)
-
-
 class RMSNorm(nn.Module):
     """
     Root Mean Square Layer Normalization (RMSNorm).
@@ -563,17 +399,15 @@ class MLA(nn.Module):
 
         self.q_a_proj = Linear(self.dim, self.q_lora_rank)
         self.q_a_layernorm = RMSNorm(self.q_lora_rank)
-        self.q_b_proj = ColumnParallelLinear(
-            self.q_lora_rank, self.n_heads * self.qk_head_dim
-        )
+        self.q_b_proj = Linear(self.q_lora_rank, self.n_heads * self.qk_head_dim)
         self.kv_a_proj_with_mqa = Linear(
             self.dim, self.kv_lora_rank + self.qk_rope_head_dim
         )
         self.kv_a_layernorm = RMSNorm(self.kv_lora_rank)
-        self.kv_b_proj = ColumnParallelLinear(
+        self.kv_b_proj = Linear(
             self.kv_lora_rank, self.n_heads * (self.qk_nope_head_dim + self.v_head_dim)
         )
-        self.o_proj = RowParallelLinear(self.n_heads * self.v_head_dim, self.dim)
+        self.o_proj = Linear(self.n_heads * self.v_head_dim, self.dim)
         self.softmax_scale = self.qk_head_dim**-0.5
         self.scale_fmt = args.scale_fmt
         if args.max_seq_len > args.original_seq_len:
@@ -709,9 +543,9 @@ class MLP(nn.Module):
             inter_dim (int): Hidden layer dimensionality.
         """
         super().__init__()
-        self.gate_proj = ColumnParallelLinear(dim, inter_dim)
-        self.down_proj = RowParallelLinear(inter_dim, dim, reduce_output=reduce_output)
-        self.up_proj = ColumnParallelLinear(dim, inter_dim)
+        self.gate_proj = Linear(dim, inter_dim)
+        self.down_proj = Linear(inter_dim, dim, reduce_output=reduce_output)
+        self.up_proj = Linear(dim, inter_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

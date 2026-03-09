@@ -75,6 +75,7 @@ class DiskCache(OffloadCache):
             return None
 
         if tensor.device.type == "meta":
+            # TODO this assertion check is failing when "max_memory" is set to 500e9
             assert tensor in self.index
             return tensor
 
