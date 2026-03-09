@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Callable, TypeVar
+from typing import Callable, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
@@ -12,6 +12,7 @@ from compressed_tensors.utils.module import (
     get_direct_state_dict,
     replace_direct_state_dict,
 )
+from tqdm import tqdm
 
 
 __all__ = ["apply_module_parallel"]
@@ -23,6 +24,7 @@ def apply_module_parallel(
     modules: list[T],
     apply_fn: Callable[[T], None],
     weight_fn: Callable[[T], float],
+    desc: Optional[str] = None,
 ) -> None:
     """Apply a function to modules in parallel across distributed ranks.
 
@@ -41,8 +43,19 @@ def apply_module_parallel(
     :param apply_fn: function to apply to each module
     :param weight_fn: function that returns the weight/size of a module
         for load balancing across ranks
+    :param desc: optional description for the progress bar (shown on each rank)
     """
     _, _, assigned_rank = greedy_bin_packing(modules, dist.get_world_size(), weight_fn)
+
+    # Count modules assigned to this rank and create progress bar
+    pbar = None
+    if desc is not None:
+        current_rank = dist.get_rank()
+        num_assigned = sum(
+            1 for module in modules if assigned_rank[module] == current_rank
+        )
+        rank_desc = f"{desc} [rank {current_rank}]"
+        pbar = tqdm(total=num_assigned, desc=rank_desc, position=current_rank)
 
     # Step 1 & 2: Decouple and compress on meta for non-processing ranks
     with disable_onloading():
@@ -56,6 +69,8 @@ def apply_module_parallel(
         for module in modules:
             if assigned_rank[module] == dist.get_rank():
                 apply_fn(module)  # 3. compress without triggering sync
+                if pbar is not None:
+                    pbar.update(1)
 
     # Step 4: Recouple - broadcast source offload across ranks
     for module in modules:
@@ -63,3 +78,6 @@ def apply_module_parallel(
             state_dict = get_direct_state_dict(module)
         with set_main_process(assigned_rank[module]):
             replace_direct_state_dict(module, state_dict)  # 4. broadcast
+
+    if pbar is not None:
+        pbar.close()

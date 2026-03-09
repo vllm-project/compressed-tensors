@@ -154,7 +154,9 @@ class ModelCompressor:
             apply_fn = partial(
                 compress_module, force_compression_format=self.force_compression_format
             )
-            apply_module_parallel(quantized_modules, apply_fn, module_size)
+            apply_module_parallel(
+                quantized_modules, apply_fn, module_size, desc="Compressing model"
+            )
         else:
             for module in tqdm(quantized_modules, desc="Compressing model"):
                 compress_module(module, self.force_compression_format)
