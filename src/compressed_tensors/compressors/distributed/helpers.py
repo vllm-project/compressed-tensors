@@ -1,3 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
+import torch.distributed as dist
+
+
+__all__ = ["wait_for_comms"]
+
+
 def wait_for_comms(pending_comms: list[dist.Work]) -> None:
     """Block until all pending async distributed operations complete.
 

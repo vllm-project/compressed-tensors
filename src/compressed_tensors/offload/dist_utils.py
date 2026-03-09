@@ -46,8 +46,8 @@ def init_dist():
     dist.barrier()
 
 
-@contextlib.context_manager()
-def as_singled_threaded():
+@contextlib.contextmanager
+def as_single_threaded():
     from compressed_tensors.offload.cache import (
         CPUCache,
         DeviceCache,
@@ -65,7 +65,7 @@ def as_singled_threaded():
         yield
 
 
-@contextlib.context_manager()
+@contextlib.contextmanager
 def set_main_process(src_rank: int):
     global SRC_RANK
 

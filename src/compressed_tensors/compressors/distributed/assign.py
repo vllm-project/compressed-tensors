@@ -1,6 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 from typing import Callable, Hashable, TypeVar
 
-import torch.distributed as dist
+
+__all__ = ["greedy_bin_packing"]
 
 T = TypeVar("T", bound=Hashable)
 

@@ -17,6 +17,7 @@ __all__ = [
     "module_size",
     "to_empty",
     "to_tensor",
+    "to_meta",
 ]
 
 T = TypeVar("T")
@@ -180,3 +181,26 @@ def to_tensor(dst: torch.Tensor, src: TensorCls) -> TensorCls:
     dst.__dict__ = src.__dict__.copy()
     dst.requires_grad = src.requires_grad
     return dst
+
+
+def to_meta(module: torch.nn.Module) -> None:
+    """Move all module parameters and buffers to meta device.
+
+    This removes pointers to offloaded tensors held by non-processing ranks,
+    allowing the processing rank to compress without increasing peak memory.
+
+    :param module: module whose tensors should be moved to meta device
+    """
+    from compressed_tensors.offload import disable_onloading
+    from compressed_tensors.utils.module import (
+        get_direct_state_dict,
+        replace_direct_state_dict,
+    )
+
+    with disable_onloading():
+        state_dict = get_direct_state_dict(module)
+        meta_state_dict = {
+            name: send_tensors(tensor, device="meta")
+            for name, tensor in state_dict.items()
+        }
+        replace_direct_state_dict(module, meta_state_dict)

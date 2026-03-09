@@ -3,6 +3,7 @@
 
 import json
 import os
+from functools import partial
 from typing import Optional
 
 import compressed_tensors
@@ -16,8 +17,11 @@ from compressed_tensors.base import (
     TRANSFORM_CONFIG_NAME,
 )
 from compressed_tensors.compressors.base import compress_module, decompress_module
+from compressed_tensors.compressors.distributed import apply_module_parallel
 from compressed_tensors.compressors.format import infer_model_format
 from compressed_tensors.config import CompressionFormat
+from compressed_tensors.offload import is_distributed
+from compressed_tensors.offload.utils import module_size
 from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
@@ -141,12 +145,14 @@ class ModelCompressor:
         if is_distributed():
             modules = [
                 module
-                for module in model.named_modules(remove_duplicate=True)
+                for _, module in model.named_modules(remove_duplicate=True)
                 if is_module_quantized(module)
             ]
-            apply_fn = partial(compress_module, force_compression_format=self.force_compression_format)
-            apply_module_parallel(modules, apply_fn, lambda m: get_module_size(m))
-        
+            apply_fn = partial(
+                compress_module, force_compression_format=self.force_compression_format
+            )
+            apply_module_parallel(modules, apply_fn, module_size)
+
         else:
             # compress modules
             modules = model.named_modules(remove_duplicate=True)
