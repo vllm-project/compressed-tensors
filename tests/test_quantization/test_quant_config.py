@@ -64,7 +64,33 @@ def test_load_scheme_from_preset(scheme_name: str):
 
 
 def test_to_dict():
-    config_groups = {"group_1": QuantizationScheme(targets=[])}
-    config = QuantizationConfig(config_groups=config_groups)
-    reloaded = QuantizationConfig.model_validate(config.to_dict())
+    """Test serialization of QuantizationConfig including format"""
+    from compressed_tensors.quantization import QuantizationArgs
+
+    config_groups = {
+        "group_1": QuantizationScheme(
+            targets=["Linear"],
+            weights=QuantizationArgs(num_bits=4, symmetric=True, group_size=128),
+        ),
+        "group_2": QuantizationScheme(
+            targets=["Conv2d"],
+            weights=QuantizationArgs(num_bits=8),
+        ),
+    }
+    config = QuantizationConfig(
+        config_groups=config_groups,
+        global_compression_ratio=3.5,
+        ignore=["model.layers.0"],
+        quantization_status="compressed",
+        format="int-quantized",
+    )
+
+    # Serialize to dict
+    config_dict = config.to_dict()
+    assert "config_groups" in config_dict
+    assert config_dict["format"] == "int-quantized"
+    assert config_dict["quantization_status"] == "compressed"
+
+    # Deserialize from dict
+    reloaded = QuantizationConfig.model_validate(config_dict)
     assert config == reloaded

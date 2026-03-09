@@ -9,7 +9,7 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
 
 
-__all__ = ["TorchDtype"]
+__all__ = ["TorchDtype", "TensorStateDict"]
 
 
 class _TorchDtypeAnnotation:
@@ -61,3 +61,4 @@ class _TorchDtypeAnnotation:
 
 
 TorchDtype = Annotated[torch.dtype, _TorchDtypeAnnotation]
+TensorStateDict = dict[str, torch.Tensor | None]
