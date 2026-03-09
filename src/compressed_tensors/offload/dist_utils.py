@@ -1,13 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import contextlib
 import os
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.utils.helpers import patch_attr
 
 
 __all__ = ["is_distributed", "is_rank0"]
+
+
+SRC_RANK = 0
 
 
 def is_rank0() -> bool:
@@ -39,6 +44,38 @@ def init_dist():
         device_id=device,
     )
     dist.barrier()
+
+
+@contextlib.context_manager()
+def as_singled_threaded():
+    from compressed_tensors.offload.cache import (
+        CPUCache,
+        DeviceCache,
+        DiskCache,
+        DistributedCPUCache,
+        DistributedDeviceCache,
+        DistributedDiskCache,
+    )
+
+    with (
+        patch_attr(DistributedDeviceCache, "offload", DeviceCache.offload),
+        patch_attr(DistributedCPUCache, "offload", CPUCache.offload),
+        patch_attr(DistributedDiskCache, "offload", DiskCache.offload),
+    ):
+        yield
+
+
+@contextlib.context_manager()
+def set_main_process(src_rank: int):
+    global SRC_RANK
+
+    restore_rank, SRC_RANK = SRC_RANK, src_rank
+    yield
+    SRC_RANK = restore_rank
+
+
+def is_main_process() -> bool:
+    return not is_distributed() or dist.get_rank() == SRC_RANK
 
 
 _FP8_DTYPES = (

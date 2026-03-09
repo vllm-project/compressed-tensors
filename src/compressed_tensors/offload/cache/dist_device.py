@@ -4,7 +4,7 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.device import DeviceCache
-from compressed_tensors.offload.dist_utils import as_broadcastable
+from compressed_tensors.offload.dist_utils import as_broadcastable, is_main_process
 from compressed_tensors.offload.utils import send_tensors, to_empty
 
 
@@ -27,7 +27,7 @@ class DistributedDeviceCache(DeviceCache):
         if tensor is None:
             return None
 
-        if dist.get_rank() == 0:
+        if is_main_process():
             tensor = super().offload(tensor)
 
         # materialize meta tensor only if necessary
