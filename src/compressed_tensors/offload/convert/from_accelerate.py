@@ -145,7 +145,7 @@ def remove_accelerate_from_module(
             assert isinstance(offload, (torch.nn.Parameter, torch.nn.Buffer))
 
             # Copy accelerate's disk index into DiskCache for our later use
-            _save_ct_index_entry(dataset, full_name, tensor)
+            _save_ct_index_entry(dataset, full_name, tensor, dataset.save_folder)
 
         # Not offloaded, likely a buffer
         else:
@@ -169,17 +169,23 @@ def remove_accelerate_from_module(
 
 
 def _save_ct_index_entry(
-    dataset: "OffloadedWeightsLoader", name: str, offloaded: torch.Tensor
+    dataset: "OffloadedWeightsLoader",
+    name: str,
+    offloaded: torch.Tensor,
+    offload_folder: str | os.PathLike | None,
 ):
     entry: dict = dataset.index[name]
 
-    if "safetensors_file" in entry:
+    if "safetensors_file" in entry and offloaded not in DiskCache.index:
         # typical case: model is loaded from safetensors file
-        DiskCache.index[offloaded] = entry
+        # create a symlink that points to the model safetensor file
+        # if the value is ever updated, the symlink is broken and a real file
+        # is written to that location
+        DiskCache.create_checkpoint_symlink(offloaded, entry, offload_folder)
 
     else:
         # unfortunately, ct's implementation does not support loading non-safetensors
-        # we must onload and save as safetensors. This should only occur while testing
+        # we must onload and save as safetensors. This typically only occurs in testing
         onloaded = dataset[name]
         DiskCache("cpu", dataset.save_folder).offload(onloaded, offloaded=offloaded)
         logger.warning(

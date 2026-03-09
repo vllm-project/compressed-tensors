@@ -131,3 +131,44 @@ def test_shared_cpu_offload():
     assert torch.equal(cache["tensor"].cpu(), tensor)
     with disable_onloading():
         assert torch.equal(cache["tensor"].cpu(), tensor)
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2)
+def test_distributed_async_update():
+    """
+    Test that different ranks can update different tensors asynchronously,
+    and that values are correct after a barrier.
+    """
+    cache = DistributedCPUCache(ONLOAD_DEVICE)
+
+    # Initialize two tensors in the cache
+    cache["tensor_0"] = torch.zeros(10, device=ONLOAD_DEVICE)
+    cache["tensor_1"] = torch.zeros(10, device=ONLOAD_DEVICE)
+
+    # Each rank updates a different tensor
+    rank = dist.get_rank()
+    if rank == 0:
+        # Rank 0 updates tensor_0
+        cache[f"tensor_{rank}"] = torch.ones(10, device=ONLOAD_DEVICE) * 1.0
+    elif rank == 1:
+        # Rank 1 updates tensor_1
+        cache[f"tensor_{rank}"] = torch.ones(10, device=ONLOAD_DEVICE) * 2.0
+
+    # Synchronize to ensure all updates are complete
+    dist.barrier()
+
+    # Verify that both tensors have the correct values on all ranks
+    tensor_0 = cache["tensor_0"]
+    tensor_1 = cache["tensor_1"]
+
+    assert torch.allclose(tensor_0.cpu(), torch.ones(10) * 1.0)
+    assert torch.allclose(tensor_1.cpu(), torch.ones(10) * 2.0)
+
+    # Verify offloaded values are also correct
+    with disable_onloading():
+        offloaded_0 = cache["tensor_0"]
+        offloaded_1 = cache["tensor_1"]
+        assert torch.allclose(offloaded_0.cpu(), torch.ones(10) * 1.0)
+        assert torch.allclose(offloaded_1.cpu(), torch.ones(10) * 2.0)
