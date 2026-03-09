@@ -13,7 +13,7 @@ def apply_module_parallel(modules, apply_fn, weight_fn):
 		    apply_fn(module)  # 3. compress without triggering sync
 	
 	for module in modules:
-		with set_main_process(assigned_rank[module]):
-		  with disable_onloading():
-		    state_dict = get_direct_state_dict(module)
+        with disable_onloading():
+          state_dict = get_direct_state_dict(module)
+	  	with set_main_process(assigned_rank[module]):
 		  replace_direct_state_dict(module, state_dict)  # 4. broadcast source offload across ranks
