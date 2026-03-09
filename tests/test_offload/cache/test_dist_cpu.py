@@ -142,25 +142,25 @@ def test_shared_cpu_offload(onload_device):
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_distributed_async_update():
+def test_distributed_async_update(onload_device):
     """
     Test that different ranks can update different tensors asynchronously,
     and that values are correct after a barrier.
     """
-    cache = DistributedCPUCache(ONLOAD_DEVICE)
+    cache = DistributedCPUCache(onload_device)
 
     # Initialize two tensors in the cache
-    cache["tensor_0"] = torch.zeros(10, device=ONLOAD_DEVICE)
-    cache["tensor_1"] = torch.zeros(10, device=ONLOAD_DEVICE)
+    cache["tensor_0"] = torch.zeros(10, device=onload_device)
+    cache["tensor_1"] = torch.zeros(10, device=onload_device)
 
     # Each rank updates a different tensor
     rank = dist.get_rank()
     if rank == 0:
         # Rank 0 updates tensor_0
-        cache[f"tensor_{rank}"] = torch.ones(10, device=ONLOAD_DEVICE) * 1.0
+        cache[f"tensor_{rank}"] = torch.ones(10, device=onload_device) * 1.0
     elif rank == 1:
         # Rank 1 updates tensor_1
-        cache[f"tensor_{rank}"] = torch.ones(10, device=ONLOAD_DEVICE) * 2.0
+        cache[f"tensor_{rank}"] = torch.ones(10, device=onload_device) * 2.0
 
     # Synchronize to ensure all updates are complete
     dist.barrier()

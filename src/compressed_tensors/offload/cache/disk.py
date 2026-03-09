@@ -143,7 +143,11 @@ class DiskCache(OffloadCache):
         offload_dir: str | os.PathLike | None,
     ) -> None:
         assert is_rank0(), "Must call on rank 0 to avoid id collisions between ranks"
-        offload_dir = offload_dir or tempfile.mkdtemp()
+        if offload_dir is None:
+            raise ValueError(
+                "Must provide an `offload_dir` to perform disk offloading "
+                "(add `offload_folder` argument to `from_pretrained`)"
+            )
         file_name = f"{cls._new_file_prefix}{id(offloaded)}.safetensors"
         file_path = os.path.join(offload_dir, file_name)
 

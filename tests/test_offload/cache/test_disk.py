@@ -90,8 +90,8 @@ def test_tensor_subclass(offload_device, onload_device, offload_cache):
 
 @pytest.mark.unit
 @requires_gpu
-def test_update_offload():
-    _test_update_offload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_update_offload(offload_device, onload_device):
+    _test_update_offload(offload_device, onload_device)
 
 
 @pytest.mark.unit
