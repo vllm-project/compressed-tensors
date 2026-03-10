@@ -13,7 +13,7 @@ from compressed_tensors.offload.convert.helpers import (
     norm_device,
 )
 from compressed_tensors.offload.dispatch import dispatch_with_map
-from compressed_tensors.offload.dist_utils import is_distributed
+from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
 from compressed_tensors.offload.utils import to_tensor
 from loguru import logger
 
@@ -145,7 +145,8 @@ def remove_accelerate_from_module(
             assert isinstance(offload, (torch.nn.Parameter, torch.nn.Buffer))
 
             # Copy accelerate's disk index into DiskCache for our later use
-            _save_ct_index_entry(dataset, full_name, tensor, dataset.save_folder)
+            if is_rank0():
+                _save_ct_index_entry(dataset, full_name, tensor)
 
         # Not offloaded, likely a buffer
         else:
@@ -172,7 +173,6 @@ def _save_ct_index_entry(
     dataset: "OffloadedWeightsLoader",
     name: str,
     offloaded: torch.Tensor,
-    offload_folder: str | os.PathLike | None,
 ):
     entry: dict = dataset.index[name]
 
@@ -181,7 +181,7 @@ def _save_ct_index_entry(
         # create a symlink that points to the model safetensor file
         # if the value is ever updated, the symlink is broken and a real file
         # is written to that location
-        DiskCache.create_checkpoint_symlink(offloaded, entry, offload_folder)
+        DiskCache.create_checkpoint_symlink(offloaded, entry, dataset.offload_folder)
 
     else:
         # unfortunately, ct's implementation does not support loading non-safetensors
