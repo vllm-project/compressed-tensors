@@ -1,18 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import hashlib
 import os
+from pathlib import Path
 
 import pytest
 import torch
+import torch.distributed as dist
+from compressed_tensors.offload import (
+    disable_onloading,
+    from_accelerate,
+    is_rank0,
+    load_offloaded_model,
+)
 from compressed_tensors.offload.cache import CPUCache, DeviceCache, DiskCache
-from compressed_tensors.offload.convert import from_accelerate
 from compressed_tensors.offload.convert.from_accelerate import (
     remove_accelerate_from_module,
 )
-from compressed_tensors.offload.dist_utils import is_rank0
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
+from transformers import AutoModelForCausalLM
 
 
 acclerate = pytest.importorskip("accelerate")
@@ -120,3 +128,87 @@ def test_from_accelerate(cuda_device, tmp_path):
 @torchrun(world_size=2)
 def test_from_accelerate_dist(cuda_device, tmp_path):
     test_from_accelerate(cuda_device, tmp_path)
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2)
+@torch.no_grad()
+def test_dist_disk_safetensors_update(tmp_path):
+    offload_folder = tmp_path / "offload_folder"
+    os.makedirs(offload_folder, exist_ok=True)
+
+    with load_offloaded_model():
+        model = AutoModelForCausalLM.from_pretrained(
+            "Qwen/Qwen3-0.6B",
+            dtype="auto",
+            device_map="auto_offload",
+            max_memory={"cpu": 6e8},
+            offload_folder=str(offload_folder),
+        )
+
+        # Get the model checkpoint files and hash them
+        if dist.get_rank() == 0:
+            checkpoint_files = {}
+            for file_path in Path(offload_folder).glob("*.safetensors"):
+                if not file_path.name.startswith(DiskCache._new_file_prefix):
+                    with open(file_path, "rb") as f:
+                        checkpoint_files[file_path.name] = hashlib.sha256(
+                            f.read()
+                        ).hexdigest()
+
+        dist.barrier()
+
+        # Each rank updates a different module's tensor
+        rank_0_module = model.model.layers[-1].self_attn.q_proj
+        rank_1_module = model.model.layers[-1].self_attn.k_proj
+        rank = dist.get_rank()
+        if rank == 0:
+            rank_0_module.weight *= 0
+        elif rank == 1:
+            rank_1_module.weight *= 0
+            rank_1_module.weight += 1
+        dist.barrier()
+
+        # Check that onloaded values are updated across ranks
+        assert torch.all(rank_0_module.weight == 0)
+        assert torch.all(rank_1_module.weight == 1)
+
+        # Compare model checkpoint files and make sure they're unchanged
+        if dist.get_rank() == 0:
+            for file_name, original_hash in checkpoint_files.items():
+                file_path = offload_folder / file_name
+                with open(file_path, "rb") as f:
+                    current_hash = hashlib.sha256(f.read()).hexdigest()
+                assert current_hash == original_hash
+
+        # Check that the files exist and are not symlinks
+        with disable_onloading():
+            q_file_path = DiskCache.index[rank_0_module.weight]["safetensors_file"]
+            k_file_path = DiskCache.index[rank_1_module.weight]["safetensors_file"]
+
+        if dist.get_rank() == 0:
+            assert os.path.exists(q_file_path)
+            assert not os.path.islink(q_file_path)
+        if dist.get_rank() == 1:
+            assert os.path.exists(k_file_path)
+            assert not os.path.islink(k_file_path)
+
+        # Delete the parameters
+        delattr(rank_0_module, "weight")
+        delattr(rank_1_module, "weight")
+
+        # Wait for all ranks to complete deletion
+        dist.barrier()
+
+        # Check that the new files were deleted
+        assert not os.path.exists(q_file_path)
+        assert not os.path.exists(k_file_path)
+
+        # Compare model checkpoint files again and make sure they're still unchanged
+        if dist.get_rank() == 0:
+            for file_name, original_hash in checkpoint_files.items():
+                file_path = offload_folder / file_name
+                with open(file_path, "rb") as f:
+                    current_hash = hashlib.sha256(f.read()).hexdigest()
+                assert current_hash == original_hash
