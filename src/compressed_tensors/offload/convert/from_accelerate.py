@@ -31,10 +31,10 @@ def from_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
     Convert a model from accelerate offloading to compressed-tensors offloading. Often
     called by `load_offloaded_model` to load offloaded models across ranks.
 
-    Rank 0 is always expected to provide an accelerate-offloaded model
-
+    Rank 0 is always expected to provide an accelerate-offloaded model.
     Other ranks (if they exist) may provide a model on any device, with or
     without accelerate offloading.
+
     - If called after `load_offloaded_model()`, other ranks will provide a meta model
         with no accelerate offloading
     - If called after `to_accelerate`, other ranks will provide an accelerate-offloaded
