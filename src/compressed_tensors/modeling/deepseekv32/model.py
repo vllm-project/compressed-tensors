@@ -266,11 +266,13 @@ class Indexer(torch.nn.Module):
         self.rope_head_dim: int = args.qk_rope_head_dim
         self.index_topk: int = args.index_topk
         self.q_lora_rank: int = args.q_lora_rank
-        self.wq_b = Linear(self.q_lora_rank, self.n_heads * self.head_dim)
-        self.wk = Linear(self.dim, self.head_dim)
+        self.wq_b = Linear(self.q_lora_rank, self.n_heads * self.head_dim, bias=False)
+        self.wk = Linear(self.dim, self.head_dim, bias=False)
         self.k_norm = LayerNorm(self.head_dim)
         # weights_proj in the checkpoint is stored in bf16, while the parameters here are stored in fp32 for convenient.
-        self.weights_proj = Linear(self.dim, self.n_heads, dtype=torch.float32)
+        self.weights_proj = Linear(
+            self.dim, self.n_heads, dtype=torch.float32, bias=False
+        )
         self.softmax_scale = self.head_dim**-0.5
         self.scale_fmt = args.scale_fmt
 
@@ -329,11 +331,14 @@ class Indexer(torch.nn.Module):
         self.k_scale_cache[:bsz, start_pos:end_pos] = k_scale
         weights = self.weights_proj(x.float()) * self.n_heads**-0.5
         weights = weights.unsqueeze(-1) * q_scale * self.softmax_scale
+        print("SHAPE QFP8", q_fp8.shape)
+        print("SHAPE X", x.shape)
+        print("SHAPE WEIGHTS", weights.shape)
         index_score = fp8_index(
             q_fp8.contiguous(),
-            weights,
+            weights.squeeze(-1),
             self.k_cache[:bsz, :end_pos].contiguous(),
-            self.k_scale_cache[:bsz, :end_pos].contiguous(),
+            self.k_scale_cache[:bsz, :end_pos].squeeze(-1).contiguous(),
         )
         if mask is not None:
             index_score += mask
@@ -397,17 +402,21 @@ class MLA(nn.Module):
         self.qk_head_dim = args.qk_nope_head_dim + args.qk_rope_head_dim
         self.v_head_dim = args.v_head_dim
 
-        self.q_a_proj = Linear(self.dim, self.q_lora_rank)
+        self.q_a_proj = Linear(self.dim, self.q_lora_rank, bias=False)
         self.q_a_layernorm = RMSNorm(self.q_lora_rank)
-        self.q_b_proj = Linear(self.q_lora_rank, self.n_heads * self.qk_head_dim)
+        self.q_b_proj = Linear(
+            self.q_lora_rank, self.n_heads * self.qk_head_dim, bias=False
+        )
         self.kv_a_proj_with_mqa = Linear(
-            self.dim, self.kv_lora_rank + self.qk_rope_head_dim
+            self.dim, self.kv_lora_rank + self.qk_rope_head_dim, bias=False
         )
         self.kv_a_layernorm = RMSNorm(self.kv_lora_rank)
         self.kv_b_proj = Linear(
-            self.kv_lora_rank, self.n_heads * (self.qk_nope_head_dim + self.v_head_dim)
+            self.kv_lora_rank,
+            self.n_heads * (self.qk_nope_head_dim + self.v_head_dim),
+            bias=False,
         )
-        self.o_proj = Linear(self.n_heads * self.v_head_dim, self.dim)
+        self.o_proj = Linear(self.n_heads * self.v_head_dim, self.dim, bias=False)
         self.softmax_scale = self.qk_head_dim**-0.5
         self.scale_fmt = args.scale_fmt
         if args.max_seq_len > args.original_seq_len:
@@ -543,9 +552,9 @@ class MLP(nn.Module):
             inter_dim (int): Hidden layer dimensionality.
         """
         super().__init__()
-        self.gate_proj = Linear(dim, inter_dim)
-        self.down_proj = Linear(inter_dim, dim, reduce_output=reduce_output)
-        self.up_proj = Linear(dim, inter_dim)
+        self.gate_proj = Linear(dim, inter_dim, bias=False)
+        self.down_proj = Linear(inter_dim, dim, bias=False)
+        self.up_proj = Linear(dim, inter_dim, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -592,11 +601,12 @@ class Gate(nn.Module):
         self.score_func = args.score_func
         self.route_scale = args.route_scale
         self.weight = nn.Parameter(torch.empty(args.n_routed_experts, args.dim))
-        self.bias = (
-            nn.Parameter(torch.empty(args.n_routed_experts, dtype=torch.float32))
-            if self.dim == 7168
-            else None
-        )
+        self.bias = None
+        # self.bias = (
+        #     nn.Parameter(torch.empty(args.n_routed_experts, dtype=torch.float32))
+        #     if self.dim == 7168
+        #     else None
+        # )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -654,9 +664,9 @@ class Expert(nn.Module):
             inter_dim (int): Hidden layer dimensionality.
         """
         super().__init__()
-        self.gate_proj = Linear(dim, inter_dim)
-        self.down_proj = Linear(inter_dim, dim)
-        self.up_proj = Linear(dim, inter_dim)
+        self.gate_proj = Linear(dim, inter_dim, bias=False)
+        self.down_proj = Linear(inter_dim, dim, bias=False)
+        self.up_proj = Linear(dim, inter_dim, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

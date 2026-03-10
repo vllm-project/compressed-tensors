@@ -6,4 +6,6 @@ This module was created with the following actions:
 - merge into config.json any fields not already existing in https://huggingface.co/deepseek-ai/DeepSeek-V3.2/blob/main/inference/config_671B_v3.2.json
 - change `tilelang.PassConfigKey.TL_DISABLE_FAST_MATH: True` to `tilelang.PassConfigKey.TL_ENABLE_FAST_MATH: False`
 - drop Linear/RowParallel/ColumnParallelLinear classes, use torch.nn.Linear instead
-- Rename Transformer inputs from tokens to input_ids
+- Rename Transformer input var name from `tokens` to `input_ids`
+- add bias=False to all Linear constructors in model def (defaulted to False on original model def's Linear class)
+- set bias=None on gate
