@@ -181,7 +181,7 @@ def _save_ct_index_entry(
         # create a symlink that points to the model safetensor file
         # if the value is ever updated, the symlink is broken and a real file
         # is written to that location
-        DiskCache.create_checkpoint_symlink(offloaded, entry, dataset.offload_folder)
+        DiskCache.create_checkpoint_symlink(offloaded, entry, dataset.save_folder)
 
     else:
         # unfortunately, ct's implementation does not support loading non-safetensors
