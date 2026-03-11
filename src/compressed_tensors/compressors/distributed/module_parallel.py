@@ -48,14 +48,9 @@ def apply_module_parallel(
     _, _, assigned_rank = greedy_bin_packing(modules, dist.get_world_size(), weight_fn)
 
     # Count modules assigned to this rank and create progress bar
-    pbar = None
-    if desc is not None:
-        current_rank = dist.get_rank()
-        num_assigned = sum(
-            1 for module in modules if assigned_rank[module] == current_rank
-        )
-        rank_desc = f"{desc} [rank {current_rank}]"
-        pbar = tqdm(total=num_assigned, desc=rank_desc, position=current_rank)
+    rank = dist.get_rank()
+    num_assigned = sum(int(a == rank) for a in assigned_rank.values())
+    progress = tqdm(total=num_assigned, desc=desc, position=rank, disable=bool(desc))
 
     # Step 1 & 2: Decouple and compress on meta for non-processing ranks
     with disable_onloading():
@@ -69,8 +64,7 @@ def apply_module_parallel(
         for module in modules:
             if assigned_rank[module] == dist.get_rank():
                 apply_fn(module)  # 3. compress without triggering sync
-                if pbar is not None:
-                    pbar.update(1)
+                progress.update(1)
 
     # Step 4: Recouple - broadcast source offload across ranks
     for module in modules:
@@ -79,5 +73,4 @@ def apply_module_parallel(
         with set_main_process(assigned_rank[module]):
             replace_direct_state_dict(module, state_dict)  # 4. broadcast
 
-    if pbar is not None:
-        pbar.close()
+    progress.close()
