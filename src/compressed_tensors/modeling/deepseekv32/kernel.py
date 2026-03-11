@@ -365,13 +365,16 @@ def bf16_index(
     k: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Perform index score using FP8 precision.
+    Perform index score using bfloat16 precision.
 
     Args:
-        q (torch.Tensor): The Q tensor, must be contiguous.
-        k (torch.Tensor): The K tensor, must be contiguous.
+        q (torch.Tensor): The Q tensor, will be made contiguous if needed.
+        k (torch.Tensor): The K tensor, will be made contiguous if needed.
 
     """
     print("BF16_INDEX q", q.shape, q.dtype)
     print("BF16_INDEX k", k.shape, k.dtype)
+    # Ensure tensors are contiguous to satisfy stride constraints
+    q = q.contiguous()
+    k = k.contiguous()
     return bf16_index_kernel(q.shape[2], q.shape[3])(q, k)
