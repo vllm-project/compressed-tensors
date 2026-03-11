@@ -4,10 +4,11 @@
 import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import MutableMapping
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, Optional
 
 import torch
 import torch.distributed as dist
+from torch._prims_common import DeviceLikeType
 
 
 class OffloadCache(MutableMapping, ABC):
@@ -18,7 +19,9 @@ class OffloadCache(MutableMapping, ABC):
 
     Typical usage:
     ```
-    module._parameters = cache_cls.from_mapping(module._parameters, onload_device)
+    module._parameters = cache_cls.from_mapping(
+        module._parameters, onload_device, offload_device
+    )
     tensor = ...
     module._parameters["name"] = tensor           # tensor is offloaded
     onloaded_tensor = module._parameters["name"]  # tensor is onloaded
@@ -29,8 +32,8 @@ class OffloadCache(MutableMapping, ABC):
     info, see `compressed_tensors.offload::(disable_offloading|disable_onloading)`
     """
 
-    onload_device: torch.device | str
-    offload_device: torch.device | Literal["disk"]
+    onload_device: DeviceLikeType
+    offload_device: DeviceLikeType | Literal["disk"]
 
     # global flags for disabling
     offloading_disabled: ClassVar[bool] = False
@@ -44,8 +47,7 @@ class OffloadCache(MutableMapping, ABC):
 
     @classmethod
     def cls_from_device(
-        cls,
-        device: torch.device | str | Literal["disk"] | None = None,
+        cls, device: DeviceLikeType | Literal["disk"]
     ) -> type["OffloadCache"]:
         """
         Get the subclass which implements offloading for the given `offload_device`.
@@ -87,7 +89,8 @@ class OffloadCache(MutableMapping, ABC):
     def from_mapping(
         cls,
         mapping: MutableMapping[str, torch.Tensor | None],
-        onload_device: torch.device | str,
+        onload_device: DeviceLikeType,
+        offload_device: DeviceLikeType | Literal["disk"],
         **kwargs,
     ):
         """
@@ -96,16 +99,26 @@ class OffloadCache(MutableMapping, ABC):
 
         :param mapping: mapping used to populate cache
         :param onload_device: device which tensors will be onloaded to
+        :param offload_device: device to offload tensors to. For DeviceCache, this
+            sets the offload target (defaults to onload_device if not provided).
+            For CPUCache and DiskCache, this is validated against the fixed
+            offload_device if provided.
         :param \\**kwargs: keyword arguments for cache constructor
         """
-        instance = cls(onload_device=onload_device, **kwargs)
+        instance = cls(
+            onload_device=onload_device, offload_device=offload_device, **kwargs
+        )
         instance.offloaded_values = {
             name: instance.offload(tensor) for name, tensor in mapping.items()
         }
 
         return instance
 
-    def __init__(self, onload_device: torch.device | str):
+    def __init__(
+        self,
+        onload_device: DeviceLikeType,
+        offload_device: Optional[DeviceLikeType | Literal["disk"]] = None,
+    ):
         super().__init__()
         self.onload_device = onload_device
         self.offloaded_values = dict()

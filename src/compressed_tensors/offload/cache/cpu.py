@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from typing import Literal, Optional
+
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.utils import send_tensors
+from torch._prims_common import DeviceLikeType
 
 
 class CPUCache(OffloadCache):
@@ -12,6 +15,13 @@ class CPUCache(OffloadCache):
     """
 
     offload_device = torch.device("cpu")
+
+    def __init__(
+        self,
+        onload_device: DeviceLikeType,
+        offload_device: Optional[DeviceLikeType | Literal["disk"]] = None,
+    ):
+        super().__init__(onload_device, offload_device)
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """

@@ -1,26 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import TYPE_CHECKING
+from typing import Literal, Optional
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.utils import send_tensors
-
-
-if TYPE_CHECKING:
-    from torch._prims_common import DeviceLikeType
+from torch._prims_common import DeviceLikeType
 
 
 class DeviceCache(OffloadCache):
     """
-    Handles offloading and onloading tensors from/to device memory. Onloading
-    tensors is typically a no-op (except onload device has been modified).
+    Handles offloading and onloading tensors from/to device memory.
     """
 
-    def __init__(self, onload_device: "DeviceLikeType"):
-        super().__init__(onload_device)
-        self.offload_device = self.onload_device
+    def __init__(
+        self,
+        onload_device: DeviceLikeType,
+        offload_device: Optional[DeviceLikeType | Literal["disk"]] = None,
+    ):
+        if offload_device is None:
+            offload_device = onload_device
+
+        self.offload_device = offload_device
+        super().__init__(onload_device, offload_device)
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """

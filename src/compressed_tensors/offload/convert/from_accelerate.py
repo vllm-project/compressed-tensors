@@ -16,6 +16,7 @@ from compressed_tensors.offload.dispatch import dispatch_with_map
 from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
 from compressed_tensors.offload.utils import to_tensor
 from loguru import logger
+from torch._prims_common import DeviceLikeType
 
 
 if TYPE_CHECKING:
@@ -84,7 +85,7 @@ def remove_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
 
 def remove_accelerate_from_module(
     module: torch.nn.Module,
-) -> tuple[torch.device | None, torch.device | Literal["disk"] | None, str | None]:
+) -> tuple[DeviceLikeType | None, DeviceLikeType | Literal["disk"] | None, str | None]:
     """
     Remove accelerate offloading from a module, if present.
     Absolutely no device movement occurs, and parameters/buffers pointers from state
@@ -187,7 +188,9 @@ def _save_ct_index_entry(
         # unfortunately, ct's implementation does not support loading non-safetensors
         # we must onload and save as safetensors. This typically only occurs in testing
         onloaded = dataset[name]
-        DiskCache("cpu", dataset.save_folder).offload(onloaded, offloaded=offloaded)
+        DiskCache("cpu", offload_dir=dataset.save_folder).offload(
+            onloaded, offloaded=offloaded
+        )
         logger.warning(
             "Attempting to disk offload a model which was not saved with safetensors. "
             "compressed-tensors only supports disk onload from safetensors files, so "
