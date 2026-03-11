@@ -1,35 +1,25 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import gc
 from weakref import ref
 
 import torch
 from compressed_tensors.offload import OffloadCache
+from tests.test_offload.conftest import assert_device_equal, assert_tensor_equal
 
 
-def _test_onloading(offload_device: str, onload_device: str):
+def _test_onloading(offload_device, onload_device):
     cache = OffloadCache.cls_from_device(offload_device)(onload_device)
     tensor = torch.ones(10)
     cache["weight"] = tensor
     onloaded = cache["weight"]
 
     assert type(onloaded) is type(tensor)
-    assert torch.equal(onloaded, tensor.to(onloaded))
+    assert_tensor_equal(onloaded, tensor, onload_device)
 
 
-def _test_garbage_collect(offload_device: str, onload_device: str):
+def _test_garbage_collect(offload_device, onload_device):
     cache = OffloadCache.cls_from_device(offload_device)(onload_device)
     cache["weight"] = torch.ones(10)
     onloaded = cache["weight"]
@@ -40,34 +30,34 @@ def _test_garbage_collect(offload_device: str, onload_device: str):
     assert onloaded_ref() is None
 
 
-def _test_offload(offload_device: str, onload_device: str):
+def _test_offload(offload_device, onload_device):
     cache = OffloadCache.cls_from_device(offload_device)(onload_device)
     tensor = torch.ones(10, device=onload_device)
     offloaded = cache.offload(tensor)
-    assert offloaded.device == offload_device
-    assert torch.equal(offloaded, tensor.to(offloaded))
+    assert_device_equal(offloaded.device, offload_device)
+    assert_tensor_equal(offloaded, tensor, offload_device)
 
 
-def _test_onload(offload_device: str, onload_device: str):
+def _test_onload(offload_device, onload_device):
     cache = OffloadCache.cls_from_device(offload_device)(onload_device)
     tensor = torch.ones(10, device=onload_device)
     onloaded = cache.onload(cache.offload(tensor))
-    assert onloaded.device == onload_device
-    assert torch.equal(onloaded, tensor.to(onloaded))
+    assert_device_equal(onloaded.device, onload_device)
+    assert_tensor_equal(onloaded, tensor, onload_device)
 
 
-def _test_disable_offloading(offload_device: str, onload_device: str):
+def _test_disable_offloading(offload_device, onload_device):
     cache = OffloadCache.cls_from_device(offload_device)(onload_device)
     cache["weight"] = torch.ones(10)
 
     outside_onloaded = cache["weight"]
     outside_onloaded_ref = ref(outside_onloaded)
-    assert outside_onloaded.device == onload_device
+    assert_device_equal(outside_onloaded.device, onload_device)
 
     with cache.disable_offloading():
         inside_onloaded = cache["weight"]
         inside_onloaded_ref = ref(inside_onloaded)
-        assert inside_onloaded.device == onload_device
+        assert_device_equal(inside_onloaded.device, onload_device)
 
         del outside_onloaded
         del inside_onloaded
@@ -80,7 +70,7 @@ def _test_disable_offloading(offload_device: str, onload_device: str):
     assert inside_onloaded_ref() is None
 
 
-def _test_disable_onloading(offload_device: str, onload_device: str):
+def _test_disable_onloading(offload_device, onload_device):
     cache = OffloadCache.cls_from_device(offload_device)(onload_device)
     tensor = torch.ones(10)
     cache.offloaded_values["weight"] = tensor
@@ -92,7 +82,7 @@ def _test_disable_onloading(offload_device: str, onload_device: str):
     assert onloaded is tensor
 
 
-def _test_delete(offload_device: str, onload_device: str):
+def _test_delete(offload_device, onload_device):
     cache = OffloadCache.cls_from_device(offload_device)(onload_device)
     cache["weight"] = torch.ones(10)
     onloaded = cache["weight"]
@@ -108,12 +98,66 @@ def _test_delete(offload_device: str, onload_device: str):
     assert onloaded_ref() is None
 
 
-def _test_shared_attributes(offload_device: str, onload_device: str):
+def _test_shared_attributes(offload_device, onload_device):
     cache = OffloadCache.cls_from_device(offload_device)(onload_device)
-    assert cache.offload_device is cache.__class__.offload_device
     assert cache.offloading_disabled is cache.__class__.offloading_disabled
     assert cache.onloading_disabled is cache.__class__.onloading_disabled
     assert cache.keep_onloaded_values is cache.__class__.keep_onloaded_values
 
     assert not hasattr(cache.__class__, "onload_device")
     assert not hasattr(cache.__class__, "offloaded_values")
+
+
+def _test_tensor_subclass(offload_device, onload_device):
+    tensor = torch.ones(10)
+    param = torch.nn.Parameter(torch.ones(10), requires_grad=False)
+    buffer = torch.nn.Buffer(torch.ones(10))
+
+    cache = OffloadCache.cls_from_device(offload_device)(onload_device)
+    cache["tensor"] = tensor
+    cache["param"] = param
+    cache["buffer"] = buffer
+
+    assert_tensor_equal(cache["tensor"], tensor, onload_device)
+    assert_tensor_equal(cache["param"], param, onload_device)
+    assert_tensor_equal(cache["buffer"], buffer, onload_device)
+
+    with cache.disable_onloading():
+        assert_tensor_equal(cache["tensor"], tensor, offload_device)
+        assert_tensor_equal(cache["param"], param, offload_device)
+        assert_tensor_equal(cache["buffer"], buffer, offload_device)
+
+
+def _test_update_offload(offload_device, onload_device):
+    cache = OffloadCache.cls_from_device(offload_device)(onload_device)
+
+    # Create initial tensor and offload it
+    initial_data = torch.ones(10, device=onload_device)
+    cache["weight"] = initial_data
+
+    # Verify initial value
+    onloaded = cache["weight"]
+    assert_tensor_equal(onloaded, initial_data, onload_device)
+
+    # Update with new data
+    new_data = torch.ones(10, device=onload_device) * 2.0
+    cache["weight"] = new_data
+
+    # Verify update worked
+    updated_onloaded = cache["weight"]
+    assert_tensor_equal(updated_onloaded, new_data, onload_device)
+
+    # Verify offloaded tensor was updated in place (not replaced)
+    with cache.disable_onloading():
+        offloaded = cache["weight"]
+        assert_tensor_equal(offloaded, new_data, offload_device)
+
+    # Test update with disable_offloading context
+    with cache.disable_offloading():
+        cache["weight"] = torch.ones(10, device=onload_device) * 3.0
+        cached_onloaded = cache["weight"]
+        assert_tensor_equal(cached_onloaded, torch.ones(10) * 3.0, onload_device)
+
+    # Verify update persisted after context exit
+    final_onloaded = cache["weight"]
+    assert_tensor_equal(final_onloaded, torch.ones(10) * 3.0, onload_device)

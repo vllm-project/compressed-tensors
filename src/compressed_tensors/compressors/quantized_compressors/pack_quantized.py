@@ -1,16 +1,6 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import math
 from typing import Literal
 
@@ -171,7 +161,7 @@ class PackedQuantizationCompressor(BaseQuantizationCompressor):
             assert (
                 zero_point is not None
             ), "Asymmetric quantization requires zero-point values"
-            original_zp_shape = (original_shape[0], scale.shape[-1])
+            original_zp_shape = (*original_shape[:-1], scale.shape[-1])
             zero_point = unpack_from_int32(
                 zero_point, num_bits, original_zp_shape, packed_dim=0
             )
@@ -219,6 +209,15 @@ def pack_to_int32(
 
     if num_bits < 1:
         raise ValueError(f"num_bits must be at least 1, got {num_bits}")
+
+    # Handle N-dimensional tensors (e.g. MoE 3D weights) by packing each 2D slice
+    if value.ndim > 2:
+        return torch.stack(
+            [
+                pack_to_int32(value[i], num_bits, packed_dim)
+                for i in range(value.shape[0])
+            ]
+        )
 
     # Convert to unsigned range for packing, matching quantization offset
     offset = 1 << (num_bits - 1)
@@ -274,6 +273,15 @@ def unpack_from_int32(
 
     if num_bits > 8:
         raise ValueError("Unpacking is only supported for less than 8 bits")
+
+    # Handle N-dimensional tensors (e.g. MoE 3D weights) by unpacking each 2D slice
+    if value.ndim > 2:
+        return torch.stack(
+            [
+                unpack_from_int32(value[i], num_bits, shape[1:], packed_dim)
+                for i in range(value.shape[0])
+            ]
+        )
 
     pack_factor = 32 // num_bits
 

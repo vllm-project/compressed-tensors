@@ -1,20 +1,8 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import logging
 import math
-from collections.abc import Generator
 
 import torch
 from compressed_tensors.quantization.quant_args import (
@@ -26,13 +14,11 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationType,
     round_to_quantized_type_dtype,
 )
-from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils.mxfp4_utils import (
     generate_mxfp4_scales,
     maybe_convert_from_mxfp4_exp,
     should_generatre_mxfp4_scales,
 )
-from compressed_tensors.utils import deprecated
 from loguru import logger
 from torch import FloatTensor, IntTensor, Tensor
 from torch.nn import Module
@@ -45,14 +31,13 @@ __all__ = [
     "get_torch_bit_depth",
     "can_quantize",
     "KV_CACHE_TARGETS",
-    "is_kv_cache_quant_scheme",
-    "iter_named_leaf_modules",
-    "iter_named_quantizable_modules",
     "compute_dynamic_scales_and_zp",
     "calculate_range",
     "calculate_qparams",
     "generate_gparam",
     "strategy_cdiv",
+    "calculate_block_padding",
+    "maybe_pad_tensor_for_block_quant",
 ]
 
 # target the self_attn layer
@@ -126,9 +111,11 @@ def calculate_qparams(
     # 5. Update any 0s with small values to
     # prevent div by 0
     eps = _get_dtype_eps(
-        dtype=quantization_args.scale_dtype
-        if quantization_args.scale_dtype is not None
-        else scales.dtype
+        dtype=(
+            quantization_args.scale_dtype
+            if quantization_args.scale_dtype is not None
+            else scales.dtype
+        )
     )
     scales = torch.where(
         scales == 0,
@@ -282,83 +269,6 @@ def module_type(module: Module) -> str:
     return type(module).__name__
 
 
-@deprecated(
-    message="This function will be removed in a future release. "
-    "Please use `model.named_modules()` and filter by "
-    "compressed_tensors.InternalModule if neceessary"
-)
-def iter_named_leaf_modules(model: Module) -> Generator[tuple[str, Module], None, None]:
-    """
-    Yields modules that do not have any submodules except observers. The observers
-    themselves are not yielded
-    :param model: model to get leaf modules of
-    :returns: generator tuple of (name, leaf_submodule)
-    """
-    for name, submodule in model.named_modules():
-        children = list(submodule.children())
-        # TODO: verify if an observer would ever be attached in this case/remove check
-        if len(children) == 0 and "observer" in name:
-            yield name, submodule
-        else:
-            if len(children) > 0:
-                named_children, children = zip(*list(submodule.named_children()))
-            has_non_observer_children = False
-            for i in range(len(children)):
-                child_name = named_children[i]
-
-                if "observer" not in child_name:
-                    has_non_observer_children = True
-
-            if not has_non_observer_children:
-                yield name, submodule
-
-
-@deprecated(
-    message="This function will be removed in a future release. "
-    "Please use `model.named_modules()` and filter by "
-    "compressed_tensors.InternalModule if neceessary"
-)
-def iter_named_quantizable_modules(
-    model: Module,
-    include_children: bool = True,
-    include_attn: bool = False,
-    include_mlp: bool = False,
-) -> Generator[tuple[str, Module], None, None]:
-    """
-    Yield name and submodule of
-    - leaf modules, set by include_children
-    - attention modyles, set by include_attn
-    :param model: model to get leaf modules of
-    :param include_children: flag to get the leaf modules
-    :param inlcude_attn: flag to get the attention modules
-    :returns: generator tuple of (name, submodule)
-    """
-    for name, submodule in model.named_modules():
-        # TODO: verify if an observer would ever be attached in this case/remove check
-        if include_children:
-            children = list(submodule.children())
-            if len(children) == 0 and "observer" not in name:
-                yield name, submodule
-            else:
-                if len(children) > 0:
-                    named_children, children = zip(*list(submodule.named_children()))
-                has_non_observer_children = False
-                for i in range(len(children)):
-                    child_name = named_children[i]
-
-                    if "observer" not in child_name:
-                        has_non_observer_children = True
-
-                if not has_non_observer_children:
-                    yield name, submodule
-        if include_attn:
-            if name.endswith("self_attn"):
-                yield name, submodule
-        if include_mlp:
-            if name.endswith("mlp"):
-                yield name, submodule
-
-
 def get_torch_bit_depth(value: torch.Tensor) -> int:
     """
     Determine the number of bits used to represent the dtype of a tensor
@@ -392,27 +302,6 @@ def can_quantize(value: torch.Tensor, quant_args: "QuantizationArgs") -> bool:  
         )
 
     return bit_depth > quant_args.num_bits
-
-
-@deprecated()
-def is_kv_cache_quant_scheme(scheme: QuantizationScheme) -> bool:
-    """
-    Check whether the QuantizationScheme targets the kv cache.
-    It does if all the following criteria are met:
-    - the scheme targets either exactly match the KV_CACHE_TARGETS
-        or the match KV_CACHE_TARGETS regex pattern
-    - the scheme quantizes output_activations (we want to quantize the
-        outputs from the KV_CACHE_TARGETS, as their correspond to the
-        keys and values that are to be saved in the cache)
-
-    :param scheme: The QuantizationScheme to investigate
-    :return: boolean flag
-    """
-    for target in scheme.targets:
-        if target in KV_CACHE_TARGETS:
-            return True
-
-    return False
 
 
 def generate_gparam(
@@ -470,3 +359,60 @@ def _get_dtype_eps(dtype: torch.dtype) -> float:
         return torch.finfo(dtype).eps
     else:
         return 1
+
+
+def calculate_block_padding(
+    shape: tuple[int, ...],
+    block_structure: tuple[int, int],
+) -> tuple[int, int]:
+    """
+    Calculate the padding needed to make tensor dimensions divisible by block size.
+
+    For block quantization, dimensions must be divisible by the block size for
+    proper scale alignment when layers are merged in inference frameworks like vLLM.
+
+    :param shape: shape of the tensor (at least 2D)
+    :param block_structure: [block_height, block_width] for block quantization
+    :return: tuple of (pad_rows, pad_cols) needed to make dimensions divisible
+    """
+    if len(shape) < 2:
+        raise ValueError(f"Tensor must be at least 2D, got shape {shape}")
+
+    rows, cols = shape[-2], shape[-1]
+    block_height, block_width = block_structure
+
+    pad_rows = (block_height - rows % block_height) % block_height
+    pad_cols = (block_width - cols % block_width) % block_width
+
+    return pad_rows, pad_cols
+
+
+def maybe_pad_tensor_for_block_quant(
+    tensor: torch.Tensor,
+    block_structure: tuple[int, int],
+) -> torch.Tensor:
+    """
+    Pad a tensor so its dimensions are divisible by the block size.
+
+    This is essential for FP8 block quantization when dimensions are not
+    divisible by block size. The padding ensures that when weights are
+    merged in inference frameworks (like vLLM's gate_up_proj), the scale
+    tensor blocks align correctly.
+
+    :param tensor: tensor to pad (at least 2D)
+    :param block_structure: [block_height, block_width] for block quantization
+    :return: padded tensor
+    """
+    original_shape = tensor.shape
+
+    pad_rows, pad_cols = calculate_block_padding(original_shape, block_structure)
+
+    if pad_rows == 0 and pad_cols == 0:
+        return tensor
+
+    # F.pad uses (left, right, top, bottom) for last two dimensions
+    padded_tensor = torch.nn.functional.pad(
+        tensor, (0, pad_cols, 0, pad_rows), mode="constant", value=0
+    )
+
+    return padded_tensor

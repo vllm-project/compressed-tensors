@@ -1,16 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from collections import OrderedDict
 from copy import deepcopy
@@ -21,6 +10,7 @@ from compressed_tensors.modeling import (
     initialize_hooked_attention,
     initialize_hooked_kv_cache,
 )
+from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
     is_attention_module,
@@ -37,7 +27,6 @@ from compressed_tensors.utils.match import (
     match_named_modules,
     match_targets,
 )
-from compressed_tensors.utils.offload import update_parameter_data
 from compressed_tensors.utils.safetensors_load import get_safetensors_folder
 from loguru import logger
 from safetensors import safe_open
@@ -228,14 +217,14 @@ def _load_quant_args_from_mapping(
         with safe_open(state_dict_g_idx_path, framework="pt", device="cpu") as f:
             state_dict_g_idx = f.get_tensor(f"{module_name}.{g_idx_name}")
 
-        update_parameter_data(module, state_dict_g_idx, g_idx_name)
+        update_offload_parameter(module, g_idx_name, state_dict_g_idx)
 
     if state_dict_scale_path is not None:
         # module is quantized
         with safe_open(state_dict_scale_path, framework="pt", device="cpu") as f:
             state_dict_scale = f.get_tensor(f"{module_name}.{scale_name}")
 
-        update_parameter_data(module, state_dict_scale, scale_name)
+        update_offload_parameter(module, scale_name, state_dict_scale)
 
         if state_dict_zp_path is None:
             # fill in zero point for symmetric quantization
@@ -244,7 +233,7 @@ def _load_quant_args_from_mapping(
             with safe_open(state_dict_zp_path, framework="pt", device="cpu") as f:
                 state_dict_zp = f.get_tensor(f"{module_name}.{zp_name}")
 
-        update_parameter_data(module, state_dict_zp, zp_name)
+        update_offload_parameter(module, zp_name, state_dict_zp)
 
 
 def _scheme_from_targets(

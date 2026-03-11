@@ -1,16 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
 from functools import wraps
@@ -24,6 +13,7 @@ def offload_module(
     module: torch.nn.Module,
     onload_device: torch.device | str,
     offload_device: torch.device | str,
+    **kwargs,
 ):
     """
     Offload a module. Any existing parameters or buffers will be offloaded to the
@@ -37,17 +27,29 @@ def offload_module(
     :param module: module to offload
     :param onload_device: device used to onload parameters and buffers
     :param offload_device: device used to offload parameters and buffers
+    :param \\**kwargs: keyword arguments for cache constructor
     """
+    if isinstance(module._parameters, OffloadCache):
+        raise ValueError(
+            "Attempted to offload a module twice. "
+            "Please call `remove_module_offload` first."
+        )
+
     cache_cls = OffloadCache.cls_from_device(offload_device)
-    module._parameters = cache_cls.from_mapping(module._parameters, onload_device)
-    module._buffers = cache_cls.from_mapping(module._buffers, onload_device)
+    module._parameters = cache_cls.from_mapping(
+        module._parameters, onload_device, **kwargs
+    )
+    module._buffers = cache_cls.from_mapping(module._buffers, onload_device, **kwargs)
 
     original_forward_func = module.forward.__func__
     module._original_forward_func = original_forward_func
 
     @wraps(original_forward_func)
     def forward(self, *args, **kwargs):
-        if not OffloadCache.onloading_disabled:
+        if not OffloadCache.onloading_disabled and isinstance(
+            module._parameters, OffloadCache
+        ):
+            onload_device = module._parameters.onload_device
             args = send_tensors(args, device=onload_device)
             kwargs = send_tensors(kwargs, device=onload_device)
 

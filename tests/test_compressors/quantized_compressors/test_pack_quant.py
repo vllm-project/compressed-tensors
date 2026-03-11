@@ -1,17 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import math
 import shutil
@@ -563,3 +551,25 @@ def test_zero_point_pack_unpack_consistency(num_bits, strategy):
 
     assert torch.equal(original_zp, unpacked_zp)
     assert unpacked_zp.dtype == torch.int8
+
+
+def test_pack_unpack_3d_round_trip():
+    """3D tensors (e.g. MoE expert weights) should pack/unpack correctly."""
+    num_bits = 4
+    shape = (4, 8, 32)  # (num_experts, rows, cols)
+    value = torch.randint(-8, 7, shape, dtype=torch.int8)
+    packed = pack_to_int32(value, num_bits)
+    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
+    assert torch.equal(value, unpacked)
+
+
+def test_pack_unpack_3d_matches_stacked_2d():
+    """3D pack/unpack should match stacking individual 2D results."""
+    num_bits = 4
+    shape = (4, 8, 32)
+    value = torch.randint(-8, 7, shape, dtype=torch.int8)
+    packed_3d = pack_to_int32(value, num_bits)
+    packed_2d = torch.stack(
+        [pack_to_int32(value[i], num_bits) for i in range(value.shape[0])]
+    )
+    assert torch.equal(packed_3d, packed_2d)

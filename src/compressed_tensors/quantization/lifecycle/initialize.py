@@ -1,19 +1,8 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import logging
+import math
 
 import torch
 from compressed_tensors.modeling import (
@@ -22,7 +11,7 @@ from compressed_tensors.modeling import (
     QuantizedAttentionImpl,
     QuantizedKVCache,
 )
-from compressed_tensors.offload import unwrap_offload_forward
+from compressed_tensors.offload import disable_onloading, unwrap_offload_forward
 from compressed_tensors.quantization import (
     ActivationOrdering,
     DynamicType,
@@ -32,16 +21,13 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
     QuantizationStrategy,
 )
-from compressed_tensors.quantization.lifecycle.forward import (
-    wrap_module_forward_quantized,
-)
+from compressed_tensors.quantization.lifecycle.forward import set_forward_quantized
 from compressed_tensors.quantization.utils import strategy_cdiv
 from compressed_tensors.utils import (
     get_execution_device,
     get_head_dim,
     get_num_attn_heads,
     get_num_kv_heads,
-    register_offload_parameter,
 )
 from torch.nn import Module, Parameter
 
@@ -76,6 +62,8 @@ def initialize_module_for_quantization(
     :param force_zero_point: whether to force initialization of a zero point for
         symmetric quantization
     """
+    from compressed_tensors.linear.compressed_linear import CompressedLinear  # circ dep
+
     scheme = scheme or getattr(module, "quantization_scheme", None)
     if scheme is None:
         return
@@ -83,25 +71,11 @@ def initialize_module_for_quantization(
     QuantizationMetadata.clear_all_qparams(module)
 
     if is_attention_module(module):
-        # quantized actions based on calltime status
         initialize_attn_qparams(module, scheme, force_zero_point)
 
-    else:
-        if not isinstance(module, torch.nn.Linear):
-            _LOGGER.warning(f"Attempting to quantize module of type {type(module)}")
-
-        # use weight to determine observed shapes and dtype
-        if hasattr(module, "weight"):
+    elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+        with disable_onloading():
             weight = module.weight
-            assert isinstance(weight, torch.Tensor)
-        else:
-            # Note that a weight is required for both weight and activation
-            # quantization in order to know the dtype of activation scales
-            _LOGGER.warning(
-                f"module type {type(module)} targeted for quantization but "
-                f"has no attribute weight, skipping quantization for {type(module)}"
-            )
-            return
 
         if scheme.input_activations is not None:
             initialize_qparams(
@@ -133,10 +107,14 @@ def initialize_module_for_quantization(
                 force_zero_point=force_zero_point,
             )
 
-        with unwrap_offload_forward(module):
-            # wrap forward call of module to perform
-            # quantized actions based on calltime status
-            wrap_module_forward_quantized(module, scheme)
+        # CompressedLinear has its own forward method that handles decompression
+        # Don't override it with the quantized forward
+        if not isinstance(module, CompressedLinear):
+            with unwrap_offload_forward(module):
+                set_forward_quantized(module)
+
+    else:
+        raise ValueError(f"Quantization of module type {type(module)} is not supported")
 
     module.quantization_scheme = scheme
     module.quantization_status = QuantizationStatus.INITIALIZED
@@ -189,9 +167,7 @@ def initialize_qparams(
             torch.empty(1, dtype=torch.float32, device=device),
             requires_grad=False,
         )
-        register_offload_parameter(
-            module, f"{base_name}_global_scale", init_global_scale
-        )
+        module.register_parameter(f"{base_name}_global_scale", init_global_scale)
 
     # Skip scale/zp initialization for locally dynamic quantization
     if dynamic == DynamicType.LOCAL:
@@ -225,7 +201,7 @@ def initialize_qparams(
                 torch.full((observed_shape[-1],), -1, device=device, dtype=torch.int),
                 requires_grad=False,
             )
-            register_offload_parameter(module, f"{base_name}_g_idx", init_g_idx)
+            module.register_parameter(f"{base_name}_g_idx", init_g_idx)
 
     elif strategy == QuantizationStrategy.BLOCK:
         assert quantization_args.block_structure is not None
@@ -233,7 +209,11 @@ def initialize_qparams(
             raise ValueError("Block quant requires at least 2 observed dimensions")
 
         block_structure = quantization_args.block_structure
-        num_rows = strategy_cdiv(observed_shape[-2], block_structure[-2], strategy)
+
+        # NOTE: vllm kernels for block-quantization do not require
+        # num_rows to be evenly divisible by block_structure[-2],
+        # but num_cols does need to be evenly divisible by block_structure[-1]
+        num_rows = math.ceil(observed_shape[-2] / block_structure[-2])
         num_cols = strategy_cdiv(observed_shape[-1], block_structure[-1], strategy)
         expected_shape = (num_rows, num_cols)
 
@@ -262,7 +242,7 @@ def initialize_qparams(
         torch.empty(expected_shape, dtype=scale_dtype, device=device),
         requires_grad=False,
     )
-    register_offload_parameter(module, f"{base_name}_scale", init_scale)
+    module.register_parameter(f"{base_name}_scale", init_scale)
 
     if force_zero_point or not quantization_args.symmetric:
         init_zero_point = Parameter(
@@ -271,7 +251,7 @@ def initialize_qparams(
             ),
             requires_grad=False,
         )
-        register_offload_parameter(module, f"{base_name}_zero_point", init_zero_point)
+        module.register_parameter(f"{base_name}_zero_point", init_zero_point)
 
 
 def initialize_attn_qparams(

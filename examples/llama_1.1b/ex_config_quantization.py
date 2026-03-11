@@ -1,17 +1,3 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 ####
 #
 # The following example shows how a model can be calibrated and
@@ -23,6 +9,9 @@
 # simplified using the vllm's `llm-compressor` package
 #
 ####
+
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from pathlib import Path
 
@@ -67,7 +56,7 @@ def update_scale_zp_hook(
     module: torch.nn.Module, input: torch.Tensor, _output: torch.Tensor
 ):
     from compressed_tensors.quantization.utils import calculate_qparams
-    from compressed_tensors.utils import update_parameter_data
+    from compressed_tensors.offload import update_offload_parameter
 
     quantization_scheme = getattr(module, "quantization_scheme", None)
     if not quantization_scheme:
@@ -78,15 +67,15 @@ def update_scale_zp_hook(
     quantization_args = getattr(quantization_scheme, "weights", None)
     min_val, max_val = torch.aminmax(module.weight.data)
     scale, zp = calculate_qparams(min_val, max_val, quantization_args)
-    update_parameter_data(module, scale, "weight_scale")
-    update_parameter_data(module, zp, "weight_zero_point")
+    update_offload_parameter(module, "weight_scale", scale)
+    update_offload_parameter(module, "weight_zero_point", zp)
 
     # update input_activations scale / zero-point
     quantization_args = getattr(quantization_scheme, "input_activations", None)
     min_val, max_val = torch.aminmax(input[0])
     scale, zp = calculate_qparams(min_val, max_val, quantization_args)
-    update_parameter_data(module, scale, "input_scale")
-    update_parameter_data(module, zp, "input_zero_point")
+    update_offload_parameter(module, "input_scale", scale)
+    update_offload_parameter(module, "input_zero_point", zp)
 
     return
 

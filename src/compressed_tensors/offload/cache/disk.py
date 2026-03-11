@@ -1,0 +1,169 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
+import os
+import tempfile
+from typing import TYPE_CHECKING, Optional
+
+import torch
+from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.dist_utils import is_rank0
+from compressed_tensors.offload.utils import send_tensors, to_tensor
+from safetensors import safe_open
+from safetensors.torch import save_file
+
+
+if TYPE_CHECKING:
+    from torch._prims_common import DeviceLikeType
+
+
+class DiskCache(OffloadCache):
+    """
+    Handles offloading and onloading tensors from/to disk.
+
+    Tensors usually start as a key in safetensors file, converted by (TODO NAME).
+    New or updated tensors are written to new safetensors files in `offload_dir`.
+
+    Tensors are stored in memory as meta tensors. The mapping between offloaded meta
+    tensors and their locations on disk is defined by `index`.
+    """
+
+    offload_device = "disk"
+
+    # offloaded tensors -> weight info
+    index: dict[torch.Tensor, dict[str, str]] = dict()
+
+    # directory where new tensors are written to
+    offload_dir: str
+    _new_file_prefix = "ct_disk_cache"
+
+    def __init__(self, onload_device: torch.device, offload_dir: Optional[str] = None):
+        super().__init__(onload_device)
+        self.offload_dir = offload_dir or tempfile.mkdtemp()
+
+    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
+        """
+        Onload a tensor from disk/meta to device
+
+        :param offloaded: meta tensor to onload
+        :return: device tensor, read from disk
+        """
+        if offloaded is None:
+            return None
+
+        weight_info = self.index[offloaded]
+        device = _get_safe_open_device(self.onload_device)
+
+        with safe_open(
+            weight_info["safetensors_file"], framework="pt", device=device
+        ) as file:
+            onloaded = file.get_tensor(weight_info["weight_name"])
+            onloaded = to_tensor(onloaded, offloaded)
+            onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
+            return onloaded
+
+    def offload(
+        self, tensor: torch.Tensor | None, offloaded: Optional[torch.Tensor] = None
+    ) -> torch.Tensor | None:
+        """
+        Offload a tensor to disk by writing a new safetensors file
+
+        :param tensor: tensor on any device
+        :param offloaded: optional meta tensor used to look up an existing file
+        :return: meta tensor representing the offloaded tensor
+        """
+        if tensor is None:
+            return None
+
+        if tensor.device.type == "meta":
+            assert tensor in self.index
+            return tensor
+
+        if offloaded is None:
+            offloaded = send_tensors(tensor, device="meta")
+
+        file_name = f"{self._new_file_prefix}{id(offloaded)}.safetensors"
+        file_path = os.path.join(self.offload_dir, file_name)
+        self.index[offloaded] = {
+            "safetensors_file": file_path,
+            "weight_name": "weight",
+            "dtype": str(tensor.dtype).removeprefix("torch."),
+        }
+
+        save_file({"weight": tensor}, file_path)
+        return offloaded
+
+    def __delitem__(self, key: str):
+        """
+        Remove the offload associated with `key`. If a new file was created to store
+        updated tensor data, that new tensor data file is deleted.
+
+        Any references to onloaded tensors held by this class are invalidated.
+
+        :param key: name of tensor to invalidate
+        """
+        offloaded = self.offloaded_values[key]
+        file_path = self.index[offloaded]["safetensors_file"]
+        if os.path.basename(file_path).startswith(self._new_file_prefix):
+            os.remove(file_path)
+        del self.index[offloaded]
+        super().__delitem__(key)
+
+    def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
+        """
+        Write new param data to file that already exists.
+
+        :param offloaded: meta tensors representating parameter to update
+        :param data: new data
+        """
+        # get weight info from index
+        assert offloaded in self.index, "Cannot find offload to update"
+        weight_info = self.index[offloaded]
+        file_path = weight_info["safetensors_file"]
+        weight_name = weight_info["weight_name"]
+        dtype = getattr(torch, weight_info["dtype"])
+
+        # create new file if old file was a symlink to a checkpoint file
+        if os.path.islink(file_path):
+            assert os.path.basename(file_path).startswith(self._new_file_prefix)
+            os.unlink(file_path)
+
+        # save with data using original weight_name
+        save_file({weight_name: data.reshape_as(offloaded).to(dtype=dtype)}, file_path)
+
+    @classmethod
+    def create_checkpoint_symlink(
+        cls,
+        offloaded: torch.Tensor,
+        weight_info: dict,
+        offload_dir: str | os.PathLike | None,
+    ) -> None:
+        assert is_rank0(), "Must call on rank 0 to avoid id collisions between ranks"
+        offload_dir = offload_dir or tempfile.mkdtemp()
+        file_name = f"{cls._new_file_prefix}{id(offloaded)}.safetensors"
+        file_path = os.path.join(offload_dir, file_name)
+
+        os.symlink(weight_info["safetensors_file"], file_path)
+        cls.index[offloaded] = {
+            "safetensors_file": file_path,
+            "weight_name": weight_info["weight_name"],
+            "dtype": weight_info["dtype"],
+        }
+
+
+def _get_safe_open_device(device: "DeviceLikeType") -> str | int:
+    """
+    `safetensors.safe_open` does not accept `torch.device` as argument, so
+    we must convert from torch.device to a string, while considering "cuda" resolution
+
+    :param device: torch device to convert
+    :return: device argument to `safetensors.safe_open`
+    """
+    device = torch.device(device)
+    if device.type in ("cuda"):
+        if device.index is None:
+            return torch.cuda.current_device()
+        else:
+            return device.index
+    else:
+        return device.type

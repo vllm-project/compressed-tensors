@@ -1,16 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from functools import wraps
 from math import ceil
@@ -27,7 +16,9 @@ from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils import (
     calculate_range,
     compute_dynamic_scales_and_zp,
+    maybe_pad_tensor_for_block_quant,
 )
+from compressed_tensors.utils import patch_attr
 from torch.nn import Module
 
 
@@ -35,7 +26,7 @@ __all__ = [
     "quantize",
     "dequantize",
     "fake_quantize",
-    "wrap_module_forward_quantized",
+    "set_forward_quantized",
     "forward_quantize",
 ]
 
@@ -207,24 +198,14 @@ def _process_quantization(
     # quantization
     if args.strategy == QuantizationStrategy.BLOCK:
         original_shape = x.shape
-        rows, cols = x.shape[-2], x.shape[-1]
         block_height, block_width = args.block_structure
 
-        # Ensure exact division (tensor dimensions must be divisible by block size)
-        if rows % block_height != 0:
-            raise ValueError(
-                f"Tensor height {rows} is not divisible by block_height {block_height}."
-                f" Block quantization requires exact division."
-            )
-        if cols % block_width != 0:
-            raise ValueError(
-                f"Tensor width {cols} is not divisible by block_width {block_width}. "
-                f"Block quantization requires exact division."
-            )
+        x = maybe_pad_tensor_for_block_quant(x, args.block_structure)
+        padded_shape = x.shape
 
         # reshape into blocks and transpose to make each block contiguous
-        num_rows_blocks = rows // block_height
-        num_cols_blocks = cols // block_width
+        num_rows_blocks = padded_shape[0] // block_height
+        num_cols_blocks = padded_shape[1] // block_width
         x_blocks = x.reshape(
             num_rows_blocks,
             block_height,
@@ -255,8 +236,11 @@ def _process_quantization(
                 zero_point=zb,
                 global_scale=global_scale,
             )
-        # restore original shape
-        output = x_blocks.transpose(1, 2).reshape(original_shape)
+        # restore padded shape
+        output = x_blocks.transpose(1, 2).reshape(padded_shape)
+        # truncate to original dimensions if padding was applied
+        if original_shape != padded_shape:
+            output = output[tuple([slice(v) for v in original_shape])]
     elif args.strategy in (
         QuantizationStrategy.GROUP,
         QuantizationStrategy.TENSOR_GROUP,
@@ -352,60 +336,52 @@ def _process_quantization(
     return output
 
 
-def wrap_module_forward_quantized(module: Module, scheme: QuantizationScheme):
-    # expects a module already initialized and injected with the parameters in
-    # initialize_module_for_quantization
-    if hasattr(module.forward, "__func__"):
-        forward_func_orig = module.forward.__func__
-    else:
-        forward_func_orig = module.forward.func
+def set_forward_quantized(module: torch.nn.Linear | torch.nn.Embedding):
+    """
+    Replace a linear or embedding module's forward function with one that performs
+    on-the-fly QDQ. Note that weight quantiation will be skipped for compressed modules.
 
-    @wraps(forward_func_orig)  # ensures docstring, names, etc are propagated
-    def wrapped_forward(self, *args, **kwargs):
-        if not getattr(self, "quantization_enabled", True):
-            # quantization is disabled on forward passes, return baseline
-            # forward call
-            return forward_func_orig.__get__(self, self.__class__)(*args, **kwargs)
+    All QDQ operations can be skipped by setting `module.quantization_enabled = False`
 
-        input_ = args[0]
+    :param module: linear or embedding module whose forward function will be replaced
+    """
 
-        compressed = self.quantization_status == QuantizationStatus.COMPRESSED
+    @wraps(module.forward.__func__)
+    def quantized_forward(
+        self: torch.nn.Linear | torch.nn.Embedding, input: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Quantized forward pass of a linear or embedding module
 
-        if scheme.input_activations is not None:
-            # prehook should calibrate activations before forward call
-            input_ = forward_quantize(self, input_, "input", scheme.input_activations)
-
-        if scheme.weights is not None and not compressed:
-            # calibrate and (fake) quantize weights when applicable
-            unquantized_weight = self.weight.data.clone()
-            self.weight.data = forward_quantize(
-                self, self.weight, "weight", scheme.weights
-            )
-
-        # perform wrapped forward call
-        output = forward_func_orig.__get__(self, self.__class__)(
-            input_, *args[1:], **kwargs
+        :param self: instance of linear or embedding module
+        :param input: input activations to this module
+        :return: linear or embedding output
+        """
+        scheme: QuantizationScheme | None = getattr(self, "quantization_scheme", None)
+        status: QuantizationStatus | None = getattr(self, "quantization_status", None)
+        enabled: bool = (
+            getattr(self, "quantization_enabled", True)
+            and scheme is not None
+            and status is not None
         )
+        weight = self.weight  # onload once
+        weight_data = weight.data
 
-        # restore back to unquantized_value
-        if scheme.weights is not None and not compressed:
-            self.weight.data = unquantized_weight
+        if enabled and scheme.input_activations:
+            input = forward_quantize(self, input, "input", scheme.input_activations)
 
-        if scheme.output_activations is not None:
-            # forward-hook should calibrate/forward_quantize
-            if (
-                self.quantization_status == QuantizationStatus.CALIBRATION
-                and not scheme.output_activations.dynamic
-            ):
-                return output
+        if enabled and scheme.weights and status < QuantizationStatus.COMPRESSED:
+            weight_data = forward_quantize(self, weight_data, "weight", scheme.weights)
 
+        with patch_attr(weight, "data", weight_data):
+            output = self.__class__.forward(self, input)
+
+        if enabled and scheme.output_activations:
             output = forward_quantize(self, output, "output", scheme.output_activations)
+
         return output
 
-    # bind wrapped forward to module class so reference to `self` is correct
-    bound_wrapped_forward = wrapped_forward.__get__(module, module.__class__)
-    # set forward to wrapped forward
-    setattr(module, "forward", bound_wrapped_forward)
+    module.forward = quantized_forward.__get__(module)
 
 
 def forward_quantize(

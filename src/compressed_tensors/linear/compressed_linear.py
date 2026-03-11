@@ -1,16 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import warnings
 
@@ -21,7 +10,6 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
     initialize_module_for_quantization,
 )
-from compressed_tensors.utils import register_offload_parameter
 from compressed_tensors.utils.offload import get_execution_device
 from torch import Tensor
 from torch.nn import Parameter
@@ -81,7 +69,7 @@ class CompressedLinear(Linear):
             param = Parameter(
                 torch.empty(shape, device=init_device, dtype=dtype), requires_grad=False
             )
-            register_offload_parameter(module, name, param)
+            module.register_parameter(name, param)
 
         # mark module as compressed
         module.quantization_status = QuantizationStatus.COMPRESSED
@@ -90,12 +78,12 @@ class CompressedLinear(Linear):
 
     def forward(self, input: Tensor) -> Tensor:
         """
-        Decompresses the weight, then runs the wrapped forward pass
+        Decompresses the weight, then runs the quantized forward pass
         """
         if self.quantization_status == QuantizationStatus.COMPRESSED:
             weight_data = self.compressor.decompress_module(self)
             param = Parameter(weight_data, requires_grad=False)
-            register_offload_parameter(self, "weight", param)
+            self.register_parameter("weight", param)
 
             self.quantization_status = QuantizationStatus.FROZEN
 

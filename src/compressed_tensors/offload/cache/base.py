@@ -1,16 +1,5 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
 from abc import ABC, abstractmethod
@@ -41,7 +30,7 @@ class OffloadCache(MutableMapping, ABC):
     """
 
     onload_device: torch.device | str
-    offload_device: torch.device | str | None
+    offload_device: torch.device | Literal["disk"]
 
     # global flags for disabling
     offloading_disabled: ClassVar[bool] = False
@@ -67,7 +56,10 @@ class OffloadCache(MutableMapping, ABC):
         """
         from compressed_tensors.offload.cache.cpu import CPUCache
         from compressed_tensors.offload.cache.device import DeviceCache
+        from compressed_tensors.offload.cache.disk import DiskCache
         from compressed_tensors.offload.cache.dist_cpu import DistributedCPUCache
+        from compressed_tensors.offload.cache.dist_device import DistributedDeviceCache
+        from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 
         device_type = torch.device(device).type if device != "disk" else "disk"
         distributed = dist.is_available() and dist.is_initialized()
@@ -79,6 +71,12 @@ class OffloadCache(MutableMapping, ABC):
                 return DistributedCPUCache
             case ("cuda", False):
                 return DeviceCache
+            case ("cuda", True):
+                return DistributedDeviceCache
+            case ("disk", False):
+                return DiskCache
+            case ("disk", True):
+                return DistributedDiskCache
             case _:
                 raise NotImplementedError(
                     f"Offload of type {device} and "
@@ -90,6 +88,7 @@ class OffloadCache(MutableMapping, ABC):
         cls,
         mapping: MutableMapping[str, torch.Tensor | None],
         onload_device: torch.device | str,
+        **kwargs,
     ):
         """
         Initialize an instance from a given mapping, typically `Module._parameters` or
@@ -97,8 +96,9 @@ class OffloadCache(MutableMapping, ABC):
 
         :param mapping: mapping used to populate cache
         :param onload_device: device which tensors will be onloaded to
+        :param \\**kwargs: keyword arguments for cache constructor
         """
-        instance = cls(onload_device=onload_device)
+        instance = cls(onload_device=onload_device, **kwargs)
         instance.offloaded_values = {
             name: instance.offload(tensor) for name, tensor in mapping.items()
         }
@@ -111,7 +111,7 @@ class OffloadCache(MutableMapping, ABC):
         self.offloaded_values = dict()
 
     @abstractmethod
-    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor:
+    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Given an offloaded tensor, returns that tensor after onloading
 
@@ -121,12 +121,25 @@ class OffloadCache(MutableMapping, ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor:
+    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Given a tensor, returns that tensor after offloading
 
         :param tensor: tensor to offload
         :return: offloaded tensor
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
+        """
+        Update the data of an offloaded tensor
+
+        NOTE: Operation is performed asynchronously. If you need the offloaded value
+        to update across all ranks, call `dist.barrier()` after calling this function
+
+        :param tensor: offloaded tensor to update
+        :param data: new tensor data
         """
         raise NotImplementedError()
 
@@ -161,23 +174,31 @@ class OffloadCache(MutableMapping, ABC):
 
     def __setitem__(self, key: str, value: torch.Tensor | None):
         """
-        Offload a tensor and add it to the cache.
+        Update the offloaded and onloaded values if the key exists, otherwise
+        offload the value and add it to the cache.
 
-        If called within the `disable_onloading` context, the tensor is not offloaded
-        and is instead assigned directly
+        If called within the `disable_onloading` context, the value is assigned directly
 
         :param key: name of tensor
         :param value: tensor value to offload
         """
-        if key in self:
-            del self[key]
-
         # when onloading is disabled, parameters can be access and assigned directly
         if self.onloading_disabled:
             self.offloaded_values[key] = value
             return
 
-        self.offloaded_values[key] = self.offload(value)
+        # if the key already exists, update with the new value
+        offloaded = self.offloaded_values.get(key, None)
+        if offloaded is not None and torch.is_same_size(offloaded, value):
+            self.update_offload(offloaded, value)
+
+            onloaded = self.keep_onloaded_values.get(offloaded, None)
+            if onloaded is not None and onloaded is not offloaded:
+                onloaded.copy_(value)
+
+        # if the key does not exist (or the value is None), offload the new value
+        else:
+            self.offloaded_values[key] = self.offload(value)
 
     def __delitem__(self, key: str):
         """

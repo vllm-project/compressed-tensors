@@ -1,23 +1,12 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from math import ceil
 
 import pytest
 import torch
+from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization.utils import calculate_qparams
-from compressed_tensors.utils.offload import update_parameter_data
 
 
 def _get_dim(dim: int, value: torch.Tensor):
@@ -66,8 +55,8 @@ def mock_per_group_calibration():
             scale[:, group_index] = scale_out.squeeze(1)
             zp[:, group_index] = zp_out.squeeze(1)
 
-        update_parameter_data(module, scale, f"{base_name}_scale")
-        update_parameter_data(module, zp, f"{base_name}_zero_point")
+        update_offload_parameter(module, f"{base_name}_scale", scale)
+        update_offload_parameter(module, f"{base_name}_zero_point", zp)
 
     return update_scale_zp
 
@@ -87,8 +76,8 @@ def mock_per_channel_calibration():
         min_val = torch.amin(value, dim=dim, keepdims=True)
         max_val = torch.amax(value, dim=dim, keepdims=True)
         scale, zp = calculate_qparams(min_val, max_val, args)
-        update_parameter_data(module, scale, f"{base_name}_scale")
-        update_parameter_data(module, zp, f"{base_name}_zero_point")
+        update_offload_parameter(module, f"{base_name}_scale", scale)
+        update_offload_parameter(module, f"{base_name}_zero_point", zp)
 
     return update_scale_zp
 
@@ -107,7 +96,7 @@ def mock_per_tensor_calibration():
         # per tensor quantization just calls calculate_qparams directly
         min_val, max_val = torch.aminmax(value)
         scale, zp = calculate_qparams(min_val, max_val, args)
-        update_parameter_data(module, scale, f"{base_name}_scale")
-        update_parameter_data(module, zp, f"{base_name}_zero_point")
+        update_offload_parameter(module, f"{base_name}_scale", scale)
+        update_offload_parameter(module, f"{base_name}_zero_point", zp)
 
     return update_scale_zp

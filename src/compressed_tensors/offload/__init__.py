@@ -1,27 +1,27 @@
-# Copyright (c) 2021 - present / Neuralmagic, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
 from collections.abc import Iterable
+from typing import Literal
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.dispatch import (  # noqa: F401
     dispatch_model,
+    dispatch_with_map,
+    get_device_map,
     offload_model,
     remove_dispatch,
 )
+from compressed_tensors.offload.dist_utils import (
+    as_broadcastable,
+    init_dist,
+    is_distributed,
+    is_rank0,
+)
+from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
 from compressed_tensors.offload.utils import get_module_device, move_module_tensor
 from compressed_tensors.utils.helpers import patch_attr
@@ -32,6 +32,12 @@ __all__ = [
     "offload_model",
     "dispatch_model",
     "remove_dispatch",
+    "dispatch_with_map",
+    "get_device_map",
+    # accelerate conversion
+    "load_offloaded_model",
+    "from_accelerate",
+    "to_accelerate",
     # control movement
     "disable_onloading",
     "disable_offloading",
@@ -45,6 +51,11 @@ __all__ = [
     # backwards compatibility: should be deprecated
     "align_modules",
     "align_module_device",
+    # utilities
+    "is_distributed",
+    "is_rank0",
+    "init_dist",
+    "as_broadcastable",
 ]
 
 
@@ -85,24 +96,38 @@ def disable_onloading():
 
 def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Tensor):
     """
-    Update the data of an existing parameter and its offload dict. Supports both
-    parameters of offloaded modules and non-offloaded modules
+    Update the offload and onload data of an existing parameter/buffer. Supports both
+    parameters of both offloaded modules and non-offloaded modules.
+
+    NOTE: This function does not guard against multiple processes writing to offload
+    at the same time. It is the responsibility of the caller to ensure that, for any
+    parameter/buffer, only one rank calls this function at a time.
+
+    NOTE: This function does not update onloaded values across ranks. The caller is
+    responsible for broadcasting any updates to other ranks, if they are onloaded.
 
     :param module: module containing the parameter to update
     :param name: name of module parameter to update
     :param data: tensor to update parameter with
     """
     if isinstance(module._parameters, OffloadCache):
-        with module._parameters.disable_onloading():
-            value = getattr(module, name)
-            value.copy_(module._parameters.offload(data))
-            setattr(module, name, value)
+        # | Component | Update Implementation       |
+        # | --------- | --------------------------- |
+        # | CPU       | Copy into shared cpu memory |
+        # | Disk      | Write file to disk          |
+        # | Device    | Copy into local device      |
+        # | --------- | --------------------------- |
+        # all implementations update onloaded data if applicable
+        setattr(module, name, torch.nn.Parameter(data.data, requires_grad=False))
 
     else:
-        getattr(module, name).copy_(data)
+        with torch.no_grad():
+            getattr(module, name).copy_(data)
 
 
-def get_execution_device(module: torch.nn.Module) -> torch.device | str:
+def get_execution_device(
+    module: torch.nn.Module, default: torch.device | None = None
+) -> torch.device | Literal["disk"]:
     """
     Get the device which inputs should be moved to before module execution.
 
@@ -113,16 +138,21 @@ def get_execution_device(module: torch.nn.Module) -> torch.device | str:
         return module._parameters.onload_device
 
     else:
-        return get_module_device(module)
+        return get_module_device(module, default)
 
 
-def get_offloaded_device(module: torch.nn.Module) -> torch.device:
+def get_offloaded_device(
+    module: torch.nn.Module, default: torch.device | None = None
+) -> torch.device | Literal["disk"]:
     """
     :param module: module to check
     :return: device module is offloaded to onto after forward pass
     """
-    with disable_onloading():
-        return get_module_device(module)
+    if isinstance(module._parameters, OffloadCache):
+        return module._parameters.offload_device
+
+    else:
+        return get_module_device(module, default)
 
 
 def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.Module):
@@ -177,9 +207,10 @@ def align_module_device(
         assert isinstance(module._buffers, OffloadCache)
         with module._parameters.disable_offloading():
             if execution_device is not None:
-                with patch_attr(
-                    module._parameters, "onload_device", execution_device
-                ), patch_attr(module._buffers, "onload_device", execution_device):
+                with (
+                    patch_attr(module._parameters, "onload_device", execution_device),
+                    patch_attr(module._buffers, "onload_device", execution_device),
+                ):
                     yield
             else:
                 yield
