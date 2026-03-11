@@ -376,21 +376,13 @@ def bf16_index(
     Returns:
         torch.Tensor: Output tensor of shape (b, m, n)
     """
-    b, m, h, d = q.shape
-    n = k.shape[1]
-
-    # Compute k @ q^T for each head
-    # k: (b, n, d) -> (b, n, 1, d)
-    # q: (b, m, h, d) -> (b, 1, m, h, d)
-    k_exp = k.unsqueeze(2)  # (b, n, 1, d)
-    q_exp = q.unsqueeze(1)  # (b, 1, m, h, d)
-
-    # Element-wise multiply and sum over d dimension
-    # (b, n, 1, d) * (b, 1, m, h, d) -> (b, n, m, h, d) -> sum -> (b, n, m, h)
-    logits = torch.sum(k_exp * q_exp.transpose(1, 2), dim=-1)  # (b, n, m, h)
+    # Use einsum for memory-efficient computation
+    # k: (b, n, d), q: (b, m, h, d)
+    # logits[b, m, n, h] = sum_d(k[b, n, d] * q[b, m, h, d])
+    logits = torch.einsum('bnd,bmhd->bmnh', k, q)  # (b, m, n, h)
 
     # Apply ReLU
     logits = torch.relu(logits)
 
-    # Sum over heads and transpose to (b, m, n)
-    return logits.sum(dim=-1).transpose(1, 2).to(torch.float32)
+    # Sum over heads to get (b, m, n)
+    return logits.sum(dim=-1).to(torch.float32)
