@@ -4,10 +4,11 @@
 import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import MutableMapping
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, Optional
 
 import torch
 import torch.distributed as dist
+from torch._prims_common import DeviceLikeType
 
 
 class OffloadCache(MutableMapping, ABC):
@@ -31,8 +32,8 @@ class OffloadCache(MutableMapping, ABC):
     info, see `compressed_tensors.offload::(disable_offloading|disable_onloading)`
     """
 
-    onload_device: torch.device | str
-    offload_device: torch.device | Literal["disk"]
+    onload_device: DeviceLikeType
+    offload_device: DeviceLikeType | Literal["disk"]
 
     # global flags for disabling
     offloading_disabled: ClassVar[bool] = False
@@ -46,8 +47,7 @@ class OffloadCache(MutableMapping, ABC):
 
     @classmethod
     def cls_from_device(
-        cls,
-        device: torch.device | str | Literal["disk"] | None = None,
+        cls, device: DeviceLikeType | Literal["disk"]
     ) -> type["OffloadCache"]:
         """
         Get the subclass which implements offloading for the given `offload_device`.
@@ -89,8 +89,8 @@ class OffloadCache(MutableMapping, ABC):
     def from_mapping(
         cls,
         mapping: MutableMapping[str, torch.Tensor | None],
-        onload_device: torch.device | str,
-        offload_device: "torch.device | str | Literal['disk'] | None" = None,
+        onload_device: DeviceLikeType,
+        offload_device: DeviceLikeType | Literal["disk"],
         **kwargs,
     ):
         """
@@ -116,18 +116,15 @@ class OffloadCache(MutableMapping, ABC):
 
     def __init__(
         self,
-        onload_device: torch.device | str,
-        offload_device: torch.device | str | Literal["disk"] | None = None,
+        onload_device: DeviceLikeType,
+        offload_device: Optional[DeviceLikeType | Literal["disk"]] = None,
     ):
         super().__init__()
         self.onload_device = onload_device
         self.offloaded_values = dict()
 
-        # Validate offload_device for subclasses with a fixed offload_device
-        # (CPUCache, DiskCache). DeviceCache sets offload_device after super().__init__
-        # so this check only applies when offload_device is a class attribute.
-        if offload_device is not None and hasattr(type(self), "offload_device"):
-            assert str(offload_device) == str(self.offload_device)
+        if offload_device is not None:
+            assert offload_device == self.offload_device
 
     @abstractmethod
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:

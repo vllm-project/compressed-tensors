@@ -3,7 +3,7 @@
 
 import os
 import tempfile
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import Literal, Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
@@ -11,10 +11,7 @@ from compressed_tensors.offload.dist_utils import is_rank0
 from compressed_tensors.offload.utils import send_tensors, to_tensor
 from safetensors import safe_open
 from safetensors.torch import save_file
-
-
-if TYPE_CHECKING:
-    from torch._prims_common import DeviceLikeType
+from torch._prims_common import DeviceLikeType
 
 
 class DiskCache(OffloadCache):
@@ -40,10 +37,10 @@ class DiskCache(OffloadCache):
     def __init__(
         self,
         onload_device: torch.device,
-        offload_device: Optional["DeviceLikeType | Literal['disk']"] = None,
+        offload_device: Optional[DeviceLikeType | Literal["disk"]] = None,
         offload_dir: Optional[str] = None,
     ):
-        super().__init__(onload_device, offload_device=offload_device)
+        super().__init__(onload_device, offload_device)
         self.offload_dir = offload_dir or tempfile.mkdtemp()
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
@@ -156,7 +153,7 @@ class DiskCache(OffloadCache):
         }
 
 
-def _get_safe_open_device(device: "DeviceLikeType") -> str | int:
+def _get_safe_open_device(device: DeviceLikeType) -> str | int:
     """
     `safetensors.safe_open` does not accept `torch.device` as argument, so
     we must convert from torch.device to a string, while considering "cuda" resolution
