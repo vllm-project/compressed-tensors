@@ -123,9 +123,6 @@ class OffloadCache(MutableMapping, ABC):
         self.onload_device = onload_device
         self.offloaded_values = dict()
 
-        if offload_device is not None:
-            assert offload_device == self.offload_device
-
     @abstractmethod
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
