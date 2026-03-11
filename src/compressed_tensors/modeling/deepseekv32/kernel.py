@@ -367,14 +367,30 @@ def bf16_index(
     """
     Perform index score using bfloat16 precision.
 
-    Args:
-        q (torch.Tensor): The Q tensor, will be made contiguous if needed.
-        k (torch.Tensor): The K tensor, will be made contiguous if needed.
+    Computes: output[b,m,n] = sum_over_h(ReLU(K[b,n,:] · Q[b,m,h,:]^T))
 
+    Args:
+        q (torch.Tensor): Query tensor of shape (b, m, h, d)
+        k (torch.Tensor): Key tensor of shape (b, n, d)
+
+    Returns:
+        torch.Tensor: Output tensor of shape (b, m, n)
     """
-    print("BF16_INDEX q", q.shape, q.dtype)
-    print("BF16_INDEX k", k.shape, k.dtype)
-    # Ensure tensors are contiguous to satisfy stride constraints
-    q = q.contiguous()
-    k = k.contiguous()
-    return bf16_index_kernel(q.shape[2], q.shape[3])(q, k)
+    b, m, h, d = q.shape
+    n = k.shape[1]
+
+    # Compute k @ q^T for each head
+    # k: (b, n, d) -> (b, n, 1, d)
+    # q: (b, m, h, d) -> (b, 1, m, h, d)
+    k_exp = k.unsqueeze(2)  # (b, n, 1, d)
+    q_exp = q.unsqueeze(1)  # (b, 1, m, h, d)
+
+    # Element-wise multiply and sum over d dimension
+    # (b, n, 1, d) * (b, 1, m, h, d) -> (b, n, m, h, d) -> sum -> (b, n, m, h)
+    logits = torch.sum(k_exp * q_exp.transpose(1, 2), dim=-1)  # (b, n, m, h)
+
+    # Apply ReLU
+    logits = torch.relu(logits)
+
+    # Sum over heads and transpose to (b, m, n)
+    return logits.sum(dim=-1).transpose(1, 2).to(torch.float32)
