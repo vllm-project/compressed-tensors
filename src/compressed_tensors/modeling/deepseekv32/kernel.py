@@ -271,4 +271,107 @@ def fp8_index(
         fp32 logits -> fp32 logits_sum
         fp32 logits_sum * k_s (e8m0) -> fp32 index_score
     """
+    print("FP8_INDEX q", q.shape, q.dtype)
+    print("FP8_INDEX q_s", q_s.shape, q_s.dtype)
+    print("FP8_INDEX k", k.shape, k.dtype)
+    print("FP8_INDEX k_s", k_s.shape, k_s.dtype)
     return fp8_index_kernel(q.shape[2], q.shape[3])(q, q_s, k, k_s)
+
+
+@tilelang.jit(out_idx=[2], pass_configs=pass_configs)
+def bf16_index_kernel(h: int, d: int):
+    """
+    Kernel factory function.
+
+    Args:
+        h: Number of attention heads
+        d: Feature dimension
+
+    Returns:
+        Compiled kernel function
+    """
+    b = T.symbolic("b")  # batch size
+    m = T.symbolic("m")  # number of query positions
+    n = T.symbolic("n")  # number of key positions
+
+    blk_n1 = 512  # Outer block size for key positions
+    blk_n2 = 128  # Inner block size for key positions
+
+    @T.prim_func
+    def bf16_index_kernel_(
+        q: T.Tensor[(b, m, h, d), BF16],  # Query tensor
+        k: T.Tensor[(b, n, d), BF16],  # Key tensor
+        o: T.Tensor[(b, m, n), FP32],  # Output scores
+    ) -> None:
+        """
+        Inner kernel implementation.
+
+        Computes query-key similarity scores with ReLU activation
+        and head reduction.
+
+        Args:
+            q: Query tensor of shape (batch, num_queries, heads, dim)
+            k: Key tensor of shape (batch, num_keys, dim)
+            o: Output tensor of shape (batch, num_queries, num_keys)
+        """
+        # Iterate over batch, query positions, and key blocks
+        with T.Kernel(b, m, T.ceildiv(n, blk_n1)) as (i_b, i_m, i1_n):
+            # Load query for all heads into shared memory
+            # Shape: (h, d)
+            q_smem = T.alloc_shared((h, d), BF16)
+            T.copy(q[i_b, i_m, 0, 0], q_smem)
+
+            # Process keys in pipelined blocks
+            # 2-stage pipeline hides memory latency
+            for i2_n in T.Pipelined(blk_n1 // blk_n2, num_stages=2):
+                # Load key block into shared memory
+                # Shape: (blk_n2, d)
+                k_smem = T.alloc_shared((blk_n2, d), BF16)
+                T.copy(k[i_b, i1_n * blk_n1 + i2_n * blk_n2, 0], k_smem)
+
+                # Compute matrix multiplication: k @ q^T
+                # k_smem: [blk_n2, d]
+                # q_smem: [h, d]
+                # Result logits: [blk_n2, h]
+                logits = T.alloc_fragment((blk_n2, h), FP32)
+                T.gemm(
+                    k_smem,  # [blk_n2, d]
+                    q_smem,  # [h, d]
+                    logits,  # [blk_n2, h]
+                    transpose_A=False,
+                    transpose_B=True,
+                    clear_accum=True,
+                )
+
+                # Apply ReLU activation element-wise
+                # ReLU(x) = max(x, 0)
+                for i_h, i3_n in T.Parallel(h, blk_n2):
+                    logits[i3_n, i_h] = T.max(logits[i3_n, i_h], 0)
+
+                # Reduce across heads: sum over h dimension
+                # Input: [blk_n2, h]
+                # Output: [blk_n2]
+                logits_sum = T.alloc_fragment(blk_n2, FP32)
+                T.reduce_sum(logits, logits_sum, dim=1)
+
+                # Write output to global memory
+                T.copy(logits_sum, o[i_b, i_m, i1_n * blk_n1 + i2_n * blk_n2])
+
+    return bf16_index_kernel_
+
+
+def bf16_index(
+    q: torch.Tensor,
+    k: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Perform index score using FP8 precision.
+
+    Args:
+        q (torch.Tensor): The Q tensor, must be contiguous.
+        k (torch.Tensor): The K tensor, must be contiguous.
+
+    """
+    print("BF16_INDEX q", q.shape, q.dtype)
+    print("BF16_INDEX k", k.shape, k.dtype)
+    return bf16_index_kernel(q.shape[2], q.shape[3])(q, k)

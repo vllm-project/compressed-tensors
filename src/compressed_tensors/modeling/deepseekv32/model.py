@@ -7,12 +7,11 @@ from torch.nn import Linear
 import torch.nn.functional as F
 import torch.distributed as dist
 
-from .kernel import act_quant, fp8_index
+from .kernel import act_quant, fp8_index, bf16_index
 from .config import ModelConfig
 from transformers.models.deepseek_v3 import DeepseekV3ForCausalLM
 
 from transformers import PreTrainedModel
-import torch.nn.init as init
 from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
@@ -21,6 +20,7 @@ from transformers.processing_utils import Unpack
 from transformers.utils import TransformersKwargs
 from transformers.cache_utils import Cache
 from transformers.generation import GenerationMixin
+from transformers.models.deepseek_v3.modeling_deepseek_v3 import DeepseekV3Attention
 
 world_size = 1
 rank = 0
@@ -282,7 +282,8 @@ class Indexer(torch.nn.Module):
                 args.max_batch_size,
                 args.max_seq_len,
                 self.head_dim,
-                dtype=torch.float8_e4m3fn,
+                dtype=torch.bfloat16,
+                # dtype=torch.float8_e4m3fn,
             ),
             persistent=False,
         )
@@ -325,21 +326,37 @@ class Indexer(torch.nn.Module):
         k = torch.cat([k_pe, k_nope], dim=-1)
         q = rotate_activation(q)
         k = rotate_activation(k)
-        q_fp8, q_scale = act_quant(q, block_size, self.scale_fmt)
-        k_fp8, k_scale = act_quant(k, block_size, self.scale_fmt)
-        self.k_cache[:bsz, start_pos:end_pos] = k_fp8
-        self.k_scale_cache[:bsz, start_pos:end_pos] = k_scale
+        # q_fp8, q_scale = act_quant(q, block_size, self.scale_fmt)
+        # k_fp8, k_scale = act_quant(k, block_size, self.scale_fmt)
+        # self.k_cache[:bsz, start_pos:end_pos] = k_fp8
+        # self.k_scale_cache[:bsz, start_pos:end_pos] = k_scale
+        self.k_cache[:bsz, start_pos:end_pos] = k
+
         weights = self.weights_proj(x.float()) * self.n_heads**-0.5
-        weights = weights.unsqueeze(-1) * q_scale * self.softmax_scale
-        print("SHAPE QFP8", q_fp8.shape)
+
+        weights = weights.unsqueeze(-1) * q * self.softmax_scale
+        # weights = weights.unsqueeze(-1) * q_scale * self.softmax_scale
+        # # re-squeeze https://github.com/deepseek-ai/DeepSeek-V3.2-Exp/issues/43
+
+        weights = weights.squeeze(-1).to(torch.bfloat16).contiguous()
+        # print("SHAPE QFP8", q_fp8.shape)
+        # print("SHAPE X", x.shape)
+        # print("SHAPE WEIGHTS", weights.shape)
+        # index_score = fp8_index(
+        #     q_fp8.contiguous(),
+        #     weights,
+        #     self.k_cache[:bsz, :end_pos].contiguous(),
+        #     self.k_scale_cache[:bsz, :end_pos].squeeze(-1).contiguous(),
+        # )
+
         print("SHAPE X", x.shape)
         print("SHAPE WEIGHTS", weights.shape)
-        index_score = fp8_index(
-            q_fp8.contiguous(),
-            weights.squeeze(-1),
-            self.k_cache[:bsz, :end_pos].contiguous(),
-            self.k_scale_cache[:bsz, :end_pos].squeeze(-1).contiguous(),
+        k_ = self.k_cache[:bsz, :end_pos].contiguous()
+        index_score = bf16_index(
+            weights,
+            k_,
         )
+
         if mask is not None:
             index_score += mask
         topk_indices = index_score.topk(min(self.index_topk, end_pos), dim=-1)[1]
@@ -601,12 +618,11 @@ class Gate(nn.Module):
         self.score_func = args.score_func
         self.route_scale = args.route_scale
         self.weight = nn.Parameter(torch.empty(args.n_routed_experts, args.dim))
-        self.bias = None
-        # self.bias = (
-        #     nn.Parameter(torch.empty(args.n_routed_experts, dtype=torch.float32))
-        #     if self.dim == 7168
-        #     else None
-        # )
+        self.e_score_correction_bias = (
+            nn.Parameter(torch.empty(args.n_routed_experts, dtype=torch.float32))
+            if self.dim == 7168
+            else None
+        )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -624,8 +640,8 @@ class Gate(nn.Module):
         else:
             scores = scores.sigmoid()
         original_scores = scores
-        if self.bias is not None:
-            scores = scores + self.bias
+        if self.e_score_correction_bias is not None:
+            scores = scores + self.e_score_correction_bias
         if self.n_groups > 1:
             scores = scores.view(x.size(0), self.n_groups, -1)
             if self.bias is None:
@@ -778,6 +794,8 @@ class Block(nn.Module):
             args (ModelConfig): Model arguments containing block parameters.
         """
         super().__init__()
+
+        # self.self_attn = DeepseekV3Attention(args, layer_id)
         self.self_attn = MLA(args)
         self.mlp = (
             MLP(args.dim, args.inter_dim)
@@ -896,8 +914,7 @@ class DeepseekV32PreTrainedModel(PreTrainedModel):
         "attentions": MLA,
     }
     # _keep_in_fp32_modules_strict = ["e_score_correction_bias"]
-    _keys_to_ignore_on_load_unexpected = [r"model\.layers\.61.*", r"model.*.bias"]
-    _keys_to_ignore_on_load_missing = [r"model.*.bias"]
+    _keys_to_ignore_on_load_unexpected = [r"model\.layers\.61.*"]
 
     # @torch.no_grad()
     # def _init_weights(self, module):
