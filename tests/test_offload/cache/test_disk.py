@@ -17,6 +17,7 @@ from tests.test_offload.cache.helpers import (
     _test_onloading,
     _test_shared_attributes,
     _test_tensor_subclass,
+    _test_update_offload,
 )
 from tests.test_offload.conftest import assert_tensor_equal
 from tests.testing_utils import requires_gpu
@@ -79,6 +80,12 @@ def test_shared_attributes():
 @requires_gpu
 def test_tensor_subclass():
     _test_tensor_subclass(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_update_offload():
+    _test_update_offload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
