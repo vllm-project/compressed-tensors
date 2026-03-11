@@ -3,9 +3,12 @@ This module was created with the following actions:
 - ModelArgs -> ModelConfig subclasses PretrainedConfig
 - Add DeepseekV32PreTrainedModel and DeepseekV32ForCausalLM classes that wrap Transformer as model field, instead of DeepseekV3Model
 - replace names corresponding to convert.py (https://huggingface.co/deepseek-ai/DeepSeek-V3.2/blob/main/inference/convert.py#L12-L33) but NOT for Indexer class
-- Gate module rename bias to e_score_correction_bias
+- Gate module rename bias to e_score_correction_bias, add @property bias to get around attribute not found issues
 - merge into config.json any fields not already existing in https://huggingface.co/deepseek-ai/DeepSeek-V3.2/blob/main/inference/config_671B_v3.2.json
 - change `tilelang.PassConfigKey.TL_DISABLE_FAST_MATH: True` to `tilelang.PassConfigKey.TL_ENABLE_FAST_MATH: False`
 - drop Linear/RowParallel/ColumnParallelLinear classes, use torch.nn.Linear instead
 - Rename Transformer input var name from `tokens` to `input_ids`
 - add bias=False to all Linear constructors in model def (defaulted to False on original model def's Linear class)
+- wrap all dist calls in `if world_size > 1` conditional
+- add `.float()` to LayerNorm, weight/bias dtypes change to bf16 at layer 25(?)
+- change weights_proj to bfloat16, pass in x rather than x.float() to weights_proj forward pass

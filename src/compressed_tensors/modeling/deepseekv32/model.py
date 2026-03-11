@@ -124,7 +124,7 @@ class LayerNorm(nn.Module):
 
     def forward(self, x: torch.Tensor):
         return F.layer_norm(
-            x.float(), (self.dim,), self.weight, self.bias, self.eps
+            x.float(), (self.dim,), self.weight.float(), self.bias.float(), self.eps
         ).type_as(x)
 
 
@@ -271,7 +271,10 @@ class Indexer(torch.nn.Module):
         self.k_norm = LayerNorm(self.head_dim)
         # weights_proj in the checkpoint is stored in bf16, while the parameters here are stored in fp32 for convenient.
         self.weights_proj = Linear(
-            self.dim, self.n_heads, dtype=torch.float32, bias=False
+            self.dim,
+            self.n_heads,
+            # dtype=torch.float32,
+            bias=False,
         )
         self.softmax_scale = self.head_dim**-0.5
         self.scale_fmt = args.scale_fmt
@@ -332,16 +335,14 @@ class Indexer(torch.nn.Module):
         # self.k_scale_cache[:bsz, start_pos:end_pos] = k_scale
         self.k_cache[:bsz, start_pos:end_pos] = k
 
-        weights = self.weights_proj(x.float()) * self.n_heads**-0.5
+        weights = self.weights_proj(x) * self.n_heads**-0.5
 
         weights = weights.unsqueeze(-1) * q * self.softmax_scale
         # weights = weights.unsqueeze(-1) * q_scale * self.softmax_scale
         # # re-squeeze https://github.com/deepseek-ai/DeepSeek-V3.2-Exp/issues/43
 
         weights = weights.squeeze(-1).to(torch.bfloat16).contiguous()
-        # print("SHAPE QFP8", q_fp8.shape)
-        # print("SHAPE X", x.shape)
-        # print("SHAPE WEIGHTS", weights.shape)
+
         # index_score = fp8_index(
         #     q_fp8.contiguous(),
         #     weights,
@@ -349,8 +350,6 @@ class Indexer(torch.nn.Module):
         #     self.k_scale_cache[:bsz, :end_pos].squeeze(-1).contiguous(),
         # )
 
-        print("SHAPE X", x.shape)
-        print("SHAPE WEIGHTS", weights.shape)
         k_ = self.k_cache[:bsz, :end_pos].contiguous()
         index_score = bf16_index(
             weights,
@@ -360,11 +359,14 @@ class Indexer(torch.nn.Module):
         if mask is not None:
             index_score += mask
         topk_indices = index_score.topk(min(self.index_topk, end_pos), dim=-1)[1]
-        topk_indices_ = topk_indices.clone()
-        dist.broadcast(topk_indices_, src=0)
-        assert torch.all(
-            topk_indices == topk_indices_
-        ), f"{topk_indices=} {topk_indices_=}"
+
+        if world_size > 1:
+            topk_indices_ = topk_indices.clone()
+            dist.broadcast(topk_indices_, src=0)
+            assert torch.all(
+                topk_indices == topk_indices_
+            ), f"{topk_indices=} {topk_indices_=}"
+
         return topk_indices
 
 
@@ -623,6 +625,10 @@ class Gate(nn.Module):
             if self.dim == 7168
             else None
         )
+
+    @property
+    def bias(self):
+        return self.e_score_correction_bias
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -975,7 +981,7 @@ class DeepseekV32ForCausalLM(DeepseekV32PreTrainedModel, GenerationMixin):
         >>> tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
         "Hey, are you conscious? Can you talk to me?\nI'm not conscious, but I can talk to you."
         ```"""
-        outputs: BaseModelOutputWithPast = self.model(
+        hidden_states = self.model(
             input_ids=input_ids,
             # attention_mask=attention_mask,
             # position_ids=position_ids,
@@ -985,7 +991,6 @@ class DeepseekV32ForCausalLM(DeepseekV32PreTrainedModel, GenerationMixin):
             # **kwargs,
         )
 
-        hidden_states = outputs.last_hidden_state
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         slice_indices = (
             slice(-logits_to_keep, None)
@@ -1006,9 +1011,9 @@ class DeepseekV32ForCausalLM(DeepseekV32PreTrainedModel, GenerationMixin):
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
+            # past_key_values=outputs.past_key_values,
+            # hidden_states=outputs.hidden_states,
+            # attentions=outputs.attentions,
         )
 
 
