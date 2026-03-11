@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Optional, Literal
+from typing import Literal, Optional
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache

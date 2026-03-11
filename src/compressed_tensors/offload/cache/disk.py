@@ -115,7 +115,7 @@ class DiskCache(OffloadCache):
         """
         Write new param data to file that already exists.
 
-        :param offloaded: meta tensors representating parameter to update
+        :param offloaded: meta tensor representing the parameter to update
         :param data: new data
         """
         # get weight info from index
@@ -139,7 +139,21 @@ class DiskCache(OffloadCache):
         offloaded: torch.Tensor,
         weight_info: dict,
         offload_dir: str | os.PathLike | None,
-    ) -> None:
+    ):
+        """
+        Create a symlink to a checkpoint safetensors file. This symlink allows
+        individual tensor data to be individually modified and deleted without affecting
+        the original model checkpoint files.
+
+        When reading, the symlink redirects the read to the checkpoint file
+        When updating, the symlink is destroyed and a new file written to the same path
+        When deleting, the symlink (or new file) is destroyed
+
+        :param offloaded: meta tensor representing the parameter in the checkpoint
+        :param weight_info: info (typically from accelerate) pointing to checkpoint
+        :param offload_dir: offload directly to create symlink in
+        """
+        assert offloaded.device.type == "meta"
         assert is_rank0(), "Must call on rank 0 to avoid id collisions between ranks"
         offload_dir = offload_dir or tempfile.mkdtemp()
         file_name = f"{cls._new_file_prefix}{id(offloaded)}.safetensors"
