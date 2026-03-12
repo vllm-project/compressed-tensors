@@ -206,33 +206,36 @@ def dispatch_model(
         logger.warning("Forced to offload modules due to insufficient gpu resources")
 
     # dispatch
-    finally:
-        assert len(dispatch) == len(sizes)
+    assert len(dispatch) == len(sizes)
 
-        dispatch_dict = {
-            submodule: (onload, offload)
-            for module, onload, offload in dispatch
-            for submodule in module.modules()
-        }
+    dispatch_dict = {
+        submodule: (onload, offload)
+        for module, onload, offload in dispatch
+        for submodule in module.modules()
+    }
 
-        for module in model.modules():
-            remove_module_offload(module, onload_tensors=True)
-            if module in dispatch_dict:
-                onload, offload = dispatch_dict[module]
-                offload_module(module, onload, offload)
+    for module in model.modules():
+        remove_module_offload(module, onload_tensors=True)
+        if module in dispatch_dict:
+            onload, offload = dispatch_dict[module]
+            offload_module(module, onload, offload)
 
-        logger.debug(f"Dispatched model with {extra_memory} bytes of extra memory")
-        return model
+    logger.debug(f"Dispatched model with {extra_memory} bytes of extra memory")
+    return model
 
 
 def get_device_memory() -> dict[torch.device, int]:
     """
-    Get the total memory of all available cuda devices
+    Get the total memory of all available devices. Returns CUDA device memory
+    when available, otherwise falls back to CPU with system RAM.
 
     :return: mapping from torch device to total memory
     """
     if not torch.cuda.is_available():
-        return dict()
+        import os
+
+        total_ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+        return {torch.device("cpu"): total_ram}
 
     if dist.is_available() and dist.is_initialized():
         logger.info("Detected distributed context. Dispatching to local rank gpu")

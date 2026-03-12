@@ -4,6 +4,7 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.disk import DiskCache
+from compressed_tensors.offload.utils import send_tensors
 
 
 class DistributedDiskCache(DiskCache):
@@ -31,7 +32,7 @@ class DistributedDiskCache(DiskCache):
                 self.index[offloaded]["dtype"],
             ]
         else:
-            offloaded = tensor.to(device="meta")
+            offloaded = send_tensors(tensor, device="meta")
             broadcast_obj = [None, None, None]
 
         dist.broadcast_object_list(broadcast_obj, src=0)

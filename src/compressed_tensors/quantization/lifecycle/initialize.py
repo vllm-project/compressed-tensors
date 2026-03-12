@@ -11,7 +11,7 @@ from compressed_tensors.modeling import (
     QuantizedAttentionImpl,
     QuantizedKVCache,
 )
-from compressed_tensors.offload import unwrap_offload_forward
+from compressed_tensors.offload import disable_onloading, unwrap_offload_forward
 from compressed_tensors.quantization import (
     ActivationOrdering,
     DynamicType,
@@ -21,9 +21,7 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
     QuantizationStrategy,
 )
-from compressed_tensors.quantization.lifecycle.forward import (
-    wrap_module_forward_quantized,
-)
+from compressed_tensors.quantization.lifecycle.forward import set_forward_quantized
 from compressed_tensors.quantization.utils import strategy_cdiv
 from compressed_tensors.utils import (
     get_execution_device,
@@ -64,6 +62,8 @@ def initialize_module_for_quantization(
     :param force_zero_point: whether to force initialization of a zero point for
         symmetric quantization
     """
+    from compressed_tensors.linear.compressed_linear import CompressedLinear  # circ dep
+
     scheme = scheme or getattr(module, "quantization_scheme", None)
     if scheme is None:
         return
@@ -71,25 +71,11 @@ def initialize_module_for_quantization(
     QuantizationMetadata.clear_all_qparams(module)
 
     if is_attention_module(module):
-        # quantized actions based on calltime status
         initialize_attn_qparams(module, scheme, force_zero_point)
 
-    else:
-        if not isinstance(module, torch.nn.Linear):
-            _LOGGER.warning(f"Attempting to quantize module of type {type(module)}")
-
-        # use weight to determine observed shapes and dtype
-        if hasattr(module, "weight"):
+    elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+        with disable_onloading():
             weight = module.weight
-            assert isinstance(weight, torch.Tensor)
-        else:
-            # Note that a weight is required for both weight and activation
-            # quantization in order to know the dtype of activation scales
-            _LOGGER.warning(
-                f"module type {type(module)} targeted for quantization but "
-                f"has no attribute weight, skipping quantization for {type(module)}"
-            )
-            return
 
         if scheme.input_activations is not None:
             initialize_qparams(
@@ -121,10 +107,14 @@ def initialize_module_for_quantization(
                 force_zero_point=force_zero_point,
             )
 
-        with unwrap_offload_forward(module):
-            # wrap forward call of module to perform
-            # quantized actions based on calltime status
-            wrap_module_forward_quantized(module, scheme)
+        # CompressedLinear has its own forward method that handles decompression
+        # Don't override it with the quantized forward
+        if not isinstance(module, CompressedLinear):
+            with unwrap_offload_forward(module):
+                set_forward_quantized(module)
+
+    else:
+        raise ValueError(f"Quantization of module type {type(module)} is not supported")
 
     module.quantization_scheme = scheme
     module.quantization_status = QuantizationStatus.INITIALIZED
