@@ -522,9 +522,9 @@ For non-offloaded modules: moves tensors manually and restores them on exit.
 
 Returns `True` if `torch.distributed` is available and has been initialized.
 
-#### `is_rank0() → bool`
+#### `is_main_process() → bool`
 
-Returns `True` if not in a distributed context, or if the current process is rank 0.
+Returns `True` if not in a distributed context, or if the current process is the main process (typically rank 0).
 
 #### `init_dist()`
 
