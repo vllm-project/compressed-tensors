@@ -139,11 +139,7 @@ class FloatQuantizationCompressor(NaiveQuantizationCompressor):
     """Alias for fp quantized models."""
 
     @classmethod
-<<<<<<< HEAD
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
-=======
-    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
->>>>>>> 9e7435b (Refactor compressors)
         """Float quantized matches w8a8 float quantization."""
         return (
             module_type == torch.nn.Linear
