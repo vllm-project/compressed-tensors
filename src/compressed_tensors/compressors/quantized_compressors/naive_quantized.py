@@ -193,7 +193,7 @@ class MXFP8QuantizationCompressor(NaiveQuantizationCompressor):
             global_scale=global_scale,
         )
         # Convert float scale to E8M0 exponent format (uint8) for storage
-        scale_exp = 127 + torch.floor(torch.log2(scale)).to(torch.int32)
+        scale_exp = 127 + torch.log2(scale).to(torch.int32)
         result["weight_scale"] = scale_exp.to(quantization_args.scale_dtype)
         return result
 
@@ -205,7 +205,9 @@ class MXFP8QuantizationCompressor(NaiveQuantizationCompressor):
         # Convert E8M0 scale back to float
         scale = compressed_data["weight_scale"]
         scale_exp = scale.to(torch.int32) - 127
-        scale_float = 2.0 ** scale_exp.to(torch.bfloat16)
-        compressed_data["weight_scale"] = torch.nn.Parameter(scale_float, requires_grad=False)
+        scale_float = 2.0 ** scale_exp.to(torch.float32)
+        compressed_data["weight_scale"] = torch.nn.Parameter(
+            scale_float, requires_grad=False
+        )
         # Use parent's dequantize
         return super().decompress_weight(compressed_data, quantization_args)

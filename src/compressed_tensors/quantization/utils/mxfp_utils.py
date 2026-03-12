@@ -18,10 +18,6 @@ __all__ = [
     "generate_mx_scales",
     "round_to_power_2",
     "should_generate_mx_scales",
-    # backward-compat aliases
-    "maybe_convert_from_mxfp4_exp",
-    "generate_mxfp4_scales",
-    "should_generatre_mxfp4_scales",
 ]
 
 # Reference: https://github.com/vllm-project/vllm/blob/main/tests/quantization/reference_mxfp4.py # noqa: E501
@@ -48,12 +44,16 @@ def maybe_convert_from_mx_exp(
     args: QuantizationArgs, scale: torch.Tensor
 ) -> torch.Tensor:
     """
-    Converts MX (MXFP4/MXFP8) scales. Scales are powers of 2, with the
-    exponents stored in uint8. Converts to dense dtype so that
-    they can be applied to the weights and activations during QDQ
+    Conditionally converts MX (MXFP4/MXFP8) scales from their E8M0 exponent
+    format to float scales.
 
-    :param args: quantization args
-    :param scale: uint8 exponent scale
+    If the quantization arguments indicate an MX format, the input `scale`
+    is treated as E8M0 uint8 exponents and converted to float power-of-2
+    scales. Otherwise, the input `scale` tensor is returned unchanged.
+
+    :param args: quantization args to check for MX format
+    :param scale: tensor of scale values (uint8 exponents for MX, or float)
+    :return: float scale tensor, or original scale if not MX format
     """
     original_dtype = scale.dtype
     if should_generate_mx_scales(args):
@@ -124,13 +124,3 @@ def generate_mx_scales(x: torch.Tensor, num_bits: int = 4) -> torch.Tensor:
     # Round to closest power of 2
     scale_power_2 = round_to_power_2(x)
     return 127 + torch.floor(torch.log2(scale_power_2)) - offset
-
-
-# Backward-compatible aliases
-should_generatre_mxfp4_scales = should_generate_mx_scales
-maybe_convert_from_mxfp4_exp = maybe_convert_from_mx_exp
-
-
-def generate_mxfp4_scales(x: torch.Tensor) -> torch.Tensor:
-    """Backward-compatible alias for generate_mx_scales with num_bits=4."""
-    return generate_mx_scales(x, num_bits=4)

@@ -14,7 +14,7 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationType,
     round_to_quantized_type_dtype,
 )
-from compressed_tensors.quantization.utils.mxfp4_utils import (
+from compressed_tensors.quantization.utils.mxfp_utils import (
     generate_mx_scales,
     maybe_convert_from_mx_exp,
     should_generate_mx_scales,
