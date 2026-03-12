@@ -17,9 +17,14 @@ acclerate = pytest.importorskip("accelerate")
 @pytest.mark.unit
 @requires_gpu
 @pytest.mark.parametrize("offload_device", ["cuda", "cuda:0", "cpu", "disk"])
-def test_to_accelerate_module(offload_device):
+def test_to_accelerate_module(offload_device, tmp_path):
     linear = torch.nn.Linear(5, 5)
-    offload_module(linear, "cuda", offload_device)
+    if offload_device == "disk":
+        offload_dir = tmp_path / "offload_dir"
+        os.mkdir(offload_dir)
+        offload_module(linear, "cuda", offload_device, offload_dir=str(offload_dir))
+    else:
+        offload_module(linear, "cuda", offload_device)
 
     _offload_device = to_accelerate_module(linear, name="", hf_disk_index={})
     if offload_device == "cuda":
