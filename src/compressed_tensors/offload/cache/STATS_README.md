@@ -35,26 +35,24 @@ When statistics collection is disabled, operations are not tracked, reducing run
 
 ### Basic Usage
 
-After enabling statistics collection, operations are tracked automatically:
+After enabling statistics collection, operations are tracked automatically. Below is an example with LLM Compressor:
 
 ```python
+from llmcompressor.modifiers.quantization import GPTQModifier
+from llmcompressor import oneshot
+
 from compressed_tensors.offload.cache import CPUCache, OffloadStats
-import torch
 
 # Enable statistics collection
 OffloadStats.enable()
 
-# Create a cache
-device = torch.device("cuda")
-cache = CPUCache(onload_device=device)
-
-# Perform operations (automatically tracked when enabled)
-tensor = torch.randn(100, 100, device=device)
-cache["my_tensor"] = tensor  # Offload tracked
-retrieved = cache["my_tensor"]  # Onload tracked
-
-# View statistics
-print(OffloadStats.format_summary())
+oneshot(
+    model="meta-llama/Meta-Llama-3-8B-Instruct",
+    dataset="ultrachat-200k",
+    recipe=GPTQModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"]),
+    splits={"calibration": "train_sft[:512]"},
+    max_seq_length=2048,
+)
 
 # Disable when done
 OffloadStats.disable()
