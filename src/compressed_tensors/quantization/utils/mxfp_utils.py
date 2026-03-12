@@ -10,6 +10,7 @@ from compressed_tensors.quantization.quant_args import (
     FP4_E2M1_DATA,
     FP8_E4M3_DATA,
     QuantizationArgs,
+    QuantizationType,
 )
 
 
@@ -34,7 +35,7 @@ _MX_ELEM_OFFSET = {
 
 def should_generate_mx_scales(args: QuantizationArgs):
     return (
-        args.type == "float"
+        args.type == QuantizationType.FLOAT.value
         and args.group_size == 32
         and args.scale_dtype == torch.uint8
     )
