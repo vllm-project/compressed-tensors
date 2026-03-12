@@ -20,6 +20,7 @@ from compressed_tensors.offload.dist_utils import (
     as_single_threaded,
     init_dist,
     is_distributed,
+    is_main_process,
     is_rank0,
     set_main_process,
 )
