@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
-from compressed_tensors.offload.dist_utils import is_rank0
+from compressed_tensors.offload.dist_utils import is_main_process
 from compressed_tensors.offload.utils import send_tensors, to_tensor
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -142,7 +142,9 @@ class DiskCache(OffloadCache):
         weight_info: dict,
         offload_dir: str | os.PathLike | None,
     ) -> None:
-        assert is_rank0(), "Must call on rank 0 to avoid id collisions between ranks"
+        assert (
+            is_main_process()
+        ), "Must call on main process to avoid id collisions between ranks"
         if offload_dir is None:
             raise ValueError(
                 "Must provide an `offload_dir` to perform disk offloading "

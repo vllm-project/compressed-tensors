@@ -13,7 +13,7 @@ from compressed_tensors.offload.convert.helpers import (
     norm_device,
 )
 from compressed_tensors.offload.dispatch import dispatch_with_map
-from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
+from compressed_tensors.offload.dist_utils import is_distributed, is_main_process
 from compressed_tensors.offload.utils import to_tensor
 from loguru import logger
 
@@ -145,7 +145,7 @@ def remove_accelerate_from_module(
             assert isinstance(offload, (torch.nn.Parameter, torch.nn.Buffer))
 
             # Copy accelerate's disk index into DiskCache for our later use
-            if is_rank0():
+            if is_main_process():
                 _save_ct_index_entry(dataset, full_name, tensor)
 
         # Not offloaded, likely a buffer

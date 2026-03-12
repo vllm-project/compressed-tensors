@@ -64,6 +64,7 @@ __all__ = [
     "as_broadcastable",
     "as_single_threaded",
     "set_main_process",
+    "is_main_process",
     "to_meta",
 ]
 

@@ -6,7 +6,7 @@ import os
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.utils.helpers import patch_attr
+from compressed_tensors.utils.helpers import deprecated, patch_attr
 
 
 __all__ = [
@@ -23,6 +23,7 @@ __all__ = [
 SRC_RANK = 0
 
 
+@deprecated("is_main_process")
 def is_rank0() -> bool:
     """
     Check if the current process is rank 0 in distributed training.

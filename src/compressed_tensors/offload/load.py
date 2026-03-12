@@ -12,7 +12,7 @@ import psutil
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.convert import from_accelerate
-from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
+from compressed_tensors.offload.dist_utils import is_distributed, is_main_process
 from loguru import logger
 from transformers import PreTrainedModel
 from transformers.models.auto.modeling_auto import _BaseAutoModelClass
@@ -61,7 +61,7 @@ def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
         kwargs.setdefault("device_map", None)
 
         # Rank 0 does loading, other ranks init on meta device
-        if not is_rank0():
+        if not is_main_process():
             kwargs["device_map"] = "meta"
 
         # Intercept `auto_offload`: same as "auto", but only cpu/disk are visible

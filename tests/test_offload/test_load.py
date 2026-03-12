@@ -112,7 +112,7 @@ def _get_accelerate_offloaded_device(module: torch.nn.Module) -> str | None:
 
 @pytest.mark.unit
 @patch("compressed_tensors.offload.load.from_accelerate")
-@patch("compressed_tensors.offload.load.is_rank0", return_value=True)
+@patch("compressed_tensors.offload.load.is_main_process", return_value=True)
 @patch("compressed_tensors.offload.load.is_distributed", return_value=False)
 def test_patch_forwards_positional_args(
     mock_distributed, mock_rank0, mock_from_accelerate
