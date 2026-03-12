@@ -106,7 +106,7 @@ class BaseCompressor(RegistryMixin, ABC):
         module.quantization_status = QuantizationStatus.DECOMPRESSED
 
     @classmethod
-    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
+    def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """
         Determine if this compressor is applicable for the given module type and scheme.
 

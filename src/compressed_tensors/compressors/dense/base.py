@@ -48,6 +48,6 @@ class DenseCompressor(BaseCompressor):
         return state_dict
 
     @classmethod
-    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
+    def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Dense compressor matches when there's no weight quantization."""
         return True

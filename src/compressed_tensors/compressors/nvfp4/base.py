@@ -109,7 +109,7 @@ class NVFP4PackedCompressor(BaseCompressor):
         return state_dict
 
     @classmethod
-    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
+    def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """NVFP4 matches FP4 with group_size != 32 (or None)."""
         return (
             module_type == torch.nn.Linear

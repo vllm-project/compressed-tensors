@@ -111,7 +111,7 @@ class NaiveQuantizationCompressor(BaseCompressor):
         return state_dict
 
     @classmethod
-    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
+    def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """
         Naive quantization is the fallback compressor - it matches any quantized
         scheme that doesn't match a more specific compressor.
@@ -124,7 +124,7 @@ class IntQuantizationCompressor(NaiveQuantizationCompressor):
     """Alias for integer quantized models."""
 
     @classmethod
-    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
+    def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Int quantized matches w8a8 int quantization."""
         return (
             module_type == torch.nn.Linear
@@ -139,7 +139,7 @@ class FloatQuantizationCompressor(NaiveQuantizationCompressor):
     """Alias for fp quantized models."""
 
     @classmethod
-    def match(cls, module_type: type, scheme: QuantizationScheme) -> bool:
+    def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Float quantized matches w8a8 float quantization."""
         return (
             module_type == torch.nn.Linear

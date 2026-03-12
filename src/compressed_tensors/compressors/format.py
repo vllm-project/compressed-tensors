@@ -88,7 +88,7 @@ def infer_module_format(
         (
             format
             for format in COMPRESSION_FORMAT_PRIORITY
-            if BaseCompressor.get_value_from_registry(format.value).match(
+            if BaseCompressor.get_value_from_registry(format.value).can_compress(
                 module_type, scheme
             )
         )
