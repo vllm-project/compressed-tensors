@@ -266,7 +266,7 @@ def _process_quantization(
 
         # support column-order (default) quantization as well as other orderings
         # such as activation ordering. Below checks if g_idx has been initialized
-        is_column_order = g_idx is None or -1 in g_idx
+        is_column_order = g_idx is None or g_idx.device.type == "meta" or -1 in g_idx
         if is_column_order:
             num_groups = int(ceil(columns / group_size))
             group_sizes = torch.full((num_groups,), group_size, dtype=torch.int)
@@ -390,8 +390,9 @@ def forward_quantize(
 
     # in compressed mode, the weight is already compressed and quantized so we don't
     # need to run fake quantization
+    # TODO: remove this line, as this is already guarded by `set_forward_quantized`
     if (
-        module.quantization_status == QuantizationStatus.COMPRESSED
+        module.quantization_status >= QuantizationStatus.COMPRESSED
         and base_name == "weight"
     ):
         return value

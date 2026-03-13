@@ -2,14 +2,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import math
-import shutil
-import tempfile
 from collections import OrderedDict
 
 import pytest
 import torch
 from compressed_tensors import PackedQuantizationCompressor
-from compressed_tensors.compressors.quantized_compressors.pack_quantized import (
+from compressed_tensors.compressors.pack_quantized.helpers import (
     pack_to_int32,
     unpack_from_int32,
 )
@@ -23,7 +21,6 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle.forward import fake_quantize
 from compressed_tensors.quantization.quant_args import ActivationOrdering
-from safetensors.torch import save_file
 from torch.nn.modules import Linear, Sequential
 
 
@@ -63,34 +60,29 @@ def make_dummy_g_idx(columns: int, group_size: int) -> torch.Tensor:
     ],
 )
 def test_quant_format(shape):
-    dense_state_dict = {
-        "dummy.weight": torch.rand(shape),
-        "dummy.weight_scale": torch.tensor(0.01, dtype=torch.float32),
-        "dummy.weight_zero_point": torch.tensor(0, dtype=torch.int8),
+    module_sd = {
+        "weight": torch.rand(shape),
+        "weight_scale": torch.tensor(0.01, dtype=torch.float32),
+        "weight_zero_point": torch.tensor(0, dtype=torch.int8),
     }
-    quant_config = get_dummy_quant_config()
-
-    compressor = PackedQuantizationCompressor(config=quant_config)
-    quantized_modules_to_scheme = {"dummy": quant_config.config_groups["group_1"]}
-    compressed_state_dict = compressor.compress(
-        dense_state_dict, names_to_scheme=quantized_modules_to_scheme
+    scheme = QuantizationScheme(
+        targets=["Linear"], weights=QuantizationArgs(num_bits=4, symmetric=True)
     )
 
-    # compressed state_dict adds one entry for shape
-    # but removes the zero points since we are symmetric
-    assert len(dense_state_dict) == len(compressed_state_dict)
+    compressed = PackedQuantizationCompressor.compress(module_sd, scheme=scheme)
 
-    # check compressed and packed
-    assert compressed_state_dict["dummy.weight_packed"].dtype == torch.int32
+    # 'weight' replaced by 'weight_packed' + 'weight_shape'; zp dropped (symmetric)
+    assert "weight" not in compressed
+    assert "weight_packed" in compressed
+    assert "weight_shape" in compressed
+    assert "weight_zero_point" not in compressed
+
+    assert compressed["weight_packed"].dtype == torch.int32
     expected_rows = shape[0]
-    expected_columns = math.ceil(shape[1] / 8)  # round each row up to nearest int32
-    assert compressed_state_dict["dummy.weight_packed"].shape == (
-        expected_rows,
-        expected_columns,
-    )
-
-    assert torch.equal(compressed_state_dict["dummy.weight_shape"], torch.tensor(shape))
-    assert compressed_state_dict["dummy.weight_scale"].dtype == torch.float32
+    expected_columns = math.ceil(shape[1] / 8)
+    assert compressed["weight_packed"].shape == (expected_rows, expected_columns)
+    assert torch.equal(compressed["weight_shape"], torch.tensor(shape))
+    assert compressed["weight_scale"].dtype == torch.float32
 
 
 @pytest.mark.parametrize(
@@ -134,60 +126,29 @@ def test_repack_8bit(value):
 
 
 @pytest.mark.parametrize("num_bits", [4, 8])
-def test_reload_match(tmp_path, num_bits):
-    dense_state_dict = {
-        "dummy.weight": torch.rand((511, 350)),
-        "dummy.weight_scale": torch.tensor(0.01, dtype=torch.float32),
-        "dummy.weight_zero_point": torch.tensor(0, dtype=torch.int8),
-        "dummy2.weight": torch.rand((128, 280)),
-        "dummy2.weight_scale": torch.tensor(0.02, dtype=torch.float32),
-        "dummy2.weight_zero_point": torch.tensor(15, dtype=torch.int8),
+def test_compress_decompress_match(num_bits):
+    """Round-trip compress → decompress in memory."""
+    module_sd = {
+        "weight": torch.rand((511, 350)),
+        "weight_scale": torch.tensor(0.01, dtype=torch.float32),
+        "weight_zero_point": torch.tensor(0, dtype=torch.int8),
     }
 
-    # pack-compressor only needs the number of bits from the quant-args to decompress
-    # all other information is extracted from the compressed data directly
-    quant_config = get_dummy_quant_config(num_bits, symmetric=False)
-
-    compressor = PackedQuantizationCompressor(config=quant_config)
-    quantized_modules_to_scheme = {
-        "dummy": quant_config.config_groups["group_1"],
-        "dummy2": quant_config.config_groups["group_1"],
-    }
-
-    compressed_state_dict = compressor.compress(
-        dense_state_dict.copy(), names_to_scheme=quantized_modules_to_scheme
-    )
-    save_file(compressed_state_dict, tmp_path / "model.safetensors")
-
-    reconstructed_dense = {}
-    with tempfile.TemporaryDirectory():
-        reconstructed_dense_gen = compressor.decompress(
-            tmp_path, names_to_scheme=quantized_modules_to_scheme
-        )
-        for name, value in reconstructed_dense_gen:
-            reconstructed_dense[name] = value
-
-    fake_quant_dummy = fake_quantize(
-        dense_state_dict["dummy.weight"],
-        scale=dense_state_dict["dummy.weight_scale"],
-        zero_point=dense_state_dict["dummy.weight_zero_point"],
-        args=quantized_modules_to_scheme["dummy"].weights,
-    )
-    assert torch.equal(
-        fake_quant_dummy, reconstructed_dense["dummy"].get("weight").to(torch.float32)
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(num_bits=num_bits, symmetric=False),
     )
 
-    fake_quant_dummy2 = fake_quantize(
-        dense_state_dict["dummy2.weight"],
-        scale=dense_state_dict["dummy2.weight_scale"],
-        zero_point=dense_state_dict["dummy2.weight_zero_point"],
-        args=quantized_modules_to_scheme["dummy2"].weights,
-    )
-    assert torch.equal(
-        fake_quant_dummy2, reconstructed_dense["dummy2"].get("weight").to(torch.float32)
-    )
+    compressed = PackedQuantizationCompressor.compress(module_sd.copy(), scheme=scheme)
+    decompressed = PackedQuantizationCompressor.decompress(compressed, scheme=scheme)
 
-    shutil.rmtree(tmp_path)
+    fake_quant = fake_quantize(
+        module_sd["weight"],
+        scale=module_sd["weight_scale"],
+        zero_point=module_sd["weight_zero_point"],
+        args=scheme.weights,
+    )
+    assert torch.equal(fake_quant, decompressed["weight"].to(torch.float32))
 
 
 @pytest.mark.parametrize(
@@ -196,7 +157,6 @@ def test_reload_match(tmp_path, num_bits):
 )
 def test_asymmetric_packed_support(strategy):
     shape = (1024, 1024)
-
     group_size = None
     if strategy == QuantizationStrategy.GROUP:
         group_size = 128
@@ -207,41 +167,37 @@ def test_asymmetric_packed_support(strategy):
         num_groups = shape[1] // group_size
         expected_shape = (shape[0], max(num_groups, 1))
 
-    dense_state_dict = {
-        "dummy.weight": torch.rand(shape),
-        "dummy.weight_scale": torch.rand(expected_shape).to(torch.float32),
-        "dummy.weight_zero_point": torch.rand(expected_shape).to(torch.int8),
+    module_sd = {
+        "weight": torch.rand(shape),
+        "weight_scale": torch.rand(expected_shape).to(torch.float32),
+        "weight_zero_point": torch.rand(expected_shape).to(torch.int8),
     }
 
-    quant_config = get_dummy_quant_config(
-        strategy=strategy.value, symmetric=False, group_size=group_size
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(
+            num_bits=4, strategy=strategy.value, symmetric=False, group_size=group_size
+        ),
     )
 
-    compressor = PackedQuantizationCompressor(config=quant_config)
-    quantized_modules_to_scheme = {"dummy": quant_config.config_groups["group_1"]}
-    compressed_state_dict = compressor.compress(
-        dense_state_dict, names_to_scheme=quantized_modules_to_scheme
-    )
+    compressed = PackedQuantizationCompressor.compress(module_sd, scheme=scheme)
 
-    # compressed state_dict adds one entry for shape
-    assert len(dense_state_dict) + 1 == len(compressed_state_dict)
-    assert compressed_state_dict["dummy.weight_packed"].dtype == torch.int32
-    assert compressed_state_dict["dummy.weight_zero_point"].dtype == torch.int32
-    assert compressed_state_dict["dummy.weight_scale"].dtype == torch.float32
+    # weight + shape entry + packed zp
+    assert "weight_packed" in compressed
+    assert "weight_shape" in compressed
+    assert "weight_zero_point" in compressed
+    assert compressed["weight_packed"].dtype == torch.int32
+    assert compressed["weight_zero_point"].dtype == torch.int32
+    assert compressed["weight_scale"].dtype == torch.float32
 
-    # check weight compressed and packed
     expected_rows = shape[0]
-    expected_columns = math.ceil(shape[1] / 8)  # round each row up to nearest int32
-    assert compressed_state_dict["dummy.weight_packed"].shape == (
-        expected_rows,
-        expected_columns,
-    )
-    assert torch.equal(compressed_state_dict["dummy.weight_shape"], torch.tensor(shape))
+    expected_columns = math.ceil(shape[1] / 8)
+    assert compressed["weight_packed"].shape == (expected_rows, expected_columns)
+    assert torch.equal(compressed["weight_shape"], torch.tensor(shape))
 
-    # check zp compressed and packed
     packed_size_zp = math.ceil(shape[0] / 8)
     zp_factor = group_size if strategy == QuantizationStrategy.GROUP else shape[-1]
-    assert compressed_state_dict["dummy.weight_zero_point"].shape == (
+    assert compressed["weight_zero_point"].shape == (
         packed_size_zp,
         shape[-1] // zp_factor,
     )
@@ -255,7 +211,7 @@ def test_asymmetric_packed_support(strategy):
         None,
     ],
 )
-def test_actorder_reload_match(actorder, tmp_path, mock_per_group_calibration):
+def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration):
     model = Sequential(OrderedDict([("dummy", Linear(512, 1024, bias=None))]))
     group_size = 128
     quant_config = get_dummy_quant_config(
@@ -263,44 +219,30 @@ def test_actorder_reload_match(actorder, tmp_path, mock_per_group_calibration):
     )
     apply_quantization_config(model, quant_config)
 
-    # run calibration
     model.quantization_status = QuantizationStatus.CALIBRATION
     mock_per_group_calibration(
         model.dummy, base_name="weight", value=model.dummy.weight, group_size=group_size
     )
-    # apply gptq
     if actorder == ActivationOrdering.GROUP:
         init_g_idx = make_dummy_g_idx(512, group_size)
         model.dummy.register_parameter("weight_g_idx", init_g_idx)
 
-    # compress
-    compressor = PackedQuantizationCompressor(config=quant_config)
-    quantized_modules_to_scheme = {
-        "dummy": quant_config.config_groups["group_1"],
+    scheme = quant_config.config_groups["group_1"]
+    module_sd = {
+        name: param.data.clone() for name, param in model.dummy.named_parameters()
     }
-    compressed_state_dict = compressor.compress(
-        model.state_dict(), names_to_scheme=quantized_modules_to_scheme
-    )
-    save_file(compressed_state_dict, tmp_path / "model.safetensors")
 
-    # decompress
-    reconstructed_dense_gen = compressor.decompress(
-        tmp_path, names_to_scheme=quantized_modules_to_scheme
-    )
-    reconstructed_dense = {}
-    for name, value in reconstructed_dense_gen:
-        reconstructed_dense[name] = value
+    compressed = PackedQuantizationCompressor.compress(module_sd, scheme=scheme)
+    decompressed = PackedQuantizationCompressor.decompress(compressed, scheme=scheme)
 
-    fake_quant_dummy = fake_quantize(
+    fake_quant = fake_quantize(
         model.dummy.weight,
         scale=model.dummy.weight_scale,
         zero_point=model.dummy.weight_zero_point,
         g_idx=getattr(model.dummy, "weight_g_idx", None),
-        args=quantized_modules_to_scheme["dummy"].weights,
+        args=scheme.weights,
     )
-    assert torch.equal(fake_quant_dummy, reconstructed_dense["dummy"].get("weight"))
-
-    shutil.rmtree(tmp_path)
+    assert torch.equal(fake_quant, decompressed["weight"])
 
 
 @pytest.mark.parametrize(
@@ -316,21 +258,17 @@ def test_actorder_reload_match(actorder, tmp_path, mock_per_group_calibration):
             torch.tensor([[1]]),
             torch.tensor([[129]], dtype=torch.int32),
         ),
-        # 0000 0000 0000 0000 1100 1011 1010 1001
         (4, torch.tensor([[1, 2, 3, 4]]), torch.tensor([[52137]], dtype=torch.int32)),
-        # 0111 0110 0101 0100 0011 0010 0001 0000
         (
             4,
             torch.tensor([[-8, -7, -6, -5, -4, -3, -2, -1]]),
             torch.tensor([[1985229328]], dtype=torch.int32),
         ),
-        # 10000100 10000011 10000010 10000001
         (
             8,
             torch.tensor([[1, 2, 3, 4]]),
             torch.tensor([[-2071756159]], dtype=torch.int32),
         ),
-        # 00000011 00000010 00000001 00000000
         (
             8,
             torch.tensor([[-128, -127, -126, -125]]),
@@ -353,12 +291,7 @@ def test_actorder_reload_match(actorder, tmp_path, mock_per_group_calibration):
         ),
         (
             8,
-            torch.tensor(
-                [
-                    [1, 2, 3, 4],
-                    [-128, -127, -126, -125],
-                ]
-            ),
+            torch.tensor([[1, 2, 3, 4], [-128, -127, -126, -125]]),
             torch.tensor([[-2071756159], [50462976]], dtype=torch.int32),
         ),
         (
@@ -436,13 +369,7 @@ def test_pack_to_int32(num_bits, values, expected_values):
         (
             8,
             torch.tensor([[-2071756159], [50462976]], dtype=torch.int32),
-            torch.tensor(
-                [
-                    [1, 2, 3, 4],
-                    [-128, -127, -126, -125],
-                ],
-                dtype=torch.int8,
-            ),
+            torch.tensor([[1, 2, 3, 4], [-128, -127, -126, -125]], dtype=torch.int8),
         ),
         (
             8,
@@ -472,11 +399,7 @@ def test_unpack_from_int32(num_bits, values, expected_tensor):
         (QuantizationStrategy.CHANNEL, None),
     ],
 )
-def test_asymmetric_zero_point_decompression(strategy, group_size, tmp_path):
-    """
-    Test that zero-point packing and unpacking works correctly for asymmetric
-    quantization with GROUP and CHANNEL strategies.
-    """
+def test_asymmetric_zero_point_decompression(strategy, group_size):
     shape = (512, 1024)
 
     if strategy == QuantizationStrategy.CHANNEL:
@@ -485,42 +408,28 @@ def test_asymmetric_zero_point_decompression(strategy, group_size, tmp_path):
         num_groups = shape[1] // group_size
         expected_zp_shape = (shape[0], max(num_groups, 1))
 
-    dense_state_dict = {
-        "dummy.weight": torch.randn(shape),
-        "dummy.weight_scale": torch.rand(expected_zp_shape).to(torch.float32),
-        "dummy.weight_zero_point": torch.randint(-8, 8, expected_zp_shape).to(
-            torch.int8
-        ),
+    module_sd = {
+        "weight": torch.randn(shape),
+        "weight_scale": torch.rand(expected_zp_shape).to(torch.float32),
+        "weight_zero_point": torch.randint(-8, 8, expected_zp_shape).to(torch.int8),
     }
 
-    quant_config = get_dummy_quant_config(
-        num_bits=4, strategy=strategy.value, symmetric=False, group_size=group_size
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(
+            num_bits=4, strategy=strategy.value, symmetric=False, group_size=group_size
+        ),
     )
 
-    compressor = PackedQuantizationCompressor(config=quant_config)
-    quantized_modules_to_scheme = {"dummy": quant_config.config_groups["group_1"]}
-    compressed_state_dict = compressor.compress(
-        dense_state_dict.copy(), names_to_scheme=quantized_modules_to_scheme
-    )
+    compressed = PackedQuantizationCompressor.compress(module_sd.copy(), scheme=scheme)
 
-    assert "dummy.weight_zero_point" in compressed_state_dict
-    assert compressed_state_dict["dummy.weight_zero_point"].dtype == torch.int32
+    assert "weight_zero_point" in compressed
+    assert compressed["weight_zero_point"].dtype == torch.int32
 
-    save_file(compressed_state_dict, tmp_path / "model.safetensors")
+    decompressed = PackedQuantizationCompressor.decompress(compressed, scheme=scheme)
 
-    reconstructed_dense_gen = compressor.decompress(
-        tmp_path, names_to_scheme=quantized_modules_to_scheme
-    )
-    reconstructed_dense = {}
-    for name, value in reconstructed_dense_gen:
-        reconstructed_dense[name] = value
-
-    assert "dummy" in reconstructed_dense
-    assert "weight" in reconstructed_dense["dummy"]
-
-    assert reconstructed_dense["dummy"]["weight"].shape == shape
-
-    shutil.rmtree(tmp_path)
+    assert "weight" in decompressed
+    assert decompressed["weight"].shape == shape
 
 
 @pytest.mark.parametrize(
@@ -533,9 +442,6 @@ def test_asymmetric_zero_point_decompression(strategy, group_size, tmp_path):
     ],
 )
 def test_zero_point_pack_unpack_consistency(num_bits, strategy):
-    """
-    Test that packing and unpacking zero-points preserves values correctly.
-    """
     if strategy == QuantizationStrategy.GROUP:
         shape = (512, 8)
     else:
@@ -546,7 +452,6 @@ def test_zero_point_pack_unpack_consistency(num_bits, strategy):
     original_zp = torch.randint(min_val, max_val + 1, shape).to(torch.int8)
 
     packed_zp = pack_to_int32(original_zp, num_bits, packed_dim=0)
-
     unpacked_zp = unpack_from_int32(packed_zp, num_bits, shape, packed_dim=0)
 
     assert torch.equal(original_zp, unpacked_zp)
