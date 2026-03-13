@@ -42,19 +42,31 @@ def replace_direct_state_dict(module: torch.nn.Module, new_state_dict: TensorSta
     :param module: the module to update
     :param new_state_dict: dict of new parameter/buffer values
     """
-    old_state_dict = get_direct_state_dict(module)
+    from compressed_tensors.offload import disable_onloading, update_offload_parameter
 
-    for name, old_value in old_state_dict.items():
+    with disable_onloading():
+        old_state_dict = get_direct_state_dict(module)
+
+    for name in old_state_dict:
         # remove attributes that don't exist in the new state
         if name not in new_state_dict:
             delattr(module, name)
 
     for name, new_value in new_state_dict.items():
-        # skip unchanged values
-        if name not in old_state_dict or old_state_dict[name] is not new_value:
-            # overwrite (not update) if param already existed
-            if hasattr(module, name):
-                delattr(module, name)
+        # treat all new tensors as parameters (not buffers)
+        new_value = torch.nn.Parameter(new_value, requires_grad=False)
+        old_value = old_state_dict.get(name, None)
 
-            # treat all new tensors as parameters (not buffers)
-            setattr(module, name, torch.nn.Parameter(new_value, requires_grad=False))
+        if (
+            old_value is not None
+            and torch.is_same_size(old_value, new_value)
+            and old_value.dtype == new_value.dtype
+        ):
+            update_offload_parameter(module, name, new_value)
+
+        elif name in old_state_dict:
+            delattr(module, name)
+            module.register_parameter(name, new_value)
+
+        else:
+            module.register_parameter(name, new_value)

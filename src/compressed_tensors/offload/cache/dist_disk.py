@@ -4,8 +4,8 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.disk import DiskCache
-from compressed_tensors.offload.utils import send_tensors
 from compressed_tensors.offload.dist_utils import is_main_process
+from compressed_tensors.offload.utils import send_tensors
 
 
 class DistributedDiskCache(DiskCache):

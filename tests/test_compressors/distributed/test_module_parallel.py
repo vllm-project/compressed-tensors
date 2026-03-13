@@ -5,7 +5,7 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from compressed_tensors.compressors.distributed import apply_module_parallel, to_meta
+from compressed_tensors.distributed import apply_module_parallel, to_meta
 from compressed_tensors.offload import offload_module
 from compressed_tensors.offload.utils import module_size
 from tests.test_offload.conftest import torchrun

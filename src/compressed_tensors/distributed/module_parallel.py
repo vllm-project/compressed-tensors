@@ -5,9 +5,11 @@ from typing import Callable, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.compressors.distributed.assign import greedy_bin_packing
-from compressed_tensors.offload import disable_onloading, to_meta
+from compressed_tensors.distributed.assign import greedy_bin_packing
+from compressed_tensors.distributed.helpers import wait_for_comms
+from compressed_tensors.offload import OffloadCache, disable_onloading, to_meta
 from compressed_tensors.offload.dist_utils import as_single_threaded, set_main_process
+from compressed_tensors.offload.utils import module_size
 from compressed_tensors.utils.module import (
     get_direct_state_dict,
     replace_direct_state_dict,
@@ -23,7 +25,7 @@ T = TypeVar("T", bound=torch.nn.Module)
 def apply_module_parallel(
     modules: list[T],
     apply_fn: Callable[[T], None],
-    weight_fn: Callable[[T], float],
+    weight_fn: Callable[[T], float] = module_size,
     desc: Optional[str] = None,
 ) -> None:
     """Apply a function to modules in parallel across distributed ranks.
@@ -72,5 +74,14 @@ def apply_module_parallel(
             state_dict = get_direct_state_dict(module)
         with set_main_process(assigned_rank[module]):
             replace_direct_state_dict(module, state_dict)  # 4. broadcast
+
+    # Step 5: Optional broadcast if onloaded
+    if OffloadCache.offloading_disabled:
+        comms = []
+        for module in modules:
+            for name, value in get_direct_state_dict(module):
+                dist.broadcast(value, src=assigned_rank[module])
+
+        wait_for_comms(comms)
 
     progress.close()
