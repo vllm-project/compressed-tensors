@@ -4,6 +4,7 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.disk import DiskCache
+from compressed_tensors.offload.dist_utils import is_main_process
 from compressed_tensors.offload.utils import send_tensors
 
 
@@ -23,7 +24,7 @@ class DistributedDiskCache(DiskCache):
         if tensor is None:
             return None
 
-        if dist.get_rank() == 0:
+        if is_main_process():
             # write to disk
             offloaded = super().offload(tensor)
             broadcast_obj = [

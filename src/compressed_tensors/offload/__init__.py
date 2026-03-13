@@ -17,13 +17,19 @@ from compressed_tensors.offload.dispatch import (  # noqa: F401
 )
 from compressed_tensors.offload.dist_utils import (
     as_broadcastable,
+    as_single_threaded,
     init_dist,
     is_distributed,
     is_rank0,
+    set_main_process,
 )
 from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
-from compressed_tensors.offload.utils import get_module_device, move_module_tensor
+from compressed_tensors.offload.utils import (
+    get_module_device,
+    move_module_tensor,
+    to_meta,
+)
 from compressed_tensors.utils.helpers import patch_attr
 
 
@@ -56,6 +62,9 @@ __all__ = [
     "is_rank0",
     "init_dist",
     "as_broadcastable",
+    "as_single_threaded",
+    "set_main_process",
+    "to_meta",
 ]
 
 
@@ -118,7 +127,15 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         # | Device    | Copy into local device      |
         # | --------- | --------------------------- |
         # all implementations update onloaded data if applicable
-        setattr(module, name, torch.nn.Parameter(data.data, requires_grad=False))
+        if name in module._parameters:
+            cache = module._parameters
+        elif name in module._buffers:
+            cache = module._buffers
+        else:
+            raise AttributeError(f"{type(module)} has no attribute {name}")
+
+        # triggers update if shapes match
+        cache[name] = data
 
     else:
         with torch.no_grad():

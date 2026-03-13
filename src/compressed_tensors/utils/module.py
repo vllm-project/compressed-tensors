@@ -44,7 +44,7 @@ def replace_direct_state_dict(module: torch.nn.Module, new_state_dict: TensorSta
     """
     old_state_dict = get_direct_state_dict(module)
 
-    for name, old_value in old_state_dict.items():
+    for name in old_state_dict:
         # remove attributes that don't exist in the new state
         if name not in new_state_dict:
             delattr(module, name)
