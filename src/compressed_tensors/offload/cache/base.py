@@ -249,7 +249,7 @@ class OffloadCache(MutableMapping, ABC):
         inspect offloaded tensors and directly assign offloaded tensors without copying
         """
         if not OffloadCache.onloading_disabled:
-            restore_value = OffloadCache.offloading_disabled
+            restore_value = OffloadCache.onloading_disabled
             OffloadCache.onloading_disabled = True
             yield
             OffloadCache.onloading_disabled = restore_value
