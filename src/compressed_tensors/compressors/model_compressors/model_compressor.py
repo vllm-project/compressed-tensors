@@ -144,11 +144,11 @@ class ModelCompressor:
         """
         # Collect all quantized modules
         desc = "Compressing model"
-        modules = (
+        modules = [
             module
             for _, module in model.named_modules(remove_duplicate=True)
             if is_module_quantized(module)
-        )
+        ]
 
         # Compress modules using distributed or sequential
         if not is_distributed():
