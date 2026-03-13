@@ -232,9 +232,10 @@ class OffloadCache(MutableMapping, ABC):
         subsequent fetches will leverage the cache, reducing device movement
         """
         if not OffloadCache.offloading_disabled:
+            restore_value = OffloadCache.offloading_disabled
             OffloadCache.offloading_disabled = True
             yield
-            OffloadCache.offloading_disabled = False
+            OffloadCache.offloading_disabled = restore_value
             OffloadCache.keep_onloaded_values.clear()
         else:
             yield
@@ -248,8 +249,9 @@ class OffloadCache(MutableMapping, ABC):
         inspect offloaded tensors and directly assign offloaded tensors without copying
         """
         if not OffloadCache.onloading_disabled:
+            restore_value = OffloadCache.offloading_disabled
             OffloadCache.onloading_disabled = True
             yield
-            OffloadCache.onloading_disabled = False
+            OffloadCache.onloading_disabled = restore_value
         else:
             yield
