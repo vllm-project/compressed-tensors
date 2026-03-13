@@ -489,12 +489,12 @@ class MLA(nn.Module):
         kv = self.kv_a_layernorm(kv)
         k_pe = apply_rotary_emb(k_pe.unsqueeze(2), freqs_cis)
         # we use fp8 kv cache in actual deployment, so here we simulate the precision by casting kv to fp8 and then back to bf16.
-        kv_fp8, kv_scale = act_quant(kv, block_size, self.scale_fmt)
-        kv = (
-            (kv_fp8.view(-1, block_size).float() * kv_scale.view(-1, 1))
-            .to(kv.dtype)
-            .view_as(kv)
-        )
+        # kv_fp8, kv_scale = act_quant(kv, block_size, self.scale_fmt)
+        # kv = (
+        #     (kv_fp8.view(-1, block_size).float() * kv_scale.view(-1, 1))
+        #     .to(kv.dtype)
+        #     .view_as(kv)
+        # )
         self.kv_cache[:bsz, start_pos:end_pos] = kv
         self.pe_cache[:bsz, start_pos:end_pos] = k_pe.squeeze(2)
         if mask is not None:  # MHA prefill

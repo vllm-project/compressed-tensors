@@ -15,3 +15,8 @@ This module was created with the following actions:
 - wrap all dist calls in `if world_size > 1` conditional
 - add `.float()` to LayerNorm, weight/bias dtypes change to bf16 at layer 25(?)
 - change weights_proj to bfloat16, pass in x to weights_proj forward pass instead of x.float()
+
+Model was created with the following actions:
+- run compressed-tensors/examples/convert_checkpoint/deepseek32_fpblock_example.py
+- copy over missing values (excluding "dtype") into config.json, from https://huggingface.co/deepseek-ai/DeepSeek-V3.2/blob/main/inference/config_671B_v3.2.json
+- run llm-compressor/examples/disk_offloading/deepseek_v32_example.py
