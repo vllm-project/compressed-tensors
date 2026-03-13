@@ -18,9 +18,7 @@ class OffloadCache(MutableMapping, ABC):
 
     Typical usage:
     ```
-    module._parameters = cache_cls.from_mapping(
-        module._parameters, onload_device, offload_device
-    )
+    module._parameters = cache_cls.from_mapping(module._parameters, onload_device)
     tensor = ...
     module._parameters["name"] = tensor           # tensor is offloaded
     onloaded_tensor = module._parameters["name"]  # tensor is onloaded
@@ -90,7 +88,6 @@ class OffloadCache(MutableMapping, ABC):
         cls,
         mapping: MutableMapping[str, torch.Tensor | None],
         onload_device: torch.device | str,
-        offload_device: "torch.device | str | Literal['disk'] | None" = None,
         **kwargs,
     ):
         """
@@ -99,35 +96,19 @@ class OffloadCache(MutableMapping, ABC):
 
         :param mapping: mapping used to populate cache
         :param onload_device: device which tensors will be onloaded to
-        :param offload_device: device to offload tensors to. For DeviceCache, this
-            sets the offload target (defaults to onload_device if not provided).
-            For CPUCache and DiskCache, this is validated against the fixed
-            offload_device if provided.
         :param \\**kwargs: keyword arguments for cache constructor
         """
-        instance = cls(
-            onload_device=onload_device, offload_device=offload_device, **kwargs
-        )
+        instance = cls(onload_device=onload_device, **kwargs)
         instance.offloaded_values = {
             name: instance.offload(tensor) for name, tensor in mapping.items()
         }
 
         return instance
 
-    def __init__(
-        self,
-        onload_device: torch.device | str,
-        offload_device: torch.device | str | Literal["disk"] | None = None,
-    ):
+    def __init__(self, onload_device: torch.device | str):
         super().__init__()
         self.onload_device = onload_device
         self.offloaded_values = dict()
-
-        # Validate offload_device for subclasses with a fixed offload_device
-        # (CPUCache, DiskCache). DeviceCache sets offload_device after super().__init__
-        # so this check only applies when offload_device is a class attribute.
-        if offload_device is not None and hasattr(type(self), "offload_device"):
-            assert str(offload_device) == str(self.offload_device)
 
     @abstractmethod
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:

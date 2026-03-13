@@ -187,9 +187,7 @@ def _save_ct_index_entry(
         # unfortunately, ct's implementation does not support loading non-safetensors
         # we must onload and save as safetensors. This typically only occurs in testing
         onloaded = dataset[name]
-        DiskCache("cpu", offload_dir=dataset.save_folder).offload(
-            onloaded, offloaded=offloaded
-        )
+        DiskCache("cpu", dataset.save_folder).offload(onloaded, offloaded=offloaded)
         logger.warning(
             "Attempting to disk offload a model which was not saved with safetensors. "
             "compressed-tensors only supports disk onload from safetensors files, so "

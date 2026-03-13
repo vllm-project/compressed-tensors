@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
@@ -36,16 +36,8 @@ class DiskCache(OffloadCache):
     offload_dir: str
     _new_file_prefix = "ct_disk_cache"
 
-    def __init__(
-        self,
-        onload_device: torch.device,
-        offload_device: Optional["DeviceLikeType | Literal['disk']"] = None,
-        offload_dir: Optional[str] = None,
-    ):
-        super().__init__(onload_device, offload_device=offload_device)
-        if offload_device is not None:
-            assert str(offload_device) == str(self.offload_device)
-
+    def __init__(self, onload_device: torch.device, offload_dir: Optional[str] = None):
+        super().__init__(onload_device)
         if offload_dir is None:
             raise ValueError(
                 "Must provide an `offload_dir` to perform disk offloading "
