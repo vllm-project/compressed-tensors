@@ -79,7 +79,7 @@ class CompressedLinear(Linear):
 
     def forward(self, input: Tensor) -> Tensor:
         """
-        Decompresses the weight, then runs the wrapped forward pass
+        Decompresses the weight, then runs the quantized forward pass
         """
         if self.quantization_status == QuantizationStatus.COMPRESSED:
             weight_data = self.compressor.decompress_module(self)

@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from compressed_tensors.offload import get_offloaded_device
+from compressed_tensors.offload import (
+    disable_onloading,
+    from_accelerate,
+    get_offloaded_device,
+)
 from compressed_tensors.offload.convert import to_accelerate
 from compressed_tensors.offload.convert.from_accelerate import _infer_module_device
 from compressed_tensors.offload.load import load_offloaded_model, patch_from_pretrained
@@ -48,13 +52,14 @@ TEST_PARAMETERS = [
 @pytest.mark.integration
 @requires_gpu
 @pytest.mark.parametrize("device_map,max_memory,first,second", TEST_PARAMETERS)
-def test_load(device_map, max_memory, first, second):
+def test_load(device_map, max_memory, first, second, tmp_path):
     with load_offloaded_model():
         model = AutoModelForCausalLM.from_pretrained(
             "Qwen/Qwen3-0.6B",
             device_map=device_map,
             max_memory=max_memory,
             dtype=torch.bfloat16,
+            offload_folder=str(tmp_path / "disk_offload"),
         )
 
     for layer_index in range(0, 8):
@@ -64,6 +69,9 @@ def test_load(device_map, max_memory, first, second):
     for layer_index in range(8, 28):
         module = model.get_submodule(f"model.layers.{layer_index}.self_attn.q_proj")
         assert_device_equal(get_offloaded_device(module), second)
+
+    with disable_onloading():
+        state_dict = model.state_dict(keep_vars=True)
 
     to_accelerate(model)
 
@@ -75,13 +83,23 @@ def test_load(device_map, max_memory, first, second):
         module = model.get_submodule(f"model.layers.{layer_index}.self_attn.q_proj")
         assert_device_equal(_get_accelerate_offloaded_device(module), second)
 
+    model.save_pretrained(tmp_path / "save_path")
+
+    from_accelerate(model)
+
+    # TODO: accelerate's disk onloading implementation does not keep consistent meta
+    # tensors, :. tensor pointers change and cannot be converted back properly
+    if second != "disk":
+        with disable_onloading():
+            assert model.state_dict(keep_vars=True) == state_dict
+
 
 @pytest.mark.integration
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_load_dist():
+def test_load_dist(tmp_path):
     for parameters in TEST_PARAMETERS:
-        test_load(*parameters)
+        test_load(*parameters, tmp_path=tmp_path)
 
 
 def _get_accelerate_offloaded_device(module: torch.nn.Module) -> str | None:

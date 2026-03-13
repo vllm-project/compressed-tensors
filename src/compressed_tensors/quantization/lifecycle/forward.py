@@ -18,6 +18,7 @@ from compressed_tensors.quantization.utils import (
     compute_dynamic_scales_and_zp,
     maybe_pad_tensor_for_block_quant,
 )
+from compressed_tensors.utils import patch_attr
 from torch.nn import Module
 
 
@@ -25,7 +26,7 @@ __all__ = [
     "quantize",
     "dequantize",
     "fake_quantize",
-    "wrap_module_forward_quantized",
+    "set_forward_quantized",
     "forward_quantize",
 ]
 
@@ -335,60 +336,52 @@ def _process_quantization(
     return output
 
 
-def wrap_module_forward_quantized(module: Module, scheme: QuantizationScheme):
-    # expects a module already initialized and injected with the parameters in
-    # initialize_module_for_quantization
-    if hasattr(module.forward, "__func__"):
-        forward_func_orig = module.forward.__func__
-    else:
-        forward_func_orig = module.forward.func
+def set_forward_quantized(module: torch.nn.Linear | torch.nn.Embedding):
+    """
+    Replace a linear or embedding module's forward function with one that performs
+    on-the-fly QDQ. Note that weight quantiation will be skipped for compressed modules.
 
-    @wraps(forward_func_orig)  # ensures docstring, names, etc are propagated
-    def wrapped_forward(self, *args, **kwargs):
-        if not getattr(self, "quantization_enabled", True):
-            # quantization is disabled on forward passes, return baseline
-            # forward call
-            return forward_func_orig.__get__(self, self.__class__)(*args, **kwargs)
+    All QDQ operations can be skipped by setting `module.quantization_enabled = False`
 
-        input_ = args[0]
+    :param module: linear or embedding module whose forward function will be replaced
+    """
 
-        compressed = self.quantization_status == QuantizationStatus.COMPRESSED
+    @wraps(module.forward.__func__)
+    def quantized_forward(
+        self: torch.nn.Linear | torch.nn.Embedding, input: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Quantized forward pass of a linear or embedding module
 
-        if scheme.input_activations is not None:
-            # prehook should calibrate activations before forward call
-            input_ = forward_quantize(self, input_, "input", scheme.input_activations)
-
-        if scheme.weights is not None and not compressed:
-            # calibrate and (fake) quantize weights when applicable
-            unquantized_weight = self.weight.data.clone()
-            self.weight.data = forward_quantize(
-                self, self.weight, "weight", scheme.weights
-            )
-
-        # perform wrapped forward call
-        output = forward_func_orig.__get__(self, self.__class__)(
-            input_, *args[1:], **kwargs
+        :param self: instance of linear or embedding module
+        :param input: input activations to this module
+        :return: linear or embedding output
+        """
+        scheme: QuantizationScheme | None = getattr(self, "quantization_scheme", None)
+        status: QuantizationStatus | None = getattr(self, "quantization_status", None)
+        enabled: bool = (
+            getattr(self, "quantization_enabled", True)
+            and scheme is not None
+            and status is not None
         )
+        weight = self.weight  # onload once
+        weight_data = weight.data
 
-        # restore back to unquantized_value
-        if scheme.weights is not None and not compressed:
-            self.weight.data = unquantized_weight
+        if enabled and scheme.input_activations:
+            input = forward_quantize(self, input, "input", scheme.input_activations)
 
-        if scheme.output_activations is not None:
-            # forward-hook should calibrate/forward_quantize
-            if (
-                self.quantization_status == QuantizationStatus.CALIBRATION
-                and not scheme.output_activations.dynamic
-            ):
-                return output
+        if enabled and scheme.weights and status < QuantizationStatus.COMPRESSED:
+            weight_data = forward_quantize(self, weight_data, "weight", scheme.weights)
 
+        with patch_attr(weight, "data", weight_data):
+            output = self.__class__.forward(self, input)
+
+        if enabled and scheme.output_activations:
             output = forward_quantize(self, output, "output", scheme.output_activations)
+
         return output
 
-    # bind wrapped forward to module class so reference to `self` is correct
-    bound_wrapped_forward = wrapped_forward.__get__(module, module.__class__)
-    # set forward to wrapped forward
-    setattr(module, "forward", bound_wrapped_forward)
+    module.forward = quantized_forward.__get__(module)
 
 
 def forward_quantize(
