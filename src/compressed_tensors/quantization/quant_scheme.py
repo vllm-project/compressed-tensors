@@ -216,6 +216,29 @@ MXFP4 = dict(
     ),
 )
 
+MXFP8 = dict(
+    weights=QuantizationArgs(
+        num_bits=8,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+    ),
+    input_activations=QuantizationArgs(
+        num_bits=8,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        dynamic=True,
+        symmetric=True,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+    ),
+)
+
 
 # 8 bit integer weights and 8 bit activations quantization
 INT8_W8A8 = dict(
@@ -387,4 +410,5 @@ PRESET_SCHEMES = {
     "NVFP4": NVFP4,
     "MXFP4A16": MXFP4A16,
     "MXFP4": MXFP4,
+    "MXFP8": MXFP8,
 }

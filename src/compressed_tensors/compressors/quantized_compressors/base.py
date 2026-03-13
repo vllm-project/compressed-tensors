@@ -127,8 +127,12 @@ class BaseQuantizationCompressor(BaseCompressor):
 
     def _skip_scale(self):
         from compressed_tensors.compressors import NVFP4PackedCompressor
+        from compressed_tensors.compressors.quantized_compressors import naive_quantized
 
-        return isinstance(self, NVFP4PackedCompressor)
+        return isinstance(
+            self,
+            (NVFP4PackedCompressor, naive_quantized.MXFP8QuantizationCompressor),
+        )
 
     def _skip_zp(
         self, name: str, names_to_scheme: dict[str, QuantizationScheme]

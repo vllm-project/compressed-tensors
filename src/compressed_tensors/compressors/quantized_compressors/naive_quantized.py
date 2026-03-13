@@ -20,6 +20,7 @@ __all__ = [
     "NaiveQuantizationCompressor",
     "IntQuantizationCompressor",
     "FloatQuantizationCompressor",
+    "MXFP8QuantizationCompressor",
 ]
 
 
@@ -162,3 +163,50 @@ class FloatQuantizationCompressor(NaiveQuantizationCompressor):
     """
 
     pass
+
+
+@BaseCompressor.register(name=CompressionFormat.mxfp8_quantized.value)
+class MXFP8QuantizationCompressor(NaiveQuantizationCompressor):
+    """
+    Compressor for MXFP8 quantized models. Weights are stored as float8_e4m3fn
+    with E8M0 (power-of-2) scales stored as uint8 exponents.
+    """
+
+    def compress_weight(
+        self,
+        weight: Tensor,
+        scale: Tensor,
+        quantization_args: QuantizationArgs,
+        zero_point: Tensor | None = None,
+        g_idx: torch.Tensor | None = None,
+        device: torch.device | None = None,
+        global_scale: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        # Get quantized FP8 weight from parent using the float scale
+        result = super().compress_weight(
+            weight=weight,
+            scale=scale,
+            quantization_args=quantization_args,
+            zero_point=zero_point,
+            g_idx=g_idx,
+            device=device,
+            global_scale=global_scale,
+        )
+        scale_exp = 127 + torch.floor(torch.log2(scale)).to(torch.int32)
+        result["weight_scale"] = scale_exp.to(quantization_args.scale_dtype)
+        return result
+
+    def decompress_weight(
+        self,
+        compressed_data: dict[str, Tensor],
+        quantization_args: QuantizationArgs | None = None,
+    ) -> torch.Tensor:
+        # Convert E8M0 scale back to float
+        scale = compressed_data["weight_scale"]
+        scale_exp = scale.to(torch.int32) - 127
+        scale_float = 2.0 ** scale_exp.to(torch.float32)
+        compressed_data["weight_scale"] = torch.nn.Parameter(
+            scale_float, requires_grad=False
+        )
+        # Use parent's dequantize
+        return super().decompress_weight(compressed_data, quantization_args)

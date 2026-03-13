@@ -1,42 +1,63 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import math
+
 import torch
 from compressed_tensors.quantization.quant_args import (
     BFLOAT16_DATA,
     FLOAT32_DATA,
     FP4_E2M1_DATA,
+    FP8_E4M3_DATA,
     QuantizationArgs,
+    QuantizationType,
 )
 
 
 __all__ = [
-    "maybe_convert_from_mxfp4_exp",
-    "generate_mxfp4_scales",
+    "maybe_convert_from_mx_exp",
+    "generate_mx_scales",
     "round_to_power_2",
-    "should_generatre_mxfp4_scales",
+    "should_generate_mx_scales",
 ]
 
 # Reference: https://github.com/vllm-project/vllm/blob/main/tests/quantization/reference_mxfp4.py # noqa: E501
 
+# The exponent offset maps the group max into the quantized type's
+# representable range.  It equals floor(log2(type_max)):
+#   FP4 E2M1  max=6.0   -> floor(log2(6))   = 2
+#   FP8 E4M3  max=448.0 -> floor(log2(448)) = 8
+_MX_ELEM_OFFSET = {
+    4: int(math.floor(math.log2(FP4_E2M1_DATA.max))),  # 2
+    8: int(math.floor(math.log2(FP8_E4M3_DATA.max))),  # 8
+}
 
-def should_generatre_mxfp4_scales(args: QuantizationArgs):
-    return args.num_bits == 4 and args.type == "float" and args.group_size == 32
+
+def should_generate_mx_scales(args: QuantizationArgs):
+    return (
+        args.type == QuantizationType.FLOAT.value
+        and args.group_size == 32
+        and args.scale_dtype == torch.uint8
+    )
 
 
-def maybe_convert_from_mxfp4_exp(
+def maybe_convert_from_mx_exp(
     args: QuantizationArgs, scale: torch.Tensor
 ) -> torch.Tensor:
     """
-    Converts mxfp4 scales. Scales are powers of 2, with the
-    exponents stored in uint8. Converts to dense dtype so that
-    they can be applied to the weights and activations during QDQ
+    Conditionally converts MX (MXFP4/MXFP8) scales from their E8M0 exponent
+    format to float scales.
 
-    :param scale: uint8 exponent scale
-    :param dtype: dense dtype
+    If the quantization arguments indicate an MX format, the input `scale`
+    is treated as E8M0 uint8 exponents and converted to float power-of-2
+    scales. Otherwise, the input `scale` tensor is returned unchanged.
+
+    :param args: quantization args to check for MX format
+    :param scale: tensor of scale values (uint8 exponents for MX, or float)
+    :return: float scale tensor, or original scale if not MX format
     """
     original_dtype = scale.dtype
-    if should_generatre_mxfp4_scales(args):
+    if should_generate_mx_scales(args):
         scale_exp = scale.to(torch.int32) - 127
         scale = 2.00 ** (scale_exp.to(torch.float))
         return scale.to(original_dtype)
@@ -85,17 +106,22 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
     return block_max_uint.view(scale_dtype)
 
 
-def generate_mxfp4_scales(x: torch.Tensor) -> torch.Tensor:
+def generate_mx_scales(x: torch.Tensor, num_bits: int = 4) -> torch.Tensor:
     """
-    Generate mxfp4 scales. The scales require the following steps
+    Generate MX scales (for MXFP4 and MXFP8). The scales require the
+    following steps:
     1. Round to the closest power of 2
-    2. Convert to exponent
+    2. Subtract the element-format offset so that the largest group
+       values map into the quantized type's representable range
+    3. Convert to biased E8M0 exponent (bias 127)
 
     Called when calculating qparams using observers.
 
-    :param x: tensor to round to closest power of 2
-    :returns scales as exponents
+    :param x: tensor of per-group max absolute values
+    :param num_bits: quantized element width (4 for MXFP4, 8 for MXFP8)
+    :returns scales as E8M0 exponents (uint8 after rounding)
     """
+    offset = _MX_ELEM_OFFSET[num_bits]
     # Round to closest power of 2
     scale_power_2 = round_to_power_2(x)
-    return 127 + torch.floor(torch.log2(scale_power_2)) - 2
+    return 127 + torch.floor(torch.log2(scale_power_2)) - offset

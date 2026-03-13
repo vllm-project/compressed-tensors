@@ -7,6 +7,9 @@ from collections import OrderedDict
 import pytest
 import torch
 from compressed_tensors import FloatQuantizationCompressor
+from compressed_tensors.compressors.quantized_compressors.naive_quantized import (
+    MXFP8QuantizationCompressor,
+)
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationConfig,
@@ -16,6 +19,7 @@ from compressed_tensors.quantization import (
     apply_quantization_config,
 )
 from compressed_tensors.quantization.lifecycle.forward import fake_quantize
+from compressed_tensors.quantization.utils import calculate_qparams
 from safetensors.torch import save_file
 from torch.nn.modules import Linear, Sequential
 
@@ -215,3 +219,76 @@ def test_block_quant_compression_padding(rows, cols, block_height, block_width):
         rows,
         cols,
     ), "Compressed weight shape should be the same as original weight shape"
+
+
+def test_mxfp8_compress_decompress():
+    """
+    Test MXFP8 compress/decompress round-trip with group strategy
+    and group_size=32. Verifies weights survive the cycle (lossy but close).
+    """
+    rows, cols = 512, 1024
+    group_size = 32
+    num_groups = cols // group_size
+
+    quant_args = QuantizationArgs(
+        num_bits=8,
+        type="float",
+        strategy=QuantizationStrategy.GROUP,
+        group_size=group_size,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+        symmetric=True,
+    )
+
+    weight = torch.randn((rows, cols))
+
+    # Compute scales using calculate_qparams (which generates MX scales)
+    reshaped = weight.reshape(rows, num_groups, group_size)
+    min_vals = reshaped.amin(dim=-1)
+    max_vals = reshaped.amax(dim=-1)
+    scale, zp = calculate_qparams(min_vals, max_vals, quant_args)
+
+    config_groups = {
+        "group_1": QuantizationScheme(
+            targets=["Linear"],
+            weights=quant_args,
+        ),
+    }
+    quant_config = QuantizationConfig(config_groups=config_groups)
+    compressor = MXFP8QuantizationCompressor(config=quant_config)
+
+    # Build state dict
+    dense_state_dict = {
+        "dummy.weight": weight,
+        "dummy.weight_scale": scale,
+        "dummy.weight_zero_point": zp,
+    }
+
+    module_name_to_scheme = {"dummy": quant_config.config_groups["group_1"]}
+
+    # Compress
+    compressed_state_dict = compressor.compress(
+        dense_state_dict, names_to_scheme=module_name_to_scheme
+    )
+
+    # Check compressed weight is FP8
+    compressed_weight = compressed_state_dict["dummy.weight"]
+    assert compressed_weight.dtype == torch.float8_e4m3fn
+
+    # Check scale is stored as uint8 (E8M0 exponent format)
+    compressed_scale = compressed_state_dict["dummy.weight_scale"]
+    assert compressed_scale.dtype == torch.uint8
+
+    # Decompress
+    decompressed_gen = compressor.decompress_from_state_dict(
+        compressed_state_dict, names_to_scheme=module_name_to_scheme
+    )
+    for name, data in decompressed_gen:
+        decompressed_weight = data["weight"]
+
+    # Check shapes match
+    assert decompressed_weight.shape == weight.shape
+
+    # FP8 quantization is lossy, but should be reasonably close
+    # Use a tolerance that accounts for FP8 precision limits
+    assert torch.allclose(decompressed_weight.float(), weight, atol=0.1, rtol=0.1)

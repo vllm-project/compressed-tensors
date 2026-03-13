@@ -44,6 +44,14 @@ def _get_quant_compression_format(
             return CompressionFormat.mxfp4_pack_quantized
         return CompressionFormat.nvfp4_pack_quantized
 
+    if (
+        weight_args.num_bits == 8
+        and weight_args.type == QuantizationType.FLOAT.value
+        and weight_args.group_size == 32
+        and weight_args.scale_dtype == torch.uint8
+    ):
+        return CompressionFormat.mxfp8_quantized
+
     if is_weight_only:  # w4a16 and w8a16
         is_valid_pack = (
             weight_args.num_bits in [4, 8]
