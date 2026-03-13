@@ -207,7 +207,7 @@ def calculate_range(
     :return: tuple endpoints for the given quantization range
     """
     if quantization_args.type == QuantizationType.INT:
-        bit_range = 2**quantization_args.num_bits
+        bit_range = 2.0**quantization_args.num_bits
         q_max = torch.tensor(bit_range / 2 - 1, device=device)
         q_min = torch.tensor(-bit_range / 2, device=device)
     elif quantization_args.type == QuantizationType.FLOAT:
