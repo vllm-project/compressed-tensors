@@ -6,8 +6,7 @@ from typing import Callable, Optional, TypeVar
 import torch
 import torch.distributed as dist
 from compressed_tensors.distributed.assign import greedy_bin_packing
-from compressed_tensors.distributed.helpers import wait_for_comms
-from compressed_tensors.offload import OffloadCache, disable_onloading, to_meta
+from compressed_tensors.offload import disable_onloading, to_meta
 from compressed_tensors.offload.dist_utils import as_single_threaded, set_main_process
 from compressed_tensors.offload.utils import module_size
 from compressed_tensors.utils.module import (
@@ -17,17 +16,17 @@ from compressed_tensors.utils.module import (
 from tqdm import tqdm
 
 
-__all__ = ["apply_module_parallel"]
+__all__ = ["replace_module_parallel"]
 
 T = TypeVar("T", bound=torch.nn.Module)
 
 
-def apply_module_parallel(
+def replace_module_parallel(
     modules: list[T],
     apply_fn: Callable[[T], None],
     weight_fn: Callable[[T], float] = module_size,
     desc: Optional[str] = None,
-) -> None:
+):
     """Apply a function to modules in parallel across distributed ranks.
 
     Distributes modules across ranks using greedy bin packing, then applies
@@ -61,7 +60,7 @@ def apply_module_parallel(
                 to_meta(module)  # 1. remove non-processing rank pointers
                 apply_fn(module)  # 2. compress on meta (prepare step 4)
 
-    # Step 3: Compress on device for processing rank
+    # Step 3: Apply on device for processing rank
     with as_single_threaded():
         for module in modules:
             if assigned_rank[module] == dist.get_rank():
@@ -74,14 +73,3 @@ def apply_module_parallel(
             state_dict = get_direct_state_dict(module)
         with set_main_process(assigned_rank[module]):
             replace_direct_state_dict(module, state_dict)  # 4. broadcast
-
-    # Step 5: Optional broadcast if onloaded
-    if OffloadCache.offloading_disabled:
-        comms = []
-        for module in modules:
-            for name, value in get_direct_state_dict(module):
-                dist.broadcast(value, src=assigned_rank[module])
-
-        wait_for_comms(comms)
-
-    progress.close()

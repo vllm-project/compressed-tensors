@@ -19,7 +19,7 @@ from compressed_tensors.base import (
 from compressed_tensors.compressors.base import compress_module, decompress_module
 from compressed_tensors.compressors.format import infer_model_format
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.distributed import apply_module_parallel
+from compressed_tensors.distributed import replace_module_parallel
 from compressed_tensors.offload import is_distributed
 from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
@@ -155,7 +155,7 @@ class ModelCompressor:
                 compress_module(module, self.force_compression_format)
         else:
             compress_fn = partial(compress_module, format=self.force_compression_format)
-            apply_module_parallel(modules, compress_fn, desc=desc)
+            replace_module_parallel(modules, compress_fn, desc=desc)
 
         # update config status to reflect compression
         if self.quantization_config is not None:

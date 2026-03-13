@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+from typing import Iterable
 
 import torch.distributed as dist
 
@@ -7,7 +8,7 @@ import torch.distributed as dist
 __all__ = ["wait_for_comms"]
 
 
-def wait_for_comms(pending_comms: list[dist.Work]) -> None:
+def wait_for_comms(pending_comms: Iterable[dist.Work]) -> None:
     """Block until all pending async distributed operations complete.
 
     Calls ``wait()`` on each work handle, then clears the list in-place
@@ -18,6 +19,5 @@ def wait_for_comms(pending_comms: list[dist.Work]) -> None:
         ``async_op=True``). The list is cleared after all operations
         have completed.
     """
-    for comm in list(pending_comms):
+    for comm in pending_comms:
         comm.wait()
-    pending_comms.clear()
