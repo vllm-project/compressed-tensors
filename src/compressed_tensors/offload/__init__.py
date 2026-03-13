@@ -17,13 +17,19 @@ from compressed_tensors.offload.dispatch import (  # noqa: F401
 )
 from compressed_tensors.offload.dist_utils import (
     as_broadcastable,
+    as_single_threaded,
     init_dist,
     is_distributed,
     is_rank0,
+    set_main_process,
 )
 from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
-from compressed_tensors.offload.utils import get_module_device, move_module_tensor
+from compressed_tensors.offload.utils import (
+    get_module_device,
+    move_module_tensor,
+    to_meta,
+)
 from compressed_tensors.utils.helpers import patch_attr
 
 
@@ -56,6 +62,9 @@ __all__ = [
     "is_rank0",
     "init_dist",
     "as_broadcastable",
+    "as_single_threaded",
+    "set_main_process",
+    "to_meta",
 ]
 
 
