@@ -8,6 +8,9 @@ jobs:
   auto-rebase:
     if: github.event.label.name == 'needs-rebase'
     runs-on: ubuntu-24.04
+    concurrency:
+      group: auto-rebase-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     permissions:
       contents: write
       pull-requests: write
