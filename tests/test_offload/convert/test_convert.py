@@ -11,6 +11,9 @@ from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 
 
+acclerate = pytest.importorskip("accelerate")
+
+
 def get_hf_dispatched_model(cuda_device, tmp_path):
     from accelerate.big_modeling import dispatch_model
 
