@@ -100,7 +100,7 @@ def exec_jobs(
     """
     results = []
     if max_workers == 1:
-        for idx, job in tqdm.tqdm(enumerate(jobs), desc=desc):
+        for job in tqdm.tqdm(jobs, desc=desc):
             results.append([job[0](*job[1:])])
         return results
 
