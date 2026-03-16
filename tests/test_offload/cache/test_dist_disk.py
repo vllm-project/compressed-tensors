@@ -163,7 +163,9 @@ def test_distributed_files(tmp_path):
     if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
         files = os.listdir(offload_dir)
         assert len(files) == 1
-        with safe_open(os.path.join(offload_dir, files[0]), framework="pt", device="cpu") as file:
+        with safe_open(
+            os.path.join(offload_dir, files[0]), framework="pt", device="cpu"
+        ) as file:
             read_tensor = file.get_tensor("weight")
             assert_tensor_equal(read_tensor, tensor)
 
@@ -176,7 +178,9 @@ def test_distributed_files(tmp_path):
     if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
         files = os.listdir(offload_dir)
         assert len(files) == 1
-        with safe_open(os.path.join(offload_dir, files[0]), framework="pt", device="cpu") as file:
+        with safe_open(
+            os.path.join(offload_dir, files[0]), framework="pt", device="cpu"
+        ) as file:
             read_tensor = file.get_tensor("weight")
             assert_tensor_equal(read_tensor, tensor)
 
