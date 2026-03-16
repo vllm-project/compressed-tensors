@@ -103,7 +103,11 @@ def test_tensor_subclass(offload_device, onload_device, offload_cache):
 @torchrun(world_size=2)
 def test_distributed_offload(onload_device, tmp_path):
     offload_dir = tmp_path / "offload_dir"
-    os.mkdir(offload_dir)
+    if dist.get_rank() == 0:
+        os.mkdir(offload_dir)
+
+    # Ensure directory creation completes before other ranks proceed
+    dist.barrier()
 
     cache = DistributedDiskCache(onload_device, offload_dir=str(offload_dir))
     tensor = torch.zeros((5, 2))
@@ -129,7 +133,11 @@ def test_distributed_offload(onload_device, tmp_path):
 @torchrun(world_size=2)
 def test_distributed_files(tmp_path):
     offload_dir = tmp_path / "offload_dir"
-    os.mkdir(offload_dir)
+    if dist.get_rank() == 0:
+        os.mkdir(offload_dir)
+
+    # Ensure directory creation completes before other ranks proceed
+    dist.barrier()
 
     # initial write, broadcasted to all ranks
     DiskCache.index = {}
