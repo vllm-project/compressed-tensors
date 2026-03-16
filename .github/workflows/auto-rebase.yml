@@ -1,0 +1,72 @@
+name: Auto Rebase PR
+
+on:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  auto-rebase:
+    if: github.event.label.name == 'needs-rebase'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run Claude rebase agent
+        uses: anthropics/claude-code-action@beta
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are helping to automatically rebase a pull request that has merge conflicts.
+
+            PR Details:
+            - PR Number: ${{ github.event.pull_request.number }}
+            - PR Branch: ${{ github.event.pull_request.head.ref }}
+            - PR Head SHA: ${{ github.event.pull_request.head.sha }}
+            - Target Branch: ${{ github.event.pull_request.base.ref }}
+            - PR Author: ${{ github.event.pull_request.user.login }}
+            - PR Title: ${{ github.event.pull_request.title }}
+            - Repository: ${{ github.repository }}
+
+            Your task is to rebase the PR branch onto the target branch and open a new PR with the result.
+
+            Steps to follow:
+            1. Run `git fetch --all` to ensure all remote refs are up to date.
+            2. Create and checkout a new branch named `auto-rebase/${{ github.event.pull_request.number }}/${{ github.event.pull_request.head.ref }}`.
+               - Truncate the branch name if it would exceed 200 characters.
+               - Base this new branch off the PR's head commit: `git checkout -b <new-branch> ${{ github.event.pull_request.head.sha }}`
+            3. Rebase onto the target branch: `git rebase origin/${{ github.event.pull_request.base.ref }}`
+            4. If there are merge conflicts, resolve them file by file:
+               - Read the conflicting file to understand both sides of the conflict.
+               - Resolve each conflict by preserving the intent of both changes where possible.
+               - Prefer the PR branch's changes for logic that was actively added or modified in the PR.
+               - After resolving each file, run `git add <file>` and then `git rebase --continue`.
+               - Set GIT_EDITOR=true so that rebase --continue does not open an interactive editor.
+            5. If the rebase cannot be completed (e.g., conflicts are too complex to resolve automatically),
+               abort with `git rebase --abort` and comment on the PR explaining what happened.
+            6. Push the new branch: `git push origin <new-branch>`
+            7. Open a pull request using `gh pr create` with:
+               - `--base ${{ github.event.pull_request.base.ref }}`
+               - `--head <new-branch>`
+               - Title: `[Auto-rebase] ${{ github.event.pull_request.title }}`
+               - Body: A message explaining that this is an automated rebase of PR #${{ github.event.pull_request.number }},
+                 including a link to the original PR and a note for the author (@${{ github.event.pull_request.user.login }})
+                 to review the resolved conflicts and close the original PR if this looks correct.
+
+            Important notes:
+            - Use `GIT_EDITOR=true git rebase --continue` (or set the env var before running) to avoid interactive prompts.
+            - Do not force-push or modify the original PR branch.
+            - If you successfully open a new PR, post a comment on the original PR (#${{ github.event.pull_request.number }})
+              linking to the new PR.
