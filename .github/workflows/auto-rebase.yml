@@ -23,6 +23,49 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Write PR description and rebase state to files
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Write PR body for conflict resolution context
+          gh pr view ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --json body -q .body \
+            > /tmp/pr_body.txt
+
+          # Compute rebase branch name (truncated to 200 chars)
+          REBASE_BRANCH="auto-rebase/${{ github.event.pull_request.number }}/${{ github.event.pull_request.head.ref }}"
+          REBASE_BRANCH="${REBASE_BRANCH:0:200}"
+
+          # Check if the rebase branch already exists on remote
+          if git ls-remote --heads origin "$REBASE_BRANCH" | grep -q .; then
+            BRANCH_EXISTS=true
+          else
+            BRANCH_EXISTS=false
+          fi
+
+          # Check if there is already an open PR from the rebase branch
+          OPEN_PR_JSON=$(gh pr list \
+            --repo ${{ github.repository }} \
+            --head "$REBASE_BRANCH" \
+            --state open \
+            --json number,url \
+            --jq '.[0] // empty')
+
+          if [ -n "$OPEN_PR_JSON" ]; then
+            OPEN_PR_EXISTS=true
+          else
+            OPEN_PR_EXISTS=false
+          fi
+
+          # Write state file for the Claude agent to read
+          cat > /tmp/rebase_state.txt <<EOF
+          REBASE_BRANCH=$REBASE_BRANCH
+          BRANCH_EXISTS=$BRANCH_EXISTS
+          OPEN_PR_EXISTS=$OPEN_PR_EXISTS
+          OPEN_PR_JSON=$OPEN_PR_JSON
+          EOF
+
       - name: Run Claude rebase agent
         uses: anthropics/claude-code-action@beta
         with:
@@ -40,33 +83,57 @@ jobs:
             - PR Title: ${{ github.event.pull_request.title }}
             - Repository: ${{ github.repository }}
 
-            Your task is to rebase the PR branch onto the target branch and open a new PR with the result.
+            Before starting, read these two files:
+            - /tmp/pr_body.txt — the PR description; use this to understand intent when resolving conflicts
+            - /tmp/rebase_state.txt — current state with these fields:
+                - REBASE_BRANCH: the branch name to use for the rebase (already computed and truncated)
+                - BRANCH_EXISTS: whether that branch already exists on the remote
+                - OPEN_PR_EXISTS: whether there is already an open PR from that branch into the target
+                - OPEN_PR_JSON: JSON with `number` and `url` of the open PR, if one exists
 
-            Steps to follow:
-            1. Run `git fetch --all` to ensure all remote refs are up to date.
-            2. Create and checkout a new branch named `auto-rebase/${{ github.event.pull_request.number }}/${{ github.event.pull_request.head.ref }}`.
-               - Truncate the branch name if it would exceed 200 characters.
-               - Base this new branch off the PR's head commit: `git checkout -b <new-branch> ${{ github.event.pull_request.head.sha }}`
-            3. Rebase onto the target branch: `git rebase origin/${{ github.event.pull_request.base.ref }}`
-            4. If there are merge conflicts, resolve them file by file:
-               - Read the conflicting file to understand both sides of the conflict.
-               - Resolve each conflict by preserving the intent of both changes where possible.
-               - Prefer the PR branch's changes for logic that was actively added or modified in the PR.
-               - After resolving each file, run `git add <file>` and then `git rebase --continue`.
-               - Set GIT_EDITOR=true so that rebase --continue does not open an interactive editor.
-            5. If the rebase cannot be completed (e.g., conflicts are too complex to resolve automatically),
-               abort with `git rebase --abort` and comment on the PR explaining what happened.
-            6. Push the new branch: `git push origin <new-branch>`
-            7. Open a pull request using `gh pr create` with:
-               - `--base ${{ github.event.pull_request.base.ref }}`
-               - `--head <new-branch>`
-               - Title: `[Auto-rebase] ${{ github.event.pull_request.title }}`
-               - Body: A message explaining that this is an automated rebase of PR #${{ github.event.pull_request.number }},
-                 including a link to the original PR and a note for the author (@${{ github.event.pull_request.user.login }})
-                 to review the resolved conflicts and close the original PR if this looks correct.
+            Based on the state, follow the appropriate scenario:
 
-            Important notes:
-            - Use `GIT_EDITOR=true git rebase --continue` (or set the env var before running) to avoid interactive prompts.
-            - Do not force-push or modify the original PR branch.
-            - If you successfully open a new PR, post a comment on the original PR (#${{ github.event.pull_request.number }})
-              linking to the new PR.
+            **Scenario A — branch exists AND open PR exists (BRANCH_EXISTS=true, OPEN_PR_EXISTS=true):**
+            The previous rebase attempt is still active. Update it in place:
+            1. Run `git fetch --all`.
+            2. Checkout the existing rebase branch: `git checkout <REBASE_BRANCH>` then `git reset --hard ${{ github.event.pull_request.head.sha }}`
+            3. Rebase onto the target (see conflict resolution below).
+            4. Force-push the branch: `git push --force-with-lease origin <REBASE_BRANCH>`
+            5. Do NOT create a new PR — the existing one will update automatically.
+            6. Comment on the original PR (#${{ github.event.pull_request.number }}) saying the existing rebase PR was updated.
+
+            **Scenario B — branch exists but NO open PR (BRANCH_EXISTS=true, OPEN_PR_EXISTS=false):**
+            The previous rebase PR was closed. Reuse the branch but open a fresh PR:
+            1. Run `git fetch --all`.
+            2. Checkout the existing rebase branch and reset: `git checkout <REBASE_BRANCH>` then `git reset --hard ${{ github.event.pull_request.head.sha }}`
+            3. Rebase onto the target (see conflict resolution below).
+            4. Force-push: `git push --force-with-lease origin <REBASE_BRANCH>`
+            5. Open a new PR (see PR creation below).
+
+            **Scenario C — branch does NOT exist (BRANCH_EXISTS=false):**
+            First time rebasing this PR. Create everything from scratch:
+            1. Run `git fetch --all`.
+            2. Create and checkout the branch: `git checkout -b <REBASE_BRANCH> ${{ github.event.pull_request.head.sha }}`
+            3. Rebase onto the target (see conflict resolution below).
+            4. Push: `git push origin <REBASE_BRANCH>`
+            5. Open a new PR (see PR creation below).
+
+            **Conflict resolution (used in all scenarios):**
+            - Rebase command: `git rebase origin/${{ github.event.pull_request.base.ref }}`
+            - For each conflicting file: read the file, understand both sides using the PR description for context,
+              resolve by preserving intent of both changes and preferring the PR branch's actively modified logic.
+            - After resolving each file: `git add <file>`, then `GIT_EDITOR=true git rebase --continue`
+            - If the rebase cannot be completed, abort with `git rebase --abort`, comment on the original PR
+              explaining the failure, and stop.
+
+            **PR creation (Scenarios B and C):**
+            Use `gh pr create` with:
+            - `--base ${{ github.event.pull_request.base.ref }}`
+            - `--head <REBASE_BRANCH>`
+            - Title: `[Auto-rebase] ${{ github.event.pull_request.title }}`
+            - Body: explain this is an automated rebase of PR #${{ github.event.pull_request.number }},
+              link to the original PR, and ask @${{ github.event.pull_request.user.login }} to review
+              the resolved conflicts and close the original PR if this looks correct.
+            Then post a comment on the original PR linking to the new PR.
+
+            Important: do not modify the original PR branch (${{ github.event.pull_request.head.ref }}).
