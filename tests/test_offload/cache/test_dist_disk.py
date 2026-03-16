@@ -102,14 +102,21 @@ def test_tensor_subclass(offload_device, onload_device, offload_cache):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_distributed_offload(onload_device, tmp_path):
-    offload_dir = tmp_path / "offload_dir"
+    # Broadcast directory path from rank 0 to all ranks
     if dist.get_rank() == 0:
+        offload_dir = tmp_path / "offload_dir"
         os.mkdir(offload_dir)
+        broadcast_obj = [str(offload_dir)]
+    else:
+        broadcast_obj = [None]
+
+    dist.broadcast_object_list(broadcast_obj, src=0)
+    offload_dir = broadcast_obj[0]
 
     # Ensure directory creation completes before other ranks proceed
     dist.barrier()
 
-    cache = DistributedDiskCache(onload_device, offload_dir=str(offload_dir))
+    cache = DistributedDiskCache(onload_device, offload_dir=offload_dir)
     tensor = torch.zeros((5, 2))
     cache["tensor"] = tensor
 
@@ -132,16 +139,23 @@ def test_distributed_offload(onload_device, tmp_path):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_distributed_files(tmp_path):
-    offload_dir = tmp_path / "offload_dir"
+    # Broadcast directory path from rank 0 to all ranks
     if dist.get_rank() == 0:
+        offload_dir = tmp_path / "offload_dir"
         os.mkdir(offload_dir)
+        broadcast_obj = [str(offload_dir)]
+    else:
+        broadcast_obj = [None]
+
+    dist.broadcast_object_list(broadcast_obj, src=0)
+    offload_dir = broadcast_obj[0]
 
     # Ensure directory creation completes before other ranks proceed
     dist.barrier()
 
     # initial write, broadcasted to all ranks
     DiskCache.index = {}
-    cache = DistributedDiskCache("cpu", offload_dir=str(offload_dir))
+    cache = DistributedDiskCache("cpu", offload_dir=offload_dir)
     tensor = torch.zeros(10)
     cache["weight"] = tensor
 
