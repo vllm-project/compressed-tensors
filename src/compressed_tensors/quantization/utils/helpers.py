@@ -331,7 +331,7 @@ def generate_gparam(
     # (clamp does not propagate NaN, so it passes through to the division).
     # Inf arises when max_val_pos was near zero and the division overflows float32.
     # global_scale=1 means no global scaling, which is a safe fallback for
-    # uncalibrated experts. 
+    # uncalibrated experts.
     global_scale = torch.nan_to_num(global_scale, nan=1.0, posinf=1.0, neginf=1.0)
 
     return global_scale.to(dtype).reshape([1])
