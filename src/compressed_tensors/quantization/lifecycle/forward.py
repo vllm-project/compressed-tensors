@@ -216,8 +216,17 @@ def _process_quantization(
         # expand scale/zero_point for blocks
         sb = scale.unsqueeze(-1).unsqueeze(-1)
         zb = zero_point.unsqueeze(-1).unsqueeze(-1) if zero_point is not None else None
-        if do_quantize:
-            # quantize blocks
+        if do_quantize and do_dequantize:
+            x_blocks = _fake_quantize(
+                x=x_blocks,
+                scale=sb,
+                zero_point=zb,
+                q_min=q_min,
+                q_max=q_max,
+                args=args,
+                global_scale=global_scale,
+            )
+        elif do_quantize:
             x_blocks = _quantize(
                 x=x_blocks,
                 scale=sb,
@@ -228,8 +237,7 @@ def _process_quantization(
                 dtype=dtype,
                 global_scale=global_scale,
             )
-        if do_dequantize:
-            # dequantize blocks
+        elif do_dequantize:
             x_blocks = _dequantize(
                 x_q=x_blocks,
                 scale=sb,
@@ -245,7 +253,6 @@ def _process_quantization(
         QuantizationStrategy.GROUP,
         QuantizationStrategy.TENSOR_GROUP,
     ):
-
         output_dtype = dtype if dtype is not None else x.dtype
         output = torch.zeros_like(x).to(output_dtype)
         columns = output.shape[-1]
@@ -285,7 +292,17 @@ def _process_quantization(
         )
         x = x.unflatten(-1, reshaped_dims)
 
-        if do_quantize:
+        if do_quantize and do_dequantize:
+            output = _fake_quantize(
+                x=x,
+                scale=scale.unsqueeze(-1),
+                zero_point=zero_point.unsqueeze(-1) if zero_point is not None else None,
+                q_min=q_min,
+                q_max=q_max,
+                args=args,
+                global_scale=global_scale,
+            )
+        elif do_quantize:
             output = _quantize(
                 x=x,
                 scale=scale.unsqueeze(-1),
@@ -296,11 +313,9 @@ def _process_quantization(
                 q_max=q_max,
                 args=args,
             )
-
-        if do_dequantize:
-            input = output if do_quantize else x
+        elif do_dequantize:
             output = _dequantize(
-                x_q=input,
+                x_q=x,
                 scale=scale.unsqueeze(-1),
                 zero_point=zero_point.unsqueeze(-1) if zero_point is not None else None,
                 global_scale=global_scale,
@@ -314,7 +329,17 @@ def _process_quantization(
             output = output.index_select(-1, inv_perm)
 
     else:  # covers tensor, channel, token, and attn_head strategies
-        if do_quantize:
+        if do_quantize and do_dequantize:
+            output = _fake_quantize(
+                x=x,
+                scale=scale,
+                zero_point=zero_point,
+                q_min=q_min,
+                q_max=q_max,
+                args=args,
+                global_scale=global_scale,
+            )
+        elif do_quantize:
             output = _quantize(
                 x=x,
                 scale=scale,
@@ -325,9 +350,9 @@ def _process_quantization(
                 dtype=dtype,
                 global_scale=global_scale,
             )
-        if do_dequantize:
+        elif do_dequantize:
             output = _dequantize(
-                output if do_quantize else x,
+                x,
                 scale=scale,
                 zero_point=zero_point,
                 global_scale=global_scale,
@@ -387,7 +412,6 @@ def set_forward_quantized(module: torch.nn.Linear | torch.nn.Embedding):
 def forward_quantize(
     module: Module, value: torch.Tensor, base_name: str, args: "QuantizationArgs"
 ) -> torch.Tensor:
-
     # in compressed mode, the weight is already compressed and quantized so we don't
     # need to run fake quantization
     # TODO: remove this line, as this is already guarded by `set_forward_quantized`
@@ -426,6 +450,43 @@ def forward_quantize(
 
 
 @torch.no_grad()
+def _fake_quantize(
+    x: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    q_min: torch.Tensor,
+    q_max: torch.Tensor,
+    args: QuantizationArgs,
+    global_scale: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """
+    Fused quantize-then-dequantize in a single pass, avoiding:
+    - Double scale/global_scale division
+    - Intermediate quantized dtype allocation
+    - Redundant zero_point add then subtract
+    """
+    # compute effective scale once
+    if global_scale is not None:
+        scale = scale / global_scale
+
+    scaled = x / scale
+
+    if zero_point is not None:
+        scaled += zero_point.to(x.dtype)
+
+    # clamp and round (stays in float — no int8/fp8 intermediate)
+    quantized = round_to_quantized_type_args(
+        tensor=scaled, args=args, min=q_min, max=q_max
+    )
+
+    # dequantize in-place: subtract zero_point and multiply by scale
+    if zero_point is not None:
+        quantized = quantized - zero_point.to(quantized.dtype)
+
+    return quantized * scale
+
+
+@torch.no_grad()
 def _quantize(
     x: torch.Tensor,
     scale: torch.Tensor,
@@ -436,7 +497,6 @@ def _quantize(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
-
     # if a global scale is optionally provided, use it
     # to further scale the local `scale` parameter
     if global_scale is not None:
@@ -466,7 +526,6 @@ def _dequantize(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
-
     # if a global scale is optionally provided, use it
     # to further scale the local `scale` parameter
     if global_scale is not None:
