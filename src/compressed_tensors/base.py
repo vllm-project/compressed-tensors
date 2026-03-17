@@ -9,3 +9,4 @@ TRANSFORM_CONFIG_NAME = "transform_config"
 # required fields
 COMPRESSION_VERSION_NAME = "version"
 QUANTIZATION_METHOD_NAME = "quant_method"
+QUANTIZATION_METHOD = "compressed-tensors"

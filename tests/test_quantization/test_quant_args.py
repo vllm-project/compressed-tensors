@@ -144,3 +144,27 @@ def test_invalid():
         QuantizationArgs(strategy="invalid")
     with pytest.raises(ValidationError):
         QuantizationArgs(strategy=QuantizationStrategy.GROUP)
+
+
+def test_serialize_args():
+    """Test serialization of QuantizationArgs"""
+    args = QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.INT,
+        symmetric=True,
+        group_size=128,
+        actorder=ActivationOrdering.GROUP,
+    )
+
+    # Serialize to dict
+    args_dict = args.model_dump()
+    assert args_dict["num_bits"] == 4
+    assert args_dict["type"] == "int"
+    assert args_dict["symmetric"] is True
+    assert args_dict["group_size"] == 128
+    assert args_dict["strategy"] == "group"
+    assert args_dict["actorder"] == "group"
+
+    # Deserialize from dict
+    reloaded = QuantizationArgs.model_validate(args_dict)
+    assert reloaded == args
