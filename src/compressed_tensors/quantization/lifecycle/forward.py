@@ -463,7 +463,6 @@ def _quantize_dequantize(
     Fused quantize-then-dequantize in a single pass, avoiding:
     - Double scale/global_scale division
     - Intermediate quantized dtype allocation
-    - Redundant zero_point add then subtract
     """
     # compute effective scale once
     if global_scale is not None:
