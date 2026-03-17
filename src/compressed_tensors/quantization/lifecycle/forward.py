@@ -217,7 +217,7 @@ def _process_quantization(
         sb = scale.unsqueeze(-1).unsqueeze(-1)
         zb = zero_point.unsqueeze(-1).unsqueeze(-1) if zero_point is not None else None
         if do_quantize and do_dequantize:
-            x_blocks = _fake_quantize(
+            x_blocks = _quantize_dequantize(
                 x=x_blocks,
                 scale=sb,
                 zero_point=zb,
@@ -293,7 +293,7 @@ def _process_quantization(
         x = x.unflatten(-1, reshaped_dims)
 
         if do_quantize and do_dequantize:
-            output = _fake_quantize(
+            output = _quantize_dequantize(
                 x=x,
                 scale=scale.unsqueeze(-1),
                 zero_point=zero_point.unsqueeze(-1) if zero_point is not None else None,
@@ -330,7 +330,7 @@ def _process_quantization(
 
     else:  # covers tensor, channel, token, and attn_head strategies
         if do_quantize and do_dequantize:
-            output = _fake_quantize(
+            output = _quantize_dequantize(
                 x=x,
                 scale=scale,
                 zero_point=zero_point,
@@ -450,7 +450,7 @@ def forward_quantize(
 
 
 @torch.no_grad()
-def _fake_quantize(
+def _quantize_dequantize(
     x: torch.Tensor,
     scale: torch.Tensor,
     zero_point: torch.Tensor | None,
