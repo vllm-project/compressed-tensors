@@ -358,8 +358,20 @@ def save_mtp_tensors_to_checkpoint(
     save_file(mtp_tensors, dest_shard_path)
 
     index_path = os.path.join(dest_dir, SAFE_WEIGHTS_INDEX_NAME)
-    with open(index_path, "r") as f:
-        index = json.load(f)
+    if not os.path.exists(index_path):
+        # Single-shard checkpoint: build index from model.safetensors
+        single_shard_path = os.path.join(dest_dir, SAFE_WEIGHTS_NAME)
+        if not os.path.exists(single_shard_path):
+            raise FileNotFoundError(
+                f"Neither {SAFE_WEIGHTS_INDEX_NAME} nor {SAFE_WEIGHTS_NAME} "
+                f"found in {dest_dir}"
+            )
+        with safe_open(single_shard_path, framework="pt", device="cpu") as f:
+            weight_map = {key: SAFE_WEIGHTS_NAME for key in f.keys()}
+        index = {"metadata": {}, "weight_map": weight_map}
+    else:
+        with open(index_path, "r") as f:
+            index = json.load(f)
 
     for key in mtp_tensors:
         index["weight_map"][key] = shard_name
