@@ -21,6 +21,7 @@ __all__ = [
     "get_nested_mappings_from_state_dict",
     "get_quantization_parameter_to_path_mapping",
     "is_quantization_param",
+    "save_mtp_tensors_to_checkpoint",
 ]
 
 NestedStateDictType = dict[str, dict[str, Tensor]]
@@ -309,3 +310,64 @@ def is_quantization_param(name: str) -> bool:
         return True
 
     return False
+
+
+def save_mtp_tensors_to_checkpoint(
+    source_model: str,
+    dest_dir: str,
+    mtp_prefix: str = "mtp",
+    shard_name: str = "model_mtp.safetensors",
+):
+    """
+    Extracts MTP (Multi-Token Prediction) tensors from a source model checkpoint
+    and saves them into a destination checkpoint directory, updating the
+    model.safetensors.index.json to include the MTP keys.
+
+    MTP layers are not quantized and are excluded from the model's state dict
+    during quantization (e.g. via _keys_to_ignore_on_load_unexpected). This
+    function copies them as-is from the original checkpoint so they are present
+    in the final saved checkpoint.
+
+    :param source_model: local path or HuggingFace stub of the original
+        (unquantized) model to extract MTP tensors from
+    :param dest_dir: path to the quantized checkpoint directory to save MTP
+        tensors into
+    :param mtp_prefix: key prefix used to identify MTP tensors, defaults to
+        "mtp"
+    :param shard_name: filename for the new shard written into dest_dir,
+        defaults to "model_mtp.safetensors"
+    """
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+
+    source_dir = get_safetensors_folder(source_model)
+    weight_mappings = get_weight_mappings(source_dir)
+
+    mtp_tensors = {}
+    for key, filepath in weight_mappings.items():
+        if key.startswith(mtp_prefix):
+            with safe_open(filepath, framework="pt", device="cpu") as f:
+                mtp_tensors[key] = f.get_tensor(key)
+
+    if not mtp_tensors:
+        raise ValueError(
+            f"No tensors with prefix '{mtp_prefix}' found in {source_model}"
+        )
+
+    dest_shard_path = os.path.join(dest_dir, shard_name)
+    save_file(mtp_tensors, dest_shard_path)
+
+    index_path = os.path.join(dest_dir, SAFE_WEIGHTS_INDEX_NAME)
+    with open(index_path, "r") as f:
+        index = json.load(f)
+
+    for key in mtp_tensors:
+        index["weight_map"][key] = shard_name
+
+    index["metadata"]["total_size"] = sum(
+        os.path.getsize(os.path.join(dest_dir, s))
+        for s in set(index["weight_map"].values())
+    )
+
+    with open(index_path, "w") as f:
+        json.dump(index, f, indent=2)
