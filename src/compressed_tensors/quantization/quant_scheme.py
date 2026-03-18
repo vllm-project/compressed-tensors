@@ -23,7 +23,7 @@ __all__ = [
 ]
 
 
-class QuantizationScheme(BaseModel):
+class QuantizationScheme(BaseModel, use_enum_values=True):
     """
     Set of QuantizationArgs defining how the weights, inputs and outputs of target list
     of modules should be quantized
@@ -40,7 +40,7 @@ class QuantizationScheme(BaseModel):
     weights: QuantizationArgs | None = None
     input_activations: QuantizationArgs | None = None
     output_activations: QuantizationArgs | None = None
-    format: str | None = None
+    format: CompressionFormat | None = None
 
     @model_validator(mode="after")
     def validate_model_after(model: "QuantizationScheme") -> "QuantizationScheme":
@@ -78,7 +78,7 @@ class QuantizationScheme(BaseModel):
             if outputs.actorder is not None:
                 raise ValueError("Cannot apply actorder to output activations")
 
-        if format == CompressionFormat.mixed_precision.value:
+        if format == CompressionFormat.mixed_precision:
             raise ValueError(
                 "mixed-precision cannot be set as a format for a QuantizationScheme"
             )
