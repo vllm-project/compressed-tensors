@@ -478,11 +478,13 @@ def _quantize_dequantize(
         tensor=scaled, args=args, min=q_min, max=q_max
     )
 
-    # dequantize in-place: subtract zero_point and multiply by scale
+    # dequantize: subtract zero_point and multiply by scale
+    # cast to scale.dtype to match _dequantize behavior
+    dequant = quantized.to(scale.dtype)
     if zero_point is not None:
-        quantized = quantized - zero_point.to(quantized.dtype)
+        dequant = dequant - zero_point.to(scale.dtype)
 
-    return quantized * scale
+    return dequant * scale
 
 
 @torch.no_grad()
