@@ -13,6 +13,7 @@ __all__ = [
     "is_weights_file",
     "find_config_path",
     "find_safetensors_index_path",
+    "find_safetensors_index_file",
 ]
 
 
@@ -69,5 +70,13 @@ def find_config_path(save_directory: str | os.PathLike) -> str | None:
     for file_name in os.listdir(save_directory):
         if file_name in (CONFIG_NAME, "params.json"):
             return os.path.join(save_directory, file_name)
+
+    return None
+
+
+def find_safetensors_index_file(model_files: dict[str, str]) -> str | None:
+    for file_path, resolved_path in model_files.items():
+        if file_path.endswith("safetensors.index.json"):
+            return resolved_path
 
     return None
