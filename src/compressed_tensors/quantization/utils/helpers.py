@@ -323,7 +323,16 @@ def generate_gparam(
     min_vals = torch.min(updated_min_val, torch.zeros_like(updated_min_val))
     max_vals = torch.max(updated_max_val, torch.zeros_like(updated_max_val))
     max_val_pos = torch.max(torch.abs(min_vals), torch.abs(max_vals))
+    max_val_pos = torch.clamp(max_val_pos, min=torch.finfo(max_val_pos.dtype).tiny)
     global_scale = scale_data.max * quant_data.max / max_val_pos
+
+    # Replace any NaN or Inf with 1.0. NaN arises when max_val_pos was NaN
+    # (clamp does not propagate NaN, so it passes through to the division).
+    # Inf arises when max_val_pos was near zero and the division overflows float32.
+    # global_scale=1 means no global scaling, which is a safe fallback for
+    # uncalibrated experts.
+    global_scale = torch.nan_to_num(global_scale, nan=1.0, posinf=1.0, neginf=1.0)
+
     return global_scale.to(dtype).reshape([1])
 
 

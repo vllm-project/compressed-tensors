@@ -29,20 +29,19 @@ class QuantizationStatus(str, Enum):
     """
     Enum storing the different states a quantized layer can be in
 
-    Initialized: scale, zero points and observers have been attached to the layer but
-    are set to dummy values (not yet calibrated)
-    Calibration: scale and zero points have been calibrated through OBCQ or similar
-    algorithm, observers are still attached
-    Frozen: scale and zero points are finalized, observers have been deleted, weights
-    are still in their original precision
-    Compressed: weights have been converted to their target type or compressed to
-    their closed approximation
+    - Initialized: Quantization parameters are initialized to empty values
+    - Calibration: Quantization parameters are being calibrated, observers are attached
+    - Frozen: Quantization parameters are fully calibrated, observers are removed
+    - Compressed: All parameters are quantized to target dtype
+    - Decompressed: Parameters are converted back into frozen state,
+        additionally, weight qdq is skipped during forward passes for better performance
     """
 
     INITIALIZED = "initialized"
     CALIBRATION = "calibration"
     FROZEN = "frozen"
     COMPRESSED = "compressed"
+    DECOMPRESSED = "decompressed"
 
     @classmethod
     def lifecycle_order(cls) -> list["QuantizationStatus"]:
@@ -85,6 +84,7 @@ LIFECYCLE_ORDER = [
     QuantizationStatus.CALIBRATION,
     QuantizationStatus.FROZEN,
     QuantizationStatus.COMPRESSED,
+    QuantizationStatus.DECOMPRESSED,
 ]
 
 DEFAULT_QUANTIZATION_METHOD = "compressed-tensors"

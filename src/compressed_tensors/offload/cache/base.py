@@ -3,7 +3,7 @@
 
 import contextlib
 from abc import ABC, abstractmethod
-from collections.abc import MutableMapping
+from collections.abc import Hashable, MutableMapping
 from typing import ClassVar, Literal
 
 import torch
@@ -18,7 +18,9 @@ class OffloadCache(MutableMapping, ABC):
 
     Typical usage:
     ```
-    module._parameters = cache_cls.from_mapping(module._parameters, onload_device)
+    module._parameters = cache_cls.from_mapping(
+        module._parameters, onload_device, offload_device
+    )
     tensor = ...
     module._parameters["name"] = tensor           # tensor is offloaded
     onloaded_tensor = module._parameters["name"]  # tensor is onloaded
@@ -37,7 +39,7 @@ class OffloadCache(MutableMapping, ABC):
     onloading_disabled: ClassVar[bool] = False
 
     # names -> offloaded tensors (populated from _parameters or _buffers)
-    offloaded_values: dict[str, torch.Tensor]
+    offloaded_values: dict[Hashable, torch.Tensor]
 
     # offloaded tensors -> onloaded tensors (only when offloading is disabled)
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
@@ -86,8 +88,9 @@ class OffloadCache(MutableMapping, ABC):
     @classmethod
     def from_mapping(
         cls,
-        mapping: MutableMapping[str, torch.Tensor | None],
+        mapping: MutableMapping[Hashable, torch.Tensor | None],
         onload_device: torch.device | str,
+        offload_device: "torch.device | str | Literal['disk'] | None" = None,
         **kwargs,
     ):
         """
@@ -96,19 +99,35 @@ class OffloadCache(MutableMapping, ABC):
 
         :param mapping: mapping used to populate cache
         :param onload_device: device which tensors will be onloaded to
+        :param offload_device: device to offload tensors to. For DeviceCache, this
+            sets the offload target (defaults to onload_device if not provided).
+            For CPUCache and DiskCache, this is validated against the fixed
+            offload_device if provided.
         :param \\**kwargs: keyword arguments for cache constructor
         """
-        instance = cls(onload_device=onload_device, **kwargs)
+        instance = cls(
+            onload_device=onload_device, offload_device=offload_device, **kwargs
+        )
         instance.offloaded_values = {
             name: instance.offload(tensor) for name, tensor in mapping.items()
         }
 
         return instance
 
-    def __init__(self, onload_device: torch.device | str):
+    def __init__(
+        self,
+        onload_device: torch.device | str,
+        offload_device: torch.device | str | Literal["disk"] | None = None,
+    ):
         super().__init__()
         self.onload_device = onload_device
         self.offloaded_values = dict()
+
+        # Validate offload_device for subclasses with a fixed offload_device
+        # (CPUCache, DiskCache). DeviceCache sets offload_device after super().__init__
+        # so this check only applies when offload_device is a class attribute.
+        if offload_device is not None and hasattr(type(self), "offload_device"):
+            assert str(offload_device) == str(self.offload_device)
 
     @abstractmethod
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
@@ -143,7 +162,7 @@ class OffloadCache(MutableMapping, ABC):
         """
         raise NotImplementedError()
 
-    def __getitem__(self, key: str) -> torch.Tensor:
+    def __getitem__(self, key: Hashable) -> torch.Tensor:
         """
         Onload a tensor
 
@@ -172,7 +191,7 @@ class OffloadCache(MutableMapping, ABC):
 
         return onloaded
 
-    def __setitem__(self, key: str, value: torch.Tensor | None):
+    def __setitem__(self, key: Hashable, value: torch.Tensor | None):
         """
         Update the offloaded and onloaded values if the key exists, otherwise
         offload the value and add it to the cache.
@@ -200,7 +219,7 @@ class OffloadCache(MutableMapping, ABC):
         else:
             self.offloaded_values[key] = self.offload(value)
 
-    def __delitem__(self, key: str):
+    def __delitem__(self, key: Hashable):
         """
         Remove the offloaded tensor associated with `key`. Any references to its
         onloaded tensors held by this class are invalidated.
@@ -232,9 +251,10 @@ class OffloadCache(MutableMapping, ABC):
         subsequent fetches will leverage the cache, reducing device movement
         """
         if not OffloadCache.offloading_disabled:
+            restore_value = OffloadCache.offloading_disabled
             OffloadCache.offloading_disabled = True
             yield
-            OffloadCache.offloading_disabled = False
+            OffloadCache.offloading_disabled = restore_value
             OffloadCache.keep_onloaded_values.clear()
         else:
             yield
@@ -248,8 +268,9 @@ class OffloadCache(MutableMapping, ABC):
         inspect offloaded tensors and directly assign offloaded tensors without copying
         """
         if not OffloadCache.onloading_disabled:
+            restore_value = OffloadCache.onloading_disabled
             OffloadCache.onloading_disabled = True
             yield
-            OffloadCache.onloading_disabled = False
+            OffloadCache.onloading_disabled = restore_value
         else:
             yield
