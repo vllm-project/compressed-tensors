@@ -3,16 +3,14 @@
 
 from typing import Iterable
 
-from loguru import logger
 import torch
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.quantization import (
-    QuantizationConfig,
-)
+from compressed_tensors.quantization import QuantizationConfig
 from compressed_tensors.quantization.utils.helpers import (
     maybe_pad_tensor_for_block_quant,
 )
-from compressed_tensors.utils.match import match_quantizable_tensors, match_name
+from compressed_tensors.utils.match import match_name, match_quantizable_tensors
+from loguru import logger
 
 
 class FP8BlockToBfloat16Converter(Converter):

@@ -1,18 +1,21 @@
-from typing import Callable, Iterable
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 import json
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Callable, Iterable
 
 import torch
 import tqdm
 from compressed_tensors.entrypoints.convert import (
+    find_safetensors_index_file,
     get_checkpoint_files,
+    invert_mapping,
     is_weights_file,
     update_safetensors_index,
-    find_safetensors_index_file,
-    invert_mapping,
 )
 from loguru import logger
 from safetensors.torch import load_file, save_file
@@ -29,13 +32,13 @@ def reindex_checkpoint(
     `get_unmatched_names`, such that weights exist in the same safetensors file.
     This is necessary for:
 
-    - microscale schemes, where fused weights must exist in the same file. This is required
-        by model_free_ptq for microscale schemes (NVFP4A16, MXFP4A16), for example:
+    - microscale schemes, where fused weights must exist in the same file, for example:
         1) gate_proj and up_proj -> fused gate_up_proj
         2) q_proj, k_proj and v_proj -> fused qkv_proj
     - previously compressed checkpoints, where weights and qparams must exist in the
-        same safetensors file. This is required for convert_checkpoint, for example:
-        1) weight and weight_scale must exist when expanding from FP8_BLOCK to bf16
+        same safetensors file, for example:
+        1) weight and weight_scale_inv must exist in the same safetensors file when
+        expanding from FP8 quant method's FP8_BLOCK to bf16
 
     This script assumes weight locality; if a set of fused weights are not in a file,
     1. the incomplete set is the last set of weights (sorted alphabetically)
