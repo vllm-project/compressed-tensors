@@ -23,7 +23,9 @@ converter = FP8BlockToBfloat16Converter(
     ],
 )
 
-# Reindex weight and weight_scale_inv tensors which are split across safetensors files
+# A module's `weight` and `weight_scale_inv` tensors need to exist in the same
+# safetensors file in order for convert_checkpoint to work in a parallelized fashion.
+# First, reindex weight and weight_scale_inv tensors if they are split across files
 reindex_checkpoint(
     model_stub=MODEL_ID,
     save_directory=SAVE_DIR,
