@@ -195,13 +195,12 @@ def test_dist_disk_safetensors_update(tmp_path):
             assert not os.path.islink(k_file_path)
 
         # Delete the parameters
+        dist.barrier()
         delattr(rank_0_module, "weight")
         delattr(rank_1_module, "weight")
 
-        # Wait for all ranks to complete deletion
-        dist.barrier()
-
         # Check that the new files were deleted
+        dist.barrier()
         assert not os.path.exists(q_file_path)
         assert not os.path.exists(k_file_path)
 

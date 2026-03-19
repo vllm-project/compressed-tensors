@@ -12,15 +12,15 @@ __all__ = ["SparsityCompressionConfig", "CompressionFormat", "SparsityStructure"
 
 
 @unique
-class CompressionFormat(Enum):
+class CompressionFormat(str, Enum):
     dense = "dense"
-    sparse_bitmask = "sparse-bitmask"
-    sparse_24_bitmask = "sparse-24-bitmask"
+    sparse_bitmask = "sparse-bitmask"  # legacy format
+    sparse_24_bitmask = "sparse-24-bitmask"  # legacy format
     int_quantized = "int-quantized"
     float_quantized = "float-quantized"
     naive_quantized = "naive-quantized"
     pack_quantized = "pack-quantized"
-    marlin_24 = "marlin-24"
+    marlin_24 = "marlin-24"  # legacy format
     mixed_precision = "mixed-precision"
     nvfp4_pack_quantized = "nvfp4-pack-quantized"
     mxfp4_pack_quantized = "mxfp4-pack-quantized"
