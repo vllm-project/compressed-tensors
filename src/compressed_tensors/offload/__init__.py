@@ -118,7 +118,15 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         # | Device    | Copy into local device      |
         # | --------- | --------------------------- |
         # all implementations update onloaded data if applicable
-        setattr(module, name, torch.nn.Parameter(data.data, requires_grad=False))
+        if name in module._parameters:
+            cache = module._parameters
+        elif name in module._buffers:
+            cache = module._buffers
+        else:
+            raise AttributeError(f"{type(module)} has no attribute {name}")
+
+        # triggers update if shapes match
+        cache[name] = data
 
     else:
         with torch.no_grad():
