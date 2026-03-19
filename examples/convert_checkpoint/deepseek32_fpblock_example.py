@@ -7,6 +7,9 @@ from compressed_tensors.entrypoints.convert import (
     FP8BlockToBfloat16Converter,
 )
 
+# deepseek-ai/DeepSeek-V3.2 checkpoint has layers that are quantized in the FP8
+# quant method's FP8_BLOCK scheme. This script will upconvert to bfloat16 so that
+# the model can be compressed in another configuration.
 MODEL_ID = "deepseek-ai/DeepSeek-V3.2"
 SAVE_DIR = MODEL_ID.rstrip("/").split("/")[-1] + "-bf16"
 
@@ -18,10 +21,9 @@ converter = FP8BlockToBfloat16Converter(
         r"re:.*self_attn.kv_a_proj_with_mqa$",
         r"re:.*self_attn.indexer.(wk|wq_b)$",
     ],
-    weight_block_size=[128, 128],
 )
 
-# Some weight and weight_scale_inv tensors are split across safetensors files
+# Reindex weight and weight_scale_inv tensors which are split across safetensors files
 reindex_checkpoint(
     model_stub=MODEL_ID,
     save_directory=SAVE_DIR,

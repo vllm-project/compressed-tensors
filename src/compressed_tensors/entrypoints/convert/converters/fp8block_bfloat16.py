@@ -24,7 +24,7 @@ class FP8BlockToBfloat16Converter(Converter):
         self,
         ignore: Iterable[str] = tuple(),
         targets: Iterable[str] = tuple(),
-        weight_block_size: list[int] | None = None,
+        weight_block_size: tuple[int] = (128, 128),
     ):
         self.ignore = ignore
         self.targets = targets
@@ -135,13 +135,6 @@ class FP8BlockToBfloat16Converter(Converter):
         :return: weight tensor with dtype bfloat16 that has the
         same shape as weight
         """
-        if self.weight_block_size is None:
-            # No block quantization, apply scales directly
-            # Convert weight to float32 first for multiplication
-            return (weight.to(torch.float32) * weight_scale_inv.to(torch.float32)).to(
-                torch.bfloat16
-            )
-
         original_shape = weight.shape
         block_height, block_width = self.weight_block_size
 
