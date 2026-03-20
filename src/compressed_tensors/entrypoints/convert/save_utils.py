@@ -26,9 +26,9 @@ def update_config(
     based on the converter that was used.
     Quantization config is considered stale and re-written entirely.
     """
-    quant_config = converter.create_config()
+
     quant_config_data = None
-    if quant_config is not None:
+    if (quant_config := converter.create_config()) is not None:
         quant_config_data = quant_config.model_dump()
         quant_config_data[COMPRESSION_VERSION_NAME] = ct_version
 
