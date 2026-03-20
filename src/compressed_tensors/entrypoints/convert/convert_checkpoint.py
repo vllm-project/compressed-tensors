@@ -17,10 +17,8 @@ from compressed_tensors.entrypoints.convert.file_utils import (
     get_checkpoint_files,
     is_weights_file,
 )
-from compressed_tensors.entrypoints.convert.save_utils import (
-    update_config,
-    update_safetensors_index,
-)
+from compressed_tensors.entrypoints.convert.save_utils import update_config
+from compressed_tensors.utils.safetensors_load import update_safetensors_index
 from loguru import logger
 
 

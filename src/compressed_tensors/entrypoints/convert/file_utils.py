@@ -3,10 +3,6 @@
 
 import os
 
-from compressed_tensors.utils.safetensors_load import (  # noqa: F401
-    find_config_path,
-    find_safetensors_index_path,
-)
 from huggingface_hub import list_repo_files
 from transformers.utils.hub import cached_file
 
@@ -14,8 +10,6 @@ from transformers.utils.hub import cached_file
 __all__ = [
     "get_checkpoint_files",
     "is_weights_file",
-    "find_config_path",
-    "find_safetensors_index_path",
 ]
 
 

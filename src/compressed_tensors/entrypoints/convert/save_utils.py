@@ -9,10 +9,7 @@ from typing import TYPE_CHECKING
 
 from compressed_tensors import __version__ as ct_version
 from compressed_tensors.base import COMPRESSION_VERSION_NAME, QUANTIZATION_CONFIG_NAME
-from compressed_tensors.utils.safetensors_load import (  # noqa: F401
-    find_config_path,
-    update_safetensors_index,
-)
+from compressed_tensors.utils.safetensors_load import find_config_path
 from loguru import logger
 
 
@@ -20,7 +17,7 @@ if TYPE_CHECKING:
     from compressed_tensors.entrypoints.convert.converters.base import Converter
 
 
-__all__ = ["update_config", "update_safetensors_index"]
+__all__ = ["update_config"]
 
 
 def update_config(
