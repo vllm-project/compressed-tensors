@@ -3,8 +3,11 @@
 
 import os
 
+from compressed_tensors.utils.safetensors_load import (  # noqa: F401
+    find_config_path,
+    find_safetensors_index_path,
+)
 from huggingface_hub import list_repo_files
-from transformers.file_utils import CONFIG_NAME
 from transformers.utils.hub import cached_file
 
 
@@ -52,19 +55,3 @@ def _walk_file_paths(root_dir: str, ignore: str | None = None) -> list[str]:
             if not (ignore and rel_path.startswith(ignore)):
                 all_files.append(rel_path)
     return all_files
-
-
-def find_safetensors_index_path(save_directory: str | os.PathLike) -> str | None:
-    for file_name in os.listdir(save_directory):
-        if file_name.endswith("safetensors.index.json"):
-            return os.path.join(save_directory, file_name)
-
-    return None
-
-
-def find_config_path(save_directory: str | os.PathLike) -> str | None:
-    for file_name in os.listdir(save_directory):
-        if file_name in (CONFIG_NAME, "params.json"):
-            return os.path.join(save_directory, file_name)
-
-    return None

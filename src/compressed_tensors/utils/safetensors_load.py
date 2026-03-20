@@ -7,7 +7,11 @@ import re
 import struct
 from collections.abc import Iterable
 
+from compressed_tensors.base import QUANTIZATION_CONFIG_NAME
+from safetensors import safe_open
+from safetensors.torch import save_file
 from torch import Tensor
+from transformers.file_utils import CONFIG_NAME
 from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME, cached_file
 
 
@@ -21,12 +25,52 @@ __all__ = [
     "get_nested_mappings_from_state_dict",
     "get_quantization_parameter_to_path_mapping",
     "is_quantization_param",
+    "find_config_path",
+    "find_safetensors_index_path",
+    "update_safetensors_index",
     "save_mtp_tensors_to_checkpoint",
 ]
 
 NestedStateDictType = dict[str, dict[str, Tensor]]
 WeightMappingType = dict[str, str]
 NestedWeightMappingType = dict[str, WeightMappingType]
+
+
+def find_safetensors_index_path(save_directory: str | os.PathLike) -> str | None:
+    for file_name in os.listdir(save_directory):
+        if file_name.endswith("safetensors.index.json"):
+            return os.path.join(save_directory, file_name)
+    return None
+
+
+def find_config_path(save_directory: str | os.PathLike) -> str | None:
+    for file_name in os.listdir(save_directory):
+        if file_name in (CONFIG_NAME, "params.json"):
+            return os.path.join(save_directory, file_name)
+    return None
+
+
+def update_safetensors_index(
+    save_directory: str | os.PathLike,
+    total_size: int,
+    weight_map: dict[str, str],
+):
+    file_path = find_safetensors_index_path(save_directory)
+    if file_path is None:
+        file_path = os.path.join(save_directory, SAFE_WEIGHTS_INDEX_NAME)
+
+    with open(file_path, "w") as file:
+        json.dump(
+            {
+                "metadata": {
+                    "total_size": total_size,
+                },
+                "weight_map": weight_map,
+            },
+            file,
+            indent=2,
+            sort_keys=True,
+        )
 
 
 def get_safetensors_folder(
@@ -312,6 +356,39 @@ def is_quantization_param(name: str) -> bool:
     return False
 
 
+def _fetch_and_save_prefix_tensors(
+    source_model: str, prefix: str, dest_dir: str, shard_name: str
+) -> dict:
+    """
+    Extracts all tensors whose keys start with `prefix` from `source_model`
+    and saves them as a new shard in `dest_dir`. This is useful when saving
+    MTP layers from the original checkpoint into the quantized checkpoint,
+    since MTP layers are not included in the quantized model and thus must
+    be copied over as-is.
+
+    :param source_model: local path or HuggingFace stub of the source model
+    :param prefix: tensor key prefix to filter on
+    :param dest_dir: destination directory to write the shard into
+    :param shard_name: filename for the new shard
+    :return: dict mapping tensor key to tensor
+
+    """
+    source_dir = get_safetensors_folder(source_model)
+    weight_mappings = get_weight_mappings(source_dir)
+
+    tensors = {}
+    for key, filepath in weight_mappings.items():
+        if key.startswith(prefix):
+            with safe_open(filepath, framework="pt", device="cpu") as f:
+                tensors[key] = f.get_tensor(key)
+
+    if not tensors:
+        raise ValueError(f"No tensors with prefix '{prefix}' found in {source_model}")
+
+    save_file(tensors, os.path.join(dest_dir, shard_name))
+    return tensors
+
+
 def save_mtp_tensors_to_checkpoint(
     source_model: str,
     dest_dir: str,
@@ -320,8 +397,10 @@ def save_mtp_tensors_to_checkpoint(
 ):
     """
     Extracts MTP (Multi-Token Prediction) tensors from a source model checkpoint
-    and saves them into a destination checkpoint directory, updating the
-    model.safetensors.index.json to include the MTP keys.
+    and saves them into a destination checkpoint directory. Updates the
+    safetensors index to include the new MTP shard and updates the
+    quantization_config ignore list in config.json so inference engines skip
+    quantization for MTP layers.
 
     MTP layers are not quantized and are excluded from the model's state dict
     during quantization (e.g. via _keys_to_ignore_on_load_unexpected). This
@@ -337,49 +416,49 @@ def save_mtp_tensors_to_checkpoint(
     :param shard_name: filename for the new shard written into dest_dir,
         defaults to "model_mtp.safetensors"
     """
-    from safetensors import safe_open
-    from safetensors.torch import save_file
+    # Extract MTP tensors from the original checkpoint and save them as a new
+    # shard in dest_dir. MTP layers are not part of the quantized model so they
+    # must be carried over as-is.
+    mtp_tensors = _fetch_and_save_prefix_tensors(
+        source_model, mtp_prefix, dest_dir, shard_name
+    )
 
-    source_dir = get_safetensors_folder(source_model)
-    weight_mappings = get_weight_mappings(source_dir)
-
-    mtp_tensors = {}
-    for key, filepath in weight_mappings.items():
-        if key.startswith(mtp_prefix):
-            with safe_open(filepath, framework="pt", device="cpu") as f:
-                mtp_tensors[key] = f.get_tensor(key)
-
-    if not mtp_tensors:
-        raise ValueError(
-            f"No tensors with prefix '{mtp_prefix}' found in {source_model}"
-        )
-
-    dest_shard_path = os.path.join(dest_dir, shard_name)
-    save_file(mtp_tensors, dest_shard_path)
-
-    index_path = os.path.join(dest_dir, SAFE_WEIGHTS_INDEX_NAME)
-    if not os.path.exists(index_path):
-        # Single-shard checkpoint: build index from model.safetensors
+    # Build weight_map from existing index or single-shard file, then add MTP entries.
+    # update_safetensors_index will create the index file if it doesn't exist yet.
+    index_path = find_safetensors_index_path(dest_dir)
+    if index_path is not None:
+        with open(index_path, "r") as f:
+            weight_map = json.load(f)["weight_map"]
+    else:
         single_shard_path = os.path.join(dest_dir, SAFE_WEIGHTS_NAME)
         if not os.path.exists(single_shard_path):
             raise FileNotFoundError(
-                f"Neither {SAFE_WEIGHTS_INDEX_NAME} nor {SAFE_WEIGHTS_NAME} "
+                f"Neither a safetensors index nor {SAFE_WEIGHTS_NAME} "
                 f"found in {dest_dir}"
             )
         with safe_open(single_shard_path, framework="pt", device="cpu") as f:
             weight_map = {key: SAFE_WEIGHTS_NAME for key in f.keys()}
-        index = {"metadata": {}, "weight_map": weight_map}
-    else:
-        with open(index_path, "r") as f:
-            index = json.load(f)
 
-    for key in mtp_tensors:
-        index["weight_map"][key] = shard_name
-
-    index["metadata"]["total_size"] = sum(
-        os.path.getsize(os.path.join(dest_dir, s))
-        for s in set(index["weight_map"].values())
+    weight_map.update({key: shard_name for key in mtp_tensors})
+    total_size = sum(
+        os.path.getsize(os.path.join(dest_dir, s)) for s in set(weight_map.values())
     )
+    update_safetensors_index(dest_dir, total_size, weight_map)
 
-    with open(index_path, "w") as f:
-        json.dump(index, f, indent=2)
+    # Update quantization_config.ignore in config.json so inference engines
+    # know not to apply quantization to MTP layers
+    config_path = find_config_path(dest_dir)
+    if config_path is not None:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+
+        quant_config = config.get(QUANTIZATION_CONFIG_NAME)
+        if quant_config is not None:
+            ignore_list = quant_config.get("ignore") or []
+            mtp_ignore_pattern = f"re:^{mtp_prefix}"
+            if mtp_ignore_pattern not in ignore_list:
+                ignore_list.append(mtp_ignore_pattern)
+                quant_config["ignore"] = ignore_list
+                config[QUANTIZATION_CONFIG_NAME] = quant_config
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)

@@ -1,17 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from __future__ import annotations
+
 import json
 import os
+from typing import TYPE_CHECKING
 
 from compressed_tensors import __version__ as ct_version
 from compressed_tensors.base import COMPRESSION_VERSION_NAME, QUANTIZATION_CONFIG_NAME
-from compressed_tensors.entrypoints.convert import (
-    Converter,
+from compressed_tensors.utils.safetensors_load import (  # noqa: F401
     find_config_path,
-    find_safetensors_index_path,
+    update_safetensors_index,
 )
 from loguru import logger
+
+
+if TYPE_CHECKING:
+    from compressed_tensors.entrypoints.convert.converters.base import Converter
 
 
 __all__ = ["update_config", "update_safetensors_index"]
@@ -46,27 +52,4 @@ def update_config(
         logger.warning(
             f"Could not find config file in {save_directory}. Please add to config "
             f"{json.dumps(quant_config_data, indent=2, sort_keys=True)}"
-        )
-
-
-def update_safetensors_index(
-    save_directory: str | os.PathLike,
-    total_size: int,
-    weight_map: dict[str, str],
-):
-    file_path = find_safetensors_index_path(save_directory)
-    if file_path is None:
-        return
-
-    with open(file_path, "w") as file:
-        json.dump(
-            {
-                "metadata": {
-                    "total_size": total_size,
-                },
-                "weight_map": weight_map,
-            },
-            file,
-            indent=2,
-            sort_keys=True,
         )
