@@ -2,13 +2,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import json
-import os
 
 import pytest
 import torch
 from compressed_tensors.entrypoints.convert import (
-    reindex_checkpoint,
     FP8BlockToBfloat16Converter,
+    reindex_checkpoint,
 )
 from safetensors.torch import load_file, save_file
 
