@@ -51,7 +51,7 @@ def reindex_checkpoint(
     :param save_directory: output directory for reindexed weights files
     :param get_unmatched_names: function that takes a list of tensor names in current
         safetensors file, and returns the list of unmatched names, i.e. a list of names
-        of the tensors that are missing one or more accompanying tesnors.
+        of the tensors that are missing one or more accompanying tensors.
     :param num_workers: number of worker threads to save files with
     """
 
@@ -61,7 +61,7 @@ def reindex_checkpoint(
     if index_file is None:
         raise ValueError(
             "This script is used to modify safetensor file shards, but was "
-            "unable to find safetenors index file. No reindexing is required."
+            "unable to find safetensors index file. No reindexing is required."
         )
 
     # copy non-weight files
