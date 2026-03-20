@@ -3,6 +3,7 @@
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
+from compressed_tensors.compressors.mx_utils import compress_mx_scale
 from compressed_tensors.compressors.nvfp4.base import NVFP4PackedCompressor
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
@@ -30,8 +31,7 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
         cls, scale: torch.Tensor, weights: QuantizationArgs
     ) -> torch.Tensor:
         assert weights.scale_dtype is not None
-        scale_exp = 127 + torch.floor(torch.log2(scale)).to(torch.int32)
-        return scale_exp.to(weights.scale_dtype)
+        return compress_mx_scale(scale, weights.scale_dtype)
 
     @classmethod
     def decompress(
