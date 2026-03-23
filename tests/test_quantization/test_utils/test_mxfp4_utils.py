@@ -5,8 +5,8 @@ import pytest
 import torch
 from compressed_tensors.quantization import round_to_quantized_type_dtype
 from compressed_tensors.quantization.utils import (
-    generate_mxfp4_scales,
-    maybe_convert_from_mxfp4_exp,
+    generate_mx_scales,
+    maybe_convert_from_mx_exp,
     round_to_power_2,
 )
 
@@ -78,10 +78,10 @@ def test_mxfp4_scales_e2e(dtype):
         zp_dtype=torch.uint8,
     )
 
-    scales = generate_mxfp4_scales(block_max)
+    scales = generate_mx_scales(block_max, num_bits=4)
     scales = round_to_quantized_type_dtype(scales, dtype=args.scale_dtype)
 
-    converted_ct = maybe_convert_from_mxfp4_exp(args=args, scale=scales)
+    converted_ct = maybe_convert_from_mx_exp(args=args, scale=scales)
 
     scales_exp = torch.log2(converted_ct)
     block_max_exp = torch.floor(torch.log2(round_to_power_2(block_max))) - 2

@@ -3,7 +3,7 @@
 
 import contextlib
 from abc import ABC, abstractmethod
-from collections.abc import MutableMapping
+from collections.abc import Hashable, MutableMapping
 from typing import ClassVar, Literal
 
 import torch
@@ -39,7 +39,7 @@ class OffloadCache(MutableMapping, ABC):
     onloading_disabled: ClassVar[bool] = False
 
     # names -> offloaded tensors (populated from _parameters or _buffers)
-    offloaded_values: dict[str, torch.Tensor]
+    offloaded_values: dict[Hashable, torch.Tensor]
 
     # offloaded tensors -> onloaded tensors (only when offloading is disabled)
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
@@ -88,7 +88,7 @@ class OffloadCache(MutableMapping, ABC):
     @classmethod
     def from_mapping(
         cls,
-        mapping: MutableMapping[str, torch.Tensor | None],
+        mapping: MutableMapping[Hashable, torch.Tensor | None],
         onload_device: torch.device | str,
         offload_device: "torch.device | str | Literal['disk'] | None" = None,
         **kwargs,
@@ -162,7 +162,7 @@ class OffloadCache(MutableMapping, ABC):
         """
         raise NotImplementedError()
 
-    def __getitem__(self, key: str) -> torch.Tensor:
+    def __getitem__(self, key: Hashable) -> torch.Tensor:
         """
         Onload a tensor
 
@@ -191,7 +191,7 @@ class OffloadCache(MutableMapping, ABC):
 
         return onloaded
 
-    def __setitem__(self, key: str, value: torch.Tensor | None):
+    def __setitem__(self, key: Hashable, value: torch.Tensor | None):
         """
         Update the offloaded and onloaded values if the key exists, otherwise
         offload the value and add it to the cache.
@@ -219,7 +219,7 @@ class OffloadCache(MutableMapping, ABC):
         else:
             self.offloaded_values[key] = self.offload(value)
 
-    def __delitem__(self, key: str):
+    def __delitem__(self, key: Hashable):
         """
         Remove the offloaded tensor associated with `key`. Any references to its
         onloaded tensors held by this class are invalidated.
