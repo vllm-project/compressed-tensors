@@ -14,6 +14,7 @@ from compressed_tensors.offload.dispatch import (  # noqa: F401
     get_device_map,
     offload_model,
     remove_dispatch,
+    set_onload_device,
 )
 from compressed_tensors.offload.dist_utils import (
     as_broadcastable,
@@ -29,7 +30,8 @@ from compressed_tensors.utils.helpers import patch_attr
 
 __all__ = [
     # dispatch models
-    "offload_model",
+    "set_onload_device",
+    "offload_model",  # deprecated, use set_onload_device
     "dispatch_model",
     "remove_dispatch",
     "dispatch_with_map",
