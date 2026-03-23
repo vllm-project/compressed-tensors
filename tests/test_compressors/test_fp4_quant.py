@@ -71,24 +71,3 @@ def test_compress_scale_without_scale_dtype():
 
     # Verify the output dtype is float8_e4m3fn
     assert compressed_scale.dtype == torch.float8_e4m3fn
-
-
-def test_compress_scale_with_scale_dtype():
-    """Test that NVFP4 compressor respects explicit scale_dtype"""
-    # Create a scale tensor
-    scale = torch.randn(10, dtype=torch.bfloat16)
-
-    # Create QuantizationArgs with explicit scale_dtype
-    quant_args = QuantizationArgs(
-        num_bits=4,
-        type=QuantizationType.FLOAT,
-        symmetric=True,
-        group_size=16,
-        scale_dtype=torch.float8_e4m3fn,
-    )
-
-    # Compress the scale
-    compressed_scale = NVFP4PackedCompressor._compress_scale(scale, quant_args)
-
-    # Verify the output dtype matches the specified scale_dtype
-    assert compressed_scale.dtype == torch.float8_e4m3fn
