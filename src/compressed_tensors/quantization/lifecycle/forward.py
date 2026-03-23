@@ -327,5 +327,3 @@ def forward_quantize(
         g_idx=g_idx,
         global_scale=global_scale,
     )
-
-
