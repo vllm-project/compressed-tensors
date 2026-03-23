@@ -141,7 +141,7 @@ def _process_group(
 
     # support column-order (default) quantization as well as other orderings
     # such as activation ordering. Below checks if g_idx has been initialized
-    is_column_order = g_idx is None or -1 in g_idx
+    is_column_order = g_idx is None or g_idx.device.type == "meta" or -1 in g_idx
     if not is_column_order:
         perm = torch.argsort(g_idx)
         x = x.index_select(-1, perm)
