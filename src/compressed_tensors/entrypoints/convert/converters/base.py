@@ -1,10 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Protocol
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol
 
 import torch
-from compressed_tensors.quantization import QuantizationConfig
+
+
+if TYPE_CHECKING:
+    from compressed_tensors.quantization import QuantizationConfig
 
 
 class Converter(Protocol):

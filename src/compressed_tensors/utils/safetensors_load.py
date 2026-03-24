@@ -5,9 +5,13 @@ import json
 import os
 import re
 import struct
+from collections import defaultdict
 from collections.abc import Iterable
 
-from torch import Tensor
+from huggingface_hub import list_repo_files
+from safetensors import safe_open
+from safetensors.torch import save_file
+from transformers.file_utils import CONFIG_NAME
 from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME, cached_file
 
 
@@ -15,17 +19,158 @@ __all__ = [
     "get_safetensors_folder",
     "get_safetensors_header",
     "match_param_name",
-    "merge_names",
     "get_weight_mappings",
     "get_nested_weight_mappings",
-    "get_nested_mappings_from_state_dict",
     "get_quantization_parameter_to_path_mapping",
+    "get_file_map",
     "is_quantization_param",
+    "find_config_path",
+    "find_safetensors_index_path",
+    "find_safetensors_index_file",
+    "update_safetensors_index",
+    "is_weights_file",
+    "get_checkpoint_files",
 ]
 
-NestedStateDictType = dict[str, dict[str, Tensor]]
 WeightMappingType = dict[str, str]
 NestedWeightMappingType = dict[str, WeightMappingType]
+
+
+def is_weights_file(file_name: str) -> bool:
+    """
+    Check whether a filename corresponds to a model weights file based on its
+    extension.
+
+    :param file_name: filename to check
+    :return: True if the file is a recognized weights format, else False
+    """
+    return any(
+        file_name.endswith(suffix)
+        for suffix in [
+            ".bin",
+            ".safetensors",
+            ".pth",
+            ".msgpack",
+            ".pt",
+        ]
+    )
+
+
+def get_checkpoint_files(model_stub: str | os.PathLike) -> dict[str, str]:
+    """
+    Given a local path or HuggingFace model stub, return a mapping from each
+    file's relative path to its resolved local path. Local directories are
+    walked recursively; HuggingFace stubs are resolved via the Hub API.
+
+    :param model_stub: local path to a model directory or HuggingFace model stub
+    :return: dict mapping relative file path to resolved local file path
+    """
+    # In the future, this function can accept and pass download kwargs to cached_file
+
+    if os.path.exists(model_stub):
+        file_paths = _walk_directory_files(
+            model_stub, ignore=[".cache", ".gitattributes"]
+        )
+    else:
+        file_paths = list_repo_files(model_stub)
+
+    return {file_path: cached_file(model_stub, file_path) for file_path in file_paths}
+
+
+def _walk_directory_files(
+    root_dir: str, ignore: Iterable[str] | str = tuple()
+) -> list[str]:
+    """
+    Return all file paths relative to root_dir, optionally skipping entries
+    whose relative path starts with `ignore`.
+
+    :param root_dir: root directory to walk
+    :param ignore: optional path prefix to exclude from results
+    :return: list of relative file paths
+    """
+    if isinstance(ignore, str):
+        ignore = [ignore]
+
+    all_files = []
+    for dirpath, _, filenames in os.walk(root_dir):
+        for filename in filenames:
+            rel_path = os.path.relpath(os.path.join(dirpath, filename), root_dir)
+            if not any([rel_path.startswith(i) for i in ignore]):
+                all_files.append(rel_path)
+    return all_files
+
+
+def find_safetensors_index_path(save_directory: str | os.PathLike) -> str | None:
+    """
+    Search save_directory for a safetensors weight index file.
+
+    :param save_directory: directory to search
+    :return: absolute path to the index file, or None if not found
+    """
+    for file_name in os.listdir(save_directory):
+        if file_name.endswith("safetensors.index.json"):
+            return os.path.join(save_directory, file_name)
+    return None
+
+
+def find_config_path(save_directory: str | os.PathLike) -> str | None:
+    """
+    Search save_directory for a model config file (config.json or params.json).
+
+    :param save_directory: directory to search
+    :return: absolute path to the config file, or None if not found
+    """
+    for file_name in os.listdir(save_directory):
+        if file_name in (CONFIG_NAME, "params.json"):
+            return os.path.join(save_directory, file_name)
+    return None
+
+
+def find_safetensors_index_file(model_files: dict[str, str]) -> str | None:
+    """
+    Find safetensors index file from full list of model_files
+
+    :param model_files: mapping of file relative path to absolute path, usually the
+        result of `get_checkpoint_files`
+    :return: absolute path to the safetensors index file, or None if not found
+    """
+    for file_path, resolved_path in model_files.items():
+        if file_path.endswith("safetensors.index.json"):
+            return resolved_path
+
+    return None
+
+
+def update_safetensors_index(
+    save_directory: str | os.PathLike,
+    total_size: int,
+    weight_map: dict[str, str],
+):
+    """
+    Write (or overwrite) the safetensors weight index file in save_directory.
+    If an existing index file is found it will be replaced in-place; otherwise
+    the standard model.safetensors.index.json filename is used.
+
+    :param save_directory: directory containing the checkpoint
+    :param total_size: total byte size of all shards, stored in index metadata
+    :param weight_map: mapping from tensor name to shard filename
+    """
+    file_path = find_safetensors_index_path(save_directory)
+    if file_path is None:
+        file_path = os.path.join(save_directory, SAFE_WEIGHTS_INDEX_NAME)
+
+    with open(file_path, "w") as file:
+        json.dump(
+            {
+                "metadata": {
+                    "total_size": total_size,
+                },
+                "weight_map": weight_map,
+            },
+            file,
+            indent=2,
+            sort_keys=True,
+        )
 
 
 def get_safetensors_folder(
@@ -99,19 +244,6 @@ def match_param_name(full_name: str, param_name: str) -> str | None:
     if len(regex) == 0:
         return None
     return regex[0]
-
-
-def merge_names(parent_name: str, child_name: str) -> str:
-    """
-    Helper function for merging an uncompressed parameterized layer name with a
-    compression parameter. Names merged with this function can then be parsed by
-    match_param_name.
-
-    :param parent_name: uncompressed parameterized layer name
-    :param child_name: compression parameter name
-    :return: merged compressed name
-    """
-    return parent_name + "." + child_name
 
 
 def get_weight_mappings(path_to_model_or_tensors: str) -> dict[str, str]:
@@ -237,49 +369,6 @@ def get_nested_weight_mappings(
     return nested_weight_mappings
 
 
-def get_nested_mappings_from_state_dict(
-    state_dict: dict[str, Tensor],
-    params_to_nest: Iterable[str],
-    return_unmatched_params: bool = False,
-) -> NestedStateDictType | tuple[NestedStateDictType, dict[str, Tensor]]:
-    """
-    Takes a state dict and returns a nested mapping from uncompressed
-    parameterized layer names to the value of
-    each layer's compression parameters.
-
-    Example of the nested mapping:
-    layer: {
-        weight_scale: ...,
-        weight: ...,
-        zero_point: ...,
-    }
-
-    :param state_dict: state dict of the model
-    :param params_to_nest: Iterable of parameter names to nest.
-    :return: Nested mapping of parameterized layer names to the value of
-        each layer's compression parameters. If `return_unmatched_params`, then
-        also return a dictionary mapping unused parameter names to their values
-    """
-    nested_weight_mappings = {}
-    unmatched_params = {}
-
-    for key in state_dict.keys():
-        matched = False
-        for param_name in params_to_nest:
-            module_path = match_param_name(key, param_name)
-            if module_path:
-                if module_path not in nested_weight_mappings:
-                    nested_weight_mappings[module_path] = {}
-                nested_weight_mappings[module_path][param_name] = state_dict[key]
-                matched = True
-        if return_unmatched_params and not matched:
-            unmatched_params[key] = state_dict[key]
-
-    if return_unmatched_params:
-        return nested_weight_mappings, unmatched_params
-    return nested_weight_mappings
-
-
 def get_quantization_parameter_to_path_mapping(model_path: str) -> dict[str, str]:
     """
     Given a model path, return a mapping between a parameter and its path
@@ -292,6 +381,23 @@ def get_quantization_parameter_to_path_mapping(model_path: str) -> dict[str, str
             mapping[weight_name] = safe_path
             continue
     return mapping
+
+
+def get_file_map(weight_map: WeightMappingType) -> dict[str, list[str]]:
+    """
+    Given a safetensors index file's weight_map, which maps weight name to safetensors
+    file name, return a mapping of safetensors file name to list of weight names
+
+    :param weight_map: mapping of weight name to safetensors file name.
+        result of `get_weight_mappings`
+    :returns: file_map
+    """
+
+    file_map = defaultdict(list)
+    for k, v in weight_map.items():
+        file_map[v].append(k)
+
+    return dict(file_map)
 
 
 def is_quantization_param(name: str) -> bool:
@@ -309,3 +415,36 @@ def is_quantization_param(name: str) -> bool:
         return True
 
     return False
+
+
+def _fetch_and_save_prefix_tensors(
+    source_model: str, prefix: str, dest_dir: str, shard_name: str
+) -> dict:
+    """
+    Extracts all tensors whose keys start with `prefix` from `source_model`
+    and saves them as a new shard in `dest_dir`. This is useful when saving
+    MTP layers from the original checkpoint into the quantized checkpoint,
+    since MTP layers are not included in the quantized model and thus must
+    be copied over as-is.
+
+    :param source_model: local path or HuggingFace stub of the source model
+    :param prefix: tensor key prefix to filter on
+    :param dest_dir: destination directory to write the shard into
+    :param shard_name: filename for the new shard
+    :return: dict mapping tensor key to tensor
+
+    """
+    source_dir = get_safetensors_folder(source_model)
+    weight_mappings = get_weight_mappings(source_dir)
+
+    tensors = {}
+    for key, filepath in weight_mappings.items():
+        if key.startswith(prefix):
+            with safe_open(filepath, framework="pt", device="cpu") as f:
+                tensors[key] = f.get_tensor(key)
+
+    if len(tensors) <= 0:
+        raise ValueError(f"No tensors with prefix '{prefix}' found in {source_model}")
+
+    save_file(tensors, os.path.join(dest_dir, shard_name))
+    return tensors

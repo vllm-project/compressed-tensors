@@ -33,8 +33,8 @@ class NVFP4PackedCompressor(BaseCompressor):
     def _compress_scale(
         cls, scale: torch.Tensor, weights: QuantizationArgs
     ) -> torch.Tensor:
-        assert weights.scale_dtype is not None
-        return scale.to(weights.scale_dtype)
+        scale_dtype = weights.scale_dtype or torch.float8_e4m3fn
+        return scale.to(scale_dtype)
 
     @classmethod
     def compress(
