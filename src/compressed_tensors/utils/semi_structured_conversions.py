@@ -10,7 +10,6 @@
 
 import torch
 
-
 __all__ = [
     "sparse_semi_structured_from_dense_cutlass",
     "sparse_semi_structured_to_dense_cutlass",

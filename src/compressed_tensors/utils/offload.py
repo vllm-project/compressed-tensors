@@ -22,8 +22,8 @@ from compressed_tensors.offload import (
     get_execution_device,
     get_offloaded_device,
     register_offload_module,
-    set_onload_device,
     remove_dispatch,
+    set_onload_device,
     update_offload_parameter,
 )
 from compressed_tensors.utils.helpers import deprecated
