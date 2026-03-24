@@ -7,7 +7,6 @@ import re
 import struct
 from collections.abc import Iterable
 
-from compressed_tensors.base import QUANTIZATION_CONFIG_NAME
 from huggingface_hub import list_repo_files
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -26,7 +25,6 @@ __all__ = [
     "find_config_path",
     "find_safetensors_index_path",
     "update_safetensors_index",
-    "save_mtp_tensors_to_checkpoint",
     "is_weights_file",
     "get_checkpoint_files",
 ]
@@ -403,83 +401,8 @@ def _fetch_and_save_prefix_tensors(
             with safe_open(filepath, framework="pt", device="cpu") as f:
                 tensors[key] = f.get_tensor(key)
 
-    if not tensors:
+    if len(tensors) <= 0:
         raise ValueError(f"No tensors with prefix '{prefix}' found in {source_model}")
 
     save_file(tensors, os.path.join(dest_dir, shard_name))
     return tensors
-
-
-def save_mtp_tensors_to_checkpoint(
-    source_model: str,
-    dest_dir: str,
-    mtp_prefix: str = "mtp",
-    shard_name: str = "model_mtp.safetensors",
-):
-    """
-    Extracts MTP (Multi-Token Prediction) tensors from a source model checkpoint
-    and saves them into a destination checkpoint directory. Updates the
-    safetensors index to include the new MTP shard and updates the
-    quantization_config ignore list in config.json so inference engines skip
-    quantization for MTP layers.
-
-    MTP layers are not quantized and are excluded from the model's state dict
-    during quantization (e.g. via _keys_to_ignore_on_load_unexpected). This
-    function copies them as-is from the original checkpoint so they are present
-    in the final saved checkpoint.
-
-    :param source_model: local path or HuggingFace stub of the original
-        (unquantized) model to extract MTP tensors from
-    :param dest_dir: path to the quantized checkpoint directory to save MTP
-        tensors into
-    :param mtp_prefix: key prefix used to identify MTP tensors, defaults to
-        "mtp"
-    :param shard_name: filename for the new shard written into dest_dir,
-        defaults to "model_mtp.safetensors"
-    """
-    # Extract MTP tensors from the original checkpoint and save them as a new
-    # shard in dest_dir. MTP layers are not part of the quantized model so they
-    # must be carried over as-is.
-    mtp_tensors = _fetch_and_save_prefix_tensors(
-        source_model, mtp_prefix, dest_dir, shard_name
-    )
-
-    # Build weight_map from existing index or single-shard file, then add MTP entries.
-    # update_safetensors_index will create the index file if it doesn't exist yet.
-    index_path = find_safetensors_index_path(dest_dir)
-    if index_path is not None:
-        with open(index_path, "r") as f:
-            weight_map = json.load(f)["weight_map"]
-    else:
-        single_shard_path = os.path.join(dest_dir, SAFE_WEIGHTS_NAME)
-        if not os.path.exists(single_shard_path):
-            raise FileNotFoundError(
-                f"Neither a safetensors index nor {SAFE_WEIGHTS_NAME} "
-                f"found in {dest_dir}"
-            )
-        with safe_open(single_shard_path, framework="pt", device="cpu") as f:
-            weight_map = {key: SAFE_WEIGHTS_NAME for key in f.keys()}
-
-    weight_map.update({key: shard_name for key in mtp_tensors})
-    total_size = sum(
-        os.path.getsize(os.path.join(dest_dir, s)) for s in set(weight_map.values())
-    )
-    update_safetensors_index(dest_dir, total_size, weight_map)
-
-    # Update quantization_config.ignore in config.json so inference engines
-    # know not to apply quantization to MTP layers
-    config_path = find_config_path(dest_dir)
-    if config_path is not None:
-        with open(config_path, "r") as f:
-            config = json.load(f)
-
-        quant_config = config.get(QUANTIZATION_CONFIG_NAME)
-        if quant_config is not None:
-            ignore_list = quant_config.get("ignore") or []
-            mtp_ignore_pattern = f"re:^{mtp_prefix}"
-            if mtp_ignore_pattern not in ignore_list:
-                ignore_list.append(mtp_ignore_pattern)
-                quant_config["ignore"] = ignore_list
-                config[QUANTIZATION_CONFIG_NAME] = quant_config
-                with open(config_path, "w") as f:
-                    json.dump(config, f, indent=2)

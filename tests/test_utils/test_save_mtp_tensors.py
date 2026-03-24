@@ -6,7 +6,7 @@ import os
 
 import pytest
 import torch
-from compressed_tensors.utils.safetensors_load import save_mtp_tensors_to_checkpoint
+from compressed_tensors.utils.mtp import save_mtp_tensors_to_checkpoint
 from safetensors import safe_open
 from safetensors.torch import save_file
 from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
@@ -210,7 +210,7 @@ class TestSaveMtpTensorsToCheckpoint:
         empty_dest = tmp_path / "dest_empty"
         empty_dest.mkdir()
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(ValueError):
             save_mtp_tensors_to_checkpoint(str(source_dir), str(empty_dest))
 
     def test_custom_mtp_prefix(self, dest_dir_with_index, tmp_path):
