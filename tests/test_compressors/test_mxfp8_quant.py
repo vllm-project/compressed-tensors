@@ -162,3 +162,28 @@ def test_mxfp8_can_compress():
         ),
     )
     assert MXFP8QuantizationCompressor.can_compress(nn.Linear, int_scheme) is False
+
+
+def test_compress_scale_without_scale_dtype():
+    """
+    Test that MXFP8 compressor handles missing scale_dtype.
+
+    (backward compatibility)
+    """
+    # Create a scale tensor
+    scale = torch.randn(10, dtype=torch.bfloat16).abs() + 1e-6  # Ensure positive values
+
+    # Create QuantizationArgs without scale_dtype (as in older models)
+    quant_args = QuantizationArgs(
+        num_bits=8,
+        type="float",
+        symmetric=True,
+        group_size=32,
+        # scale_dtype is not set (defaults to None)
+    )
+
+    # This should not raise an error and should default to uint8
+    compressed_scale = MXFP8QuantizationCompressor._compress_scale(scale, quant_args)
+
+    # Verify the output dtype is uint8
+    assert compressed_scale.dtype == torch.uint8

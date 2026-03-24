@@ -3,10 +3,12 @@
 
 import pytest
 import torch
+from compressed_tensors.compressors.nvfp4.base import NVFP4PackedCompressor
 from compressed_tensors.compressors.nvfp4.helpers import (
     pack_fp4_to_uint8,
     unpack_fp4_from_uint8,
 )
+from compressed_tensors.quantization import QuantizationArgs, QuantizationType
 
 
 def test_pack_unpack():
@@ -44,3 +46,28 @@ def test_pack_unpack_odd_dims():
 
     with pytest.raises((ValueError, torch._dynamo.exc.Unsupported)):
         _ = pack_fp4_to_uint8(x)
+
+
+def test_compress_scale_without_scale_dtype():
+    """
+    Test that NVFP4 compressor handles missing scale_dtype.
+
+    (backward compatibility)
+    """
+    # Create a scale tensor
+    scale = torch.randn(10, dtype=torch.bfloat16)
+
+    # Create QuantizationArgs without scale_dtype (as in older models)
+    quant_args = QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        symmetric=True,
+        group_size=16,
+        # scale_dtype is not set (defaults to None)
+    )
+
+    # This should not raise an error and should default to float8_e4m3fn
+    compressed_scale = NVFP4PackedCompressor._compress_scale(scale, quant_args)
+
+    # Verify the output dtype is float8_e4m3fn
+    assert compressed_scale.dtype == torch.float8_e4m3fn
