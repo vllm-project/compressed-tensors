@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import tempfile
+
 import pytest
 import torch
 from compressed_tensors.offload import (
@@ -8,6 +10,8 @@ from compressed_tensors.offload import (
     align_modules,
     disable_offloading,
     disable_onloading,
+    get_cache_init_kwargs,
+    get_cache_kwargs,
     get_execution_device,
     get_offloaded_device,
     update_offload_parameter,
@@ -141,16 +145,127 @@ def test_get_offloaded_device(linear: torch.nn.Linear, cache):
 
 @pytest.mark.unit
 @requires_gpu
-def register_offload_module(linear: torch.nn.Linear, cache):
+def test_get_cache_kwargs_cpu():
+    """Test get_cache_kwargs for CPUCache."""
+    # Non-offloaded module should return empty dict
+    linear = torch.nn.Linear(5, 5, device=OFFLOAD_DEVICE)
+    kwargs = get_cache_kwargs(linear)
+    assert kwargs == {}
+
+    # With default provided
+    default = {"custom": "value"}
+    kwargs = get_cache_kwargs(linear, default=default)
+    assert kwargs == {"custom": "value"}
+
+    # Offloaded module with CPUCache (no extra kwargs)
+    offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+    kwargs = get_cache_kwargs(linear)
+    assert kwargs == {}
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_get_cache_kwargs_disk():
+    """Test get_cache_kwargs for DiskCache extracts offload_dir."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        linear = torch.nn.Linear(5, 5, device="cpu")
+        offload_module(linear, ONLOAD_DEVICE, "disk", offload_dir=tmpdir)
+
+        kwargs = get_cache_kwargs(linear)
+        assert kwargs == {"offload_dir": tmpdir}
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_get_cache_init_kwargs_cpu():
+    """Test using get_cache_init_kwargs to copy offload settings from one module to another."""
+    # Create and offload a reference module
+    ref_linear = torch.nn.Linear(3, 3, device=OFFLOAD_DEVICE)
+    offload_module(ref_linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+
+    # Get the init kwargs from the reference module
+    kwargs = get_cache_init_kwargs(ref_linear)
+
+    # Create a new module and apply the same offload settings
+    new_linear = torch.nn.Linear(5, 5, device=OFFLOAD_DEVICE)
+    offload_module(new_linear, **kwargs)
+
+    # Verify the new module has the same offload settings
+    assert isinstance(new_linear._parameters, CPUCache)
+    assert_device_equal(new_linear._parameters.onload_device, ONLOAD_DEVICE)
+    assert_device_equal(new_linear._parameters.offload_device, OFFLOAD_DEVICE)
+    # Verify weights work correctly
+    assert_device_equal(new_linear.weight.device, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_get_cache_init_kwargs_disk():
+    """Test using get_cache_init_kwargs to copy disk offload settings."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create and offload a reference module with disk offloading
+        ref_linear = torch.nn.Linear(3, 3, device="cpu")
+        offload_module(ref_linear, ONLOAD_DEVICE, "disk", offload_dir=tmpdir)
+
+        # Get the init kwargs from the reference module
+        kwargs = get_cache_init_kwargs(ref_linear)
+
+        # Create a new module and apply the same offload settings
+        new_linear = torch.nn.Linear(5, 5, device="cpu")
+        offload_module(new_linear, **kwargs)
+
+        # Verify the new module has the same offload settings including offload_dir
+        assert_device_equal(new_linear._parameters.onload_device, ONLOAD_DEVICE)
+        assert new_linear._parameters.offload_device == "disk"
+        assert new_linear._parameters.offload_dir == tmpdir
+        # Verify weights work correctly
+        assert_device_equal(new_linear.weight.device, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_register_offload_module_cpu(linear: torch.nn.Linear):
+    from compressed_tensors.offload import register_offload_module
+
+    # Non-offloaded parent - submodule should not be offloaded
     sub1 = torch.nn.Linear(1, 1)
     register_offload_module(linear, "sub1", sub1)
     assert linear.sub1 is sub1
+    assert not isinstance(sub1._parameters, CPUCache)
 
+    # Offloaded parent - submodule should inherit offloading
     offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     sub2 = torch.nn.Linear(1, 1)
     register_offload_module(linear, "sub2", sub2)
     assert linear.sub2 is sub2
+    assert isinstance(sub2._parameters, CPUCache)
+    assert_device_equal(sub2._parameters.onload_device, ONLOAD_DEVICE)
+    assert_device_equal(sub2._parameters.offload_device, OFFLOAD_DEVICE)
     assert_device_equal(sub2.weight.device, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_register_offload_module_disk():
+    """Test register_offload_module inherits offload_dir from parent with DiskCache."""
+    from compressed_tensors.offload import register_offload_module
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create a parent module with disk offloading
+        parent = torch.nn.Linear(5, 5, device="cpu")
+        offload_module(parent, ONLOAD_DEVICE, "disk", offload_dir=tmpdir)
+
+        # Register a submodule - it should inherit the disk offloading settings
+        sub = torch.nn.Linear(3, 3, device="cpu")
+        register_offload_module(parent, "sub", sub)
+
+        # Verify the submodule has the same offload settings including offload_dir
+        assert parent.sub is sub
+        assert_device_equal(sub._parameters.onload_device, ONLOAD_DEVICE)
+        assert sub._parameters.offload_device == "disk"
+        assert sub._parameters.offload_dir == tmpdir
+        # Verify weights work correctly
+        assert_device_equal(sub.weight.device, ONLOAD_DEVICE)
 
 
 @pytest.mark.unit
