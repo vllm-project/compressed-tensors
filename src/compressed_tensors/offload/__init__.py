@@ -154,9 +154,8 @@ def get_offloaded_device(
     else:
         return get_module_device(module, default)
 
-def get_cache_kwargs(
-    module: torch.nn.Module, default: dict | None = None
-) -> dict:
+
+def get_cache_kwargs(module: torch.nn.Module, default: dict | None = None) -> dict:
     """
     Get any ancillary kwargs needed for the module OffloadCache
 
@@ -164,32 +163,37 @@ def get_cache_kwargs(
     :return: dict of cache kwargs
     """
     kwargs = default.copy() if default is not None else {}
-    if isinstance(module._parameters, OffloadCache) and hasattr(module._parameters, "offload_dir"):
+    if isinstance(module._parameters, OffloadCache) and hasattr(
+        module._parameters, "offload_dir"
+    ):
         kwargs["offload_dir"] = module._parameters.offload_dir
     return kwargs
+
 
 def get_cache_init_kwargs(
     module: torch.nn.Module,
     default: dict | None = None,
 ) -> dict:
     """
-    Get all kwargs needed to initialize an OffloadCache with the same settings as the module.
+    Get all kwargs needed to initialize an OffloadCache with the same
+    settings as the module.
 
     :param module: module to extract cache initialization kwargs from
-    :param default: default kwargs to use as a base (can include onload_device, offload_device, etc.)
-    :return: dict of kwargs for offload_module or cache constructor, including onload_device,
-             offload_device, and any additional cache-specific kwargs
+    :param default: default kwargs to use as a base (can include
+                    onload_device, offload_device, etc.)
+    :return: dict of kwargs for offload_module or cache constructor, including
+             onload_device, offload_device, and any additional cache-specific kwargs
+
     """
     kwargs = default.copy() if default is not None else {}
-    kwargs['onload_device'] = get_execution_device(
-        module, kwargs.get('onload_device')
-    )
-    kwargs['offload_device'] = get_offloaded_device(
-        module, kwargs.get('offload_device')
+    kwargs["onload_device"] = get_execution_device(module, kwargs.get("onload_device"))
+    kwargs["offload_device"] = get_offloaded_device(
+        module, kwargs.get("offload_device")
     )
     cache_kwargs = get_cache_kwargs(module)
     kwargs.update(cache_kwargs)
     return kwargs
+
 
 def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.Module):
     """

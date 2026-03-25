@@ -178,7 +178,9 @@ def test_get_cache_kwargs_disk():
 @pytest.mark.unit
 @requires_gpu
 def test_get_cache_init_kwargs_cpu():
-    """Test using get_cache_init_kwargs to copy offload settings from one module to another."""
+    """
+    Test using get_cache_init_kwargs to copy offloading from one module to another.
+    """
     # Create and offload a reference module
     ref_linear = torch.nn.Linear(3, 3, device=OFFLOAD_DEVICE)
     offload_module(ref_linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
