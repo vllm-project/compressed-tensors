@@ -5,7 +5,7 @@ import os
 
 import pytest
 import torch
-from compressed_tensors.offload import offload_model
+from compressed_tensors.offload import set_onload_device
 from compressed_tensors.transform import (
     TransformConfig,
     TransformScheme,
@@ -23,7 +23,7 @@ def test_serialization(type, randomize, model_apply, tmp_path, offload):
     # get model, maybe offload
     model, apply = model_apply
     if offload:
-        offload_model(model, torch.device("cuda"))
+        set_onload_device(model, torch.device("cuda"))
 
     # apply transforms to model
     config = TransformConfig(

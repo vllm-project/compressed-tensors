@@ -9,7 +9,7 @@ from compressed_tensors.offload.cache import CPUCache, OffloadCache
 from compressed_tensors.offload.dispatch import (
     dispatch_model,
     get_device_memory,
-    offload_model,
+    set_onload_device,
 )
 from compressed_tensors.offload.utils import module_size
 from tests.testing_utils import requires_gpu
@@ -190,7 +190,7 @@ def test_offload_and_dispatch_model(model_id):
 
     # offload entire model
     model.to("cpu")
-    model = offload_model(model, "cuda:0")
+    model = set_onload_device(model, "cuda:0")
     offloaded_logits = model(**sample).logits
     for module in model.modules():
         assert_module_offloaded(module, "cuda:0", torch.device("cpu"))
