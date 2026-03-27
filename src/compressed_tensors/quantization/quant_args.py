@@ -130,11 +130,11 @@ class ActivationOrdering(Aliasable, str, Enum):
     Group: Columns are permuted by activation order during calibration. Quantization
     groups are defined based on this permuted order. Weights are saved in original
     column order with g_idx mapping columns to groups. Runtime requires reordering
-    columns by g_idx (higher latency but improved accuracy compared to no activation 
+    columns by g_idx (higher latency but improved accuracy compared to no activation
     ordering).\n
-    Weight: Changes the way calibration occurs but doesn't change the quantization 
-    format compared to no activation ordering (normal latency). Compared to Group, 
-    it has lower latency and slightly worse accuracy. Compared to no activation 
+    Weight: Changes the way calibration occurs but doesn't change the quantization
+    format compared to no activation ordering (normal latency). Compared to Group,
+    it has lower latency and slightly worse accuracy. Compared to no activation
     ordering during calibration it has slightly better accuracy. \n
     Dynamic: alias for Group\n
     Static: alias for Weight\n
