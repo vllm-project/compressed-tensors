@@ -20,6 +20,7 @@ from compressed_tensors.quantization.quant_config import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
+from compressed_tensors.quantization.utils import KV_CACHE_TARGETS
 from compressed_tensors.utils.match import (
     is_narrow_match,
     match_named_modules,
@@ -158,7 +159,7 @@ def _apply_kv_cache_scheme(
     # this step cannot come after attention apply/initialize
     # otherwise it will override the attention qparams
     scheme = QuantizationScheme(
-        targets=[".*self_attn$"],  # is never read in practice
+        targets=KV_CACHE_TARGETS.copy(),  # is never read in practice
         input_activations=kv_cache_scheme,
     )
     for submodule in model.modules():
