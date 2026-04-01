@@ -6,7 +6,7 @@ import json
 import pytest
 import torch
 from compressed_tensors.entrypoints.convert import (
-    FP8BlockToBfloat16Converter,
+    FP8BlockDequantizer,
     reindex_checkpoint,
 )
 from safetensors.torch import load_file, save_file
@@ -73,7 +73,7 @@ def test_reindex_checkpoint(tmp_path):
     with open(config_path, "w") as f:
         json.dump({"model_type": "test"}, f)
 
-    converter = FP8BlockToBfloat16Converter(targets=[r"re:.*layer\d.*"])
+    converter = FP8BlockDequantizer(targets=[r"re:.*layer\d.*"])
 
     # Run reindex_checkpoint
     save_dir = tmp_path / "reindexed"

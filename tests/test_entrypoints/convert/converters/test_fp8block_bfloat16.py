@@ -3,7 +3,7 @@
 
 import pytest
 import torch
-from compressed_tensors.entrypoints.convert import FP8BlockToBfloat16Converter
+from compressed_tensors.entrypoints.convert import FP8BlockDequantizer
 
 
 @pytest.mark.unit
@@ -12,7 +12,7 @@ def test_fp8_block_to_bfloat16_conversion():
     Test that _create_bfloat16_weight correctly converts FP8 block-quantized
     weights to bfloat16 by multiplying by the scale_inv per block.
     """
-    converter = FP8BlockToBfloat16Converter(weight_block_size=(128, 128))
+    converter = FP8BlockDequantizer(weight_block_size=(128, 128))
 
     # Create a weight tensor divisible by block size (256x256 = 2x2 blocks of 128x128)
     original_weight = torch.randn(256, 256, dtype=torch.bfloat16)
@@ -40,7 +40,7 @@ def test_fp8_block_to_bfloat16_conversion_with_padding():
     Test that _create_bfloat16_weight correctly handles tensors that need padding
     (dimensions not evenly divisible by block size).
     """
-    converter = FP8BlockToBfloat16Converter(weight_block_size=(128, 128))
+    converter = FP8BlockDequantizer(weight_block_size=(128, 128))
 
     # Create a weight tensor NOT divisible by block size (200x300)
     # Should be padded to 256x384 (2x3 blocks)
@@ -65,7 +65,7 @@ def test_fp8_block_converter_process():
     Test that the converter's process method correctly converts FP8 block-quantized
     tensors in a dict to bfloat16, removing weight_scale_inv tensors.
     """
-    converter = FP8BlockToBfloat16Converter(
+    converter = FP8BlockDequantizer(
         targets=[r"re:.*layer\d+\.mlp\..*proj$"], weight_block_size=(128, 128)
     )
 

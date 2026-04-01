@@ -13,9 +13,10 @@ from compressed_tensors.utils.match import match_name, match_quantizable_tensors
 from loguru import logger
 
 
-class FP8BlockToBfloat16Converter(Converter):
+class FP8BlockDequantizer(Converter):
     """
-    Upconvert block-quantized FP8 quant_method to bfloat16
+    Dequantize a checkpoint that has been block-quantized with FP8 quant_method
+    The resultant weights will be stored in bfloat16
     """
 
     def __init__(

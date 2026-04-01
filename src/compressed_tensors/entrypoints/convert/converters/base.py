@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import torch
 
+
 __all__ = ["Converter", "build_inverse_weights_map"]
 
 if TYPE_CHECKING:
