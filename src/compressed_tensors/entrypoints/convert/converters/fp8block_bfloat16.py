@@ -94,33 +94,25 @@ class FP8BlockToBfloat16Converter(Converter):
     def create_config(self) -> QuantizationConfig | None:
         return None
 
-    def get_unmatched_names(
-        self,
-        tensor_names: Iterable[str],
-    ) -> list[str]:
-        """
-        If a targeted tensor is found, but its accompanying targeted tensor is missing,
-        add it to the list of unmatched names so that it can be reindexed. In the case
-        of the FP8 quant method's FP8_BLOCK scheme, the weight and weight_scale_inv
-        tensors must live in the same safetensors file.
+    def requires(self, weight_name: str) -> list[str]:
+        requires = {}
+        if (
+            any([match_name(weight_name, target) for target in self.targets])
+            and not any([match_name(weight_name, ignore) for ignore in self.ignore])
+            and weight_name.endswith(".weight")
+        ):
+            requires.add(weight_name + "_scale_inv")
+        return requires
 
-        :returns: list of tensor names which are missing their desired counterpart.
-        """
-        unmatched = []
-        for tensor_name in tensor_names:
-            if any(
-                [match_name(tensor_name, target) for target in self.targets]
-            ) and not any([match_name(tensor_name, ignore) for ignore in self.ignore]):
-                # if "weight" is found, need to ensure "weight_scale_inv" also exists
-                # if "weight_scale_inv" is found, need to ensure "weight" also exists
-                desired_tensor_name = (
-                    tensor_name.rstrip("_scale_inv")
-                    if tensor_name.endswith("_scale_inv")
-                    else (tensor_name + "_scale_inv")
-                )
-                if desired_tensor_name not in tensor_names:
-                    unmatched.append(tensor_name)
-        return unmatched
+    def is_required_by(self, weight_name: str) -> list[str]:
+        is_required_by = {}
+        if (
+            any([match_name(weight_name, target) for target in self.targets])
+            and not any([match_name(weight_name, ignore) for ignore in self.ignore])
+            and weight_name.endswith(".weight_scale_inv")
+        ):
+            is_required_by.add(weight_name.rstrip("_scale_inv"))
+        return is_required_by
 
     def _create_bfloat16_weight(
         self, weight: torch.Tensor, weight_scale_inv: torch.Tensor

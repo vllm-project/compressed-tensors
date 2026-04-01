@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import json
 import os
 import shutil
 from collections.abc import Callable
@@ -13,8 +14,12 @@ from compressed_tensors.entrypoints.convert.convert_file import (
     validate_file,
     write_checkpoint_quantization_config,
 )
-from compressed_tensors.entrypoints.convert.converters import Converter
+from compressed_tensors.entrypoints.convert.converters import (
+    Converter,
+    build_inverse_weights_map,
+)
 from compressed_tensors.utils.safetensors_load import (
+    find_safetensors_index_file,
     get_checkpoint_files,
     is_weights_file,
     update_safetensors_index,
@@ -48,8 +53,13 @@ def convert_checkpoint(
     :param converters: converter we wish to apply to the checkpoint,
         e.g. conversion of some layers from some format to compressed-tensors
     """
-    # validate arguments
+    # get all model_files for checkpoint
     model_files = get_checkpoint_files(model_stub)
+
+    # Read weight map from safetensors.index.json
+    index_file = find_safetensors_index_file(model_files)
+    with open(index_file, "r") as f:
+        weight_map: dict[str, str] = json.load(f)["weight_map"]
 
     # 0. collect safetensors files, copy files
     validate_jobs = []
@@ -58,8 +68,16 @@ def convert_checkpoint(
         save_path = Path(save_directory) / file_path
 
         if file_path.endswith("safetensors"):
-            validate_jobs.append((validate_file, resolved_path, converter))
-            convert_jobs.append((convert_file, resolved_path, save_path, converter))
+            inverse_weights_map = build_inverse_weights_map(
+                shard_name=file_path,
+                weight_map=weight_map,
+                model_files=model_files,
+                converters=[converter],
+            )
+            validate_jobs.append((validate_file, inverse_weights_map, converter))
+            convert_jobs.append(
+                (convert_file, inverse_weights_map, save_path, converter)
+            )
 
         else:
             if is_weights_file(file_path):

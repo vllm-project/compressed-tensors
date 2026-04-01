@@ -7,9 +7,12 @@ import os
 from compressed_tensors import __version__ as ct_version
 from compressed_tensors.base import COMPRESSION_VERSION_NAME, QUANTIZATION_CONFIG_NAME
 from compressed_tensors.entrypoints.convert import Converter
-from compressed_tensors.utils.safetensors_load import find_config_path
+from compressed_tensors.utils.safetensors_load import (
+    find_config_path,
+    load_tensors_from_inverse_weights_map,
+)
 from loguru import logger
-from safetensors.torch import load_file, save_file
+from safetensors.torch import save_file
 
 
 __all__ = [
@@ -63,35 +66,45 @@ def write_checkpoint_quantization_config(
 
 
 def validate_file(
-    file_path: str | os.PathLike,
+    inverse_weights_map: dict[str, list[str]],
     converter: Converter,
 ):
     """
     Validate that each quantizable tensor in a safetensors file can be quantized.
 
-    :param file_path: safetensors file to validate
+    :param inverse_weights_map: mapping of resolved source file path ->
+        list of tensor names to load from that file. Precomputed by
+        build_inverse_weights_map() in the job-building phase.
+        Example: {"/path/shard0.safetensors": ["q_proj.weight"],
+                  "/path/shard1.safetensors": ["k_proj.weight", "v_proj.weight"]}
     :param converter: converter we wish to apply to the checkpoint,
         e.g. conversion of some layers from some format to compressed-tensors
     """
-    tensors = load_file(file_path)
+    tensors = load_tensors_from_inverse_weights_map(inverse_weights_map)
 
     converter.validate(tensors)
 
 
 def convert_file(
-    file_path: str | os.PathLike,
+    inverse_weights_map: dict[str, list[str]],
     save_path: str | os.PathLike,
     converter: Converter,
 ) -> tuple[int, dict[str, str]]:
     """
     Convert tensors in a given safetensors file
 
-    :param file_path: safetensors file to process
+    :param inverse_weights_map: mapping of resolved source file path ->
+        list of tensor names to load from that file. Precomputed by
+        build_inverse_weights_map() in the job-building phase.
+        Example: {"/path/shard0.safetensors": ["q_proj.weight"],
+                  "/path/shard1.safetensors": ["k_proj.weight", "v_proj.weight"]}
     :param save_path: save path of file with quantized weights
     :param converter: converter we wish to apply to the checkpoint,
         e.g. conversion of some layers from some format to compressed-tensors
+    :returns: tuple of (total_size, weight_map), respectively the total size in bytes
+        of the saved file and dictionary of weight name -> save path
     """
-    tensors = load_file(file_path)
+    tensors = load_tensors_from_inverse_weights_map(inverse_weights_map)
 
     converter.process(tensors)
 

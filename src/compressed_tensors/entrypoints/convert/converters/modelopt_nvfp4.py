@@ -13,7 +13,7 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_scheme import NVFP4
-from compressed_tensors.utils.match import match_quantizable_tensors
+from compressed_tensors.utils.match import match_name, match_quantizable_tensors
 
 
 class ModelOptNvfp4Converter(Converter):
@@ -106,6 +106,34 @@ class ModelOptNvfp4Converter(Converter):
 
             if param_name in disallowed_names:
                 raise ValueError(f"Hit unexpected non-targeted tensor {name}")
+
+    def requires(self, weight_name: str) -> set[str]:
+        module_name = weight_name.rstrip(".", 1)[0]
+        requires = {}
+        if (
+            any([match_name(weight_name, target) for target in self.targets])
+            and not any([match_name(weight_name, ignore) for ignore in self.ignore])
+            and weight_name.endswith(".weight")
+        ):
+            requires.add(module_name + ".input_scale")
+            requires.add(module_name + ".weight_scale")
+            requires.add(module_name + ".weight_scale_2")
+
+            if self.kv_cache_scheme:
+                requires.add(module_name + ".k_scale")
+                requires.add(module_name + ".v_scale")
+        return requires
+
+    def is_required_by(self, weight_name: str) -> set[str]:
+        module_name = weight_name.rstrip(".", 1)[0]
+        is_required_by = {}
+        if (
+            any([match_name(weight_name, target) for target in self.targets])
+            and not any([match_name(weight_name, ignore) for ignore in self.ignore])
+            and not weight_name.endswith(".weight")
+        ):
+            is_required_by.add(module_name + ".weight")
+        return is_required_by
 
     def create_config(self) -> QuantizationConfig:
         return QuantizationConfig(

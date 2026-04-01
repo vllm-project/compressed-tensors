@@ -8,6 +8,7 @@ import struct
 from collections import defaultdict
 from collections.abc import Iterable
 
+import torch
 from huggingface_hub import list_repo_files
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -23,6 +24,7 @@ __all__ = [
     "get_nested_weight_mappings",
     "get_quantization_parameter_to_path_mapping",
     "get_file_map",
+    "load_tensors_from_inverse_weights_map",
     "is_quantization_param",
     "find_config_path",
     "find_safetensors_index_path",
@@ -398,6 +400,42 @@ def get_file_map(weight_map: WeightMappingType) -> dict[str, list[str]]:
         file_map[v].append(k)
 
     return dict(file_map)
+
+
+def load_tensors_from_inverse_weights_map(
+    inverse_weights_map: dict[str, list[str] | None],
+    device: str | torch.device,
+) -> dict[str, torch.Tensor]:
+    """
+    Given an inverse_weights_map, which is a dictionary of file name to list of
+    tensor names, load up all listed tensor names
+
+    :param inverse_weights_map: mapping of resolved source file path ->
+        list of tensor names to load from that file. Precomputed by
+        build_inverse_weights_map() in the job-building phase.
+        If list is empty, all tensors are pulled
+        Example: {"/path/shard0.safetensors": ["q_proj.weight"],
+                  "/path/shard1.safetensors": ["k_proj.weight", "v_proj.weight"]}
+    :param device: tensors will be loaded onto this device.
+
+    :returns: mapping of tensor name to actual tensor loaded from safetensors file
+        Example: {"q_proj.weight": torch.Tensor(...), "k_proj.weight: torch.Tensor(...)}
+    """
+    tensors: dict[str, torch.Tensor] = {}
+    for source_file, tensor_names in inverse_weights_map.items():
+        with safe_open(source_file, framework="pt", device=str(device)) as f:
+            keys = f.keys()
+            # if tensor_names is empty, pull all tensors
+            if tensor_names is None or len(tensor_names) == 0:
+                tensor_names = keys
+            for tensor_name in tensor_names:
+                if tensor_name not in keys:
+                    raise ValueError(
+                        f"Expected to find tensor {tensor_name} in "
+                        f"{source_file}, but tensor was not found."
+                    )
+                tensors[tensor_name] = f.get_tensor(tensor_name)
+    return tensors
 
 
 def is_quantization_param(name: str) -> bool:
