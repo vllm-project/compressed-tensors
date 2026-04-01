@@ -14,7 +14,7 @@ SAVE_DIR = MODEL_ID.rstrip("/").split("/")[-1] + "-bf16"
 
 # Convert DeepSeek-V3.2 back to dense bfloat16 format
 convert_checkpoint(
-    model_stub=SAVE_DIR,
+    model_stub=MODEL_ID,
     save_directory=SAVE_DIR,
     converter=FP8BlockDequantizer(
         # `deepseek-ai/DeepSeek-V3.2` fp8-block-quantized layers, found by inspection
