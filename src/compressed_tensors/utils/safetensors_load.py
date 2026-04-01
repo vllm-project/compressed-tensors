@@ -404,7 +404,7 @@ def get_file_map(weight_map: WeightMappingType) -> dict[str, list[str]]:
 
 def load_tensors_from_inverse_weights_map(
     inverse_weights_map: dict[str, list[str] | None],
-    device: str | torch.device,
+    device: str | torch.device = torch.device("cpu"),
 ) -> dict[str, torch.Tensor]:
     """
     Given an inverse_weights_map, which is a dictionary of file name to list of
@@ -416,7 +416,7 @@ def load_tensors_from_inverse_weights_map(
         If list is empty, all tensors are pulled
         Example: {"/path/shard0.safetensors": ["q_proj.weight"],
                   "/path/shard1.safetensors": ["k_proj.weight", "v_proj.weight"]}
-    :param device: tensors will be loaded onto this device.
+    :param device: tensors will be loaded onto this device. Defaults to CPU
 
     :returns: mapping of tensor name to actual tensor loaded from safetensors file
         Example: {"q_proj.weight": torch.Tensor(...), "k_proj.weight: torch.Tensor(...)}
