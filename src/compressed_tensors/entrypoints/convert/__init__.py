@@ -6,4 +6,3 @@
 
 from .converters import *
 from .convert_checkpoint import *
-from .reindex_checkpoint import *
