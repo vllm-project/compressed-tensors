@@ -61,13 +61,15 @@ def convert_checkpoint(
     with open(index_file, "r") as f:
         weight_map: dict[str, str] = json.load(f)["weight_map"]
 
+    # Build inverse_weight_maps, so that each job knows how to load up every necessary
+    # weight and its dependencies
     inverse_weight_maps = build_inverse_weight_maps(
         weight_map=weight_map,
         model_files=model_files,
         converters=[converter],
     )
 
-    # 0. collect safetensors files, copy files
+    # Build validation/conversion jobs, copy over any other file
     validate_jobs = []
     convert_jobs = []
     for file_path, resolved_path in model_files.items():
@@ -92,10 +94,10 @@ def convert_checkpoint(
                 logger.info(f"Copying {file_path} {save_path}")
                 shutil.copyfile(resolved_path, save_path)
 
-    # 1. validate quantizable tensors fail fast before long-running quantization
+    # Validate before long-running procssing job
     exec_jobs(validate_jobs, max_workers, desc="Validating")
 
-    # 2-5. quantize and compress weights
+    # Process weights, accumulating total bytes used and the new weight_map
     total_size = 0
     weight_map = dict()
     convert_results = exec_jobs(convert_jobs, max_workers, desc="Converting")
@@ -103,7 +105,7 @@ def convert_checkpoint(
         total_size += _total_size
         weight_map.update(_weight_map)
 
-    # 5. update config and safetensors index
+    # Update config and safetensors index
     write_checkpoint_quantization_config(save_directory, converter)
     update_safetensors_index(save_directory, total_size, weight_map)
 

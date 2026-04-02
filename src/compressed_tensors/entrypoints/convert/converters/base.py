@@ -57,9 +57,8 @@ class Converter(Protocol):
 
     def get_dependencies(self, weight_name: str) -> dict[str, bool]:
         """
-        Given a weight name, return a dictionary of all dependency weight names:
-        weight_name -> is_required
-        in order to process weight_name correctly.
+        Given a weight name, return a dictionary of all dependency weight names, so that
+        weights can be processed correctly and in a parallelized fashion.
         If a dependency is optional, the value associated with the key should be False.
         If the value is True, it is assumed the weight is required and will error out
         during the job build phase if not found.
