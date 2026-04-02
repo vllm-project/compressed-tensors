@@ -16,7 +16,7 @@ from compressed_tensors.entrypoints.convert.convert_file import (
 )
 from compressed_tensors.entrypoints.convert.converters import (
     Converter,
-    build_inverse_weights_map,
+    build_inverse_weight_maps,
 )
 from compressed_tensors.utils.safetensors_load import (
     find_safetensors_index_file,
@@ -61,6 +61,12 @@ def convert_checkpoint(
     with open(index_file, "r") as f:
         weight_map: dict[str, str] = json.load(f)["weight_map"]
 
+    inverse_weight_maps = build_inverse_weight_maps(
+        weight_map=weight_map,
+        model_files=model_files,
+        converters=[converter],
+    )
+
     # 0. collect safetensors files, copy files
     validate_jobs = []
     convert_jobs = []
@@ -68,15 +74,14 @@ def convert_checkpoint(
         save_path = Path(save_directory) / file_path
 
         if file_path.endswith("safetensors"):
-            inverse_weights_map = build_inverse_weights_map(
-                shard_name=file_path,
-                weight_map=weight_map,
-                model_files=model_files,
-                converters=[converter],
+            assert (
+                file_path in inverse_weight_maps
+            ), f"Could not find inverse_weight_map for file {file_path}"
+            validate_jobs.append(
+                (validate_file, inverse_weight_maps[file_path], converter)
             )
-            validate_jobs.append((validate_file, inverse_weights_map, converter))
             convert_jobs.append(
-                (convert_file, inverse_weights_map, save_path, converter)
+                (convert_file, inverse_weight_maps[file_path], save_path, converter)
             )
 
         else:

@@ -108,12 +108,12 @@ class ModelOptNvfp4Converter(Converter):
                 raise ValueError(f"Hit unexpected non-targeted tensor {name}")
 
     def requires(self, weight_name: str) -> set[str]:
-        module_name = weight_name.rstrip(".", 1)[0]
-        requires = {}
+        module_name, suffix = weight_name.rsplit(".", 1)
+        requires = set()
         if (
-            any([match_name(weight_name, target) for target in self.targets])
-            and not any([match_name(weight_name, ignore) for ignore in self.ignore])
-            and weight_name.endswith(".weight")
+            any([match_name(module_name, target) for target in self.targets])
+            and not any([match_name(module_name, ignore) for ignore in self.ignore])
+            and suffix == "weight"
         ):
             requires.add(module_name + ".input_scale")
             requires.add(module_name + ".weight_scale")
@@ -123,17 +123,6 @@ class ModelOptNvfp4Converter(Converter):
                 requires.add(module_name + ".k_scale")
                 requires.add(module_name + ".v_scale")
         return requires
-
-    def is_required_by(self, weight_name: str) -> set[str]:
-        module_name = weight_name.rstrip(".", 1)[0]
-        is_required_by = {}
-        if (
-            any([match_name(weight_name, target) for target in self.targets])
-            and not any([match_name(weight_name, ignore) for ignore in self.ignore])
-            and not weight_name.endswith(".weight")
-        ):
-            is_required_by.add(module_name + ".weight")
-        return is_required_by
 
     def create_config(self) -> QuantizationConfig:
         return QuantizationConfig(

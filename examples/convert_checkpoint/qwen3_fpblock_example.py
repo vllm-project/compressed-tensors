@@ -16,8 +16,8 @@ convert_checkpoint(
     converter=FP8BlockDequantizer(
         # qwen-community/Qwen3-4B-FP8's fp8-block-quantized layers, found by inspection
         targets=[
-            "re:.*mlp.*\.(gate_up|gate|up|down)_proj$",
-            "re:.*self_attn.*\.(q|k|v|o)_proj$",
+            r"re:.*mlp.*\.(gate_up|gate|up|down)_proj$",
+            r"re:.*self_attn.*\.(q|k|v|o)_proj$",
         ],
         weight_block_size=[128, 128],
     ),

@@ -7,9 +7,10 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Protocol
 
 import torch
+from compressed_tensors.utils.safetensors_load import InverseWeightMap
 
 
-__all__ = ["Converter", "build_inverse_weights_map"]
+__all__ = ["Converter", "build_inverse_weight_maps"]
 
 if TYPE_CHECKING:
     from compressed_tensors.quantization import QuantizationConfig
@@ -57,24 +58,17 @@ class Converter(Protocol):
     def requires(self, weight_name: str) -> set[str]:
         """
         Given a weight name, return the set of all weight names required in order
-        to process weight_name correctly
-        """
-        pass
-
-    def is_required_by(self, weight_name: str) -> set[str]:
-        """
-        Given a weight name, return the set of all weight names that require
-        weight_name, in order for them to be processed correctly
+        to process weight_name correctly.
+        If there is no dependency, an empty set is returned.
         """
         pass
 
 
-def build_inverse_weights_map(
-    shard_name: str,
+def build_inverse_weight_maps(
     weight_map: dict[str, str],
     model_files: dict[str, str],
     converters: list[Converter],
-) -> dict[str, list[str]]:
+) -> dict[str, InverseWeightMap]:
     """
     For a given output shard, precompute exactly which tensors to load from
     which source files — including required partner tensors from other shards.
@@ -96,35 +90,41 @@ def build_inverse_weights_map(
                 if require not in current_requires:
                     current_requires.add(require)
                     get_recursive_requires(require, converters, current_requires)
+
         return current_requires
 
-    inverse_weights_map: dict[str, list[str]] = defaultdict(list)
+    # map of weight name -> set of weights required to process this weight
+    weight_requires_dict: dict[str, set[str]] = defaultdict(set)
     for weight_name, weight_shard_name in weight_map.items():
-        if weight_shard_name != shard_name:
-            continue
+        weight_requires_dict[weight_name] = get_recursive_requires(
+            weight_name, converters, set()
+        )
+        assert (
+            weight_name not in weight_requires_dict[weight_name]
+        ), f"{weight_name} found in requires {weight_requires_dict[weight_name]}"
 
-        if any([converter.is_required_by(weight_name) for converter in converters]):
+    # set of all weights that are dependencies (i.e. required by a primary weight)
+    dependency_weights: set[str] = set()
+    for values in weight_requires_dict.values():
+        for value in values:
+            dependency_weights.add(value)
+
+    inverse_weight_maps: dict[str, InverseWeightMap] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for weight_name, weight_shard_name in weight_map.items():
+        if weight_name in dependency_weights:
             # weight is a partner to some other primary tensor, skip it
             continue
 
-        requires = get_recursive_requires(weight_name, converters, {})
-        if any(
-            [
-                converter.is_required_by(name)
-                for name in requires
-                for converter in converters
-            ]
-        ):
-            # weight's required partner is required by another converter, skip it
-            continue
+        # weight is purely a primary weight, is not a dependency of anything
+        # add it and all its required weights
+        inverse_weight_map: InverseWeightMap = inverse_weight_maps[weight_shard_name]
+        required_weights = weight_requires_dict[weight_name]
+        for weight_to_add_name in [weight_name, *required_weights]:
+            weight_to_add_shard_name = weight_map[weight_to_add_name]
+            resolved_path = model_files.get(weight_to_add_shard_name)
+            inverse_weight_map[resolved_path].append(weight_to_add_name)
 
-        # if weight or its dependencies are not required by any tensor,
-        # include it and all its requirements
-        resolved_path = model_files.get(weight_shard_name)
-        inverse_weights_map[resolved_path].append(weight_name)
-
-        for require in requires:
-            resolved_path = model_files.get(weight_map[require])
-            inverse_weights_map[resolved_path].append(require)
-
-    return dict(inverse_weights_map)
+    # return dicts, not defaultdicts
+    return {k: dict(v) for k, v in inverse_weight_maps.items()}

@@ -24,7 +24,8 @@ __all__ = [
     "get_nested_weight_mappings",
     "get_quantization_parameter_to_path_mapping",
     "get_file_map",
-    "load_tensors_from_inverse_weights_map",
+    "InverseWeightMap",
+    "load_tensors_from_inverse_weight_map",
     "is_quantization_param",
     "find_config_path",
     "find_safetensors_index_path",
@@ -402,17 +403,25 @@ def get_file_map(weight_map: WeightMappingType) -> dict[str, list[str]]:
     return dict(file_map)
 
 
-def load_tensors_from_inverse_weights_map(
-    inverse_weights_map: dict[str, list[str] | None],
+InverseWeightMap = dict[str, list[str] | None]
+"""
+Mapping of absolute path -> list of tensors. Used to pull tensors across different
+safetensors files that must be loaded/processed together. Used in conjunction
+with `load_tensors_from_inverse_weight_map`
+"""
+
+
+def load_tensors_from_inverse_weight_map(
+    inverse_weight_map: InverseWeightMap,
     device: str | torch.device = torch.device("cpu"),
 ) -> dict[str, torch.Tensor]:
     """
-    Given an inverse_weights_map, which is a dictionary of file name to list of
+    Given an inverse_weight_map, which is a dictionary of file name to list of
     tensor names, load up all listed tensor names
 
-    :param inverse_weights_map: mapping of resolved source file path ->
+    :param inverse_weight_map: mapping of resolved source file path ->
         list of tensor names to load from that file. Precomputed by
-        build_inverse_weights_map() in the job-building phase.
+        build_inverse_weight_map() in the job-building phase.
         If list is empty, all tensors are pulled
         Example: {"/path/shard0.safetensors": ["q_proj.weight"],
                   "/path/shard1.safetensors": ["k_proj.weight", "v_proj.weight"]}
@@ -422,7 +431,7 @@ def load_tensors_from_inverse_weights_map(
         Example: {"q_proj.weight": torch.Tensor(...), "k_proj.weight: torch.Tensor(...)}
     """
     tensors: dict[str, torch.Tensor] = {}
-    for source_file, tensor_names in inverse_weights_map.items():
+    for source_file, tensor_names in inverse_weight_map.items():
         with safe_open(source_file, framework="pt", device=str(device)) as f:
             keys = f.keys()
             # if tensor_names is empty, pull all tensors
