@@ -99,7 +99,7 @@ def build_inverse_weight_maps(
 
         return current_deps
 
-    # map of weight name -> set of weights required to process this weight
+    # map of weight name -> ( map of dependency name -> is_required )
     weight_deps_dict: dict[str, set[str]] = defaultdict(set)
     for weight_name, weight_shard_name in weight_map.items():
         weight_deps_dict[weight_name] = get_dependencies_recursive(
@@ -109,22 +109,22 @@ def build_inverse_weight_maps(
             weight_name not in weight_deps_dict[weight_name]
         ), f"{weight_name} found in dependencies {weight_deps_dict[weight_name]}"
 
-    # set of all weights that are dependencies (i.e. required by a primary weight)
-    dependency_weights: set[str] = set()
+    # set of all dependencies (i.e. all weight names required by another)
+    all_dependencies: set[str] = set()
     for values in weight_deps_dict.values():
         for value in values:
-            dependency_weights.add(value)
+            all_dependencies.add(value)
 
     inverse_weight_maps: dict[str, InverseWeightMap] = defaultdict(
         lambda: defaultdict(list)
     )
     for weight_name, weight_shard_name in weight_map.items():
-        if weight_name in dependency_weights:
+        if weight_name in all_dependencies:
             # weight is a partner to some other primary tensor, skip it
             continue
 
         # weight is purely a primary weight, is not a dependency of anything
-        # add it and all its required weights
+        # add it and all its dependencies
         inverse_weight_map: InverseWeightMap = inverse_weight_maps[weight_shard_name]
         dependency_weights = weight_deps_dict[weight_name]
         for weight_to_add_name, is_required in [
@@ -142,5 +142,5 @@ def build_inverse_weight_maps(
             resolved_path = model_files.get(weight_to_add_shard_name)
             inverse_weight_map[resolved_path].append(weight_to_add_name)
 
-    # return dicts, not defaultdicts
+    # return dicts, not defaultdicts, to avoid silent errors
     return {k: dict(v) for k, v in inverse_weight_maps.items()}
