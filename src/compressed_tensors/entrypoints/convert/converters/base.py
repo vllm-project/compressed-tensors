@@ -55,11 +55,17 @@ class Converter(Protocol):
         """
         pass
 
-    def requires(self, weight_name: str) -> set[str]:
+    def get_dependencies(self, weight_name: str) -> dict[str, bool]:
         """
-        Given a weight name, return the set of all weight names required in order
-        to process weight_name correctly.
-        If there is no dependency, an empty set is returned.
+        Given a weight name, return a dictionary of all dependency weight names:
+        weight_name -> is_required
+        in order to process weight_name correctly.
+        If a dependency is optional, the value associated with the key should be False.
+        If the value is True, it is assumed the weight is required and will error out
+        during the job build phase if not found.
+        If there are no dependencies, an empty dict should be returned.
+
+        :returns: dict[str, bool] {dependency weight name -> whether it is required}
         """
         pass
 
@@ -82,30 +88,30 @@ def build_inverse_weight_maps(
     :return: {resolved_file_path: [tensor_names_to_load]}
     """
 
-    def get_recursive_requires(
-        weight_name: str, converters: list[Converter], current_requires: set[str]
-    ) -> tuple[set[str], set[str]]:
+    def get_dependencies_recursive(
+        weight_name: str, converters: list[Converter], current_deps: dict[str, bool]
+    ) -> dict[str, bool]:
         for converter in converters:
-            for require in converter.requires(weight_name):
-                if require not in current_requires:
-                    current_requires.add(require)
-                    get_recursive_requires(require, converters, current_requires)
+            for dep, is_required in converter.get_dependencies(weight_name).items():
+                if dep not in current_deps:
+                    current_deps[dep] = is_required
+                    get_dependencies_recursive(dep, converters, current_deps)
 
-        return current_requires
+        return current_deps
 
     # map of weight name -> set of weights required to process this weight
-    weight_requires_dict: dict[str, set[str]] = defaultdict(set)
+    weight_deps_dict: dict[str, set[str]] = defaultdict(set)
     for weight_name, weight_shard_name in weight_map.items():
-        weight_requires_dict[weight_name] = get_recursive_requires(
-            weight_name, converters, set()
+        weight_deps_dict[weight_name] = get_dependencies_recursive(
+            weight_name, converters, {}
         )
         assert (
-            weight_name not in weight_requires_dict[weight_name]
-        ), f"{weight_name} found in requires {weight_requires_dict[weight_name]}"
+            weight_name not in weight_deps_dict[weight_name]
+        ), f"{weight_name} found in dependencies {weight_deps_dict[weight_name]}"
 
     # set of all weights that are dependencies (i.e. required by a primary weight)
     dependency_weights: set[str] = set()
-    for values in weight_requires_dict.values():
+    for values in weight_deps_dict.values():
         for value in values:
             dependency_weights.add(value)
 
@@ -120,8 +126,18 @@ def build_inverse_weight_maps(
         # weight is purely a primary weight, is not a dependency of anything
         # add it and all its required weights
         inverse_weight_map: InverseWeightMap = inverse_weight_maps[weight_shard_name]
-        required_weights = weight_requires_dict[weight_name]
-        for weight_to_add_name in [weight_name, *required_weights]:
+        dependency_weights = weight_deps_dict[weight_name]
+        for weight_to_add_name, is_required in [
+            (weight_name, True),
+            *dependency_weights.items(),
+        ]:
+            if weight_to_add_name not in weight_map:
+                if is_required:
+                    raise ValueError(
+                        f"Required weight {weight_to_add_name} not found in weight map"
+                    )
+                else:
+                    continue
             weight_to_add_shard_name = weight_map[weight_to_add_name]
             resolved_path = model_files.get(weight_to_add_shard_name)
             inverse_weight_map[resolved_path].append(weight_to_add_name)

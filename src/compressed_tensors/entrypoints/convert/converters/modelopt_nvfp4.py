@@ -107,22 +107,28 @@ class ModelOptNvfp4Converter(Converter):
             if param_name in disallowed_names:
                 raise ValueError(f"Hit unexpected non-targeted tensor {name}")
 
-    def requires(self, weight_name: str) -> set[str]:
+    def get_dependencies(self, weight_name: str) -> dict[str, bool]:
         module_name, suffix = weight_name.rsplit(".", 1)
-        requires = set()
         if (
             any([match_name(module_name, target) for target in self.targets])
             and not any([match_name(module_name, ignore) for ignore in self.ignore])
             and suffix == "weight"
         ):
-            requires.add(module_name + ".input_scale")
-            requires.add(module_name + ".weight_scale")
-            requires.add(module_name + ".weight_scale_2")
+            deps = {
+                f"{module_name}.input_scale": True,
+                f"{module_name}.weight_scale": True,
+                f"{module_name}.weight_scale_2": True,
+            }
 
             if self.kv_cache_scheme:
-                requires.add(module_name + ".k_scale")
-                requires.add(module_name + ".v_scale")
-        return requires
+                deps |= {
+                    f"{module_name}.k_scale": False,
+                    f"{module_name}.v_scale": False,
+                }
+
+            return deps
+
+        return {}
 
     def create_config(self) -> QuantizationConfig:
         return QuantizationConfig(

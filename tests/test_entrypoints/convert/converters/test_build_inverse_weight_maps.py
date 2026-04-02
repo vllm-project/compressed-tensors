@@ -9,10 +9,8 @@ from compressed_tensors.entrypoints.convert import (
     FP8BlockDequantizer,
     build_inverse_weight_maps,
 )
-from safetensors.torch import load_file, save_file
-from compressed_tensors.utils.safetensors_load import (
-    get_checkpoint_files,
-)
+from compressed_tensors.utils.safetensors_load import get_checkpoint_files
+from safetensors.torch import save_file
 
 
 @pytest.mark.unit
@@ -110,7 +108,7 @@ def test_build_inverse_weight_maps(tmp_path):
     all_weight_names = set(weight_map.keys())
     assert (
         seen_weight_names >= all_weight_names
-    ), f"Some weights are missing, {all_weight_names-seen_weight_names}"
+    ), f"Some weights are missing, {all_weight_names - seen_weight_names}"
     assert (
         all_weight_names >= seen_weight_names
-    ), f"Some weights are added that are not included, {seen_weight_names-all_weight_names}"
+    ), f"Extraneous weights added, {seen_weight_names - all_weight_names}"
