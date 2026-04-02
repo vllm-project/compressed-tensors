@@ -124,7 +124,7 @@ def exec_jobs(
     # For easier debugging, don't run single-threaded jobs via ThreadPoolExecutor
     if max_workers == 1:
         for job in tqdm.tqdm(jobs, desc=desc):
-            results.append([job[0](*job[1:])])
+            results.append(job[0](*job[1:]))
         return results
 
     with ThreadPoolExecutor(max_workers) as executor:
