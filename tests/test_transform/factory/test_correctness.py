@@ -3,7 +3,7 @@
 
 import pytest
 import torch
-from compressed_tensors.offload import offload_model
+from compressed_tensors.offload import set_onload_device
 from compressed_tensors.transform import (
     TransformArgs,
     TransformConfig,
@@ -87,7 +87,7 @@ def test_correctness_model(type, randomize, input_batch_size, model_apply, offlo
     # load model
     model = model_apply[0]
     if offload:
-        offload_model(model, torch.device("cuda"))
+        set_onload_device(model, torch.device("cuda"))
 
     # get output
     input = torch.rand((input_batch_size, 5, model.fcs[0].in_features))
