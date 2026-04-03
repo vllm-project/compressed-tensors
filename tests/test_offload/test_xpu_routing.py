@@ -17,10 +17,7 @@ import pytest
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.cache.device import DeviceCache
-from compressed_tensors.offload.convert.helpers import (
-    is_accelerator_type,
-    norm_device,
-)
+from compressed_tensors.offload.convert.helpers import is_accelerator_type, norm_device
 
 
 @pytest.fixture

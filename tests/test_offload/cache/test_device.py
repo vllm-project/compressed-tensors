@@ -19,7 +19,9 @@ from tests.test_offload.cache.helpers import (
 from tests.test_offload.conftest import assert_device_equal
 from tests.testing_utils import requires_gpu
 
+
 _CUR_DEVICE_TYPE = torch.accelerator.current_accelerator().type
+
 
 @pytest.fixture()
 def onload_device():
