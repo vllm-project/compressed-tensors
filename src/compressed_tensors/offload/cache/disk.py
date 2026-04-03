@@ -66,13 +66,23 @@ class DiskCache(OffloadCache):
         weight_info = self.index[offloaded]
         device = _get_safe_open_device(self.onload_device)
 
-        with safe_open(
-            weight_info["safetensors_file"], framework="pt", device=device
-        ) as file:
-            onloaded = file.get_tensor(weight_info["weight_name"])
-            onloaded = to_tensor(onloaded, offloaded)
-            onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
-            return onloaded
+        try:
+            with safe_open(
+                weight_info["safetensors_file"], framework="pt", device=device
+            ) as file:
+                onloaded = file.get_tensor(weight_info["weight_name"])
+        except Exception:
+            # Fallback: safetensors may not recognise all accelerator device
+            # strings (e.g. "xpu").  Load to CPU, then move.
+            with safe_open(
+                weight_info["safetensors_file"], framework="pt", device="cpu"
+            ) as file:
+                onloaded = file.get_tensor(weight_info["weight_name"])
+            onloaded = onloaded.to(self.onload_device)
+
+        onloaded = to_tensor(onloaded, offloaded)
+        onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
+        return onloaded
 
     def offload(
         self, tensor: torch.Tensor | None, offloaded: Optional[torch.Tensor] = None
@@ -170,15 +180,18 @@ class DiskCache(OffloadCache):
 def _get_safe_open_device(device: "DeviceLikeType") -> str | int:
     """
     `safetensors.safe_open` does not accept `torch.device` as argument, so
-    we must convert from torch.device to a string, while considering "cuda" resolution
+    we must convert from torch.device to a string, while considering accelerator
+    device index resolution.
 
     :param device: torch device to convert
     :return: device argument to `safetensors.safe_open`
     """
+    from compressed_tensors.offload.convert.helpers import is_accelerator_type
+
     device = torch.device(device)
-    if device.type in ("cuda"):
+    if is_accelerator_type(device.type):
         if device.index is None:
-            return torch.cuda.current_device()
+            return torch.accelerator.current_device_index()
         else:
             return device.index
     else:

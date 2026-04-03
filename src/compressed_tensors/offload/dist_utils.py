@@ -29,10 +29,10 @@ def init_dist():
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
 
-    device = torch.device(f"cuda:{local_rank}")
-    torch.cuda.set_device(device)
+    device = torch.device(torch.accelerator.current_accelerator().type, local_rank)
+    torch.accelerator.set_device_index(device)
     dist.init_process_group(
-        backend="nccl",
+        backend=dist.get_default_backend_for_device(device),
         init_method="env://",
         rank=rank,
         world_size=world_size,
