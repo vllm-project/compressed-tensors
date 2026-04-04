@@ -28,8 +28,8 @@ class DistributedCPUCache(CPUCache):
         tensor = tensor.contiguous()
 
         if dist.get_rank() == 0:
-            tensor = super().offload(tensor)
-            tensor = tensor.share_memory_()
+            # create shared memory cpu tensor
+            tensor = super().offload(tensor).share_memory_()
             handle, filename, nbytes = tensor.untyped_storage()._share_filename_cpu_()
             broadcast_obj = [handle, filename, nbytes]
         else:
