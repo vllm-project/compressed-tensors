@@ -46,8 +46,8 @@ class FP8BlockDequantizer(Converter):
             param_name = name.rsplit(".", 1)[-1]
 
             if param_name == "weight":
-                # weight * weight_scale_inv -> weight bfloat16
-                tensors[f"{module_name}.weight"] = self._create_bfloat16_weight(
+                # weight * weight_scale_inv -> dequantized weight
+                tensors[f"{module_name}.weight"] = self._create_dequantized_weight(
                     tensors[f"{module_name}.weight"],
                     tensors[f"{module_name}.weight_scale_inv"],
                 )
