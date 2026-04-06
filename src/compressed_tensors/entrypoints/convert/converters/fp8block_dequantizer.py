@@ -95,15 +95,15 @@ class FP8BlockDequantizer(Converter):
     def create_config(self) -> QuantizationConfig | None:
         return None
 
-    def get_dependencies(self, weight_name: str) -> dict[str, bool]:
+    def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, suffix = weight_name.rsplit(".", 1)
         if (
             any([match_name(module_name, target) for target in self.targets])
             and not any([match_name(module_name, ignore) for ignore in self.ignore])
             and suffix == "weight"
         ):
-            return {f"{module_name}.weight_scale_inv": True}
-        return {}
+            return set(f"{module_name}.weight_scale_inv")
+        return set()
 
     def _create_dequantized_weight(
         self, weight: torch.Tensor, weight_scale_inv: torch.Tensor

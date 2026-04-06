@@ -55,16 +55,13 @@ class Converter(Protocol):
         """
         raise NotImplementedError()
 
-    def get_dependencies(self, weight_name: str) -> dict[str, bool]:
+    def get_dependencies(self, weight_name: str) -> set[str]:
         """
-        Given a weight name, return a dictionary of all dependency weight names, so that
+        Given a weight name, return a set of all dependency weight names, so that
         weights can be processed correctly and in a parallelized fashion.
-        If a dependency is optional, the value associated with the key should be False.
-        If the value is True, it is assumed the weight is required and will error out
-        during the job build phase if not found.
         If there are no dependencies, an empty dict should be returned.
 
-        :returns: dict[str, bool] {dependency weight name -> whether it is required}
+        :returns: set[str] of dependency weight names
         """
         raise NotImplementedError()
 
