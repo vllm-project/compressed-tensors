@@ -86,3 +86,5 @@ def wait_for_comms(pending_comms: Iterable[dist.Work]) -> None:
     """
     for comm in pending_comms:
         comm.wait()
+
+    pending_comms.clear()

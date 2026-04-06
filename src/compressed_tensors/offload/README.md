@@ -524,9 +524,13 @@ For non-offloaded modules: moves tensors manually and restores them on exit.
 
 Returns `True` if `torch.distributed` is available and has been initialized.
 
-#### `is_source_process() → bool`
+#### `is_rank0() → bool`
 
 Returns `True` if not in a distributed context, or if the current process is the source rank (typically rank 0).
+
+!!! warning
+This argument is deprecated, please use `compressed_tensors.distributed.utils.is_source_process`.
+!!!
 
 #### `init_dist()`
 
