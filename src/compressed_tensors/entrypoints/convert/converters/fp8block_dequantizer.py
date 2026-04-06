@@ -16,7 +16,7 @@ from loguru import logger
 class FP8BlockDequantizer(Converter):
     """
     Dequantize a checkpoint that has been block-quantized with FP8 quant_method
-    The resultant weights will be stored in bfloat16
+    The resultant weights will be stored in user-provided dtype
     """
 
     def __init__(
@@ -24,10 +24,12 @@ class FP8BlockDequantizer(Converter):
         ignore: Iterable[str] = tuple(),
         targets: Iterable[str] = tuple(),
         weight_block_size: tuple[int] = (128, 128),
+        dtype=torch.bfloat16,
     ):
         self.ignore = ignore
         self.targets = targets
         self.weight_block_size = weight_block_size
+        self.dtype = dtype
 
     def process(self, tensors: dict[str, torch.Tensor]):
         """
@@ -105,16 +107,15 @@ class FP8BlockDequantizer(Converter):
             return {f"{module_name}.weight_scale_inv": True}
         return {}
 
-    def _create_bfloat16_weight(
+    def _create_dequantized_weight(
         self, weight: torch.Tensor, weight_scale_inv: torch.Tensor
     ) -> torch.Tensor:
         """
         Convert fp8 weight and fp32 weight_scale_inv tensors into
-        corresponding bfloat16 weight tensor.
+        corresponding deuqnatized weight tensor.
         Tensors are upscaled to fp32 before scaling
 
-        :return: weight tensor with dtype bfloat16 that has the
-        same shape as weight
+        :return: dequantized tensor in self.dtype and same shape as input weight tensor
         """
         original_shape = weight.shape
         block_height, block_width = self.weight_block_size
@@ -144,7 +145,7 @@ class FP8BlockDequantizer(Converter):
         # Dequantize: weight_bf16 = weight_fp8 * weight_scale_inv
         dequantized_blocks = (
             weight_blocks.to(torch.float32) * scale_inv_expanded.to(torch.float32)
-        ).to(torch.bfloat16)
+        ).to(self.dtype)
 
         # Restore padded shape
         dequantized = dequantized_blocks.transpose(1, 2).reshape(padded_shape)
