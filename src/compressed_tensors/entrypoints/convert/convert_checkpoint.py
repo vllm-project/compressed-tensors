@@ -11,14 +11,12 @@ import tqdm
 from compressed_tensors.entrypoints.convert.convert_file import (
     convert_file,
     validate_file,
+    write_checkpoint_quantization_config,
 )
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.entrypoints.convert.file_utils import (
+from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
     is_weights_file,
-)
-from compressed_tensors.entrypoints.convert.save_utils import (
-    update_config,
     update_safetensors_index,
 )
 from loguru import logger
@@ -79,7 +77,7 @@ def convert_checkpoint(
         weight_map.update(_weight_map)
 
     # 5. update config and safetensors index
-    update_config(save_directory, converter)
+    write_checkpoint_quantization_config(save_directory, converter)
     update_safetensors_index(save_directory, total_size, weight_map)
 
 

@@ -17,12 +17,14 @@ from compressed_tensors.offload.utils import (
 )
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
+from compressed_tensors.utils.helpers import deprecated
 from loguru import logger
 from torch._prims_common import DeviceLikeType
 from transformers import PreTrainedModel
 
 
 __all__ = [
+    "set_onload_device",
     "offload_model",
     "dispatch_with_map",
     "get_device_map",
@@ -36,28 +38,19 @@ ModelType = TypeVar("ModelType", bound=torch.nn.Module)
 DeviceMap = dict[str, tuple[torch.device | None, torch.device | str | None]]
 
 
-def offload_model(
+def set_onload_device(
     model: ModelType,
-    onload_device: DeviceLikeType,
-    offload_device: Any = None,
+    onload_device: torch.device | str,
 ) -> ModelType:
     """
     Modify the dispatch of a model to onload to the provided `onload_device`. Existing
-    offloaded tensors will not be modified. If a module is not offloaded, it will be
-    offloaded to the provided `offload_device`.
+    offloaded tensors will not be modified. If a module is not already offloaded, it
+    will be offloaded to its current device.
 
     :param model: model to dispatch
     :param onload_device: device to move weights to during forward pass
-    :param offload_device: device to offload weights to, if not already offloaded
     :return: dispatched model
     """
-    if offload_device is not None:
-        logger.warning(
-            "`offload_model` now keeps the same offload device that model was loaded "
-            "on. Please specify offload by loading the model on its offload device(s)"
-        )
-
-    # offload modules in place
     for module in model.modules():
         if isinstance(module._parameters, OffloadCache):
             module._parameters.onload_device = onload_device
@@ -67,6 +60,19 @@ def offload_model(
             offload_module(module, onload_device, offload_device)
 
     return model
+
+
+@deprecated("set_onload_device")
+def offload_model(
+    model: ModelType,
+    onload_device: torch.device | str,
+    offload_device: Any = None,
+) -> ModelType:
+    """
+    .. deprecated::
+        Use :func:`set_onload_device` instead.
+    """
+    return set_onload_device(model, onload_device)
 
 
 def dispatch_with_map(

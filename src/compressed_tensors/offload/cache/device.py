@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
@@ -16,14 +16,14 @@ class DeviceCache(OffloadCache):
 
     def __init__(
         self,
-        onload_device: DeviceLikeType,
-        offload_device: Optional[DeviceLikeType | Literal["disk"]] = None,
+        onload_device: "DeviceLikeType",
+        offload_device: Optional["DeviceLikeType | Literal['disk']"] = None,
     ):
-        if offload_device is None:
-            offload_device = onload_device
-
-        self.offload_device = offload_device
-        super().__init__(onload_device, offload_device)
+        super().__init__(onload_device, offload_device=offload_device)
+        if offload_device is not None:
+            self.offload_device = torch.device(offload_device)
+        else:
+            self.offload_device = self.onload_device
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """

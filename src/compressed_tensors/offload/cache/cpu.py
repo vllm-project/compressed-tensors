@@ -16,12 +16,8 @@ class CPUCache(OffloadCache):
 
     offload_device = torch.device("cpu")
 
-    def __init__(
-        self,
-        onload_device: DeviceLikeType,
-        offload_device: Optional[DeviceLikeType | Literal["disk"]] = None,
-    ):
-        super().__init__(onload_device, offload_device)
+    def __init__(self, onload_device: torch.device | str, offload_device=None):
+        super().__init__(onload_device, offload_device=offload_device)
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """

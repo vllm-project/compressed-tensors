@@ -11,6 +11,11 @@ from compressed_tensors.quantization.lifecycle.forward import (
     forward_quantize,
     set_forward_quantized,
 )
+from compressed_tensors.quantization.lifecycle.forward_helpers import (
+    _dequantize,
+    _quantize,
+    _quantize_dequantize,
+)
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
 )
@@ -599,3 +604,64 @@ def test_process_quantization_block_non_divisible_values(
     assert torch.allclose(
         out_val, x_val, atol=1e-6
     ), f"Values mismatch for 0.5: got min={out_val.min()}, max={out_val.max()}"
+
+
+@pytest.mark.parametrize(
+    "num_bits,type,symmetric,global_scale",
+    [
+        (8, "int", True, None),
+        (8, "int", False, None),
+        (4, "int", True, None),
+        (8, "float", True, None),
+        (8, "float", True, torch.tensor([2.0])),
+        (8, "int", False, torch.tensor([2.0])),
+    ],
+)
+def test_quantize_dequantize_matches_sequential(
+    num_bits, type, symmetric, global_scale
+):
+    """Verify that the fused _quantize_dequantize produces identical output
+    to calling _quantize then _dequantize sequentially."""
+    args = QuantizationArgs(
+        num_bits=num_bits,
+        type=type,
+        symmetric=symmetric,
+        strategy=QuantizationStrategy.TENSOR,
+    )
+    q_min, q_max = calculate_range(args, torch.device("cpu"))
+
+    x = torch.randn(512, 1024)
+    scale = torch.rand(1) * 0.01 + 0.001
+    zero_point = None if symmetric else torch.tensor([3.0])
+
+    # sequential: quantize then dequantize
+    q = _quantize(
+        x=x,
+        scale=scale,
+        zero_point=zero_point,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        global_scale=global_scale,
+    )
+    sequential_out = _dequantize(
+        x_q=q,
+        scale=scale,
+        zero_point=zero_point,
+        global_scale=global_scale,
+    )
+
+    # fused
+    fused_out = _quantize_dequantize(
+        x=x,
+        scale=scale,
+        zero_point=zero_point,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        global_scale=global_scale,
+    )
+
+    assert torch.equal(
+        sequential_out, fused_out
+    ), f"Mismatch: max diff = {(sequential_out - fused_out).abs().max().item()}"

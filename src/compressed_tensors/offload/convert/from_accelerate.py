@@ -175,9 +175,13 @@ def _save_ct_index_entry(
     name: str,
     offloaded: torch.Tensor,
 ):
+    # already indexed from a previous round-trip (e.g. to_accelerate -> from_accelerate)
+    if offloaded in DiskCache.index:
+        return
+
     entry: dict = dataset.index[name]
 
-    if "safetensors_file" in entry and offloaded not in DiskCache.index:
+    if "safetensors_file" in entry:
         # typical case: model is loaded from safetensors file
         # create a symlink that points to the model safetensor file
         # if the value is ever updated, the symlink is broken and a real file

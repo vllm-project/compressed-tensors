@@ -8,7 +8,7 @@ import torch
 from compressed_tensors.offload import (
     disable_offloading,
     disable_onloading,
-    offload_model,
+    set_onload_device,
 )
 from compressed_tensors.transform import (
     TransformArgs,
@@ -31,7 +31,7 @@ def test_memory_sharing(type, randomize, requires_grad, offload):
     # load model (maybe with offloading)
     model = TransformableModel(2, 2, 4, 4, 8, 8)
     if offload:
-        offload_model(model, torch.device("cuda"))
+        set_onload_device(model, torch.device("cuda"))
 
     # add transforms to model
     config = TransformConfig(

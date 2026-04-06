@@ -2,8 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
-import tempfile
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
 from compressed_tensors.offload.cache import OffloadCache
@@ -37,11 +36,19 @@ class DiskCache(OffloadCache):
     def __init__(
         self,
         onload_device: torch.device,
-        offload_device: Optional[DeviceLikeType | Literal["disk"]] = None,
+        offload_device: Optional["DeviceLikeType | Literal['disk']"] = None,
         offload_dir: Optional[str] = None,
     ):
-        super().__init__(onload_device, offload_device)
-        self.offload_dir = offload_dir or tempfile.mkdtemp()
+        super().__init__(onload_device, offload_device=offload_device)
+        if offload_device is not None:
+            assert str(offload_device) == str(self.offload_device)
+
+        if offload_dir is None:
+            raise ValueError(
+                "Must provide an `offload_dir` to perform disk offloading "
+                "(add `offload_folder` argument to `from_pretrained`)"
+            )
+        self.offload_dir = offload_dir
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
@@ -155,7 +162,11 @@ class DiskCache(OffloadCache):
         """
         assert offloaded.device.type == "meta"
         assert is_rank0(), "Must call on rank 0 to avoid id collisions between ranks"
-        offload_dir = offload_dir or tempfile.mkdtemp()
+        if offload_dir is None:
+            raise ValueError(
+                "Must provide an `offload_dir` to perform disk offloading "
+                "(add `offload_folder` argument to `from_pretrained`)"
+            )
         file_name = f"{cls._new_file_prefix}{id(offloaded)}.safetensors"
         file_path = os.path.join(offload_dir, file_name)
 

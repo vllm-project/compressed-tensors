@@ -15,37 +15,42 @@ from tests.test_offload.cache.helpers import (
     _test_onloading,
     _test_shared_attributes,
     _test_tensor_subclass,
-    _test_update_offload,
 )
 from tests.test_offload.conftest import assert_device_equal
 from tests.testing_utils import requires_gpu
 
 
-ONLOAD_DEVICE = torch.device("cuda")
-OFFLOAD_DEVICE = torch.device("cuda")
+@pytest.fixture()
+def onload_device():
+    return torch.device("cuda")
+
+
+@pytest.fixture()
+def offload_device():
+    return torch.device("cuda")
 
 
 @pytest.mark.unit
 @requires_gpu
-def test_delete():
-    _test_delete(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_delete(offload_device, onload_device, offload_cache):
+    _test_delete(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu
-def test_disable_offloading():
+def test_disable_offloading(onload_device):
     # unlike other device caches, the onload is not garbage collected
-    cache = DeviceCache(ONLOAD_DEVICE)
+    cache = DeviceCache(onload_device)
     cache["weight"] = torch.ones(10)
 
     outside_onloaded = cache["weight"]
     outside_onloaded_ref = ref(outside_onloaded)
-    assert_device_equal(outside_onloaded.device, ONLOAD_DEVICE)
+    assert_device_equal(outside_onloaded.device, onload_device)
 
     with cache.disable_offloading():
         inside_onloaded = cache["weight"]
         inside_onloaded_ref = ref(inside_onloaded)
-        assert_device_equal(inside_onloaded.device, ONLOAD_DEVICE)
+        assert_device_equal(inside_onloaded.device, onload_device)
 
         del outside_onloaded
         del inside_onloaded
@@ -60,15 +65,15 @@ def test_disable_offloading():
 
 @pytest.mark.unit
 @requires_gpu
-def test_disable_onloading():
-    _test_disable_onloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_disable_onloading(offload_device, onload_device, offload_cache):
+    _test_disable_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu
-def test_garbage_collect():
+def test_garbage_collect(onload_device):
     # unlike other device caches, the onload is not garbage collected
-    cache = DeviceCache(ONLOAD_DEVICE)
+    cache = DeviceCache(onload_device)
     cache["weight"] = torch.ones(10)
     onloaded = cache["weight"]
 
@@ -80,36 +85,30 @@ def test_garbage_collect():
 
 @pytest.mark.unit
 @requires_gpu
-def test_offload():
-    _test_offload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_offload(offload_device, onload_device, offload_cache):
+    _test_offload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu
 @requires_gpu
-def test_onload():
-    _test_onload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_onload(offload_device, onload_device, offload_cache):
+    _test_onload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu
-def test_onloading():
-    _test_onloading(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_onloading(offload_device, onload_device, offload_cache):
+    _test_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu
-def test_shared_attributes():
-    _test_shared_attributes(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_shared_attributes(offload_device, onload_device, offload_cache):
+    _test_shared_attributes(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu
-def test_tensor_subclass():
-    _test_tensor_subclass(OFFLOAD_DEVICE, ONLOAD_DEVICE)
-
-
-@pytest.mark.unit
-@requires_gpu
-def test_update_offload():
-    _test_update_offload(OFFLOAD_DEVICE, ONLOAD_DEVICE)
+def test_tensor_subclass(offload_device, onload_device, offload_cache):
+    _test_tensor_subclass(offload_device, onload_device, offload_cache)
