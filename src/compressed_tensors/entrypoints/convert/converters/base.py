@@ -34,7 +34,7 @@ class Converter(Protocol):
         - `model.layers.0.self_attn.q_proj.weight`
         - `model.layers.0.mlp.up_proj.weight_packed`
         """
-        pass
+        raise NotImplementedError()
 
     def validate(self, tensors: dict[str, torch.Tensor]):
         """
@@ -44,7 +44,7 @@ class Converter(Protocol):
         :param tensors: dictionary of tensor name to tensor, as loaded from
         safetensors file.
         """
-        pass
+        raise NotImplementedError()
 
     def create_config(self) -> QuantizationConfig | None:
         """
@@ -53,7 +53,7 @@ class Converter(Protocol):
         If the converter is moving checkpoint to full-precision, have this function
         return None, and quantization_config will be removed from config.json
         """
-        pass
+        raise NotImplementedError()
 
     def get_dependencies(self, weight_name: str) -> dict[str, bool]:
         """
@@ -66,7 +66,7 @@ class Converter(Protocol):
 
         :returns: dict[str, bool] {dependency weight name -> whether it is required}
         """
-        pass
+        raise NotImplementedError()
 
 
 def build_inverse_weight_maps(
