@@ -138,7 +138,7 @@ def find_safetensors_index_file(model_files: dict[str, str]) -> str | None:
     :return: absolute path to the safetensors index file, or None if not found
     """
     for file_path, resolved_path in model_files.items():
-        if file_path.endswith("safetensors.index.json"):
+        if file_path.endswith(SAFE_WEIGHTS_INDEX_NAME):
             return resolved_path
 
     return None
