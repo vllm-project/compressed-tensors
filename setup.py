@@ -77,11 +77,11 @@ def _setup_packages() -> List:
     )
 
 def _setup_install_requires() -> List:
-    return ["torch>=1.7.0,<2.11", "transformers<5.0.0", "pydantic>=2.0", "loguru"]
+    return ["torch>=1.7.0,<2.11", "transformers>=4.45.0,<5.6", "pydantic>=2.0", "loguru"]
 
 def _setup_extras() -> Dict:
     return {
-        "dev": ["black==22.12.0", "isort==5.8.0", "wheel>=0.36.2", "flake8>=3.8.3", "pytest>=6.0.0", "nbconvert>=7.16.3", "transformers<5.0", "accelerate"],
+        "dev": ["black==22.12.0", "isort==5.8.0", "wheel>=0.36.2", "flake8>=3.8.3", "pytest>=6.0.0", "nbconvert>=7.16.3", "transformers>=4.45.0,<5.6", "accelerate"],
         "accelerate": ["accelerate"]
     }
 
