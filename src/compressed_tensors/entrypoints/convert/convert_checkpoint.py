@@ -19,7 +19,7 @@ from compressed_tensors.entrypoints.convert.converters import (
     build_inverse_weight_maps,
 )
 from compressed_tensors.utils.safetensors_load import (
-    find_safetensors_index_file,
+    get_weight_map,
     get_checkpoint_files,
     is_weights_file,
     update_safetensors_index,
@@ -57,9 +57,7 @@ def convert_checkpoint(
     model_files = get_checkpoint_files(model_stub)
 
     # Read weight map from safetensors.index.json
-    index_file = find_safetensors_index_file(model_files)
-    with open(index_file, "r") as f:
-        weight_map: dict[str, str] = json.load(f)["weight_map"]
+    weight_map = get_weight_map(model_files)
 
     # Build inverse_weight_maps, so that each job knows how to load up every necessary
     # weight and its dependencies

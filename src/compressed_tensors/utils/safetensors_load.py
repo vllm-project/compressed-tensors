@@ -30,6 +30,7 @@ __all__ = [
     "find_config_path",
     "find_safetensors_index_path",
     "find_safetensors_index_file",
+    "get_weight_map",
     "update_safetensors_index",
     "is_weights_file",
     "get_checkpoint_files",
@@ -80,9 +81,7 @@ def get_checkpoint_files(model_stub: str | os.PathLike) -> dict[str, str]:
     return {file_path: cached_file(model_stub, file_path) for file_path in file_paths}
 
 
-def _walk_directory_files(
-    root_dir: str, ignore: Iterable[str]
-) -> list[str]:
+def _walk_directory_files(root_dir: str, ignore: Iterable[str]) -> list[str]:
     """
     Return all file paths relative to root_dir, optionally skipping entries
     whose relative path starts with `ignore`.
@@ -142,6 +141,30 @@ def find_safetensors_index_file(model_files: dict[str, str]) -> str | None:
             return resolved_path
 
     return None
+
+
+def get_weight_map(model_files: dict[str, str]) -> dict[str, str]:
+    """
+    Get weight map from full list of model_files.
+    If safetensors index.json file is found, weight_map can be pulled from there.
+    Otherwise, it is created from the single safetensors weights file.
+
+    :returns: weight map of form {weight name -> safetensor file name}
+    """
+    index_file = find_safetensors_index_file(model_files)
+    if index_file is not None:
+        with open(index_file, "r") as f:
+            return json.load(f)["weight_map"]
+
+    # if no index_file, use model.saftensors instead.
+    if SAFE_WEIGHTS_NAME not in model_files:
+        raise ValueError(
+            f"File {SAFE_WEIGHTS_NAME} expected but not found in {model_files.keys()}"
+        )
+
+    # create from model.safetensors
+    with safe_open(model_files[SAFE_WEIGHTS_NAME], "r") as file:
+        return {tensor: SAFE_WEIGHTS_NAME for tensor in file.keys()}
 
 
 def update_safetensors_index(
