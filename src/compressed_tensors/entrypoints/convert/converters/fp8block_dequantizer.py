@@ -110,7 +110,7 @@ class FP8BlockDequantizer(Converter):
     ) -> torch.Tensor:
         """
         Convert fp8 weight and fp32 weight_scale_inv tensors into
-        corresponding deuqnatized weight tensor.
+        corresponding dequantized weight tensor.
         Tensors are upscaled to fp32 before scaling
 
         :return: dequantized tensor in self.dtype and same shape as input weight tensor
