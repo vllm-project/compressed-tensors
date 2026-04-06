@@ -76,6 +76,8 @@ class OffloadCache(MutableMapping, ABC):
                 return DeviceCache
             case (device, True) if is_accelerator_type(device):
                 return DistributedDeviceCache
+            case ("mps", False):
+                return DeviceCache
             case ("disk", False):
                 return DiskCache
             case ("disk", True):
