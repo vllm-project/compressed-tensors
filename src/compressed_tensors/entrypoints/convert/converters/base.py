@@ -135,7 +135,7 @@ def build_inverse_weight_maps(
                 else:
                     continue
             weight_to_add_shard_name = weight_map[weight_to_add_name]
-            resolved_path = model_files.get(weight_to_add_shard_name)
+            resolved_path = model_files[weight_to_add_shard_name]
             inverse_weight_map[resolved_path].append(weight_to_add_name)
 
     # return dicts, not defaultdicts, to avoid silent errors
