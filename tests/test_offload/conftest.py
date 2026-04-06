@@ -18,6 +18,16 @@ def assert_device_equal(
     device_a: torch.device | Literal["disk"],
     device_b: torch.device | Literal["disk"],
 ):
+    def _get_device_index(device: torch.device) -> int:
+        """Return the resolved device index, handling CUDA, MPS, and CPU."""
+        if device.index is not None:
+            return device.index
+        if device.type == "cuda":
+            return torch.cuda.current_device()
+
+        # MPS only has a single device (index 0); CPU has no meaningful index
+        return 0
+
     if device_a == "disk":
         device_a = torch.device("meta")
     if device_b == "disk":
