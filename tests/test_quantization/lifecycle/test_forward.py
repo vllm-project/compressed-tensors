@@ -6,13 +6,15 @@ import math
 import pytest
 import torch
 from compressed_tensors.quantization.lifecycle.forward import (
-    _dequantize,
     _process_quantization,
-    _quantize,
-    _quantize_dequantize,
     fake_quantize,
     forward_quantize,
     set_forward_quantized,
+)
+from compressed_tensors.quantization.lifecycle.forward_helpers import (
+    _dequantize,
+    _quantize,
+    _quantize_dequantize,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
