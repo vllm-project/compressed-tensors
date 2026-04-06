@@ -49,8 +49,11 @@ def write_checkpoint_quantization_config(
             config_data = json.load(file)
 
         if quant_config_data is None:
-            del config_data[QUANTIZATION_CONFIG_NAME]
+            # if no new quant config, make sure checkpoint quant config is empty
+            if QUANTIZATION_CONFIG_NAME in config_data:
+                del config_data[QUANTIZATION_CONFIG_NAME]
         else:
+            # if new quant config, overwrite checkpoint quant config
             config_data[QUANTIZATION_CONFIG_NAME] = quant_config_data
 
         with open(config_file_path, "w") as file:
