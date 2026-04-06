@@ -109,10 +109,7 @@ def build_inverse_weight_maps(
         ), f"{weight_name} found in dependencies {weight_deps_dict[weight_name]}"
 
     # set of all dependencies (i.e. all weight names required by another)
-    all_dependencies: set[str] = set()
-    for values in weight_deps_dict.values():
-        for value in values:
-            all_dependencies.add(value)
+    all_dependencies: set[str] = set().union(*weight_deps_dict.values())
 
     inverse_weight_maps: dict[str, InverseWeightMap] = defaultdict(
         lambda: defaultdict(list)
