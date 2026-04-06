@@ -99,7 +99,7 @@ def build_inverse_weight_maps(
         return current_deps
 
     # map of weight name -> ( map of dependency name -> is_required )
-    weight_deps_dict: dict[str, set[str]] = defaultdict(set)
+    weight_deps_dict: dict[str, set[str]] = dict()
     for weight_name, weight_shard_name in weight_map.items():
         weight_deps_dict[weight_name] = get_dependencies_recursive(
             weight_name, converters, {}
