@@ -81,7 +81,7 @@ def get_checkpoint_files(model_stub: str | os.PathLike) -> dict[str, str]:
 
 
 def _walk_directory_files(
-    root_dir: str, ignore: Iterable[str] | str = tuple()
+    root_dir: str, ignore: Iterable[str]
 ) -> list[str]:
     """
     Return all file paths relative to root_dir, optionally skipping entries
