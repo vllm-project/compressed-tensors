@@ -14,6 +14,7 @@ from compressed_tensors.offload.dispatch import (  # noqa: F401
     get_device_map,
     offload_model,
     remove_dispatch,
+    set_onload_device,
 )
 from compressed_tensors.offload.dist_utils import (
     as_broadcastable,
@@ -29,7 +30,8 @@ from compressed_tensors.utils.helpers import patch_attr
 
 __all__ = [
     # dispatch models
-    "offload_model",
+    "set_onload_device",
+    "offload_model",  # deprecated, use set_onload_device
     "dispatch_model",
     "remove_dispatch",
     "dispatch_with_map",
@@ -118,7 +120,15 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         # | Device    | Copy into local device      |
         # | --------- | --------------------------- |
         # all implementations update onloaded data if applicable
-        setattr(module, name, torch.nn.Parameter(data.data, requires_grad=False))
+        if name in module._parameters:
+            cache = module._parameters
+        elif name in module._buffers:
+            cache = module._buffers
+        else:
+            raise AttributeError(f"{type(module)} has no attribute {name}")
+
+        # triggers update if shapes match
+        cache[name] = data
 
     else:
         with torch.no_grad():
@@ -155,6 +165,46 @@ def get_offloaded_device(
         return get_module_device(module, default)
 
 
+def get_cache_kwargs(module: torch.nn.Module, default: dict | None = None) -> dict:
+    """
+    Get any ancillary kwargs needed for the module OffloadCache
+
+    :param module: module to check
+    :return: dict of cache kwargs
+    """
+    kwargs = default.copy() if default is not None else {}
+    if isinstance(module._parameters, OffloadCache) and hasattr(
+        module._parameters, "offload_dir"
+    ):
+        kwargs["offload_dir"] = module._parameters.offload_dir
+    return kwargs
+
+
+def get_cache_init_kwargs(
+    module: torch.nn.Module,
+    default: dict | None = None,
+) -> dict:
+    """
+    Get all kwargs needed to initialize an OffloadCache with the same
+    settings as the module.
+
+    :param module: module to extract cache initialization kwargs from
+    :param default: default kwargs to use as a base (can include
+                    onload_device, offload_device, etc.)
+    :return: dict of kwargs for offload_module or cache constructor, including
+             onload_device, offload_device, and any additional cache-specific kwargs
+
+    """
+    kwargs = default.copy() if default is not None else {}
+    kwargs["onload_device"] = get_execution_device(module, kwargs.get("onload_device"))
+    kwargs["offload_device"] = get_offloaded_device(
+        module, kwargs.get("offload_device")
+    )
+    cache_kwargs = get_cache_kwargs(module)
+    kwargs.update(cache_kwargs)
+    return kwargs
+
+
 def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.Module):
     """
     Register a submodule with offloading if the parent module is offloaded
@@ -165,7 +215,8 @@ def register_offload_module(base: torch.nn.Module, name: str, module: torch.nn.M
     """
     cache = base._parameters
     if isinstance(cache, OffloadCache):
-        offload_module(module, cache.onload_device, cache.offload_device)
+        kwargs = get_cache_init_kwargs(base)
+        offload_module(module, **kwargs)
 
     base.register_module(name, module)
 

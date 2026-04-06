@@ -174,9 +174,13 @@ def _save_ct_index_entry(
     name: str,
     offloaded: torch.Tensor,
 ):
+    # already indexed from a previous round-trip (e.g. to_accelerate -> from_accelerate)
+    if offloaded in DiskCache.index:
+        return
+
     entry: dict = dataset.index[name]
 
-    if "safetensors_file" in entry and offloaded not in DiskCache.index:
+    if "safetensors_file" in entry:
         # typical case: model is loaded from safetensors file
         # create a symlink that points to the model safetensor file
         # if the value is ever updated, the symlink is broken and a real file
@@ -187,7 +191,9 @@ def _save_ct_index_entry(
         # unfortunately, ct's implementation does not support loading non-safetensors
         # we must onload and save as safetensors. This typically only occurs in testing
         onloaded = dataset[name]
-        DiskCache("cpu", dataset.save_folder).offload(onloaded, offloaded=offloaded)
+        DiskCache("cpu", offload_dir=dataset.save_folder).offload(
+            onloaded, offloaded=offloaded
+        )
         logger.warning(
             "Attempting to disk offload a model which was not saved with safetensors. "
             "compressed-tensors only supports disk onload from safetensors files, so "

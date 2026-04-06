@@ -63,6 +63,10 @@ def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
         # Rank 0 does loading, other ranks init on meta device
         if not is_rank0():
             kwargs["device_map"] = "meta"
+            # Workaround: transformers v5 tie_weights() calls torch.equal() on
+            # meta tensors which is unsupported. Since rank 0 broadcasts the real
+            # weights, we can safely skip tying on non-rank workers.
+            kwargs.setdefault("tie_word_embeddings", False)
 
         # Intercept `auto_offload`: same as "auto", but only cpu/disk are visible
         elif kwargs["device_map"] == "auto_offload":

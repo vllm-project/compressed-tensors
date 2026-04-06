@@ -30,7 +30,7 @@ class DistributedCPUCache(CPUCache):
         if dist.get_rank() == 0:
             # create shared memory cpu tensor
             tensor = super().offload(tensor).share_memory_()
-            (handle, filename, nbytes) = tensor.untyped_storage()._share_filename_cpu_()
+            handle, filename, nbytes = tensor.untyped_storage()._share_filename_cpu_()
             broadcast_obj = [handle, filename, nbytes]
         else:
             broadcast_obj = [None, None, None]
