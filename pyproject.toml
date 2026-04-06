@@ -14,3 +14,9 @@ markers = [
     "regression: detailed tests to ensure major functions work correctly",
     "integration: tests which integrate with a third party service such as HF",
 ]
+
+[dependency-groups]
+dev = [
+    "psutil>=7.2.2",
+    "pytest>=9.0.2",
+]
