@@ -37,8 +37,7 @@ def _parse_bool_env(value: Optional[str]) -> Optional[bool]:
     elif value_lower in ("0", "false", "no", ""):
         return False
     else:
-        # For backwards compatibility, any other non-empty string is treated as True
-        return bool(value)
+        return None
 
 
 @dataclass
