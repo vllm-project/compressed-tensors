@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
+import torch.distributed as dist
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.utils import send_tensors, to_tensor
@@ -177,11 +178,11 @@ class DiskCache(OffloadCache):
     @classmethod
     def _is_ct_file_path(cls, file_path: str) -> bool:
         """Only write and delete files that DiskCache has created"""
-        return os.path.basename(file_path).startswith(cls._created_file_prefix)
+        return os.path.basename(file_path).startswith(cls._ct_file_prefix)
 
     def _get_ct_file_path(cls, offload_dir: str, offloaded: torch.Tensor):
         """Create file path with a prefix marking it as modifiable"""
-        file_name = f"{cls._ct_file_prefix}{id(offloaded)}.safetensors"
+        file_name = f"{cls._ct_file_prefix}{_get_rank()}{id(offloaded)}.safetensors"
         return os.path.join(offload_dir, file_name)
 
 
@@ -203,3 +204,11 @@ def _get_safe_open_device(device: "DeviceLikeType") -> str:
         return f"{device.type}:{index}"
     else:
         return device.type
+
+
+def _get_rank() -> int:
+    """Get rank, value is zero if not distributed"""
+    if dist.is_initialized():
+        return dist.get_rank()
+    else:
+        return 0
