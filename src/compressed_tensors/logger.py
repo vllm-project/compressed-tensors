@@ -58,9 +58,7 @@ def configure_logger(config: Optional[LoggerConfig] = None):
     Note: Environment variables take precedence over the function parameters.
 
     By default, this function does NOT clear existing loggers or add new handlers,
-    making it safe to use in library code. Applications can opt-in to the previous
-    behavior by setting COMPRESSED_TENSORS_CLEAR_LOGGERS=1 and
-    COMPRESSED_TENSORS_LOG_LEVEL=INFO.
+    making it safe to use in library code.
 
     :param config: The configuration for the logger to use.
     :type config: LoggerConfig
