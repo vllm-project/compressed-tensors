@@ -5,7 +5,6 @@ import json
 import os
 import re
 import struct
-from collections import defaultdict
 from collections.abc import Iterable
 
 import torch
@@ -23,7 +22,6 @@ __all__ = [
     "get_weight_mappings",
     "get_nested_weight_mappings",
     "get_quantization_parameter_to_path_mapping",
-    "get_file_map",
     "InverseWeightMap",
     "load_tensors_from_inverse_weight_map",
     "is_quantization_param",
@@ -405,23 +403,6 @@ def get_quantization_parameter_to_path_mapping(model_path: str) -> dict[str, str
             mapping[weight_name] = safe_path
             continue
     return mapping
-
-
-def get_file_map(weight_map: WeightMappingType) -> dict[str, list[str]]:
-    """
-    Given a safetensors index file's weight_map, which maps weight name to safetensors
-    file name, return a mapping of safetensors file name to list of weight names
-
-    :param weight_map: mapping of weight name to safetensors file name.
-        result of `get_weight_mappings`
-    :returns: file_map
-    """
-
-    file_map = defaultdict(list)
-    for k, v in weight_map.items():
-        file_map[v].append(k)
-
-    return dict(file_map)
 
 
 InverseWeightMap = dict[str, list[str] | None]
