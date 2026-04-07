@@ -4,6 +4,7 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.cpu import CPUCache
+from compressed_tensors.offload.cache.stats import OffloadStats
 from compressed_tensors.offload.utils import send_tensors, to_empty
 
 
@@ -12,6 +13,7 @@ class DistributedCPUCache(CPUCache):
     Handles offloading and onloading tensors from/to cpu memory shared across processes
     """
 
+    @OffloadStats.track_offload
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Synchronously create shared cpu memory for offload

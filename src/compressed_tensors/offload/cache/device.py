@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
+from compressed_tensors.offload.cache.stats import OffloadStats
 from compressed_tensors.offload.utils import send_tensors
 
 
@@ -29,6 +30,7 @@ class DeviceCache(OffloadCache):
         else:
             self.offload_device = self.onload_device
 
+    @OffloadStats.track_onload
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Typically a no op, except when onload device has been modified
@@ -39,6 +41,7 @@ class DeviceCache(OffloadCache):
         # move because onload_device might be modified after init
         return send_tensors(offloaded, device=self.onload_device, copy=False)
 
+    @OffloadStats.track_offload
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Offload a tensor to the device
@@ -49,6 +52,7 @@ class DeviceCache(OffloadCache):
         return send_tensors(tensor, device=self.offload_device, copy=False)
 
     @torch.no_grad()
+    @OffloadStats.track_update
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
         Update the device value with new data

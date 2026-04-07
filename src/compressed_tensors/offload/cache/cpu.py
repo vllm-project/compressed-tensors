@@ -3,6 +3,7 @@
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
+from compressed_tensors.offload.cache.stats import OffloadStats
 from compressed_tensors.offload.utils import send_tensors
 
 
@@ -16,6 +17,7 @@ class CPUCache(OffloadCache):
     def __init__(self, onload_device: torch.device | str, offload_device=None):
         super().__init__(onload_device, offload_device=offload_device)
 
+    @OffloadStats.track_onload
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Onload a tensor from cpu to device
@@ -25,6 +27,7 @@ class CPUCache(OffloadCache):
         """
         return send_tensors(offloaded, device=self.onload_device, copy=False)
 
+    @OffloadStats.track_offload
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Offload a tensor from any device to cpu
@@ -35,6 +38,7 @@ class CPUCache(OffloadCache):
         return send_tensors(tensor, device=self.offload_device, copy=False)
 
     @torch.no_grad()
+    @OffloadStats.track_update
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
         Update the offloaded cpu value with new data

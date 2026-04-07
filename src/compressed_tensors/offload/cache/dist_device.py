@@ -4,6 +4,7 @@
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.cache.device import DeviceCache
+from compressed_tensors.offload.cache.stats import OffloadStats
 from compressed_tensors.offload.dist_utils import as_broadcastable
 from compressed_tensors.offload.utils import send_tensors, to_empty
 
@@ -17,6 +18,7 @@ class DistributedDeviceCache(DeviceCache):
     the model is replicated across devices.
     """
 
+    @OffloadStats.track_offload
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Move a tensor to device, then broadcast data to all other ranks
