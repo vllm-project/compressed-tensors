@@ -20,11 +20,33 @@ __all__ = ["LoggerConfig", "configure_logger", "logger"]
 _logged_once = set()
 
 
+def _parse_bool_env(value: Optional[str]) -> Optional[bool]:
+    """
+    Parse a boolean environment variable value.
+    Returns None if the value is None, True/False otherwise.
+
+    Accepts: "1", "true", "True", "TRUE", "yes", "Yes", "YES" as True
+    Accepts: "0", "false", "False", "FALSE", "no", "No", "NO", "" as False
+    """
+    if value is None:
+        return None
+
+    value_lower = value.lower().strip()
+    if value_lower in ("1", "true", "yes"):
+        return True
+    elif value_lower in ("0", "false", "no", ""):
+        return False
+    else:
+        # For backwards compatibility, any other non-empty string is treated as True
+        # but we should warn about this
+        return bool(value)
+
+
 @dataclass
 class LoggerConfig:
     disabled: bool = False
-    clear_loggers: bool = True
-    console_log_level: Optional[str] = "INFO"
+    clear_loggers: bool = False
+    console_log_level: Optional[str] = None
     log_file: Optional[str] = None
     log_file_level: Optional[str] = None
 
@@ -37,20 +59,31 @@ def configure_logger(config: Optional[LoggerConfig] = None):
 
     Note: Environment variables take precedence over the function parameters.
 
+    By default, this function does NOT clear existing loggers or add new handlers,
+    making it safe to use in library code. Applications can opt-in to the previous
+    behavior by setting COMPRESSED_TENSORS_CLEAR_LOGGERS=1 and
+    COMPRESSED_TENSORS_LOG_LEVEL=INFO.
+
     :param config: The configuration for the logger to use.
     :type config: LoggerConfig
     """
     logger_config = config or LoggerConfig()
 
     # env vars get priority
-    if bool(os.getenv("COMPRESSED_TENSORS_LOG_DISABLED")):
-        logger_config.disabled = True
-    if bool(os.getenv("COMPRESSED_TENSORS_CLEAR_LOGGERS")):
-        logger_config.clear_loggers = True
+    disabled_env = _parse_bool_env(os.getenv("COMPRESSED_TENSORS_LOG_DISABLED"))
+    if disabled_env is not None:
+        logger_config.disabled = disabled_env
+
+    clear_loggers_env = _parse_bool_env(os.getenv("COMPRESSED_TENSORS_CLEAR_LOGGERS"))
+    if clear_loggers_env is not None:
+        logger_config.clear_loggers = clear_loggers_env
+
     if (console_log_level := os.getenv("COMPRESSED_TENSORS_LOG_LEVEL")) is not None:
         logger_config.console_log_level = console_log_level.upper()
+
     if (log_file := os.getenv("COMPRESSED_TENSORS_LOG_FILE")) is not None:
         logger_config.log_file = log_file
+
     if (log_file_level := os.getenv("COMPRESSED_TENSORS_LOG_FILE_LEVEL")) is not None:
         logger_config.log_file_level = log_file_level.upper()
 
