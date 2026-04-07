@@ -73,7 +73,9 @@ def convert_checkpoint(
 
         if shard_name.endswith("safetensors"):
             if shard_name not in inverse_weight_maps:
-                raise ValueError(f"Could not find inverse_weight_map for shard {shard_name}")
+                raise ValueError(
+                    f"Could not find inverse_weight_map for shard {shard_name}"
+                )
             validate_jobs.append(
                 (validate_file, inverse_weight_maps[shard_name], converter)
             )
