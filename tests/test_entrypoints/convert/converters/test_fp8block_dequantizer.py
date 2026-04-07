@@ -28,7 +28,7 @@ def test_fp8_block_to_bfloat16_conversion():
     weight_fp8 = original_weight.to(torch.float32).to(torch.float8_e4m3fn)
 
     # Test conversion
-    result = converter._create_bfloat16_weight(weight_fp8, weight_scale_inv)
+    result = converter._create_dequantized_weight(weight_fp8, weight_scale_inv)
 
     # Verify using helper
     _verify_block_conversion(result, weight_fp8, weight_scale_inv, (128, 128))
@@ -52,7 +52,7 @@ def test_fp8_block_to_bfloat16_conversion_with_padding():
     weight_scale_inv = torch.ones(num_row_blocks, num_col_blocks, dtype=torch.float32)
 
     # Test conversion
-    result = converter._create_bfloat16_weight(weight_fp8, weight_scale_inv)
+    result = converter._create_dequantized_weight(weight_fp8, weight_scale_inv)
 
     # Verify output shape matches original (not padded)
     assert result.shape == (200, 300), "Output shape should match original, not padded"

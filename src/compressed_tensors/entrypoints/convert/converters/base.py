@@ -85,21 +85,22 @@ def build_inverse_weight_maps(
     """
 
     def get_dependencies_recursive(
-        weight_name: str, converters: list[Converter], current_deps: dict[str, bool]
-    ) -> dict[str, bool]:
+        weight_name: str, converters: list[Converter], current_deps: set[str]
+    ) -> set[str]:
         for converter in converters:
-            for dep, is_required in converter.get_dependencies(weight_name).items():
+            deps = converter.get_dependencies(weight_name)
+            for dep in deps:
                 if dep not in current_deps:
-                    current_deps[dep] = is_required
+                    current_deps.add(dep)
                     get_dependencies_recursive(dep, converters, current_deps)
 
         return current_deps
 
-    # map of weight name -> ( map of dependency name -> is_required )
+    # map of weight name -> set of dependency names
     weight_deps_dict: dict[str, set[str]] = dict()
     for weight_name, weight_shard_name in weight_map.items():
         weight_deps_dict[weight_name] = get_dependencies_recursive(
-            weight_name, converters, {}
+            weight_name, converters, set()
         )
         assert (
             weight_name not in weight_deps_dict[weight_name]
@@ -120,17 +121,14 @@ def build_inverse_weight_maps(
         # add it and all its dependencies
         inverse_weight_map: InverseWeightMap = inverse_weight_maps[weight_shard_name]
         dependency_weights = weight_deps_dict[weight_name]
-        for weight_to_add_name, is_required in [
-            (weight_name, True),
-            *dependency_weights.items(),
+        for weight_to_add_name in [
+            weight_name,
+            *dependency_weights,
         ]:
             if weight_to_add_name not in weight_map:
-                if is_required:
-                    raise ValueError(
-                        f"Required weight {weight_to_add_name} not found in weight map"
-                    )
-                else:
-                    continue
+                raise ValueError(
+                    f"Dependency weight {weight_to_add_name} not found in weight map"
+                )
             weight_to_add_shard_name = weight_map[weight_to_add_name]
             resolved_path = model_files[weight_to_add_shard_name]
             inverse_weight_map[resolved_path].append(weight_to_add_name)

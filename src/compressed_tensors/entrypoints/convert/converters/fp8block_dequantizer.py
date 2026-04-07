@@ -101,7 +101,7 @@ class FP8BlockDequantizer(Converter):
             and not any([match_name(module_name, ignore) for ignore in self.ignore])
             and suffix == "weight"
         ):
-            return set(f"{module_name}.weight_scale_inv")
+            return {f"{module_name}.weight_scale_inv"}
         return set()
 
     def _create_dequantized_weight(

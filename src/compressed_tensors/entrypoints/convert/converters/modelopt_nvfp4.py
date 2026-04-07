@@ -114,11 +114,11 @@ class ModelOptNvfp4Converter(Converter):
             and not any([match_name(module_name, ignore) for ignore in self.ignore])
             and suffix == "weight"
         ):
-            deps = set(
+            deps = {
                 f"{module_name}.input_scale",
                 f"{module_name}.weight_scale",
                 f"{module_name}.weight_scale_2",
-            )
+            }
 
             if self.kv_cache_scheme:
                 if module_name.endswith("k_proj"):
