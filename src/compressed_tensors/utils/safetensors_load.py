@@ -90,8 +90,6 @@ def _walk_directory_files(root_dir: str, ignore: Iterable[str]) -> list[str]:
     :param ignore: optional path prefix to exclude from results
     :return: list of relative file paths
     """
-    if isinstance(ignore, str):
-        ignore = [ignore]
 
     all_files = []
     for dirpath, _, filenames in os.walk(root_dir):
