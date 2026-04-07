@@ -38,7 +38,6 @@ def _parse_bool_env(value: Optional[str]) -> Optional[bool]:
         return False
     else:
         # For backwards compatibility, any other non-empty string is treated as True
-        # but we should warn about this
         return bool(value)
 
 
