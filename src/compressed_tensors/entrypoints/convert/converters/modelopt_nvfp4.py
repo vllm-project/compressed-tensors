@@ -107,7 +107,7 @@ class ModelOptNvfp4Converter(Converter):
             if param_name in disallowed_names:
                 raise ValueError(f"Hit unexpected non-targeted tensor {name}")
 
-    def get_dependencies(self, weight_name: str) -> dict[str, bool]:
+    def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, suffix = weight_name.rsplit(".", 1)
         if (
             any([match_name(module_name, target) for target in self.targets])
@@ -128,7 +128,7 @@ class ModelOptNvfp4Converter(Converter):
 
             return deps
 
-        return {}
+        return set()
 
     def create_config(self) -> QuantizationConfig:
         return QuantizationConfig(

@@ -55,7 +55,6 @@ def convert_checkpoint(
     # get all model_files for checkpoint
     model_files = get_checkpoint_files(model_stub)
 
-    # Read weight map from safetensors.index.json
     weight_map = get_weight_map(model_files)
 
     # Build inverse_weight_maps, so that each job knows how to load up every necessary
@@ -69,26 +68,25 @@ def convert_checkpoint(
     # Build validation/conversion jobs, copy over any other file
     validate_jobs = []
     convert_jobs = []
-    for file_path, resolved_path in model_files.items():
-        save_path = Path(save_directory) / file_path
+    for shard_name, resolved_path in model_files.items():
+        save_path = Path(save_directory) / shard_name
 
-        if file_path.endswith("safetensors"):
-            assert (
-                file_path in inverse_weight_maps
-            ), f"Could not find inverse_weight_map for file {file_path}"
+        if shard_name.endswith("safetensors"):
+            if shard_name not in inverse_weight_maps:
+                raise ValueError(f"Could not find inverse_weight_map for shard {shard_name}")
             validate_jobs.append(
-                (validate_file, inverse_weight_maps[file_path], converter)
+                (validate_file, inverse_weight_maps[shard_name], converter)
             )
             convert_jobs.append(
-                (convert_file, inverse_weight_maps[file_path], save_path, converter)
+                (convert_file, inverse_weight_maps[shard_name], save_path, converter)
             )
 
         else:
-            if is_weights_file(file_path):
-                logger.warning(f"Skip processing for weights file {file_path}")
+            if is_weights_file(shard_name):
+                logger.warning(f"Skip processing for weights file {shard_name}")
             if str(resolved_path) != str(save_path):
                 save_path.parent.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Copying {file_path} {save_path}")
+                logger.info(f"Copying {shard_name} {save_path}")
                 shutil.copyfile(resolved_path, save_path)
 
     # Validate before long-running procssing job
