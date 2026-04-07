@@ -122,9 +122,9 @@ class ModelOptNvfp4Converter(Converter):
 
             if self.kv_cache_scheme:
                 if module_name.endswith("k_proj"):
-                    deps |= {f"{module_name}.k_scale"}
+                    deps.add(f"{module_name}.k_scale")
                 if module_name.endswith("v_proj"):
-                    deps |= {f"{module_name}.v_scale"}
+                    deps.add(f"{module_name}.v_scale")
 
             return deps
 
