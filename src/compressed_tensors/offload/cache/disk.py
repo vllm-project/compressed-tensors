@@ -105,6 +105,7 @@ class DiskCache(OffloadCache):
             "dtype": str(tensor.dtype).removeprefix("torch."),
         }
 
+        assert _is_created_file_path(file_path)
         save_file({"weight": tensor}, file_path)
         return offloaded
 
@@ -119,7 +120,7 @@ class DiskCache(OffloadCache):
         """
         offloaded = self.offloaded_values[key]
         file_path = self.index[offloaded]["safetensors_file"]
-        if os.path.basename(file_path).startswith(self._new_file_prefix):
+        if _is_created_file_path(file_path):
             os.remove(file_path)
         del self.index[offloaded]
         super().__delitem__(key)
@@ -140,10 +141,11 @@ class DiskCache(OffloadCache):
 
         # create new file if old file was a symlink to a checkpoint file
         if os.path.islink(file_path):
-            assert os.path.basename(file_path).startswith(self._new_file_prefix)
+            assert _is_created_file_path(file_path)
             os.unlink(file_path)
 
         # save with data using original weight_name
+        assert _is_created_file_path(file_path)
         save_file({weight_name: data.reshape_as(offloaded).to(dtype=dtype)}, file_path)
 
     @classmethod
@@ -192,3 +194,8 @@ def _get_safe_open_device(device: "DeviceLikeType") -> str:
         return f"{device.type}:{index}"
     else:
         return device.type
+
+
+def _is_created_file_path(file_path):
+    """Only write and delete files that DiskCache has created"""
+    assert os.path.basename(file_path).startswith(DiskCache._new_file_prefix)
