@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import json
 import os
 import shutil
 from collections.abc import Callable
@@ -19,8 +18,8 @@ from compressed_tensors.entrypoints.convert.converters import (
     build_inverse_weight_maps,
 )
 from compressed_tensors.utils.safetensors_load import (
-    get_weight_map,
     get_checkpoint_files,
+    get_weight_map,
     is_weights_file,
     update_safetensors_index,
 )

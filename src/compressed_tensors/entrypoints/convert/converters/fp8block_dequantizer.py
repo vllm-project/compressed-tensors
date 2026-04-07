@@ -10,7 +10,6 @@ from compressed_tensors.quantization.utils.helpers import (
     maybe_pad_tensor_for_block_quant,
 )
 from compressed_tensors.utils.match import match_name, match_quantizable_tensors
-from loguru import logger
 
 
 class FP8BlockDequantizer(Converter):
