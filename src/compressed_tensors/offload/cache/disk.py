@@ -180,7 +180,7 @@ class DiskCache(OffloadCache):
         return os.path.basename(file_path).startswith(cls._created_file_prefix)
 
     def _get_ct_file_path(cls, offload_dir: str, offloaded: torch.Tensor):
-        """"""
+        """Create file path with a prefix marking it as modifiable"""
         file_name = f"{cls._ct_file_prefix}{id(offloaded)}.safetensors"
         return os.path.join(offload_dir, file_name)
 
