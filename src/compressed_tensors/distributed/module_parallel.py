@@ -45,7 +45,7 @@ def replace_module_parallel(
         for load balancing across ranks
     :param desc: optional description for the progress bar (shown on each rank)
     """
-    from compressed_tensors.offload import disable_onloading, to_meta, OffloadCache
+    from compressed_tensors.offload import OffloadCache, disable_onloading, to_meta
 
     _, _, assigned_rank = greedy_bin_packing(modules, dist.get_world_size(), weight_fn)
 
