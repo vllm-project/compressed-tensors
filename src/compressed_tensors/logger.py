@@ -20,29 +20,6 @@ __all__ = ["LoggerConfig", "configure_logger", "logger"]
 _logged_once = set()
 
 
-def _parse_bool_env(value: Optional[str]) -> Optional[bool]:
-    """
-    Parse a boolean environment variable value.
-    Returns:
-        - None if the value is unset or unrecognized
-        - True for recognized truthy tokens
-        - False for recognized falsy tokens
-
-    Accepts: "1", "true", "True", "TRUE", "yes", "Yes", "YES" as True
-    Accepts: "0", "false", "False", "FALSE", "no", "No", "NO", "" as False
-    """
-    if value is None:
-        return None
-
-    value_lower = value.lower().strip()
-    if value_lower in ("1", "true", "yes"):
-        return True
-    elif value_lower in ("0", "false", "no", ""):
-        return False
-    else:
-        return None
-
-
 @dataclass
 class LoggerConfig:
     disabled: bool = False
@@ -69,11 +46,11 @@ def configure_logger(config: Optional[LoggerConfig] = None):
     logger_config = config or LoggerConfig()
 
     # env vars get priority
-    disabled_env = _parse_bool_env(os.getenv("COMPRESSED_TENSORS_LOG_DISABLED"))
+    disabled_env = parse_bool_env(os.getenv("COMPRESSED_TENSORS_LOG_DISABLED"))
     if disabled_env is not None:
         logger_config.disabled = disabled_env
 
-    clear_loggers_env = _parse_bool_env(os.getenv("COMPRESSED_TENSORS_CLEAR_LOGGERS"))
+    clear_loggers_env = parse_bool_env(os.getenv("COMPRESSED_TENSORS_CLEAR_LOGGERS"))
     if clear_loggers_env is not None:
         logger_config.clear_loggers = clear_loggers_env
 
@@ -114,6 +91,29 @@ def configure_logger(config: Optional[LoggerConfig] = None):
             serialize=True,
             filter=support_log_once,
         )
+
+
+def parse_bool_env(value: Optional[str]) -> Optional[bool]:
+    """
+    Parse a boolean environment variable value.
+    Returns:
+        - None if the value is unset or unrecognized
+        - True for recognized truthy tokens
+        - False for recognized falsy tokens
+
+    Accepts: "1", "true", "True", "TRUE", "yes", "Yes", "YES" as True
+    Accepts: "0", "false", "False", "FALSE", "no", "No", "NO", "" as False
+    """
+    if value is None:
+        return None
+
+    value_lower = value.lower().strip()
+    if value_lower in ("1", "true", "yes"):
+        return True
+    elif value_lower in ("0", "false", "no", ""):
+        return False
+    else:
+        return None
 
 
 def support_log_once(record: Dict[str, Any]) -> bool:
