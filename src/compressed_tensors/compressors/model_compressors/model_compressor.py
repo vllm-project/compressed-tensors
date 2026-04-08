@@ -172,11 +172,22 @@ class ModelCompressor:
 
         :param model: model whose parameters should be decompressed in place
         """
-        # decompress modules
-        modules = model.named_modules(remove_duplicate=True)
-        for _, module in tqdm(list(modules), desc="Decompressing model"):
-            if is_module_quantized(module):
+        desc = "Decompressing model"
+        modules = [
+            module
+            for _, module in model.named_modules(remove_duplicate=True)
+            if is_module_quantized(module)
+        ]
+
+        # Decompress modules using distributed or sequential
+        if not is_distributed():
+            for module in tqdm(modules, desc=desc):
                 decompress_module(module, self.force_compression_format)
+        else:
+            decompress_fn = partial(
+                decompress_module, format=self.force_compression_format
+            )
+            replace_module_parallel(modules, decompress_fn, desc=desc)
 
         # update config status to reflect decompression
         if self.quantization_config is not None:
