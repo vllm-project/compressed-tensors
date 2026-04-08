@@ -61,8 +61,6 @@ class QuantizationMetadata:
         Artifacts include any qparams, quantization_scheme, or wrapped
         forward method that might have been altered previously in lifecycle.
 
-        `quantization_status` and `quantization_enabled` are left unchanged.
-
         :param module: Module to clear
         """
         with unwrap_offload_forward(module):
