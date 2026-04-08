@@ -159,7 +159,7 @@ def get_weight_map(model_files: dict[str, str]) -> dict[str, str]:
         )
 
     # create from model.safetensors
-    with safe_open(model_files[SAFE_WEIGHTS_NAME], "r") as file:
+    with safe_open(model_files[SAFE_WEIGHTS_NAME], framework="pt") as file:
         return {tensor: SAFE_WEIGHTS_NAME for tensor in file.keys()}
 
 
