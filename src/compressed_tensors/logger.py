@@ -23,7 +23,10 @@ _logged_once = set()
 def _parse_bool_env(value: Optional[str]) -> Optional[bool]:
     """
     Parse a boolean environment variable value.
-    Returns None if the value is None, True/False otherwise.
+    Returns:
+        - None if the value is unset or unrecognized
+        - True for recognized truthy tokens
+        - False for recognized falsy tokens
 
     Accepts: "1", "true", "True", "TRUE", "yes", "Yes", "YES" as True
     Accepts: "0", "false", "False", "FALSE", "no", "No", "NO", "" as False
