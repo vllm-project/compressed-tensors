@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING, Literal
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.distributed import is_distributed, is_source_process
+from compressed_tensors.distributed import (
+    get_source_rank,
+    is_distributed,
+    is_source_process,
+)
 from compressed_tensors.offload.cache import DiskCache
 from compressed_tensors.offload.convert.helpers import (
     DEFAULT_OFFLOAD_DEVICE,
@@ -46,7 +50,7 @@ def from_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
 
     broadcast_obj = [device_map, offload_dir]
     if is_distributed():
-        dist.broadcast_object_list(broadcast_obj, src=0)
+        dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
     dispatch_with_map(model, *broadcast_obj)
     return tuple(broadcast_obj)

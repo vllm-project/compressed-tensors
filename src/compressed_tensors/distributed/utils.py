@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import contextlib
 import os
 from typing import Iterable
 
@@ -14,11 +15,43 @@ __all__ = [
     "init_dist",
     "as_broadcastable",
     "wait_for_comms",
+    "get_source_rank",
 ]
+
+SRC_RANK = 0
+
+
+def get_source_rank() -> int:
+    """Get the current source rank for distributed operations."""
+    return SRC_RANK
 
 
 def is_source_process() -> bool:
-    return not is_distributed() or dist.get_rank() == 0
+    return not is_distributed() or dist.get_rank() == SRC_RANK
+
+
+@contextlib.contextmanager
+def set_source_process(src_rank: int):
+    """
+    Context manager to temporarily designate a different rank as the main process.
+
+    This allows temporarily changing which rank is considered the "main" process
+    for operations that should only be performed by one process. The original
+    main process rank is restored when exiting the context.
+
+    :param src_rank: the rank to designate as the main process within the context
+
+    Example:
+        >>> with set_source_process(2):
+        ...     if is_source_process():
+        ...         # Only rank 2 executes this
+        ...         print("I'm the temporary main process")
+    """
+    global SRC_RANK
+
+    restore_rank, SRC_RANK = SRC_RANK, src_rank
+    yield
+    SRC_RANK = restore_rank
 
 
 def is_distributed() -> bool:
