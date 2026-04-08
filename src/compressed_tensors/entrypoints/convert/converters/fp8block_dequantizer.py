@@ -68,18 +68,16 @@ class FP8BlockDequantizer(Converter):
         for name in targeted_names:
             module_name, param_name = name.rsplit(".", 1)
 
-            if param_name == "weight":
-                if f"{module_name}.weight_scale_inv" not in tensors:
+            if param_name not in allowed_names:
+                raise ValueError(f"Found unexpected targeted tensor {name}")
+            if param_name == "weight" and f"{module_name}.weight_scale_inv" not in tensors
                     raise ValueError(
                         f"Found weight without corresponding weight_scale_inv {name}"
                     )
-            elif param_name == "weight_scale_inv":
-                if f"{module_name}.weight" not in tensors:
+            if param_name == "weight_scale_inv" and f"{module_name}.weight" not in tensors:
                     raise ValueError(
                         f"Found weight_scale_inv without corresponding weight {name}"
-                    )
-            elif param_name not in allowed_names:
-                raise ValueError(f"Found unexpected targeted tensor {name}")
+                    )            
 
         disallowed_names = ["weight_scale_inv"]
         untargeted_names = [
