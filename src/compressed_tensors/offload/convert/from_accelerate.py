@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Literal
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.distributed import is_distributed, is_source_process
 from compressed_tensors.offload.cache import DiskCache
 from compressed_tensors.offload.convert.helpers import (
     DEFAULT_OFFLOAD_DEVICE,
@@ -13,7 +14,6 @@ from compressed_tensors.offload.convert.helpers import (
     norm_device,
 )
 from compressed_tensors.offload.dispatch import dispatch_with_map
-from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
 from compressed_tensors.offload.utils import to_tensor
 from loguru import logger
 
@@ -40,7 +40,7 @@ def from_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
     - If called after `to_accelerate`, other ranks will provide an accelerate-offloaded
         model shared cpu tensors/file paths.
 
-    :param model: accelerate-offloaded model if rank0, meta model otherwise
+    :param model: accelerate-offloaded model if source process, no constraint otherwise
     """
     device_map, offload_dir = remove_accelerate(model)
 
@@ -145,7 +145,7 @@ def remove_accelerate_from_module(
             assert isinstance(offload, (torch.nn.Parameter, torch.nn.Buffer))
 
             # Copy accelerate's disk index into DiskCache for our later use
-            if is_rank0():
+            if is_source_process():
                 _save_ct_index_entry(dataset, full_name, tensor)
 
         # Not offloaded, likely a buffer

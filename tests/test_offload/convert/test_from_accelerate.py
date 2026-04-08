@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 import torch
 import torch.distributed as dist
+from compressed_tensors.distributed import is_source_process
 from compressed_tensors.offload import (
     disable_onloading,
     from_accelerate,
-    is_rank0,
     load_offloaded_model,
 )
 from compressed_tensors.offload.cache import CPUCache, DeviceCache, DiskCache
@@ -96,7 +96,7 @@ def test_from_accelerate(cuda_device, tmp_path):
     model = torch.nn.Sequential(
         torch.nn.Linear(5, 5), torch.nn.Linear(5, 5), torch.nn.Linear(5, 5)
     )
-    if is_rank0():
+    if is_source_process():
         dispatch_model(
             model,
             {"0": 0, "1": "cpu", "2": "disk"},
@@ -116,7 +116,7 @@ def test_from_accelerate(cuda_device, tmp_path):
         "1": (cuda_device, torch.device("cpu")),
         "2": (cuda_device, "disk"),
     }
-    if is_rank0():
+    if is_source_process():
         assert _offload_dir == offload_dir
     assert isinstance(model[0]._parameters, DeviceCache)
     assert isinstance(model[1]._parameters, CPUCache)
