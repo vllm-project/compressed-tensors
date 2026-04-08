@@ -29,6 +29,8 @@ def assert_device_equal(
             return 0
         elif device.type == "cpu": # CPU has no meaningful index
             return 0
+        elif device.type == "meta": # meta devices have no index
+            return 0
         else:
             raise NotImplementedError(device.type)
 
