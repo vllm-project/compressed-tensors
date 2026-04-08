@@ -26,16 +26,21 @@ class QuantizationMetadata:
         All quantization parameter names that might be registered
         onto a module during lifecycle (excluding serialized parameters)
         """
-        return [KVCacheScaleType.KEY.value, KVCacheScaleType.VALUE.value] + [
-            f"{base_name}_{suffix}"
-            for base_name in ("input", "weight", "output")
-            for suffix in (
-                "global_scale",
-                "scale",
-                "zero_point",
-                "g_idx",
-            )
-        ]
+        return (
+            [KVCacheScaleType.KEY.value, KVCacheScaleType.VALUE.value]
+            + ["weight_shape", "weight_packed"]
+            + [
+                f"{base_name}_{suffix}"
+                for base_name in ("input", "weight", "output")
+                for suffix in (
+                    "global_scale",
+                    "scale",
+                    "shape",
+                    "zero_point",
+                    "g_idx",
+                )
+            ]
+        )
 
     @classmethod
     def clear_all_qparams(cls, module: Module):
@@ -72,3 +77,11 @@ class QuantizationMetadata:
             # Clear quantization_scheme
             if hasattr(module, "quantization_scheme"):
                 delattr(module, "quantization_scheme")
+
+            # Clear quantization_status
+            if hasattr(module, "quantization_status"):
+                delattr(module, "quantization_status")
+
+            # Clear quantization_enabled
+            if hasattr(module, "quantization_enabled"):
+                delattr(module, "quantization_enabled")
