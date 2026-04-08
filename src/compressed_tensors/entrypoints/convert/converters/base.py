@@ -98,7 +98,7 @@ def build_inverse_weight_maps(
 
     # map of weight name -> set of dependency names
     weight_deps_dict: dict[str, set[str]] = dict()
-    for weight_name, weight_shard_name in weight_map.items():
+    for weight_name in weight_map:
         weight_deps_dict[weight_name] = get_dependencies_recursive(
             weight_name, converters, set()
         )
@@ -119,7 +119,7 @@ def build_inverse_weight_maps(
 
         # weight is purely a primary weight, is not a dependency of anything
         # add it and all its dependencies
-        inverse_weight_map: InverseWeightMap = inverse_weight_maps[weight_shard_name]
+        current_iwm: InverseWeightMap = inverse_weight_maps[weight_shard_name]
         dependency_weights = weight_deps_dict[weight_name]
         for weight_to_add_name in [
             weight_name,
@@ -131,7 +131,7 @@ def build_inverse_weight_maps(
                 )
             weight_to_add_shard_name = weight_map[weight_to_add_name]
             resolved_path = model_files[weight_to_add_shard_name]
-            inverse_weight_map[resolved_path].append(weight_to_add_name)
+            current_iwm[resolved_path].append(weight_to_add_name)
 
     # return dicts, not defaultdicts, to avoid silent errors
     return {k: dict(v) for k, v in inverse_weight_maps.items()}
