@@ -7,7 +7,6 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.distributed.assign import greedy_bin_packing
 from compressed_tensors.distributed.utils import set_source_process
-from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.utils import as_single_threaded, module_size
 from compressed_tensors.utils.module import (
     get_direct_state_dict,
@@ -46,7 +45,7 @@ def replace_module_parallel(
         for load balancing across ranks
     :param desc: optional description for the progress bar (shown on each rank)
     """
-    from compressed_tensors.offload import disable_onloading, to_meta
+    from compressed_tensors.offload import disable_onloading, to_meta, OffloadCache
 
     _, _, assigned_rank = greedy_bin_packing(modules, dist.get_world_size(), weight_fn)
 
