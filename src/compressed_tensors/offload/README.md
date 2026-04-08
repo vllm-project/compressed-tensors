@@ -214,11 +214,7 @@ The primary function for attaching offloading to a single `torch.nn.Module`. It:
 offload_module(layer, onload_device="cuda:0", offload_device="cpu")
 ```
 
-<<<<<<< HEAD
-**When to use:** when you want fine-grained control over which specific modules are offloaded. For model-wide dispatch, prefer `dispatch_model` or `offload_model`.
-=======
 **When to use:** when you want fine-grained control over which specific modules are offloaded. For model-wide dispatch, prefer `dispatch_model` or `set_onload_device`.
->>>>>>> main
 
 > **Note:** Raises `ValueError` if the module is already offloaded. Call `remove_module_offload` first.
 
@@ -277,30 +273,19 @@ model = dispatch_model(model, device_memory={torch.device("cuda:0"): 16e9})
 
 ---
 
-<<<<<<< HEAD
-#### `offload_model(model, onload_device, offload_device=None)`
-=======
 #### `set_onload_device(model, onload_device)`
->>>>>>> main
 
 A lighter-weight dispatch that moves all modules in a model to the same `onload_device`, without changing where weights are stored. For modules not yet offloaded, it offloads them to their current device.
 
 ```python
 # Move all execution to cuda:0, keeping offloads unchanged
-<<<<<<< HEAD
-model = offload_model(model, onload_device="cuda:0")
-=======
 model = set_onload_device(model, onload_device="cuda:0")
->>>>>>> main
 ```
 
 **When to use:** when you have already loaded a model with weights in the right place (e.g., via `load_offloaded_model`) and just need to set the execution device. Less powerful than `dispatch_model` but simpler.
 
-<<<<<<< HEAD
-=======
 > **Note:** `offload_model` is a deprecated alias for this function.
 
->>>>>>> main
 ---
 
 #### `dispatch_with_map(model, device_map, offload_dir=None)`
@@ -705,11 +690,7 @@ compressed_tensors.offload
 ├── load.py                   load_offloaded_model()
 │     └── calls from_accelerate after loading
 │
-<<<<<<< HEAD
-├── dispatch.py               dispatch_model(), offload_model(), dispatch_with_map()
-=======
 ├── dispatch.py               dispatch_model(), set_onload_device(), dispatch_with_map()
->>>>>>> main
 │     └── calls offload_module() for each module
 │
 ├── module.py                 offload_module(), remove_module_offload()
