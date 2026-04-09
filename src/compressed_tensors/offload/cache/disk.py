@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
@@ -51,7 +52,6 @@ class DiskCache(OffloadCache):
                 "Must provide an `offload_dir` to perform disk offloading "
                 "(add `offload_folder` argument to `from_pretrained`)"
             )
-        self.offload_dir = offload_dir
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
@@ -161,7 +161,9 @@ class DiskCache(OffloadCache):
         file_name = f"{cls._new_file_prefix}{id(offloaded)}.safetensors"
         file_path = os.path.join(offload_dir, file_name)
 
-        os.symlink(weight_info["safetensors_file"], file_path)
+        # Resolve relative paths to absolute paths for symlink creation
+        source_path = Path(weight_info["safetensors_file"]).resolve()
+        os.symlink(source_path, file_path)
         cls.index[offloaded] = {
             "safetensors_file": file_path,
             "weight_name": weight_info["weight_name"],
