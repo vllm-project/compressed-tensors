@@ -74,17 +74,14 @@ def replace_module_parallel(
     for module in modules:
         with disable_onloading():
             state_dict = get_direct_state_dict(module)
+            # if assigned_rank[module] == dist.get_rank():
+            #    print(state_dict)
 
         # If module is not offloaded, manually broadcast tensors via object list
         if not isinstance(module._parameters, OffloadCache):
-            with set_source_process(assigned_rank[module]):
-                if assigned_rank[module] == dist.get_rank():
-                    broadcast_obj = [state_dict]
-                else:
-                    broadcast_obj = [None]
-
-                dist.broadcast_object_list(broadcast_obj, src=assigned_rank[module])
-                state_dict = broadcast_obj[0]
+            broadcast_obj = [state_dict]
+            dist.broadcast_object_list(broadcast_obj, src=assigned_rank[module])
+            state_dict = broadcast_obj[0]
 
         with set_source_process(assigned_rank[module]):
             replace_direct_state_dict(module, state_dict)  # 4. broadcast

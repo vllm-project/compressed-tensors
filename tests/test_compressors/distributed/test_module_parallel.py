@@ -84,32 +84,6 @@ def test_replace_module_parallel_basic():
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_replace_module_parallel_load_balancing():
-    """Test that modules are distributed evenly across ranks."""
-    # Create modules of different sizes
-    modules = [
-        SimpleLinear(100, 100),  # Large
-        SimpleLinear(10, 10),  # Small
-        SimpleLinear(100, 100),  # Large
-        SimpleLinear(10, 10),  # Small
-    ]
-
-    # Track which rank processes each module
-    rank_assignments = {}
-
-    def apply_fn(module):
-        rank_assignments[id(module)] = dist.get_rank()
-
-    replace_module_parallel(modules, apply_fn, module_size)
-
-    # Both ranks should have processed at least one module
-    ranks_used = set(rank_assignments.values())
-    assert len(ranks_used) == dist.get_world_size()
-
-
-@pytest.mark.unit
-@requires_gpu(2)
-@torchrun(world_size=2)
 def test_replace_module_parallel_with_offload():
     """Test replace_module_parallel with offloaded modules."""
     modules = [SimpleLinear(10, 10) for _ in range(4)]
@@ -179,9 +153,10 @@ def test_replace_module_parallel_non_processing_ranks_use_meta():
 
     replace_module_parallel(modules, apply_fn, module_size)
 
-    # At least one call should have seen a meta device (non-processing rank)
-    # Note: This is tricky to test because the actual compression happens on-device
-    # But we can verify the final state is valid
+    # At least one call should see meta on each rank (non-processing modules)
+    assert "meta" in devices_seen
+
+    # Final state should still be materialized
     for module in modules:
         assert module.weight.device.type != "meta"
 

@@ -179,15 +179,9 @@ class ModelCompressor:
             if is_module_quantized(module)
         ]
 
-        # Decompress modules using distributed or sequential
-        if not is_distributed():
-            for module in tqdm(modules, desc=desc):
-                decompress_module(module, self.force_compression_format)
-        else:
-            decompress_fn = partial(
-                decompress_module, format=self.force_compression_format
-            )
-            replace_module_parallel(modules, decompress_fn, desc=desc)
+        # TODO: support distributed decompression
+        for module in tqdm(modules, desc=desc):
+            decompress_module(module, self.force_compression_format)
 
         # update config status to reflect decompression
         if self.quantization_config is not None:
