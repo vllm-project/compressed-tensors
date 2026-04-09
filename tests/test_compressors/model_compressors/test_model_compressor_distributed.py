@@ -333,10 +333,7 @@ def test_compress_model_distributed_hook_triggers():
 
     # Forward pass should trigger decompression
     x = torch.randn(2, 10)
-    if dist.get_rank() == 0:
-        x = x.cuda()
     _ = model(x)
-    dist.barrier()
 
     # After forward, should be decompressed
     assert model.layer1.weight.dtype == torch.float32
