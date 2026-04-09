@@ -52,7 +52,8 @@ class DiskCache(OffloadCache):
                 "Must provide an `offload_dir` to perform disk offloading "
                 "(add `offload_folder` argument to `from_pretrained`)"
             )
-        self.offload_dir = offload_dir
+        # Resolve relative paths to absolute paths for symlink creation
+        self.offload_dir = Path(offload_dir).resolve()
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
