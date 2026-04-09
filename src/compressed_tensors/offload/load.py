@@ -12,6 +12,7 @@ import psutil
 import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import is_distributed, is_source_process
+from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.convert import from_accelerate
 from loguru import logger
 from transformers import PreTrainedModel
@@ -80,7 +81,12 @@ def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
             kwargs["max_memory"] = _get_device_memory() | _get_cpu_memory(extra_cpu_mem)
 
         model = original_func(cls, *args, **kwargs)
-        from_accelerate(model)  # rank 0 shares weights with ranks via offload/broadcast
+
+        # Skip if the model was already converted by an inner wrapper (e.g.
+        # AutoModelForCausalLM delegates to Qwen3ForCausalLM, both wrapped)
+        if not _is_offloaded(model):
+            from_accelerate(model)
+
         return model
 
     try:
@@ -120,6 +126,10 @@ def _get_shared_memory() -> int:
             "Could not find shared memory at `/dev/shm`. Please add platform suppport"
         )
         return psutil.virtual_memory().available
+
+
+def _is_offloaded(model: torch.nn.Module) -> bool:
+    return any(isinstance(m._parameters, OffloadCache) for m in model.modules())
 
 
 def _get_caller_frame() -> FrameType:
