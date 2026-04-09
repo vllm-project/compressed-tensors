@@ -33,25 +33,20 @@ def is_source_process() -> bool:
 @contextlib.contextmanager
 def set_source_process(src_rank: int):
     """
-    Context manager to temporarily designate a different rank as the main process.
-
-    This allows temporarily changing which rank is considered the "main" process
-    for operations that should only be performed by one process. The original
-    main process rank is restored when exiting the context.
+    Context manager to temporarily designate a different rank as the source process.
+    Similar to "is_rank0", this function chooses which rank serves as the source when
+    broadcasting. This is useful when work is partioned across ranks, and then results
+    need to be broadcasted across ranks from different sources.
 
     :param src_rank: the rank to designate as the main process within the context
-
-    Example:
-        >>> with set_source_process(2):
-        ...     if is_source_process():
-        ...         # Only rank 2 executes this
-        ...         print("I'm the temporary main process")
     """
     global SRC_RANK
 
     restore_rank, SRC_RANK = SRC_RANK, src_rank
-    yield
-    SRC_RANK = restore_rank
+    try:
+        yield
+    finally:
+        SRC_RANK = restore_rank
 
 
 def is_distributed() -> bool:

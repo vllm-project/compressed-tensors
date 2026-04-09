@@ -52,7 +52,9 @@ def replace_module_parallel(
     # Count modules assigned to this rank and create progress bar
     rank = dist.get_rank()
     num_assigned = sum(int(a == rank) for a in assigned_rank.values())
-    progress = tqdm(total=num_assigned, desc=desc, position=rank, disable=bool(desc))
+    progress = tqdm(
+        total=num_assigned, desc=desc, position=rank, disable=(desc is None)
+    )
 
     # Step 1 & 2: Decouple and compress on meta for non-processing ranks
     with disable_onloading():

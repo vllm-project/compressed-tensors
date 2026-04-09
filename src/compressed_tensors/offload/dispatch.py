@@ -79,6 +79,7 @@ def dispatch_with_map(
     model: torch.nn.Module,
     device_map: DeviceMap,
     offload_dir: Optional[str] = None,
+    show_progress: bool = True,
 ):
     """
     Dispatch a model according to the provided device map
@@ -86,9 +87,11 @@ def dispatch_with_map(
     :param model: model to dispatch
     :param device_map: device map specifying the onload and offload of each module
     :param offload_dir: optional directory for disk offloading
+    :param show_progress: show tqdm progress
     """
-    device_map_items = tqdm(list(device_map.items()), desc="Dispatching model")
-    for name, (onload_device, offload_device) in device_map_items:
+    for name, (onload_device, offload_device) in tqdm(
+        list(device_map.items()), desc="Dispatching model", disable=(not show_progress)
+    ):
         module = model.get_submodule(name)
 
         if offload_device == "disk":

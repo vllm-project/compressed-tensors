@@ -5,9 +5,9 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from compressed_tensors.distributed import replace_module_parallel, to_meta
+from compressed_tensors.distributed import replace_module_parallel
 from compressed_tensors.offload import offload_module
-from compressed_tensors.offload.utils import module_size
+from compressed_tensors.offload.utils import module_size, to_meta
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 

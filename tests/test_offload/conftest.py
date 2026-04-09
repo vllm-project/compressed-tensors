@@ -93,7 +93,7 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
                 cmd = (
                     f"{sys.executable} "
                     f"-m torch.distributed.run --nproc_per_node {world_size} "
-                    "--log-dir tmp/torchrun-logs --tee 3 --role torchrun "
+                    "--log-dir /tmp/torchrun-logs --tee 3 --role torchrun "
                     f"-m pytest {file_path}::{func_name} -sx"
                 )
 
