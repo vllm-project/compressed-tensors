@@ -200,8 +200,9 @@ def test_distributed_offload_logs_memory_hint(onload_device):
     )
 
     try:
-        # Only Rank 0 calls offload(), which throws an error *before* the dist.broadcast barrier.
-        # This cleanly avoids the hang since Rank 1 safely exits without waiting.
+        # Only Rank 0 calls offload(), which throws an error *before* the
+        # dist.broadcast barrier. This cleanly avoids the hang since Rank 1
+        # safely exits without waiting.
         if dist.get_rank() == 0:
             with pytest.raises(RuntimeError, match="Cannot allocate memory"):
                 cache.offload(torch.zeros(1, device=onload_device))
