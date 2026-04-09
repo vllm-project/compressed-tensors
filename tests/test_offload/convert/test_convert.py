@@ -5,8 +5,8 @@ import os
 
 import pytest
 import torch
+from compressed_tensors.distributed import is_source_process
 from compressed_tensors.offload import disable_onloading, from_accelerate, to_accelerate
-from compressed_tensors.offload.dist_utils import is_rank0
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 
@@ -24,7 +24,7 @@ def get_hf_dispatched_model(cuda_device, tmp_path):
         torch.nn.Linear(5, 5), torch.nn.Linear(5, 5), torch.nn.Linear(5, 5)
     )
 
-    if is_rank0():
+    if is_source_process():
         dispatch_model(
             model,
             {"0": 0, "1": "cpu", "2": "disk"},
