@@ -15,6 +15,7 @@ from compressed_tensors.offload.utils import module_size
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+accelerator_device = torch.accelerator.current_accelerator()
 
 class Decoder(torch.nn.Module):
     def __init__(self):
@@ -75,6 +76,7 @@ def has_memory_requirements(device_memory: dict[torch.device, int]):
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(accelerator_device.type == "mps", reason = "[Known issue] https://github.com/pytorch/pytorch/issues/167447")
 @requires_gpu
 def test_dispatch_one_device():
     model = Model()
@@ -87,6 +89,7 @@ def test_dispatch_one_device():
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(accelerator_device.type == "mps", reason = "[Known issue] https://github.com/pytorch/pytorch/issues/167447")
 @requires_gpu
 def test_dispatch_two_devices():
     model = Model()
@@ -104,6 +107,7 @@ def test_dispatch_two_devices():
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(accelerator_device.type == "mps", reason = "[Known issue] https://github.com/pytorch/pytorch/issues/167447")
 @requires_gpu
 def test_dispatch_no_split():
     model = Model()
@@ -120,6 +124,7 @@ def test_dispatch_no_split():
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(accelerator_device.type == "mps", reason = "[Known issue] https://github.com/pytorch/pytorch/issues/167447")
 @requires_gpu
 def test_dispatch_split():
     model = Model()
@@ -141,6 +146,7 @@ def test_dispatch_split():
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(accelerator_device.type == "mps", reason = "[Known issue] https://github.com/pytorch/pytorch/issues/167447")
 @requires_gpu
 def test_dispatch_offloaded():
     model = Model()
@@ -173,6 +179,7 @@ def test_dispatch_offloaded():
 @pytest.mark.integration
 @requires_gpu
 @pytest.mark.parametrize("model_id", ["nm-testing/tinysmokellama-3.2"])
+@pytest.mark.skipif(accelerator_device.type == "mps", reason = "[Known issue] https://github.com/pytorch/pytorch/issues/167447")
 @torch.inference_mode()
 def test_offload_and_dispatch_model(model_id):
     model = AutoModelForCausalLM.from_pretrained(model_id).eval()

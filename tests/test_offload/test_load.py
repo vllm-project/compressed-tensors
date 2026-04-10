@@ -21,18 +21,19 @@ from transformers import AutoModelForCausalLM
 acclerate = pytest.importorskip("accelerate")
 
 
+accelerator_device = torch.accelerator.current_accelerator()
 TEST_PARAMETERS = [
     (
         "auto",
         {0: 596049920, "cpu": 1e15},  # force cpu offload for testing
-        torch.device("cuda"),
+        accelerator_device,
         torch.device("cpu"),
     ),
     (
-        "cuda",
+        accelerator_device.type,
         None,
-        torch.device("cuda"),
-        torch.device("cuda"),
+        accelerator_device,
+        accelerator_device,
     ),
     (
         "cpu",
@@ -111,6 +112,7 @@ def _get_accelerate_offloaded_device(module: torch.nn.Module) -> str | None:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(accelerator_device.type == "mps", reason = "[Known issue] https://github.com/pytorch/pytorch/issues/167447")
 @patch("compressed_tensors.offload.load.from_accelerate")
 def test_patch_forwards_positional_args(mock_from_accelerate):
     """Regression: positional args must be forwarded without rebinding to cls."""
