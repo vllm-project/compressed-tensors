@@ -64,3 +64,33 @@ class DistributedDiskCache(DiskCache):
             offloaded = self.offloaded_values[key]
             del self.index[offloaded]
             super(DiskCache, self).__delitem__(key)
+
+    @classmethod
+    def clean_offload_dir(cls, offload_dir: str | None = None) -> int:
+        """
+        Clean up all intermediate safetensors files created by DiskCache.
+        In distributed settings, only rank 0 performs the actual file deletion.
+
+        :param offload_dir: If provided, only clean files in this directory.
+                           If None, clean all files in the shared index.
+        :return: Number of files cleaned up (only on rank 0, 0 on other ranks)
+        """
+        if dist.get_rank() == 0:
+            files_cleaned = super().clean_offload_dir(offload_dir)
+            dist.barrier()
+            return files_cleaned
+        else:
+            # Non-source processes still clear their index
+            if offload_dir is not None:
+                from pathlib import Path
+
+                offload_dir = str(Path(offload_dir).resolve())
+
+            for offloaded in list(cls.index.keys()):
+                file_path = cls.index[offloaded]["safetensors_file"]
+                if offload_dir is not None and not file_path.startswith(offload_dir):
+                    continue
+                del cls.index[offloaded]
+
+            dist.barrier()
+            return 0
