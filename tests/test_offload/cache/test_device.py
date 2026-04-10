@@ -22,18 +22,12 @@ from tests.testing_utils import requires_gpu
 
 @pytest.fixture()
 def onload_device():
-    if (torch.mps.is_available()):
-        return torch.device("mps")
-
-    return torch.device("cuda")
+    return torch.accelerator.current_accelerator()
 
 
 @pytest.fixture()
 def offload_device():
-    if (torch.mps.is_available()):
-        return torch.device("mps")
-
-    return torch.device("cuda")
+    return torch.accelerator.current_accelerator()
 
 
 @pytest.mark.unit

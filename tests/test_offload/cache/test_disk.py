@@ -25,8 +25,7 @@ from tests.testing_utils import requires_gpu
 
 @pytest.fixture()
 def onload_device():
-    return torch.device("cuda")
-
+    return torch.accelerator.current_accelerator()
 
 @pytest.fixture()
 def offload_device():
