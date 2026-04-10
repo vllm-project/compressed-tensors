@@ -6,7 +6,7 @@ from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.offload.dist_utils import is_distributed
+from compressed_tensors.distributed import is_distributed
 
 
 __all__ = ["get_tensors", "norm_device", "DEFAULT_OFFLOAD_DEVICE"]

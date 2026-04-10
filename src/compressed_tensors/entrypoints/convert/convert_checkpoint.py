@@ -13,9 +13,13 @@ from compressed_tensors.entrypoints.convert.convert_file import (
     validate_file,
     write_checkpoint_quantization_config,
 )
-from compressed_tensors.entrypoints.convert.converters import Converter
+from compressed_tensors.entrypoints.convert.converters import (
+    Converter,
+    build_inverse_weight_maps,
+)
 from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
+    get_weight_map,
     is_weights_file,
     update_safetensors_index,
 )
@@ -32,11 +36,14 @@ def convert_checkpoint(
     max_workers: int = 1,
 ):
     """
-    Convert a model checkpoint to compressed-tensors format without loading it up
-    in memory, instead operating directly on the model safetensors files. This
-    entrypoint operates on a model stub or folder containing weights saved in
-    safetensors files, and updates the corresponding quantization_config field in
-    the config.json. All additional files will be copied to new checkpoint.
+    Convert a model checkpoint to either:
+    - its equivalent quantized format in compressed-tensors
+    - the unquantized format
+    without loading it up in memory, instead operating directly on the model
+    safetensors files. This entrypoint operates on a model stub or folder containing
+    weights saved in safetensors files, and updates the corresponding
+    quantization_config field in the config.json. All additional files will be
+    copied to new checkpoint.
 
     :param model_stub: huggingface model hub or path to local weights files
     :param save_directory: new checkpoint will be saved in this directory.
@@ -45,30 +52,49 @@ def convert_checkpoint(
     :param converters: converter we wish to apply to the checkpoint,
         e.g. conversion of some layers from some format to compressed-tensors
     """
-    # validate arguments
+    # get all model_files for checkpoint
     model_files = get_checkpoint_files(model_stub)
 
-    # 0. collect safetensors files, copy files
+    weight_map = get_weight_map(model_files)
+
+    # Build inverse_weight_maps, so that each job knows how to load up every necessary
+    # weight and its dependencies
+    inverse_weight_maps = build_inverse_weight_maps(
+        weight_map=weight_map,
+        model_files=model_files,
+        converters=[converter],
+    )
+
+    # Build validation/conversion jobs, copy over any other file
     validate_jobs = []
     convert_jobs = []
-    for file_path, resolved_path in model_files.items():
-        save_path = Path(save_directory) / file_path
+    for shard_name, resolved_path in model_files.items():
+        save_path = Path(save_directory) / shard_name
 
-        if file_path.endswith("safetensors"):
-            validate_jobs.append((validate_file, resolved_path, converter))
-            convert_jobs.append((convert_file, resolved_path, save_path, converter))
+        if shard_name.endswith("safetensors"):
+            if shard_name not in inverse_weight_maps:
+                raise ValueError(
+                    f"Could not find inverse_weight_map for shard {shard_name}"
+                )
+            validate_jobs.append(
+                (validate_file, inverse_weight_maps[shard_name], converter)
+            )
+            convert_jobs.append(
+                (convert_file, inverse_weight_maps[shard_name], save_path, converter)
+            )
 
         else:
-            if is_weights_file(file_path):
-                logger.warning(f"Skip processing for weights file {file_path}")
-            save_path.parent.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Copying {file_path} {save_path}")
-            shutil.copyfile(resolved_path, save_path)
+            if is_weights_file(shard_name):
+                logger.warning(f"Skip processing for weights file {shard_name}")
+            if str(resolved_path) != str(save_path):
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Copying {shard_name} {save_path}")
+                shutil.copyfile(resolved_path, save_path)
 
-    # 1. validate quantizable tensors fail fast before long-running quantization
+    # Validate before long-running procssing job
     exec_jobs(validate_jobs, max_workers, desc="Validating")
 
-    # 2-5. quantize and compress weights
+    # Process weights, accumulating total bytes used and the new weight_map
     total_size = 0
     weight_map = dict()
     convert_results = exec_jobs(convert_jobs, max_workers, desc="Converting")
@@ -76,7 +102,7 @@ def convert_checkpoint(
         total_size += _total_size
         weight_map.update(_weight_map)
 
-    # 5. update config and safetensors index
+    # Update config and safetensors index
     write_checkpoint_quantization_config(save_directory, converter)
     update_safetensors_index(save_directory, total_size, weight_map)
 
@@ -93,6 +119,13 @@ def exec_jobs(
     :param desc: tqdm description
     """
     results = []
+
+    # For easier debugging, don't run single-threaded jobs via ThreadPoolExecutor
+    if max_workers == 1:
+        for job in tqdm.tqdm(jobs, desc=desc):
+            results.append(job[0](*job[1:]))
+        return results
+
     with ThreadPoolExecutor(max_workers) as executor:
         futures = [executor.submit(*job) for job in jobs]
         for future in tqdm.tqdm(as_completed(futures), total=len(futures), desc=desc):

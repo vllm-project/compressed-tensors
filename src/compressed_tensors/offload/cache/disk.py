@@ -2,11 +2,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
+from compressed_tensors.distributed import is_source_process
 from compressed_tensors.offload.cache import OffloadCache
-from compressed_tensors.offload.dist_utils import is_rank0
 from compressed_tensors.offload.utils import send_tensors, to_tensor
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -51,7 +52,8 @@ class DiskCache(OffloadCache):
                 "Must provide an `offload_dir` to perform disk offloading "
                 "(add `offload_folder` argument to `from_pretrained`)"
             )
-        self.offload_dir = offload_dir
+        # Resolve relative paths to absolute paths for symlink creation
+        self.offload_dir = Path(offload_dir).resolve()
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
@@ -150,7 +152,9 @@ class DiskCache(OffloadCache):
         weight_info: dict,
         offload_dir: str | os.PathLike | None,
     ) -> None:
-        assert is_rank0(), "Must call on rank 0 to avoid id collisions between ranks"
+        assert (
+            is_source_process()
+        ), "Must call on rank 0 to avoid id collisions between ranks"
         if offload_dir is None:
             raise ValueError(
                 "Must provide an `offload_dir` to perform disk offloading "
@@ -159,7 +163,9 @@ class DiskCache(OffloadCache):
         file_name = f"{cls._new_file_prefix}{id(offloaded)}.safetensors"
         file_path = os.path.join(offload_dir, file_name)
 
-        os.symlink(weight_info["safetensors_file"], file_path)
+        # Resolve relative paths to absolute paths for symlink creation
+        source_path = Path(weight_info["safetensors_file"]).resolve()
+        os.symlink(source_path, file_path)
         cls.index[offloaded] = {
             "safetensors_file": file_path,
             "weight_name": weight_info["weight_name"],

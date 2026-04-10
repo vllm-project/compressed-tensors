@@ -3,6 +3,7 @@
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.distributed import is_source_process
 from compressed_tensors.offload.cache.cpu import CPUCache
 from compressed_tensors.offload.cache.utils import catch_cpu_mem_error
 from compressed_tensors.offload.utils import send_tensors, to_empty
@@ -27,7 +28,7 @@ class DistributedCPUCache(CPUCache):
         # slight runtime cost for views
         tensor = tensor.contiguous()
 
-        if dist.get_rank() == 0:
+        if is_source_process():
             # create shared memory cpu tensor
             tensor = super().offload(tensor).share_memory_()
             handle, filename, nbytes = tensor.untyped_storage()._share_filename_cpu_()

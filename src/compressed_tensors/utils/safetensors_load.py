@@ -7,6 +7,7 @@ import re
 import struct
 from collections.abc import Iterable
 
+import torch
 from huggingface_hub import list_repo_files
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -21,9 +22,13 @@ __all__ = [
     "get_weight_mappings",
     "get_nested_weight_mappings",
     "get_quantization_parameter_to_path_mapping",
+    "InverseWeightMap",
+    "load_tensors_from_inverse_weight_map",
     "is_quantization_param",
     "find_config_path",
     "find_safetensors_index_path",
+    "find_safetensors_index_file",
+    "get_weight_map",
     "update_safetensors_index",
     "is_weights_file",
     "get_checkpoint_files",
@@ -65,14 +70,16 @@ def get_checkpoint_files(model_stub: str | os.PathLike) -> dict[str, str]:
     # In the future, this function can accept and pass download kwargs to cached_file
 
     if os.path.exists(model_stub):
-        file_paths = _walk_directory_files(model_stub, ignore=".cache")
+        file_paths = _walk_directory_files(
+            model_stub, ignore=[".cache", ".gitattributes"]
+        )
     else:
         file_paths = list_repo_files(model_stub)
 
     return {file_path: cached_file(model_stub, file_path) for file_path in file_paths}
 
 
-def _walk_directory_files(root_dir: str, ignore: str | None = None) -> list[str]:
+def _walk_directory_files(root_dir: str, ignore: Iterable[str]) -> list[str]:
     """
     Return all file paths relative to root_dir, optionally skipping entries
     whose relative path starts with `ignore`.
@@ -81,11 +88,12 @@ def _walk_directory_files(root_dir: str, ignore: str | None = None) -> list[str]
     :param ignore: optional path prefix to exclude from results
     :return: list of relative file paths
     """
+
     all_files = []
     for dirpath, _, filenames in os.walk(root_dir):
         for filename in filenames:
             rel_path = os.path.relpath(os.path.join(dirpath, filename), root_dir)
-            if not (ignore and rel_path.startswith(ignore)):
+            if not any([rel_path.startswith(i) for i in ignore]):
                 all_files.append(rel_path)
     return all_files
 
@@ -114,6 +122,45 @@ def find_config_path(save_directory: str | os.PathLike) -> str | None:
         if file_name in (CONFIG_NAME, "params.json"):
             return os.path.join(save_directory, file_name)
     return None
+
+
+def find_safetensors_index_file(model_files: dict[str, str]) -> str | None:
+    """
+    Find safetensors index file from full list of model_files
+
+    :param model_files: mapping of file relative path to absolute path, usually the
+        result of `get_checkpoint_files`
+    :return: absolute path to the safetensors index file, or None if not found
+    """
+    for file_path, resolved_path in model_files.items():
+        if file_path.endswith(SAFE_WEIGHTS_INDEX_NAME):
+            return resolved_path
+
+    return None
+
+
+def get_weight_map(model_files: dict[str, str]) -> dict[str, str]:
+    """
+    Get weight map from full list of model_files.
+    If safetensors index.json file is found, weight_map can be pulled from there.
+    Otherwise, it is created from the single safetensors weights file.
+
+    :returns: weight map of form {weight name -> safetensor file name}
+    """
+    index_file = find_safetensors_index_file(model_files)
+    if index_file is not None:
+        with open(index_file, "r") as f:
+            return json.load(f)["weight_map"]
+
+    # if no index_file, use model.saftensors instead.
+    if SAFE_WEIGHTS_NAME not in model_files:
+        raise ValueError(
+            f"File {SAFE_WEIGHTS_NAME} expected but not found in {model_files.keys()}"
+        )
+
+    # create from model.safetensors
+    with safe_open(model_files[SAFE_WEIGHTS_NAME], framework="pt") as file:
+        return {tensor: SAFE_WEIGHTS_NAME for tensor in file.keys()}
 
 
 def update_safetensors_index(
@@ -356,6 +403,50 @@ def get_quantization_parameter_to_path_mapping(model_path: str) -> dict[str, str
             mapping[weight_name] = safe_path
             continue
     return mapping
+
+
+InverseWeightMap = dict[str, list[str] | None]
+"""
+Mapping of absolute path -> list of tensors. Used to pull tensors across different
+safetensors files that must be loaded/processed together. Used in conjunction
+with `load_tensors_from_inverse_weight_map`
+"""
+
+
+def load_tensors_from_inverse_weight_map(
+    inverse_weight_map: InverseWeightMap,
+    device: str | torch.device = torch.device("cpu"),
+) -> dict[str, torch.Tensor]:
+    """
+    Given an inverse_weight_map, which is a dictionary of file name to list of
+    tensor names, load up all listed tensor names
+
+    :param inverse_weight_map: mapping of resolved source file path ->
+        list of tensor names to load from that file. Precomputed by
+        build_inverse_weight_map() in the job-building phase.
+        If list is empty, all tensors are pulled
+        Example: {"/path/shard0.safetensors": ["q_proj.weight"],
+                  "/path/shard1.safetensors": ["k_proj.weight", "v_proj.weight"]}
+    :param device: tensors will be loaded onto this device. Defaults to CPU
+
+    :returns: mapping of tensor name to actual tensor loaded from safetensors file
+        Example: {"q_proj.weight": torch.Tensor(...), "k_proj.weight: torch.Tensor(...)}
+    """
+    tensors: dict[str, torch.Tensor] = {}
+    for source_file, tensor_names in inverse_weight_map.items():
+        with safe_open(source_file, framework="pt", device=str(device)) as f:
+            keys = f.keys()
+            # if tensor_names is empty, pull all tensors
+            if tensor_names is None or len(tensor_names) == 0:
+                tensor_names = keys
+            for tensor_name in tensor_names:
+                if tensor_name not in keys:
+                    raise ValueError(
+                        f"Expected to find tensor {tensor_name} in "
+                        f"{source_file}, but tensor was not found."
+                    )
+                tensors[tensor_name] = f.get_tensor(tensor_name)
+    return tensors
 
 
 def is_quantization_param(name: str) -> bool:

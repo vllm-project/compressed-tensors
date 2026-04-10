@@ -13,7 +13,7 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_scheme import NVFP4
-from compressed_tensors.utils.match import match_quantizable_tensors
+from compressed_tensors.utils.match import match_name, match_quantizable_tensors
 
 
 class ModelOptNvfp4Converter(Converter):
@@ -106,6 +106,29 @@ class ModelOptNvfp4Converter(Converter):
 
             if param_name in disallowed_names:
                 raise ValueError(f"Hit unexpected non-targeted tensor {name}")
+
+    def get_dependencies(self, weight_name: str) -> set[str]:
+        module_name, suffix = weight_name.rsplit(".", 1)
+        if (
+            any([match_name(module_name, target) for target in self.targets])
+            and not any([match_name(module_name, ignore) for ignore in self.ignore])
+            and suffix == "weight"
+        ):
+            deps = {
+                f"{module_name}.input_scale",
+                f"{module_name}.weight_scale",
+                f"{module_name}.weight_scale_2",
+            }
+
+            if self.kv_cache_scheme:
+                if module_name.endswith("k_proj"):
+                    deps.add(f"{module_name}.k_scale")
+                if module_name.endswith("v_proj"):
+                    deps.add(f"{module_name}.v_scale")
+
+            return deps
+
+        return set()
 
     def create_config(self) -> QuantizationConfig:
         return QuantizationConfig(
