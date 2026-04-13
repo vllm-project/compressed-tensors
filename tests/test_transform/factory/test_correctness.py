@@ -146,6 +146,96 @@ def test_correctness_attention_heads(type, randomize, head_dim, input_batch_size
     assert torch.allclose(true_output, output, atol=1e-5, rtol=0.0)
 
 
+@pytest.mark.parametrize("type", ("hadamard", "random-hadamard", "random-matrix"))
+@pytest.mark.parametrize("randomize", (True, False))
+@pytest.mark.parametrize("head_dim", (None, 2, 4))
+@pytest.mark.parametrize("input_batch_size", (1, 5))
+def test_correctness_linear_with_bias(type, randomize, head_dim, input_batch_size):
+    """Test that WEIGHT_OUTPUT transforms correctly handle bias.
+
+    For WEIGHT_OUTPUT on a Linear with bias:
+        y' = R @ (W @ x + b) = (R @ W) @ x + (R @ b)
+    Both weight and bias must be transformed.
+    """
+    size = (4, 8)
+    module = torch.nn.Linear(*size, bias=True)
+    scheme = TransformScheme(type=type, randomize=randomize, head_dim=head_dim)
+    factory = TransformFactory.from_scheme(scheme, name="")
+
+    input = torch.rand((input_batch_size, 5, size[0]))
+    true_output = module(input)
+
+    # Apply WEIGHT_OUTPUT (transforms weight AND bias) then WEIGHT_INPUT inverse
+    config = TransformConfig(
+        config_groups={
+            "": TransformScheme(
+                type=type,
+                randomize=randomize,
+                head_dim=head_dim,
+                apply=[
+                    TransformArgs(targets="0", location="weight_output"),
+                    TransformArgs(targets="1", location="weight_input", inverse=True),
+                ],
+            )
+        }
+    )
+    model = torch.nn.Sequential(module, torch.nn.Linear(size[1], 16, bias=False))
+    true_output_full = model(input)
+    apply_transform_config(model, config)
+
+    output = model(input)
+    assert torch.allclose(true_output_full, output, atol=1e-5, rtol=0.0)
+
+
+@pytest.mark.parametrize("type", ("hadamard", "random-hadamard", "random-matrix"))
+@pytest.mark.parametrize("randomize", (True, False))
+@pytest.mark.parametrize("head_dim", (4, 8))
+@pytest.mark.parametrize("input_batch_size", (1, 5))
+def test_correctness_attention_heads_with_bias(
+    type, randomize, head_dim, input_batch_size
+):
+    """Test R2 head-wise rotation with attention bias (e.g. Qwen2 v_proj).
+
+    When v_proj has bias and R2 WEIGHT_OUTPUT is applied, the bias must also
+    be rotated for the o_proj WEIGHT_INPUT inverse to correctly cancel out.
+    """
+    hidden_size = 64
+    num_attention_heads = 8
+
+    attention = MockAttention(
+        hidden_size=hidden_size,
+        num_attention_heads=num_attention_heads,
+        num_key_value_heads=head_dim,
+    )
+    # Add bias to v_proj to simulate Qwen2-like architecture
+    attention.v_proj.bias = torch.nn.Parameter(
+        torch.randn(attention.v_proj.out_features)
+    )
+
+    input = torch.rand(input_batch_size, 5, hidden_size)
+    true_output = attention(input)
+
+    config = TransformConfig(
+        config_groups={
+            "R2": TransformScheme(
+                type=type,
+                randomize=randomize,
+                head_dim=head_dim,
+                apply=[
+                    TransformArgs(targets="v_proj", location="weight_output"),
+                    TransformArgs(
+                        targets="o_proj", location="weight_input", inverse=True
+                    ),
+                ],
+            )
+        }
+    )
+    apply_transform_config(attention, config)
+
+    output = attention(input)
+    assert torch.allclose(true_output, output, atol=1e-5, rtol=0.0)
+
+
 @pytest.mark.parametrize("type", ("hadamard", "random-hadamard"))
 @pytest.mark.parametrize("randomize", (True, False))
 @pytest.mark.parametrize("head_dim", (4, 8))
