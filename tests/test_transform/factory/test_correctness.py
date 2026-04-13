@@ -159,11 +159,8 @@ def test_correctness_linear_with_bias(type, randomize, head_dim, input_batch_siz
     """
     size = (4, 8)
     module = torch.nn.Linear(*size, bias=True)
-    scheme = TransformScheme(type=type, randomize=randomize, head_dim=head_dim)
-    factory = TransformFactory.from_scheme(scheme, name="")
 
     input = torch.rand((input_batch_size, 5, size[0]))
-    true_output = module(input)
 
     # Apply WEIGHT_OUTPUT (transforms weight AND bias) then WEIGHT_INPUT inverse
     config = TransformConfig(
