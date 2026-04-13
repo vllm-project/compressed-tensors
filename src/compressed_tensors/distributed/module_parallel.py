@@ -23,7 +23,7 @@ T = TypeVar("T", bound=torch.nn.Module)
 def replace_module_parallel(
     modules: list[T],
     apply_fn: Callable[[T], None],
-    weight_fn: Callable[[T], float] = module_size,
+    weight_fn: Callable[[T], int | float] = module_size,
     desc: Optional[str] = None,
 ):
     """Apply a function to modules in parallel across distributed ranks.
@@ -61,7 +61,7 @@ def replace_module_parallel(
         for module in modules:
             if assigned_rank[module] != dist.get_rank():
                 to_meta(module)  # 1. remove non-processing rank pointers
-                apply_fn(module)  # 2. compress on meta (prepare step 4)
+                apply_fn(module)  # 2. compress on meta to match state dict for step 4
 
     # Step 3: Apply on device for processing rank
     with as_single_threaded():
@@ -74,8 +74,6 @@ def replace_module_parallel(
     for module in modules:
         with disable_onloading():
             state_dict = get_direct_state_dict(module)
-            # if assigned_rank[module] == dist.get_rank():
-            #    print(state_dict)
 
         # If module is not offloaded, manually broadcast tensors via object list
         if not isinstance(module._parameters, OffloadCache):
