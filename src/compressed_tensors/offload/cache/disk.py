@@ -9,6 +9,7 @@ import torch
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.utils import send_tensors, to_tensor
+from compressed_tensors.utils import is_accelerator_type
 from safetensors import safe_open
 from safetensors.torch import save_file
 
@@ -173,19 +174,21 @@ class DiskCache(OffloadCache):
         }
 
 
-def _get_safe_open_device(device: "DeviceLikeType") -> str | int:
+def _get_safe_open_device(device: "DeviceLikeType") -> str:
     """
     `safetensors.safe_open` does not accept `torch.device` as argument, so
-    we must convert from torch.device to a string, while considering "cuda" resolution
+    we must convert from torch.device to a string, while considering accelerator
+    device index resolution.
 
     :param device: torch device to convert
-    :return: device argument to `safetensors.safe_open`
+    :return: device string for `safetensors.safe_open`
     """
     device = torch.device(device)
-    if device.type in ("cuda"):
+    if is_accelerator_type(device.type):
         if device.index is None:
-            return torch.cuda.current_device()
+            index = torch.accelerator.current_device_index()
         else:
-            return device.index
+            index = device.index
+        return f"{device.type}:{index}"
     else:
         return device.type

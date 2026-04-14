@@ -23,7 +23,7 @@ def assert_device_equal(
     if device_b == "disk":
         device_b = torch.device("meta")
 
-    cur_index = torch.cuda.current_device()
+    cur_index = torch.accelerator.current_device_index()
     a_index = cur_index if device_a.index is None else device_a.index
     b_index = cur_index if device_b.index is None else device_b.index
     assert device_a.type == device_b.type and a_index == b_index
@@ -72,9 +72,12 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
                 rank = int(os.environ["RANK"])
                 local_rank = int(os.environ["LOCAL_RANK"])
 
-                torch.cuda.set_device(local_rank)
+                torch.accelerator.set_device_index(local_rank)
+                accel_type = torch.accelerator.current_accelerator().type
                 dist.init_process_group(
-                    backend="nccl",
+                    backend=dist.get_default_backend_for_device(
+                        torch.device(accel_type, local_rank)
+                    ),
                     init_method="env://",
                     rank=rank,
                     world_size=world_size,
@@ -106,9 +109,10 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
 
 
 @pytest.fixture()
-def cuda_device():
+def accel_device():
+    accel_type = torch.accelerator.current_accelerator().type
     return (
-        torch.device("cuda")
+        torch.device(accel_type)
         if "TORCHELASTIC_RUN_ID" in os.environ
-        else torch.device("cuda:0")
+        else torch.device(accel_type, 0)
     )

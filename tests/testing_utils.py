@@ -101,12 +101,12 @@ def induce_sparsity(tensor, sparsity_ratio) -> "torch.Tensor":
 
 def is_gpu_available():
     """
-    :return: True if a GPU is available, False otherwise
+    :return: True if an accelerator device is available, False otherwise
     """
     try:
         import torch  # noqa: F401
 
-        return torch.cuda.device_count() > 0
+        return torch.accelerator.device_count() > 0
     except ImportError:
         return False
 
@@ -133,7 +133,7 @@ def requires_gpu(test_case_or_num):
         num_required_gpus = 1
 
     decorator = pytest.mark.skipif(
-        (torch.cuda.device_count() < num_required_gpus),
+        (torch.accelerator.device_count() < num_required_gpus),
         reason=f"Not enough GPUs available, {num_required_gpus} GPUs required",
     )
     if isinstance(test_case_or_num, int):
