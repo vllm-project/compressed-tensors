@@ -85,7 +85,6 @@ jobs:
         - name: "🔬 Running tests"
           run: |-
             docker exec -e NUMA_NODE=${NUMA_NODE} -e NUMA_CPUSET=${NUMA_CPUSET} -e ZE_AFFINITY_MASK=${ZE_AFFINITY_MASK} $CONTAINER_NAME \
-              bash -c "cd tests && \
-              numactl --physcpubind=${NUMA_CPUSET:-84-111} --membind=${NUMA_NODE:-3} pytest -c pytest-xpu.ini"
+              bash -c "numactl --physcpubind=${NUMA_CPUSET:-84-111} --membind=${NUMA_NODE:-3} pytest -c pytest-xpu.ini"
         - name: Clean up docker container
           run: docker rm -f $CONTAINER_NAME

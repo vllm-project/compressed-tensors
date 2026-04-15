@@ -20,22 +20,6 @@ __all__ = [
 DEFAULT_OFFLOAD_DEVICE = torch.device("cpu")
 
 
-def is_accelerator_type(device_type: str) -> bool:
-    """Return ``True`` if *device_type* matches the current accelerator.
-
-    Works for any backend exposed via :mod:`torch.accelerator` — CUDA, XPU,
-    NPU, etc.  Returns ``False`` when no accelerator is present.
-    """
-    if not torch.accelerator.is_available():
-        return False
-    return device_type == torch.accelerator.current_accelerator().type
-
-
-def _accel_type() -> str:
-    """Shorthand for the current accelerator's device-type string."""
-    return torch.accelerator.current_accelerator().type
-
-
 def norm_device(
     device: str | torch.device | None,
 ) -> torch.device | Literal["disk"] | None:

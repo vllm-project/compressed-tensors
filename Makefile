@@ -23,8 +23,6 @@ style:
 test:
 	@echo "Running python tests";
 	pytest -ra tests;
-	@echo "Running emulated XPU tests";
-	pytest -ra -c pytest-xpu.ini --emulate-xpu;
 
 # creates wheel file
 build:
