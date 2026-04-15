@@ -6,12 +6,12 @@ from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.offload.dist_utils import is_distributed
+from compressed_tensors.distributed import is_distributed
+from compressed_tensors.utils import is_accelerator_type
 
 
 __all__ = [
     "get_tensors",
-    "is_accelerator_type",
     "norm_device",
     "DEFAULT_OFFLOAD_DEVICE",
 ]

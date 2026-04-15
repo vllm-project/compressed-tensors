@@ -1,5 +1,4 @@
 .PHONY: build docs test
-
 BUILD_TYPE ?= dev # set nightly to build nightly release
 PYCHECKDIRS := src tests
 PYCHECKGLOBS := 'src/**/*.py' 'tests/**/*.py' 'utils/**/*.py' 'examples/**/*.py' setup.py
@@ -24,6 +23,8 @@ style:
 test:
 	@echo "Running python tests";
 	pytest -ra tests;
+	@echo "Running emulated XPU tests";
+	pytest -ra -c pytest-xpu.ini --emulate-xpu;
 
 # creates wheel file
 build:

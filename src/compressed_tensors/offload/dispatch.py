@@ -247,7 +247,9 @@ def get_device_memory() -> dict[torch.device, int]:
 
     if dist.is_available() and dist.is_initialized():
         logger.info("Detected distributed context. Dispatching to local rank gpu")
-        device_memory = torch.accelerator.get_memory_info(dist.get_rank())[1]
+        device_memory = torch.accelerator.get_memory_info(
+            torch.accelerator.current_device_index()
+        )[1]
         return {torch.device(accel_type): device_memory}
 
     return {

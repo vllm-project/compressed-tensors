@@ -211,9 +211,10 @@ def test_offload_and_dispatch_model(model_id):
 
 
 @pytest.mark.unit
+@pytest.mark.skip_xpu  # mocks torch.accelerator for CPU fallback path
 def test_get_device_memory_cpu_fallback():
-    with patch("compressed_tensors.offload.dispatch.torch.cuda") as mock_cuda:
-        mock_cuda.is_available.return_value = False
+    with patch("compressed_tensors.offload.dispatch.torch.accelerator") as mock_accel:
+        mock_accel.is_available.return_value = False
         device_memory = get_device_memory()
 
     assert len(device_memory) == 1
@@ -232,11 +233,12 @@ def test_dispatch_cpu_only():
 
 
 @pytest.mark.unit
+@pytest.mark.skip_xpu  # mocks torch.accelerator for CPU fallback path
 def test_dispatch_cpu_only_via_fallback():
     model = Model()
 
-    with patch("compressed_tensors.offload.dispatch.torch.cuda") as mock_cuda:
-        mock_cuda.is_available.return_value = False
+    with patch("compressed_tensors.offload.dispatch.torch.accelerator") as mock_accel:
+        mock_accel.is_available.return_value = False
         dispatch_model(model, extra_memory=0)
 
     assert_module_on_device(model, "cpu")

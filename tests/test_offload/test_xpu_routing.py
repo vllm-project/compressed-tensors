@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 """
-Option 1: Mock routing tests for XPU device type.
+XPU emulation test (part 1): Mock routing tests for XPU device type.
 
 Verifies that routing functions handle ``"xpu"`` correctly by mocking
 ``torch.accelerator`` — no real tensor operations, no GPU required.
@@ -17,7 +17,8 @@ import pytest
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.cache.device import DeviceCache
-from compressed_tensors.offload.convert.helpers import is_accelerator_type, norm_device
+from compressed_tensors.offload.convert.helpers import norm_device
+from compressed_tensors.utils import is_accelerator_type
 
 
 @pytest.fixture
@@ -74,13 +75,24 @@ class TestXpuRouting:
 
         # bare "xpu" → current device index (0)
         result = _get_safe_open_device(torch.device("xpu"))
-        assert result == 0
+        assert result == "xpu:0"
 
     def test_get_safe_open_device_xpu_with_index(self, mock_xpu_accelerator):
         from compressed_tensors.offload.cache.disk import _get_safe_open_device
 
         result = _get_safe_open_device(torch.device("xpu", 3))
-        assert result == 3
+        assert result == "xpu:3"
+
+    def test_get_safe_open_device_cuda_returns_string(self, monkeypatch):
+        from compressed_tensors.offload.cache.disk import _get_safe_open_device
+
+        fake = SimpleNamespace(type="cuda")
+        monkeypatch.setattr(torch.accelerator, "current_accelerator", lambda: fake)
+        monkeypatch.setattr(torch.accelerator, "is_available", lambda: True)
+        monkeypatch.setattr(torch.accelerator, "current_device_index", lambda: 2)
+
+        assert _get_safe_open_device(torch.device("cuda")) == "cuda:2"
+        assert _get_safe_open_device(torch.device("cuda", 5)) == "cuda:5"
 
     def test_get_safe_open_device_cpu(self, mock_xpu_accelerator):
         from compressed_tensors.offload.cache.disk import _get_safe_open_device

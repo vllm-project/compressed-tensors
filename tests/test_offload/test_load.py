@@ -112,11 +112,7 @@ def _get_accelerate_offloaded_device(module: torch.nn.Module) -> str | None:
 
 @pytest.mark.unit
 @patch("compressed_tensors.offload.load.from_accelerate")
-@patch("compressed_tensors.offload.load.is_rank0", return_value=True)
-@patch("compressed_tensors.offload.load.is_distributed", return_value=False)
-def test_patch_forwards_positional_args(
-    mock_distributed, mock_rank0, mock_from_accelerate
-):
+def test_patch_forwards_positional_args(mock_from_accelerate):
     """Regression: positional args must be forwarded without rebinding to cls."""
     received = {}
 
@@ -130,11 +126,9 @@ def test_patch_forwards_positional_args(
             return MagicMock()
 
     with patch_from_pretrained(FakeModel, extra_cpu_mem=0):
-        FakeModel.from_pretrained(
-            "org/model-name", device_map="cpu", torch_dtype="auto"
-        )
+        FakeModel.from_pretrained("org/model", device_map="cpu", torch_dtype="auto")
 
     assert received["cls"] is FakeModel
-    assert received["path"] == "org/model-name"
+    assert received["path"] == "org/model"
     assert received["kwargs"]["device_map"] == "cpu"
     assert received["kwargs"]["torch_dtype"] == "auto"

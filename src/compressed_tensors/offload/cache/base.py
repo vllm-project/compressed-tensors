@@ -8,6 +8,7 @@ from typing import ClassVar, Literal
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.utils import is_accelerator_type
 
 
 class OffloadCache(MutableMapping, ABC):
@@ -67,23 +68,24 @@ class OffloadCache(MutableMapping, ABC):
         device_type = torch.device(device).type if device != "disk" else "disk"
         distributed = dist.is_available() and dist.is_initialized()
 
-        if device_type == "cpu" and not distributed:
-            return CPUCache
-        elif device_type == "cpu" and distributed:
-            return DistributedCPUCache
-        elif is_accelerator_type(device_type) and not distributed:
-            return DeviceCache
-        elif is_accelerator_type(device_type) and distributed:
-            return DistributedDeviceCache
-        elif device_type == "disk" and not distributed:
-            return DiskCache
-        elif device_type == "disk" and distributed:
-            return DistributedDiskCache
-        else:
-            raise NotImplementedError(
-                f"Offload of type {device} and "
-                f"distributed={distributed} has not been implemented"
-            )
+        match (device_type, distributed):
+            case ("cpu", False):
+                return CPUCache
+            case ("cpu", True):
+                return DistributedCPUCache
+            case (device, False) if is_accelerator_type(device):
+                return DeviceCache
+            case (device, True) if is_accelerator_type(device):
+                return DistributedDeviceCache
+            case ("disk", False):
+                return DiskCache
+            case ("disk", True):
+                return DistributedDiskCache
+            case _:
+                raise NotImplementedError(
+                    f"Offload of type {device_type} and "
+                    f"distributed={distributed} has not been implemented"
+                )
 
     @classmethod
     def from_mapping(

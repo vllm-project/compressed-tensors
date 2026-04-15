@@ -96,5 +96,29 @@ class RandomMatrixTransform(TransformBase):
         ).to(value.dtype)
 
 
+def _has_cpu_lapack() -> bool:
+    try:
+        torch.linalg.inv(torch.eye(2, dtype=torch.float64))
+        return True
+    except RuntimeError:
+        return False
+
+
+_cpu_lapack_available: bool | None = None
+
+
 def high_precision_invert(weight: Tensor) -> Tensor:
-    return torch.linalg.inv(weight.to(torch.float64)).to(weight.dtype)
+    global _cpu_lapack_available
+    original_device = weight.device
+    compute_device = original_device
+
+    # If the tensor is on CPU and LAPACK is not available (e.g. ROCm builds),
+    # move to GPU for the inversion
+    if compute_device.type == "cpu":
+        if _cpu_lapack_available is None:
+            _cpu_lapack_available = _has_cpu_lapack()
+        if not _cpu_lapack_available and torch.cuda.is_available():
+            compute_device = torch.device("cuda")
+
+    result = torch.linalg.inv(weight.to(device=compute_device, dtype=torch.float64))
+    return result.to(device=original_device, dtype=weight.dtype)
