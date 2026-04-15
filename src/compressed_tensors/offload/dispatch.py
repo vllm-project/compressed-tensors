@@ -237,26 +237,29 @@ def dispatch_model(
 
 def get_device_memory() -> dict[torch.device, int]:
     """
-    Get the total memory of all available devices. Returns CUDA device memory
-    when available, otherwise falls back to CPU with system RAM.
+    Get the total memory of all available accelerator devices. Returns accelerator
+    device memory when available, otherwise falls back to CPU with system RAM.
 
     :return: mapping from torch device to total memory
     """
-    if not torch.cuda.is_available():
+    if not torch.accelerator.is_available():
         import os
 
         total_ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
         return {torch.device("cpu"): total_ram}
 
+    accel_type = torch.accelerator.current_accelerator().type
+
     if dist.is_available() and dist.is_initialized():
         logger.info("Detected distributed context. Dispatching to local rank gpu")
-        device_memory = torch.cuda.get_device_properties(dist.get_rank()).total_memory
-        return {torch.device("cuda"): device_memory}
+        device_memory = torch.accelerator.get_memory_info(
+            torch.accelerator.current_device_index()
+        )[1]
+        return {torch.device(accel_type): device_memory}
 
     return {
-        # TODO: extend to xpu, ect.
-        torch.device(f"cuda:{idx}"): torch.cuda.get_device_properties(idx).total_memory
-        for idx in range(torch.cuda.device_count())
+        torch.device(accel_type, idx): torch.accelerator.get_memory_info(idx)[1]
+        for idx in range(torch.accelerator.device_count())
     }
 
 

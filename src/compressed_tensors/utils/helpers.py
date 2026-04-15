@@ -39,6 +39,7 @@ __all__ = [
     "get_num_attn_heads",
     "get_num_kv_heads",
     "get_head_dim",
+    "is_accelerator_type",
 ]
 
 FSDP_WRAPPER_NAME = "_fsdp_wrapped_module"
@@ -477,3 +478,14 @@ def get_head_dim(config: PretrainedConfig) -> int:
             "either `head_dim` or both `hidden_size` and `num_attention_heads`. "
             f"{config}"
         )
+
+
+def is_accelerator_type(device_type: str) -> bool:
+    """Return ``True`` if *device_type* matches the current accelerator.
+
+    Works for any backend exposed via :mod:`torch.accelerator` — CUDA, XPU,
+    NPU, etc.  Returns ``False`` when no accelerator is present.
+    """
+    if not torch.accelerator.is_available():
+        return False
+    return device_type == torch.accelerator.current_accelerator().type

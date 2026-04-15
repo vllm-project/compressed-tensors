@@ -127,6 +127,17 @@ class TransformFactory(RegistryMixin, ABC):
             with torch.no_grad(), align_module_device(module):
                 update_offload_parameter(module, "weight", transform(module.weight))
 
+                # For WEIGHT_OUTPUT, the bias must also be transformed:
+                #   y' = R @ (W @ x + b) = (R @ W) @ x + R @ b
+                # Without this, models with bias (e.g. Qwen2 attention)
+                # produce incorrect outputs under head-wise rotations (R2).
+                if (
+                    args.location == TransformLocation.WEIGHT_OUTPUT
+                    and getattr(module, "bias", None) is not None
+                ):
+                    new_bias = transform(module.bias.unsqueeze(-1)).squeeze(-1)
+                    update_offload_parameter(module, "bias", new_bias)
+
             if self.scheme.requires_grad:
                 # for training, the weight changes with every forward pass
                 # so we can leverage parametrization to propagate the gradient

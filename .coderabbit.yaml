@@ -1,0 +1,57 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "en"
+early_access: false
+reviews:
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_apply_labels: true
+  path_filters:
+    - "!**/*.pyc"
+    - "!**/build/**"
+    - "!**/.pytest_cache/**"
+    - "!**/.ruff_cache/**"
+    - "!**/__pycache__/**"
+  path_instructions:
+    - path: "**/*.py"
+      instructions: "Focus on code correctness, numerical stability, and tensor operations. Check for major PEP 8 violations and Python best practices. Pay attention to GPU memory management and model loading patterns. Ignore trivial formatting issues."
+    - path: "tests/**/*.py"
+      instructions: "Ensure PyTest tests are clear, comprehensive, and cover edge cases for compression and quantization scenarios. Verify proper mocking and test isolation. Don't focus on minor stylistic details."
+    - path: "examples/**/*.py"
+      instructions: "Review for clarity, correctness, and educational value. Ensure examples follow best practices and are runnable. Verify that comments and documentation are helpful for users learning the library."
+    - path: "src/compressed_tensors/compressors/**/*.py"
+      instructions: "Pay special attention to compression algorithm implementations. Verify correctness of packing, quantized storage, and MX format (MXFP4, MXFP8, NVFP4) implementations. Ensure compatibility with different model architectures and weight layouts."
+    - path: "src/compressed_tensors/quantization/**/*.py"
+      instructions: "Focus on quantization lifecycle correctness, scheme definitions, and observer implementations. Verify proper handling of different quantization strategies (FP8, INT4, etc.) and that calibration and activation ordering are correct."
+    - path: "src/compressed_tensors/config/**/*.py"
+      instructions: "Review configuration classes for correctness, serialization/deserialization safety, and backward compatibility. Ensure new fields have sensible defaults and are properly validated."
+    - path: "src/compressed_tensors/transform/**/*.py"
+      instructions: "Check transform factory and utility logic for correctness of weight transformations (e.g., Hadamard, smoothing). Verify numerical stability and proper application order relative to quantization."
+    - path: "src/compressed_tensors/offload/**/*.py"
+      instructions: "Review offloading and cache utilities for memory correctness, proper device placement, and no memory leaks. Verify that offload hooks interact correctly with model loading."
+    - path: "docs/**/*.md"
+      instructions: "Check for clarity, accuracy, and completeness. Ensure code examples in docs are correct and align with the current API."
+    - path: "**/README.md"
+      instructions: "Review for clarity, accuracy, and up-to-date information. Ensure installation instructions and examples are correct."
+  auto_review:
+    enabled: true
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+      - "DRAFT"
+    drafts: false
+    auto_incremental_review: false
+    base_branches:
+      - "main"
+knowledge_base:
+  linked_repositories:
+    - repository: "vllm-project/llm-compressor"
+      instructions: "Upstream library that uses compressed-tensors for model compression workflows. Useful for understanding how compression configs, quantization schemes, and compressed checkpoints are consumed by end-to-end compression pipelines."
+chat:
+  auto_reply: true
+issue_enrichment:
+  auto_enrich:
+    enabled: true

@@ -11,10 +11,10 @@ from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 
 
-acclerate = pytest.importorskip("accelerate")
+pytest.importorskip("accelerate")
 
 
-def get_hf_dispatched_model(cuda_device, tmp_path):
+def get_hf_dispatched_model(accel_device, tmp_path):
     from accelerate.big_modeling import dispatch_model
 
     offload_dir = tmp_path / "offload_dir"
@@ -28,7 +28,7 @@ def get_hf_dispatched_model(cuda_device, tmp_path):
         dispatch_model(
             model,
             {"0": 0, "1": "cpu", "2": "disk"},
-            main_device=str(cuda_device),
+            main_device=str(accel_device),
             force_hooks=True,
             offload_dir=offload_dir,
         )
@@ -40,16 +40,16 @@ def get_hf_dispatched_model(cuda_device, tmp_path):
 
 @pytest.mark.unit
 @requires_gpu
-def test_conversion_lifecycle(cuda_device, tmp_path):
-    model, offload_dir = get_hf_dispatched_model(cuda_device, tmp_path)
+def test_conversion_lifecycle(accel_device, tmp_path):
+    model, offload_dir = get_hf_dispatched_model(accel_device, tmp_path)
 
     exp_device_map = {
         "": (None, None),
-        "0": (cuda_device, cuda_device),
-        "1": (cuda_device, torch.device("cpu")),
-        "2": (cuda_device, "disk"),
+        "0": (accel_device, accel_device),
+        "1": (accel_device, torch.device("cpu")),
+        "2": (accel_device, "disk"),
     }
-    exp_hf_device_map = {"": "cpu", "0": str(cuda_device), "1": "cpu", "2": "disk"}
+    exp_hf_device_map = {"": "cpu", "0": str(accel_device), "1": "cpu", "2": "disk"}
 
     # 1. from_accelerate (oneshot/ load_offloaded_model)
     device_map, _offload_dir = from_accelerate(model)
@@ -79,5 +79,5 @@ def test_conversion_lifecycle(cuda_device, tmp_path):
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_conversion_lifecycle_dist(cuda_device, tmp_path):
-    test_conversion_lifecycle(cuda_device, tmp_path)
+def test_conversion_lifecycle_dist(accel_device, tmp_path):
+    test_conversion_lifecycle(accel_device, tmp_path)

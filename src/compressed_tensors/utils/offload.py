@@ -80,7 +80,11 @@ def cast_to_device(device_spec: int | torch.device) -> torch.device:
     :return: torch.device corresponding to the given device specification.
     """
     if isinstance(device_spec, int):
-        return torch.device(f"cuda:{device_spec}" if device_spec >= 0 else "cpu")
+        if device_spec >= 0 and torch.accelerator.is_available():
+            return torch.device(
+                torch.accelerator.current_accelerator().type, device_spec
+            )
+        return torch.device("cpu")
     return device_spec
 
 

@@ -35,7 +35,7 @@ def test_to_accelerate_module(offload_device, tmp_path):
 
 @pytest.mark.unit
 @requires_gpu
-def test_to_accelerate(cuda_device, tmp_path):
+def test_to_accelerate(accel_device, tmp_path):
     offload_dir = tmp_path / "offload_dir"
     os.mkdir(offload_dir)
 
@@ -50,7 +50,7 @@ def test_to_accelerate(cuda_device, tmp_path):
     dispatch_with_map(model, device_map, offload_dir)
 
     hf_device_map = to_accelerate(model)
-    assert hf_device_map == {"": "cpu", "0": "cpu", "1": str(cuda_device), "2": "disk"}
+    assert hf_device_map == {"": "cpu", "0": "cpu", "1": str(accel_device), "2": "disk"}
     assert hasattr(model[0], "_hf_hook")
     assert hasattr(model[1], "_hf_hook")
     assert hasattr(model[2], "_hf_hook")
@@ -59,5 +59,5 @@ def test_to_accelerate(cuda_device, tmp_path):
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2)
-def test_to_accelerate_dist(cuda_device, tmp_path):
-    test_to_accelerate(cuda_device, tmp_path)
+def test_to_accelerate_dist(accel_device, tmp_path):
+    test_to_accelerate(accel_device, tmp_path)
