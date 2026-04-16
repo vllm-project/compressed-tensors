@@ -344,13 +344,13 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             raise ValueError(f"Block structure requires block strategy\n{model}")
 
         # validate activation ordering and strategy
-        if actorder is not None and strategy not in (
+        if actorder == ActivationOrdering.GROUP and strategy not in (
             QuantizationStrategy.GROUP,
             QuantizationStrategy.TENSOR_GROUP,
         ):
             raise ValueError(
                 "Must use group or tensor_group quantization strategy in "
-                "order to apply activation ordering"
+                "order to apply group activation ordering"
             )
 
         # infer observer w.r.t. dynamic
