@@ -3,7 +3,11 @@
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.distributed import as_broadcastable, is_source_process
+from compressed_tensors.distributed import (
+    as_broadcastable,
+    get_source_rank,
+    is_source_process,
+)
 from compressed_tensors.offload.cache.device import DeviceCache
 from compressed_tensors.offload.utils import send_tensors, to_empty
 
@@ -36,5 +40,5 @@ class DistributedDeviceCache(DeviceCache):
         else:
             tensor = send_tensors(tensor, device=self.offload_device)
 
-        dist.broadcast(as_broadcastable(tensor), src=0)
+        dist.broadcast(as_broadcastable(tensor), src=get_source_rank())
         return tensor
