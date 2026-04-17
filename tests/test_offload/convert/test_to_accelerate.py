@@ -22,8 +22,10 @@ def get_offload_devices() -> list[str]:
         return offload_devices
 
     offload_devices.append(accelerator_device.type)
-    if accelerator_device.type == "cuda":
-        offload_devices.append("cuda:0")
+
+    multi_gpu_supported_types = ["cuda", "xpu", "hip", "hpu"]
+    if accelerator_device.type in multi_gpu_supported_types:
+        offload_devices.append(f"{accelerator_device.type}:0")
 
     return offload_devices
 
