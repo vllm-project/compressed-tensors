@@ -3,7 +3,7 @@
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, ClassVar, Literal, Optional
 
 import torch
 from compressed_tensors.distributed import is_source_process
@@ -32,7 +32,10 @@ class DiskCache(OffloadCache):
     offload_device = "disk"
 
     # offloaded tensors -> weight info
-    index: dict[torch.Tensor, dict[str, str]] = dict()
+    index: ClassVar[dict[torch.Tensor, dict[str, str]]] = {}
+
+    # file path -> reference count, to handle shared tensors (fixes #638)
+    _file_refcounts: ClassVar[dict[str, int]] = {}
 
     # directory where new tensors are written to
     offload_dir: str
@@ -104,6 +107,9 @@ class DiskCache(OffloadCache):
             "weight_name": "weight",
             "dtype": str(tensor.dtype).removeprefix("torch."),
         }
+        self._file_refcounts[file_path] = (
+            self._file_refcounts.get(file_path, 0) + 1
+        )
 
         save_file({"weight": tensor}, file_path)
         return offloaded
@@ -111,17 +117,25 @@ class DiskCache(OffloadCache):
     def __delitem__(self, key: str):
         """
         Remove the offload associated with `key`. If a new file was created to store
-        updated tensor data, that new tensor data file is deleted.
+        updated tensor data, that new tensor data file is deleted only when all
+        references to it have been removed (handles shared/tied tensors, fixes #638).
 
         Any references to onloaded tensors held by this class are invalidated.
 
         :param key: name of tensor to invalidate
         """
         offloaded = self.offloaded_values[key]
-        file_path = self.index[offloaded]["safetensors_file"]
-        if os.path.basename(file_path).startswith(self._new_file_prefix):
-            os.remove(file_path)
-        del self.index[offloaded]
+        weight_info = self.index.pop(offloaded, None)
+        if weight_info is not None:
+            file_path = weight_info["safetensors_file"]
+            self._file_refcounts[file_path] = self._file_refcounts.get(file_path, 0) - 1
+            if self._file_refcounts[file_path] <= 0:
+                del self._file_refcounts[file_path]
+                if os.path.basename(file_path).startswith(self._new_file_prefix):
+                    try:
+                        os.remove(file_path)
+                    except FileNotFoundError:
+                        pass
         super().__delitem__(key)
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
@@ -172,6 +186,7 @@ class DiskCache(OffloadCache):
             "weight_name": weight_info["weight_name"],
             "dtype": weight_info["dtype"],
         }
+        cls._file_refcounts[file_path] = cls._file_refcounts.get(file_path, 0) + 1
 
 
 def _get_safe_open_device(device: "DeviceLikeType") -> str:
