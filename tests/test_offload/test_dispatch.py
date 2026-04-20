@@ -12,7 +12,7 @@ from compressed_tensors.offload.dispatch import (
     set_onload_device,
 )
 from compressed_tensors.offload.utils import module_size
-from tests.test_offload.conftest import skip_if_mps_issue
+from tests.test_offload.conftest import skip_if_mps_device
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -76,7 +76,7 @@ def has_memory_requirements(device_memory: dict[torch.device, int]):
 
 
 @pytest.mark.unit
-@skip_if_mps_issue
+@skip_if_mps_device
 @requires_gpu
 def test_dispatch_one_device():
     model = Model()
@@ -89,7 +89,7 @@ def test_dispatch_one_device():
 
 
 @pytest.mark.unit
-@skip_if_mps_issue
+@skip_if_mps_device
 @requires_gpu
 def test_dispatch_two_devices():
     model = Model()
@@ -107,7 +107,7 @@ def test_dispatch_two_devices():
 
 
 @pytest.mark.unit
-@skip_if_mps_issue
+@skip_if_mps_device
 @requires_gpu
 def test_dispatch_no_split():
     model = Model()
@@ -124,7 +124,7 @@ def test_dispatch_no_split():
 
 
 @pytest.mark.unit
-@skip_if_mps_issue
+@skip_if_mps_device
 @requires_gpu
 def test_dispatch_split():
     model = Model()
@@ -146,7 +146,7 @@ def test_dispatch_split():
 
 
 @pytest.mark.unit
-@skip_if_mps_issue
+@skip_if_mps_device
 @requires_gpu
 def test_dispatch_offloaded():
     model = Model()
@@ -179,7 +179,7 @@ def test_dispatch_offloaded():
 @pytest.mark.integration
 @requires_gpu
 @pytest.mark.parametrize("model_id", ["nm-testing/tinysmokellama-3.2"])
-@skip_if_mps_issue
+@skip_if_mps_device
 @torch.inference_mode()
 def test_offload_and_dispatch_model(model_id):
     model = AutoModelForCausalLM.from_pretrained(model_id).eval()

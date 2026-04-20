@@ -16,7 +16,7 @@ from compressed_tensors.offload.utils import send_tensors
 
 accelerator_device = torch.accelerator.current_accelerator()
 
-skip_if_mps_issue = pytest.mark.skipif(
+skip_if_mps_device = pytest.mark.skipif(
     accelerator_device.type == "mps",
     reason="[Known issue] https://github.com/pytorch/pytorch/issues/167447",
 )
