@@ -3,7 +3,10 @@
 
 import torch
 from compressed_tensors.compressors.base import BaseCompressor
-from compressed_tensors.compressors.mx_utils import compress_mx_scale
+from compressed_tensors.compressors.mx_utils import (
+    compress_mx_scale,
+    decompress_mx_scale,
+)
 from compressed_tensors.compressors.nvfp4.base import NVFP4PackedCompressor
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
@@ -11,7 +14,6 @@ from compressed_tensors.quantization import (
     QuantizationScheme,
     QuantizationType,
 )
-from compressed_tensors.utils import TensorStateDict
 
 
 __all__ = ["MXFP4PackedCompressor"]
@@ -23,7 +25,6 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
     Compressor for MXFP4 quantized models.
 
     Overrides scale compression to use log2 encoding (bias-127 exponent).
-    Decompression is not implemented for this format.
     """
 
     @classmethod
@@ -34,19 +35,8 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
         return compress_mx_scale(scale, scale_dtype)
 
     @classmethod
-    def decompress(
-        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
-    ) -> TensorStateDict:
-        """
-        Decompress a per-module state dict.
-
-        MXFP4 decompression is currently not supported.
-
-        :param state_dict: local-name state dict (weight_packed, weight_scale, …)
-        :param scheme: quantization scheme for the weight
-        :return: decompressed state dict with weight in float dtype
-        """
-        raise NotImplementedError("MXFP4 decompression is currently not supported")
+    def _decompress_scale(cls, scale: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+        return decompress_mx_scale(scale).to(dtype)
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:

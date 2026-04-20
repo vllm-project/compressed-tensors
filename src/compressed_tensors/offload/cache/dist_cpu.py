@@ -3,8 +3,9 @@
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.distributed import is_source_process
+from compressed_tensors.distributed import get_source_rank, is_source_process
 from compressed_tensors.offload.cache.cpu import CPUCache
+from compressed_tensors.offload.cache.utils import catch_cpu_mem_error
 from compressed_tensors.offload.utils import send_tensors, to_empty
 
 
@@ -13,6 +14,7 @@ class DistributedCPUCache(CPUCache):
     Handles offloading and onloading tensors from/to cpu memory shared across processes
     """
 
+    @catch_cpu_mem_error
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Synchronously create shared cpu memory for offload
@@ -35,9 +37,9 @@ class DistributedCPUCache(CPUCache):
             broadcast_obj = [None, None, None]
 
         # receive shared memory file handle
-        dist.broadcast_object_list(broadcast_obj, src=0)
+        dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
-        if dist.get_rank() != 0:
+        if not is_source_process():
             # materialize meta tensor only if necessary
             if tensor.device.type == "meta":
                 tensor = to_empty(tensor, device=self.offload_device)

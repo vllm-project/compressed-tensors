@@ -37,6 +37,10 @@ class NVFP4PackedCompressor(BaseCompressor):
         return scale.to(scale_dtype)
 
     @classmethod
+    def _decompress_scale(cls, scale: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+        return scale.to(dtype)
+
+    @classmethod
     def compress(
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
@@ -93,8 +97,7 @@ class NVFP4PackedCompressor(BaseCompressor):
         m, n = packed.shape
         unpacked = unpack_fp4_from_uint8(packed, m, n * 2)
 
-        # Decompress scale back to float
-        scale_float = scale.to(unpacked.dtype)
+        scale_float = cls._decompress_scale(scale, unpacked.dtype)
 
         state_dict["weight"] = dequantize(
             x_q=unpacked,

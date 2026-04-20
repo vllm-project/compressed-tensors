@@ -19,6 +19,7 @@ from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
 from compressed_tensors.utils.helpers import deprecated
 from loguru import logger
+from tqdm import tqdm
 from transformers import PreTrainedModel
 
 
@@ -78,6 +79,7 @@ def dispatch_with_map(
     model: torch.nn.Module,
     device_map: DeviceMap,
     offload_dir: Optional[str] = None,
+    show_progress: bool = True,
 ):
     """
     Dispatch a model according to the provided device map
@@ -85,8 +87,11 @@ def dispatch_with_map(
     :param model: model to dispatch
     :param device_map: device map specifying the onload and offload of each module
     :param offload_dir: optional directory for disk offloading
+    :param show_progress: show tqdm progress
     """
-    for name, (onload_device, offload_device) in device_map.items():
+    for name, (onload_device, offload_device) in tqdm(
+        list(device_map.items()), desc="Dispatching model", disable=(not show_progress)
+    ):
         module = model.get_submodule(name)
 
         if offload_device == "disk":
@@ -232,26 +237,29 @@ def dispatch_model(
 
 def get_device_memory() -> dict[torch.device, int]:
     """
-    Get the total memory of all available devices. Returns CUDA device memory
-    when available, otherwise falls back to CPU with system RAM.
+    Get the total memory of all available accelerator devices. Returns accelerator
+    device memory when available, otherwise falls back to CPU with system RAM.
 
     :return: mapping from torch device to total memory
     """
-    if not torch.cuda.is_available():
+    if not torch.accelerator.is_available():
         import os
 
         total_ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
         return {torch.device("cpu"): total_ram}
 
+    accel_type = torch.accelerator.current_accelerator().type
+
     if dist.is_available() and dist.is_initialized():
         logger.info("Detected distributed context. Dispatching to local rank gpu")
-        device_memory = torch.cuda.get_device_properties(dist.get_rank()).total_memory
-        return {torch.device("cuda"): device_memory}
+        device_memory = torch.accelerator.get_memory_info(
+            torch.accelerator.current_device_index()
+        )[1]
+        return {torch.device(accel_type): device_memory}
 
     return {
-        # TODO: extend to xpu, ect.
-        torch.device(f"cuda:{idx}"): torch.cuda.get_device_properties(idx).total_memory
-        for idx in range(torch.cuda.device_count())
+        torch.device(accel_type, idx): torch.accelerator.get_memory_info(idx)[1]
+        for idx in range(torch.accelerator.device_count())
     }
 
 

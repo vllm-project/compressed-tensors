@@ -12,7 +12,7 @@ T = TypeVar("T", bound=Hashable)
 def greedy_bin_packing(
     items: list[T],
     num_bins: int,
-    item_weight_fn: Callable[[T], float] = lambda x: 1,
+    item_weight_fn: Callable[[T], int | float] = lambda x: 1,
 ) -> tuple[list[T], list[list[T]], dict[T, int]]:
     """Distribute items across bins using a greedy bin-packing heuristic.
 

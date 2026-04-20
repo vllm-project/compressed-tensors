@@ -6,7 +6,9 @@ import math
 import torch
 from compressed_tensors.quantization.quant_args import (
     BFLOAT16_DATA,
+    FLOAT16_DATA,
     FLOAT32_DATA,
+    FLOAT64_DATA,
     FP4_E2M1_DATA,
     FP8_E4M3_DATA,
     QuantizationArgs,
@@ -68,7 +70,7 @@ def maybe_convert_from_mx_exp(
 def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
     """
     Round values to the closest power of 2.
-    This is done by masking the values with BFLOAT16_SIGN_EXPONENT_MASK
+    This is done by masking the values with SIGN_EXPONENT_MASK,
     which essentially removes the mantissa and keeps the exponent.
     i.e the closest power of 2 for the input_value.
 
@@ -87,13 +89,25 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
         int_dtype = torch.uint16
         mantissa = BFLOAT16_DATA.mantissa
         exponent = BFLOAT16_DATA.exponent
-    else:
-        assert scale_dtype is torch.float32
+    elif scale_dtype is torch.float16:
+        int_dtype = torch.uint16
+        mantissa = FLOAT16_DATA.mantissa
+        exponent = FLOAT16_DATA.exponent
+    elif scale_dtype is torch.float32:
         int_dtype = torch.uint32
         mantissa = FLOAT32_DATA.mantissa
         exponent = FLOAT32_DATA.exponent
+    elif scale_dtype is torch.float64:
+        int_dtype = torch.uint64
+        mantissa = FLOAT64_DATA.mantissa
+        exponent = FLOAT64_DATA.exponent
+    else:
+        raise TypeError(f"Unsupported dtype {scale_dtype}")
 
-    x = x.view(int_dtype).to(torch.int32)
+    if int_dtype in (torch.uint16, torch.uint32):
+        x = x.view(int_dtype).to(torch.int32)
+    else:
+        x = x.view(int_dtype).to(torch.int64)
 
     # Find closest power of 2
     VAL_TO_ADD = 1 << (mantissa - FP4_E2M1_DATA.mantissa - 1)
@@ -102,7 +116,7 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
     # mask to only keep exponent - we conservatively round down
     # to better represent smaller numbers / prevent overflow
     block_max_uint = torch.bitwise_and(x + VAL_TO_ADD, SIGN_EXPONENT_MASK)
-    if scale_dtype is torch.bfloat16:
+    if int_dtype is torch.uint16:
         return block_max_uint.to(int_dtype).view(scale_dtype)
     return block_max_uint.view(scale_dtype)
 

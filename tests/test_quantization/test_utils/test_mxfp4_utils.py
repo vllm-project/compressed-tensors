@@ -51,7 +51,9 @@ def test_round_power_2():
     assert torch.equal(rounded, x_rounded)
 
 
-@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+@pytest.mark.parametrize(
+    "dtype", [torch.bfloat16, torch.float16, torch.float32, torch.float64]
+)
 def test_mxfp4_scales_e2e(dtype):
     from compressed_tensors.quantization.quant_args import (
         QuantizationArgs,

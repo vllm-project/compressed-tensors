@@ -64,7 +64,9 @@ def test_should_generate_mx_scales_wrong_group_size():
     assert should_generate_mx_scales(args) is False
 
 
-@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+@pytest.mark.parametrize(
+    "dtype", [torch.bfloat16, torch.float16, torch.float32, torch.float64]
+)
 def test_mxfp8_scales_e2e(dtype):
     """End-to-end test for MXFP8 scale generation and conversion."""
     mock_weight = torch.normal(mean=0.0002, std=0.0576, size=(2880, 2880))
