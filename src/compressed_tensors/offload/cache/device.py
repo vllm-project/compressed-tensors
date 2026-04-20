@@ -6,16 +6,12 @@ from typing import TYPE_CHECKING, Literal, Optional
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.utils import send_tensors
-
-
-if TYPE_CHECKING:
-    from torch._prims_common import DeviceLikeType
+from torch._prims_common import DeviceLikeType
 
 
 class DeviceCache(OffloadCache):
     """
-    Handles offloading and onloading tensors from/to device memory. Onloading
-    tensors is typically a no-op (except onload device has been modified).
+    Handles offloading and onloading tensors from/to device memory.
     """
 
     def __init__(

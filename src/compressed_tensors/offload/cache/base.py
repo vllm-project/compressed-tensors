@@ -9,6 +9,7 @@ from typing import ClassVar, Literal
 import torch
 import torch.distributed as dist
 from compressed_tensors.utils import is_accelerator_type
+from torch._prims_common import DeviceLikeType
 
 
 class OffloadCache(MutableMapping, ABC):
@@ -32,8 +33,8 @@ class OffloadCache(MutableMapping, ABC):
     info, see `compressed_tensors.offload::(disable_offloading|disable_onloading)`
     """
 
-    onload_device: torch.device | str
-    offload_device: torch.device | Literal["disk"]
+    onload_device: DeviceLikeType
+    offload_device: DeviceLikeType | Literal["disk"]
 
     # global flags for disabling
     offloading_disabled: ClassVar[bool] = False
@@ -47,8 +48,7 @@ class OffloadCache(MutableMapping, ABC):
 
     @classmethod
     def cls_from_device(
-        cls,
-        device: torch.device | str | Literal["disk"] | None = None,
+        cls, device: DeviceLikeType | Literal["disk"]
     ) -> type["OffloadCache"]:
         """
         Get the subclass which implements offloading for the given `offload_device`.

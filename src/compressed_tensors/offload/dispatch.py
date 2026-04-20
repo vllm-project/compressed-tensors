@@ -19,6 +19,7 @@ from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
 from compressed_tensors.utils.helpers import deprecated
 from loguru import logger
+from torch._prims_common import DeviceLikeType
 from tqdm import tqdm
 from transformers import PreTrainedModel
 
@@ -104,7 +105,7 @@ def dispatch_with_map(
 
 
 def get_device_map(
-    model: torch.nn.Module, default_device: torch.device = torch.device("cpu")
+    model: torch.nn.Module, default_device: DeviceLikeType = torch.device("cpu")
 ) -> DeviceMap:
     """
     Get the device map of a CT-offloaded model

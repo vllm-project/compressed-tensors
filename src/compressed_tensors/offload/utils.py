@@ -5,11 +5,12 @@ import contextlib
 from collections.abc import Container
 from dataclasses import fields, is_dataclass
 from itertools import chain
-from typing import TypeVar
+from typing import Optional, TypeVar
 
 import torch
 from compressed_tensors.utils.helpers import patch_attr
 from loguru import logger
+from torch._prims_common import DeviceLikeType
 
 
 __all__ = [
@@ -66,7 +67,7 @@ def send_tensors(value: T, *args, **kwargs) -> T:
 
 
 def get_module_device(
-    module: torch.nn.Module, default: torch.device | None = None
+    module: torch.nn.Module, default: Optional[DeviceLikeType] = None
 ) -> torch.device:
     """
     Infer the device of a module using the first
@@ -80,7 +81,7 @@ def get_module_device(
     if tensor is not None:
         return tensor.device
     elif default is not None:
-        return default
+        return torch.device(default)
     else:
         logger.warning(
             f"Unable to get execution device of {module}, falling back to CPU",
@@ -92,7 +93,7 @@ def get_module_device(
 def move_module_tensor(
     module: torch.nn.Module,
     name: str,
-    device: int | str | torch.device,
+    device: DeviceLikeType,
 ):
     """
     Move a module's tensor to a new device
