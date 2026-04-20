@@ -10,9 +10,8 @@ from types import FrameType
 
 import psutil
 import torch
-import torch.distributed as dist
+from compressed_tensors.distributed import is_distributed, is_source_process
 from compressed_tensors.offload.convert import from_accelerate
-from compressed_tensors.offload.dist_utils import is_distributed, is_rank0
 from loguru import logger
 from transformers import PreTrainedModel
 from transformers.models.auto.modeling_auto import _BaseAutoModelClass
@@ -61,7 +60,7 @@ def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
         kwargs.setdefault("device_map", None)
 
         # Rank 0 does loading, other ranks init on meta device
-        if not is_rank0():
+        if not is_source_process():
             kwargs["device_map"] = "meta"
             # Workaround: transformers v5 tie_weights() calls torch.equal() on
             # meta tensors which is unsupported. Since rank 0 broadcasts the real
@@ -91,14 +90,13 @@ def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
 
 
 def _get_device_memory() -> dict[int, int]:
-    # TODO: extend to xpu, ect.
     if is_distributed():
-        index = dist.get_rank()
-        return {index: torch.cuda.get_device_properties(index).total_memory}
+        index = torch.accelerator.current_device_index()
+        return {index: torch.accelerator.get_memory_info(index)[1]}
     else:
         return {
-            index: torch.cuda.get_device_properties(index).total_memory
-            for index in range(torch.cuda.device_count())
+            index: torch.accelerator.get_memory_info(index)[1]
+            for index in range(torch.accelerator.device_count())
         }
 
 

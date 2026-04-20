@@ -3,6 +3,7 @@
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.distributed import get_source_rank, is_source_process
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.utils import send_tensors
 
@@ -23,7 +24,7 @@ class DistributedDiskCache(DiskCache):
         if tensor is None:
             return None
 
-        if dist.get_rank() == 0:
+        if is_source_process():
             # write to disk
             offloaded = super().offload(tensor)
             broadcast_obj = [
@@ -35,9 +36,9 @@ class DistributedDiskCache(DiskCache):
             offloaded = send_tensors(tensor, device="meta")
             broadcast_obj = [None, None, None]
 
-        dist.broadcast_object_list(broadcast_obj, src=0)
+        dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
-        if dist.get_rank() != 0:
+        if not is_source_process():
             self.index[offloaded] = {
                 "safetensors_file": broadcast_obj[0],
                 "weight_name": broadcast_obj[1],
@@ -57,7 +58,7 @@ class DistributedDiskCache(DiskCache):
 
         :param key: name of tensor to invalidate
         """
-        if dist.get_rank() == 0:
+        if is_source_process():
             super().__delitem__(key)
         else:
             offloaded = self.offloaded_values[key]

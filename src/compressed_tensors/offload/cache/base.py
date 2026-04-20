@@ -8,6 +8,7 @@ from typing import ClassVar, Literal
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.utils import is_accelerator_type
 from torch._prims_common import DeviceLikeType
 
 
@@ -71,9 +72,9 @@ class OffloadCache(MutableMapping, ABC):
                 return CPUCache
             case ("cpu", True):
                 return DistributedCPUCache
-            case ("cuda", False):
+            case (device, False) if is_accelerator_type(device):
                 return DeviceCache
-            case ("cuda", True):
+            case (device, True) if is_accelerator_type(device):
                 return DistributedDeviceCache
             case ("disk", False):
                 return DiskCache
@@ -81,7 +82,7 @@ class OffloadCache(MutableMapping, ABC):
                 return DistributedDiskCache
             case _:
                 raise NotImplementedError(
-                    f"Offload of type {device} and "
+                    f"Offload of type {device_type} and "
                     f"distributed={distributed} has not been implemented"
                 )
 

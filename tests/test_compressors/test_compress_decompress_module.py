@@ -79,10 +79,6 @@ def test_compress_decompress_module(scheme_name, expected_format, actorder, devi
     _run_compress_decompress(scheme_name, expected_format, actorder, device)
 
 
-@pytest.mark.xfail(
-    reason="MXFP4 decompression is not implemented",
-    raises=NotImplementedError,
-)
 @pytest.mark.parametrize(
     "scheme_name,expected_format",
     [

@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from typing import Literal, Optional
 
 import torch
+from compressed_tensors.distributed.utils import set_source_process
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.dispatch import (  # noqa: F401
@@ -24,7 +25,12 @@ from compressed_tensors.offload.dist_utils import (
 )
 from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
-from compressed_tensors.offload.utils import get_module_device, move_module_tensor
+from compressed_tensors.offload.utils import (
+    as_single_threaded,
+    get_module_device,
+    move_module_tensor,
+    to_meta,
+)
 from compressed_tensors.utils.helpers import patch_attr
 from torch._prims_common import DeviceLikeType
 
@@ -59,6 +65,9 @@ __all__ = [
     "is_rank0",
     "init_dist",
     "as_broadcastable",
+    "as_single_threaded",
+    "set_source_process",
+    "to_meta",
 ]
 
 

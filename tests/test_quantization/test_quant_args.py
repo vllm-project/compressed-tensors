@@ -80,21 +80,9 @@ def test_actorder():
     with pytest.raises(ValueError):
         QuantizationArgs(group_size=None, actorder="group")
     with pytest.raises(ValueError):
-        QuantizationArgs(group_size=None, actorder="weight")
-    with pytest.raises(ValueError):
-        QuantizationArgs(group_size=None, actorder="static")
-    with pytest.raises(ValueError):
         QuantizationArgs(group_size=-1, actorder="group")
     with pytest.raises(ValueError):
-        QuantizationArgs(group_size=-1, actorder="weight")
-    with pytest.raises(ValueError):
-        QuantizationArgs(group_size=-1, actorder="static")
-    with pytest.raises(ValueError):
         QuantizationArgs(strategy="tensor", actorder="group")
-    with pytest.raises(ValueError):
-        QuantizationArgs(strategy="tensor", actorder="weight")
-    with pytest.raises(ValueError):
-        QuantizationArgs(strategy="tensor", actorder="static")
 
     # test boolean and none defaulting
     assert (

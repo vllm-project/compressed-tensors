@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import contextlib
 from collections.abc import Container
 from dataclasses import fields, is_dataclass
 from itertools import chain
 from typing import Optional, TypeVar
 
 import torch
+from compressed_tensors.utils.helpers import patch_attr
 from loguru import logger
 from torch._prims_common import DeviceLikeType
 
@@ -18,6 +20,8 @@ __all__ = [
     "module_size",
     "to_empty",
     "to_tensor",
+    "to_meta",
+    "as_single_threaded",
 ]
 
 T = TypeVar("T")
@@ -181,3 +185,57 @@ def to_tensor(dst: torch.Tensor, src: TensorCls) -> TensorCls:
     dst.__dict__ = src.__dict__.copy()
     dst.requires_grad = src.requires_grad
     return dst
+
+
+def to_meta(module: torch.nn.Module) -> None:
+    """Move all module parameters and buffers to meta device.
+
+    This removes pointers to offloaded tensors held by non-processing ranks,
+    allowing the processing rank to compress without increasing peak memory.
+
+    :param module: module whose tensors should be moved to meta device
+    """
+    from compressed_tensors.offload import disable_onloading
+    from compressed_tensors.utils.module import (
+        get_direct_state_dict,
+        replace_direct_state_dict,
+    )
+
+    with disable_onloading():
+        state_dict = get_direct_state_dict(module)
+        meta_state_dict = {
+            name: send_tensors(tensor, device="meta")
+            for name, tensor in state_dict.items()
+        }
+        replace_direct_state_dict(module, meta_state_dict)
+
+
+@contextlib.contextmanager
+def as_single_threaded():
+    """
+    Context manager to temporarily use single-threaded offload methods.
+
+    This context manager patches distributed cache classes to use their
+    non-distributed counterparts' offload methods. This is useful when
+    operations need to be performed without distributed coordination.
+
+    Example:
+        >>> with as_single_threaded():
+        ...     # Operations here use single-threaded offload
+        ...     cache.offload(data)
+    """
+    from compressed_tensors.offload.cache import (
+        CPUCache,
+        DeviceCache,
+        DiskCache,
+        DistributedCPUCache,
+        DistributedDeviceCache,
+        DistributedDiskCache,
+    )
+
+    with (
+        patch_attr(DistributedDeviceCache, "offload", DeviceCache.offload),
+        patch_attr(DistributedCPUCache, "offload", CPUCache.offload),
+        patch_attr(DistributedDiskCache, "offload", DiskCache.offload),
+    ):
+        yield

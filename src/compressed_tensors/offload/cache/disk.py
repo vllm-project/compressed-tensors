@@ -2,15 +2,19 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
+from compressed_tensors.distributed import is_source_process
 from compressed_tensors.offload.cache import OffloadCache
-from compressed_tensors.offload.dist_utils import is_rank0
 from compressed_tensors.offload.utils import send_tensors, to_tensor
+from compressed_tensors.utils import is_accelerator_type
 from safetensors import safe_open
 from safetensors.torch import save_file
-from torch._prims_common import DeviceLikeType
+
+if TYPE_CHECKING:
+    from torch._prims_common import DeviceLikeType
 
 
 class DiskCache(OffloadCache):
@@ -48,7 +52,8 @@ class DiskCache(OffloadCache):
                 "Must provide an `offload_dir` to perform disk offloading "
                 "(add `offload_folder` argument to `from_pretrained`)"
             )
-        self.offload_dir = offload_dir
+        # Resolve relative paths to absolute paths for symlink creation
+        self.offload_dir = Path(offload_dir).resolve()
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
@@ -146,7 +151,7 @@ class DiskCache(OffloadCache):
         offloaded: torch.Tensor,
         weight_info: dict,
         offload_dir: str | os.PathLike | None,
-    ):
+    ) -> None:
         """
         Create a symlink to a checkpoint safetensors file. This symlink allows
         individual tensor data to be individually modified and deleted without affecting
@@ -161,7 +166,9 @@ class DiskCache(OffloadCache):
         :param offload_dir: offload directly to create symlink in
         """
         assert offloaded.device.type == "meta"
-        assert is_rank0(), "Must call on rank 0 to avoid id collisions between ranks"
+        assert (
+            is_source_process()
+        ), "Must call on rank 0 to avoid id collisions between ranks"
         if offload_dir is None:
             raise ValueError(
                 "Must provide an `offload_dir` to perform disk offloading "
@@ -170,7 +177,9 @@ class DiskCache(OffloadCache):
         file_name = f"{cls._new_file_prefix}{id(offloaded)}.safetensors"
         file_path = os.path.join(offload_dir, file_name)
 
-        os.symlink(weight_info["safetensors_file"], file_path)
+        # Resolve relative paths to absolute paths for symlink creation
+        source_path = Path(weight_info["safetensors_file"]).resolve()
+        os.symlink(source_path, file_path)
         cls.index[offloaded] = {
             "safetensors_file": file_path,
             "weight_name": weight_info["weight_name"],
@@ -178,19 +187,21 @@ class DiskCache(OffloadCache):
         }
 
 
-def _get_safe_open_device(device: DeviceLikeType) -> str | int:
+def _get_safe_open_device(device: "DeviceLikeType") -> str:
     """
     `safetensors.safe_open` does not accept `torch.device` as argument, so
-    we must convert from torch.device to a string, while considering "cuda" resolution
+    we must convert from torch.device to a string, while considering accelerator
+    device index resolution.
 
     :param device: torch device to convert
-    :return: device argument to `safetensors.safe_open`
+    :return: device string for `safetensors.safe_open`
     """
     device = torch.device(device)
-    if device.type in ("cuda"):
+    if is_accelerator_type(device.type):
         if device.index is None:
-            return torch.cuda.current_device()
+            index = torch.accelerator.current_device_index()
         else:
-            return device.index
+            index = device.index
+        return f"{device.type}:{index}"
     else:
         return device.type

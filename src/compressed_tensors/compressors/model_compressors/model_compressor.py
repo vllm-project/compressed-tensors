@@ -3,6 +3,7 @@
 
 import json
 import os
+from functools import partial
 from typing import Optional
 
 import compressed_tensors
@@ -18,6 +19,8 @@ from compressed_tensors.base import (
 from compressed_tensors.compressors.base import compress_module, decompress_module
 from compressed_tensors.compressors.format import infer_model_format
 from compressed_tensors.config import CompressionFormat
+from compressed_tensors.distributed import replace_module_parallel
+from compressed_tensors.offload import is_distributed
 from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
@@ -138,11 +141,21 @@ class ModelCompressor:
 
         :param model: model whose parameters should be compressed in place
         """
-        # compress modules
-        modules = model.named_modules(remove_duplicate=True)
-        for _, module in tqdm(list(modules), desc="Compressing model"):
-            if is_module_quantized(module):
+        # Collect all quantized modules
+        desc = "Compressing model"
+        modules = [
+            module
+            for _, module in model.named_modules(remove_duplicate=True)
+            if is_module_quantized(module)
+        ]
+
+        # Compress modules using distributed or sequential
+        if not is_distributed():
+            for module in tqdm(modules, desc=desc):
                 compress_module(module, self.force_compression_format)
+        else:
+            compress_fn = partial(compress_module, format=self.force_compression_format)
+            replace_module_parallel(modules, compress_fn, desc=desc)
 
         # update config status to reflect compression
         if self.quantization_config is not None:
@@ -159,11 +172,16 @@ class ModelCompressor:
 
         :param model: model whose parameters should be decompressed in place
         """
-        # decompress modules
-        modules = model.named_modules(remove_duplicate=True)
-        for _, module in tqdm(list(modules), desc="Decompressing model"):
-            if is_module_quantized(module):
-                decompress_module(module, self.force_compression_format)
+        desc = "Decompressing model"
+        modules = [
+            module
+            for _, module in model.named_modules(remove_duplicate=True)
+            if is_module_quantized(module)
+        ]
+
+        # TODO: support distributed decompression
+        for module in tqdm(modules, desc=desc):
+            decompress_module(module, self.force_compression_format)
 
         # update config status to reflect decompression
         if self.quantization_config is not None:

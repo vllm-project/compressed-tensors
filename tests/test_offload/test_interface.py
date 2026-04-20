@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import tempfile
+from pathlib import Path
 
 import pytest
 import torch
@@ -172,7 +173,7 @@ def test_get_cache_kwargs_disk():
         offload_module(linear, ONLOAD_DEVICE, "disk", offload_dir=tmpdir)
 
         kwargs = get_cache_kwargs(linear)
-        assert kwargs == {"offload_dir": tmpdir}
+        assert kwargs == {"offload_dir": Path(tmpdir).resolve()}
 
 
 @pytest.mark.unit
@@ -219,7 +220,7 @@ def test_get_cache_init_kwargs_disk():
         # Verify the new module has the same offload settings including offload_dir
         assert_device_equal(new_linear._parameters.onload_device, ONLOAD_DEVICE)
         assert new_linear._parameters.offload_device == "disk"
-        assert new_linear._parameters.offload_dir == tmpdir
+        assert new_linear._parameters.offload_dir == Path(tmpdir).resolve()
         # Verify weights work correctly
         assert_device_equal(new_linear.weight.device, ONLOAD_DEVICE)
 
@@ -265,7 +266,7 @@ def test_register_offload_module_disk():
         assert parent.sub is sub
         assert_device_equal(sub._parameters.onload_device, ONLOAD_DEVICE)
         assert sub._parameters.offload_device == "disk"
-        assert sub._parameters.offload_dir == tmpdir
+        assert sub._parameters.offload_dir == Path(tmpdir).resolve()
         # Verify weights work correctly
         assert_device_equal(sub.weight.device, ONLOAD_DEVICE)
 

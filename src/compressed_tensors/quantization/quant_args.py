@@ -22,7 +22,9 @@ __all__ = [
     "FP8_E4M3_DATA",
     "FP4_E2M1_DATA",
     "BFLOAT16_DATA",
+    "FLOAT16_DATA",
     "FLOAT32_DATA",
+    "FLOAT64_DATA",
     "FloatArgs",
     "QuantizationType",
     "QuantizationStrategy",
@@ -80,9 +82,19 @@ class BFLOAT16_DATA(FloatArgs):
     mantissa = 7
 
 
+class FLOAT16_DATA(FloatArgs):
+    exponent = 5
+    mantissa = 10
+
+
 class FLOAT32_DATA(FloatArgs):
     exponent = 8
     mantissa = 23
+
+
+class FLOAT64_DATA(FloatArgs):
+    exponent = 11
+    mantissa = 52
 
 
 class QuantizationType(str, Enum):
@@ -332,13 +344,13 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             raise ValueError(f"Block structure requires block strategy\n{model}")
 
         # validate activation ordering and strategy
-        if actorder is not None and strategy not in (
+        if actorder == ActivationOrdering.GROUP and strategy not in (
             QuantizationStrategy.GROUP,
             QuantizationStrategy.TENSOR_GROUP,
         ):
             raise ValueError(
                 "Must use group or tensor_group quantization strategy in "
-                "order to apply activation ordering"
+                "order to apply group activation ordering"
             )
 
         # infer observer w.r.t. dynamic

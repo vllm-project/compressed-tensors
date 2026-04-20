@@ -6,10 +6,15 @@ from typing import Iterable, Literal
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.offload.dist_utils import is_distributed
+from compressed_tensors.distributed import is_distributed
+from compressed_tensors.utils import is_accelerator_type
 
 
-__all__ = ["get_tensors", "norm_device", "DEFAULT_OFFLOAD_DEVICE"]
+__all__ = [
+    "get_tensors",
+    "norm_device",
+    "DEFAULT_OFFLOAD_DEVICE",
+]
 
 
 DEFAULT_OFFLOAD_DEVICE = torch.device("cpu")
@@ -21,20 +26,25 @@ def norm_device(
     """
     Standardize the representation of devices for the purposes of consistency
 
-    - when running with distributed, represent rank device as "cuda"
-    - when not running with distributed, "cuda" refers to "cuda:0"
+    - when running with distributed, represent rank device as the accelerator type
+    - when not running with distributed, bare accelerator type (e.g. "cuda") is
+      resolved to index 0
     """
     if device in ("disk", None):
         return device
 
     device = torch.device(device)
 
-    # (dist) "cuda:R" -> "cuda"
+    # (dist) "cuda:R" / "xpu:R" -> bare type
     if is_distributed() and device.index == dist.get_rank():
         device = torch.device(type=device.type, index=None)
 
-    # (non-dist) "cuda" -> "cuda:0"
-    if not is_distributed() and device.type == "cuda" and device.index is None:
+    # (non-dist) bare accelerator type -> index 0
+    if (
+        not is_distributed()
+        and is_accelerator_type(device.type)
+        and device.index is None
+    ):
         device = torch.device(type=device.type, index=0)
 
     return device

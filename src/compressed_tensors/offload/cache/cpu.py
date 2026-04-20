@@ -5,6 +5,7 @@ from typing import Literal, Optional
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
+from compressed_tensors.offload.cache.utils import catch_cpu_mem_error
 from compressed_tensors.offload.utils import send_tensors
 from torch._prims_common import DeviceLikeType
 
@@ -28,6 +29,7 @@ class CPUCache(OffloadCache):
         """
         return send_tensors(offloaded, device=self.onload_device, copy=False)
 
+    @catch_cpu_mem_error
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Offload a tensor from any device to cpu
