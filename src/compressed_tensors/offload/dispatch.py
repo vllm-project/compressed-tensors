@@ -4,7 +4,7 @@
 from collections.abc import Container
 from copy import deepcopy
 from functools import partial
-from typing import Optional, TypeVar
+from typing import Any, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
@@ -17,6 +17,7 @@ from compressed_tensors.offload.utils import (
 )
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
+from compressed_tensors.utils.helpers import deprecated
 from loguru import logger
 from tqdm import tqdm
 from transformers import PreTrainedModel
@@ -24,6 +25,7 @@ from transformers import PreTrainedModel
 
 __all__ = [
     "set_onload_device",
+    "offload_model",
     "dispatch_with_map",
     "get_device_map",
     "dispatch_model",
@@ -58,6 +60,19 @@ def set_onload_device(
             offload_module(module, onload_device, offload_device)
 
     return model
+
+
+@deprecated("set_onload_device")
+def offload_model(
+    model: ModelType,
+    onload_device: torch.device | str,
+    offload_device: Any = None,
+) -> ModelType:
+    """
+    .. deprecated::
+        Use :func:`set_onload_device` instead.
+    """
+    return set_onload_device(model, onload_device)
 
 
 def dispatch_with_map(
