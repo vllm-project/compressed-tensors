@@ -27,6 +27,7 @@ from tests.testing_utils import requires_gpu
 def onload_device():
     return torch.accelerator.current_accelerator()
 
+
 @pytest.fixture()
 def offload_device():
     return "disk"

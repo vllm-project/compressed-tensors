@@ -29,8 +29,8 @@ acclerate = pytest.importorskip("accelerate")
 @pytest.mark.unit
 @requires_gpu
 def test_remove_accelerate_from_module_device(accel_device):
-    # there"s no way to force accelerate to "offload" to Torch accelerator. Instead, it just
-    # stays on Torch accelerator with no hooks
+    # there"s no way to force accelerate to "offload" to Torch accelerator. Instead,
+    # it just stays on Torch accelerator with no hooks
 
     current_accelerator = torch.accelerator.current_accelerator()
 

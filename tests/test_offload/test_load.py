@@ -13,7 +13,7 @@ from compressed_tensors.offload import (
 from compressed_tensors.offload.convert import to_accelerate
 from compressed_tensors.offload.convert.from_accelerate import _infer_module_device
 from compressed_tensors.offload.load import load_offloaded_model, patch_from_pretrained
-from tests.test_offload.conftest import assert_device_equal, torchrun
+from tests.test_offload.conftest import assert_device_equal, skip_if_mps_issue, torchrun
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM
 
@@ -112,7 +112,7 @@ def _get_accelerate_offloaded_device(module: torch.nn.Module) -> str | None:
 
 
 @pytest.mark.unit
-@pytest.mark.skipif(accelerator_device.type == "mps", reason = "[Known issue] https://github.com/pytorch/pytorch/issues/167447")
+@skip_if_mps_issue
 @patch("compressed_tensors.offload.load.from_accelerate")
 def test_patch_forwards_positional_args(mock_from_accelerate):
     """Regression: positional args must be forwarded without rebinding to cls."""

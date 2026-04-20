@@ -188,7 +188,7 @@ def _get_safe_open_device(device: "DeviceLikeType") -> str:
         # TODO: check if this case can be applied for all non-index accelerators
         if device.type == "mps":
             return f"{device.type}"
-        
+
         if device.index is None:
             index = torch.accelerator.current_device_index()
         else:

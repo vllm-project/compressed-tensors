@@ -6,15 +6,16 @@ import os
 import pytest
 import torch
 from compressed_tensors.offload import dispatch_with_map, offload_module, to_accelerate
-from compressed_tensors.offload.convert.to_accelerate import to_accelerate_module
 from compressed_tensors.offload.convert.helpers import norm_device
+from compressed_tensors.offload.convert.to_accelerate import to_accelerate_module
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 
 
 acclerate = pytest.importorskip("accelerate")
 
-def get_offload_devices() -> list[str]: 
+
+def get_offload_devices() -> list[str]:
     offload_devices = ["cpu", "disk"]
     accelerator_device = torch.accelerator.current_accelerator()
 
@@ -29,6 +30,7 @@ def get_offload_devices() -> list[str]:
 
     return offload_devices
 
+
 @pytest.mark.unit
 @requires_gpu
 @pytest.mark.parametrize("offload_device", get_offload_devices())
@@ -39,13 +41,16 @@ def test_to_accelerate_module(offload_device, tmp_path):
     if offload_device == "disk":
         offload_dir = tmp_path / "offload_dir"
         os.mkdir(offload_dir)
-        offload_module(linear, accelerator_device, offload_device, offload_dir=str(offload_dir))
+        offload_module(
+            linear, accelerator_device, offload_device, offload_dir=str(offload_dir)
+        )
     else:
         offload_module(linear, accelerator_device, offload_device)
 
     _offload_device = to_accelerate_module(linear, name="", hf_disk_index={})
 
     assert _offload_device == str(norm_device(offload_device))
+
 
 @pytest.mark.unit
 @requires_gpu
