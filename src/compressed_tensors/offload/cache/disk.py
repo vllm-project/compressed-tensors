@@ -173,6 +173,47 @@ class DiskCache(OffloadCache):
             "dtype": weight_info["dtype"],
         }
 
+    @classmethod
+    def clean_offload_dir(cls, offload_dir: str | os.PathLike | None = None) -> int:
+        """
+        Clean up all intermediate safetensors files created by DiskCache.
+
+        Removes files and symlinks in offload_dir with the ct_disk_cache prefix.
+        - Symlinks: removes the symlink itself, NOT the original checkpoint it points to
+        - Regular files: removes intermediate tensors created during quantization
+
+        :param offload_dir: If provided, only clean files in this directory.
+                           If None, clean all files in the shared index.
+        :return: Number of files cleaned up
+        """
+        if offload_dir is not None:
+            offload_dir = str(Path(offload_dir).resolve())
+
+        files_cleaned = 0
+        for offloaded in list(cls.index.keys()):
+            file_path = cls.index[offloaded]["safetensors_file"]
+
+            # Only delete files in the specified dir (if provided)
+            if offload_dir is not None and not file_path.startswith(offload_dir):
+                continue
+
+            # Only delete files we created (with our prefix)
+            if os.path.basename(file_path).startswith(cls._new_file_prefix):
+                try:
+                    # os.unlink removes symlink itself, not target
+                    # os.remove removes regular file
+                    if os.path.islink(file_path):
+                        os.unlink(file_path)
+                    else:
+                        os.remove(file_path)
+                    files_cleaned += 1
+                except FileNotFoundError:
+                    pass  # Already deleted
+
+            del cls.index[offloaded]
+
+        return files_cleaned
+
 
 def _get_safe_open_device(device: "DeviceLikeType") -> str:
     """
