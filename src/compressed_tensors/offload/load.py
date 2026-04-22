@@ -80,6 +80,7 @@ def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
 
         model = original_func(cls, *args, **kwargs)
         from_accelerate(model)  # rank 0 shares weights with ranks via offload/broadcast
+
         return model
 
     try:
