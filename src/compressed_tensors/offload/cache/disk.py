@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
 import torch
+import torch.distributed as dist
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.utils import send_tensors, to_tensor
@@ -36,7 +37,7 @@ class DiskCache(OffloadCache):
 
     # directory where new tensors are written to
     offload_dir: str
-    _new_file_prefix = "ct_disk_cache"
+    _ct_file_prefix = "ct_disk_cache"
 
     def __init__(
         self,
@@ -97,14 +98,14 @@ class DiskCache(OffloadCache):
         if offloaded is None:
             offloaded = send_tensors(tensor, device="meta")
 
-        file_name = f"{self._new_file_prefix}{id(offloaded)}.safetensors"
-        file_path = os.path.join(self.offload_dir, file_name)
+        file_path = self._get_ct_file_path(self.offload_dir, offloaded)
         self.index[offloaded] = {
             "safetensors_file": file_path,
             "weight_name": "weight",
             "dtype": str(tensor.dtype).removeprefix("torch."),
         }
 
+        assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
         save_file({"weight": tensor}, file_path)
         return offloaded
 
@@ -119,7 +120,7 @@ class DiskCache(OffloadCache):
         """
         offloaded = self.offloaded_values[key]
         file_path = self.index[offloaded]["safetensors_file"]
-        if os.path.basename(file_path).startswith(self._new_file_prefix):
+        if self._is_ct_file_path(file_path):
             os.remove(file_path)
         del self.index[offloaded]
         super().__delitem__(key)
@@ -140,10 +141,11 @@ class DiskCache(OffloadCache):
 
         # create new file if old file was a symlink to a checkpoint file
         if os.path.islink(file_path):
-            assert os.path.basename(file_path).startswith(self._new_file_prefix)
+            assert self._is_ct_file_path(file_path), f"Attempted to remove {file_path}"
             os.unlink(file_path)
 
         # save with data using original weight_name
+        assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
         save_file({weight_name: data.reshape_as(offloaded).to(dtype=dtype)}, file_path)
 
     @classmethod
@@ -161,17 +163,28 @@ class DiskCache(OffloadCache):
                 "Must provide an `offload_dir` to perform disk offloading "
                 "(add `offload_folder` argument to `from_pretrained`)"
             )
-        file_name = f"{cls._new_file_prefix}{id(offloaded)}.safetensors"
-        file_path = os.path.join(offload_dir, file_name)
 
         # Resolve relative paths to absolute paths for symlink creation
         source_path = Path(weight_info["safetensors_file"]).resolve()
+        file_path = cls._get_ct_file_path(offload_dir, offloaded)
+
         os.symlink(source_path, file_path)
         cls.index[offloaded] = {
             "safetensors_file": file_path,
             "weight_name": weight_info["weight_name"],
             "dtype": weight_info["dtype"],
         }
+
+    @classmethod
+    def _is_ct_file_path(cls, file_path: str) -> bool:
+        """Only write and delete files that DiskCache has created"""
+        return os.path.basename(file_path).startswith(cls._ct_file_prefix)
+
+    @classmethod
+    def _get_ct_file_path(cls, offload_dir: str, offloaded: torch.Tensor) -> str:
+        """Create file path with a prefix marking it as modifiable"""
+        file_name = f"{cls._ct_file_prefix}_{_get_rank()}_{id(offloaded)}.safetensors"
+        return os.path.join(offload_dir, file_name)
 
 
 def _get_safe_open_device(device: "DeviceLikeType") -> str:
@@ -192,3 +205,11 @@ def _get_safe_open_device(device: "DeviceLikeType") -> str:
         return f"{device.type}:{index}"
     else:
         return device.type
+
+
+def _get_rank() -> int:
+    """Get rank, value is zero if not distributed"""
+    if dist.is_initialized():
+        return dist.get_rank()
+    else:
+        return 0
