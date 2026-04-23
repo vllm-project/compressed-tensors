@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+import socket
 import subprocess
 import sys
 from functools import wraps
@@ -71,6 +72,12 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
     :param world_size: number of ranks to spawn
     """
 
+    def get_free_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            sock.listen(1)
+            return int(sock.getsockname()[1])
+
     def decorator(func: FunctionType):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -100,10 +107,12 @@ def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[...
             else:
                 file_path = sys.modules.get(func.__module__).__file__
                 func_name = func.__name__
+                master_port = get_free_port()
 
                 cmd = (
                     f"{sys.executable} "
                     f"-m torch.distributed.run --nproc_per_node {world_size} "
+                    f"--master_addr 127.0.0.1 --master_port {master_port} "
                     "--log-dir /tmp/torchrun-logs --tee 3 --role torchrun "
                     f"-m pytest {file_path}::{func_name} -sx"
                 )
