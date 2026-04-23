@@ -113,7 +113,7 @@ def test_from_accelerate(accel_device, tmp_path):
 
     device_map, _offload_dir = from_accelerate(model)
 
-    # cuda is index agnostic when distributed
+    # accelerator devices are index agnostic when distributed
     assert device_map == {
         "": (None, None),
         "0": (accel_device, accel_device),

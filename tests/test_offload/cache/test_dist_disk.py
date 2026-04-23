@@ -25,9 +25,12 @@ from tests.test_offload.conftest import assert_tensor_equal, torchrun
 from tests.testing_utils import requires_gpu
 
 
+ACCELERATOR_DEVICE = torch.device(torch.accelerator.current_accelerator().type)
+
+
 @pytest.fixture()
 def onload_device():
-    return torch.device("cuda")
+    return ACCELERATOR_DEVICE
 
 
 @pytest.fixture()
@@ -207,7 +210,7 @@ def test_distributed_async_update(tmp_path):
     # Ensure directory creation completes before other ranks proceed
     dist.barrier()
 
-    onload_device = torch.device("cuda")
+    onload_device = ACCELERATOR_DEVICE
     cache = DistributedDiskCache(onload_device, offload_dir=str(offload_dir))
 
     # Initialize two tensors in the cache
