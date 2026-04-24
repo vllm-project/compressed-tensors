@@ -30,6 +30,15 @@ class NVFP4PackedCompressor(BaseCompressor):
     """
 
     @classmethod
+    def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        return (
+            "weight_packed",
+            "weight_scale",
+            "weight_zero_point",
+            "weight_global_scale",
+        )
+
+    @classmethod
     def _compress_scale(
         cls, scale: torch.Tensor, weights: QuantizationArgs
     ) -> torch.Tensor:

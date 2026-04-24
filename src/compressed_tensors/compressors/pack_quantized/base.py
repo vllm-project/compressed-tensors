@@ -9,12 +9,13 @@ from compressed_tensors.compressors.pack_quantized.helpers import (
 )
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
+    ActivationOrdering,
     QuantizationScheme,
     QuantizationStrategy,
     QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from compressed_tensors.utils import TensorStateDict
+from compressed_tensors.utils import TensorStateDict, getattr_chain
 
 
 __all__ = ["PackedQuantizationCompressor"]
@@ -31,6 +32,18 @@ class PackedQuantizationCompressor(BaseCompressor):
     """
     Compresses a quantized model by packing every eight 4-bit weights into an int32.
     """
+
+    @classmethod
+    def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        param_names = (
+            "weight_packed",
+            "weight_scale",
+            "weight_zero_point",
+            "weight_shape",
+        )
+        if getattr_chain(scheme, "weights.actorder", None) == ActivationOrdering.GROUP:
+            return param_names + ("weight_g_idx",)
+        return param_names
 
     @classmethod
     def compress(

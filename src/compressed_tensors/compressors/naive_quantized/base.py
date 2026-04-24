@@ -5,13 +5,14 @@ import torch
 from compressed_tensors.compressors.base import BaseCompressor
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
+    ActivationOrdering,
     QuantizationScheme,
     QuantizationStrategy,
     QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
-from compressed_tensors.utils import TensorStateDict
+from compressed_tensors.utils import TensorStateDict, getattr_chain
 
 
 __all__ = [
@@ -29,6 +30,17 @@ class NaiveQuantizationCompressor(BaseCompressor):
     Each quantized layer's weight is converted from its original float dtype to
     the closest PyTorch dtype for the bit-width specified by QuantizationArgs.
     """
+
+    @classmethod
+    def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        param_names = (
+            "weight",
+            "weight_scale",
+            "weight_zero_point",
+        )
+        if getattr_chain(scheme, "weights.actorder", None) == ActivationOrdering.GROUP:
+            return param_names + ("weight_g_idx",)
+        return param_names
 
     @classmethod
     def compress(
