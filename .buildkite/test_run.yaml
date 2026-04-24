@@ -2,4 +2,4 @@ steps:
 - label: test
   timeout_in_minutes: 30
   commands:
-  - echo "Hello World"
+    - echo "Hello World"
