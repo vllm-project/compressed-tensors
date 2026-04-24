@@ -2,5 +2,4 @@ steps:
 - label: test
   timeout_in_minutes: 30
   commands:
-  - nvidia-smi
   - echo "Hello World"
