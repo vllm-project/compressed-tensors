@@ -137,6 +137,11 @@ class QuantizationConfig(BaseModel):
         updates any quantization schemes defined as presets to be fully loaded
         schemes
         """
+        try:
+            self.format = CompressionFormat(self.format).value
+        except ValueError:
+            pass
+
         for group_name, targets_or_scheme in self.config_groups.items():
             if isinstance(targets_or_scheme, QuantizationScheme):
                 continue  # scheme already defined

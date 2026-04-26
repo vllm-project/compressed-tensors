@@ -72,6 +72,8 @@ def _run_compress_decompress(scheme_name, expected_format, actorder, device):
         ("FP8_BLOCK", CompressionFormat.float_quantized, None),
         ("NVFP4A16", CompressionFormat.nvfp4_pack_quantized, None),
         ("NVFP4", CompressionFormat.nvfp4_pack_quantized, None),
+        ("MIXFP4A16", CompressionFormat.mixfp4_pack_quantized, None),
+        ("NVFP4_INT4_MIXED", CompressionFormat.mixfp4_pack_quantized, None),
     ],
 )
 @pytest.mark.parametrize("device", ["cpu", "meta", "cuda"])
