@@ -24,6 +24,20 @@ def _apply_quantize_op(
     global_scale: torch.Tensor | None,
 ) -> torch.Tensor:
     """Dispatch to the appropriate quantization kernel."""
+    if _is_mixfp4_args(args):
+        return _apply_mixfp4_quantize_op(
+            x=x,
+            scale=scale,
+            zero_point=zero_point,
+            q_min=q_min,
+            q_max=q_max,
+            args=args,
+            dtype=dtype,
+            do_quantize=do_quantize,
+            do_dequantize=do_dequantize,
+            global_scale=global_scale,
+        )
+
     if do_quantize and do_dequantize:
         return _quantize_dequantize(
             x=x,
@@ -266,3 +280,68 @@ def _dequantize(
         dequant_value = dequant_value.to(dtype)
 
     return dequant_value
+
+
+_MIXFP4_OBSERVERS = {"mixfp4", "mixed_fp4_int4"}
+_MIXFP4_FLAG_BIT = 0x80
+_INT4_QMAX = 7.0
+
+
+def _is_mixfp4_args(args: QuantizationArgs) -> bool:
+    return getattr(args, "observer", None) in _MIXFP4_OBSERVERS
+
+
+def _apply_mixfp4_quantize_op(
+    x: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    q_min: torch.Tensor,
+    q_max: torch.Tensor,
+    args: QuantizationArgs,
+    dtype: torch.dtype | None,
+    do_quantize: bool,
+    do_dequantize: bool,
+    global_scale: torch.Tensor | None,
+) -> torch.Tensor:
+    if zero_point is not None and torch.any(zero_point != 0):
+        raise ValueError("MixFP4 only supports symmetric zero points")
+
+    is_int4, effective_scale = _split_mixfp4_scale(scale, global_scale)
+
+    if not do_quantize:
+        dequantized = x.to(effective_scale.dtype) * effective_scale
+        if dtype is not None:
+            dequantized = dequantized.to(dtype)
+        return dequantized
+
+    scaled = x / effective_scale
+    fp4_quantized = round_to_quantized_type_args(
+        tensor=scaled, args=args, min=q_min, max=q_max
+    )
+    int4_quantized = scaled.round().clamp(-_INT4_QMAX, _INT4_QMAX)
+    quantized = torch.where(is_int4, int4_quantized, fp4_quantized)
+
+    if not do_dequantize:
+        if dtype is not None:
+            quantized = quantized.to(dtype)
+        return quantized
+
+    return quantized.to(effective_scale.dtype) * effective_scale
+
+
+def _split_mixfp4_scale(
+    scale: torch.Tensor, global_scale: torch.Tensor | None
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if scale.dtype == torch.float8_e4m3fn:
+        raw = scale.contiguous().view(torch.uint8)
+        is_int4 = (raw & _MIXFP4_FLAG_BIT).ne(0)
+        magnitude = (raw & 0x7F).view(torch.float8_e4m3fn).to(torch.float32)
+    else:
+        is_int4 = torch.signbit(scale)
+        magnitude = scale.abs().to(torch.float8_e4m3fn).to(torch.float32)
+
+    if global_scale is not None:
+        magnitude = magnitude / global_scale.to(torch.float32)
+
+    effective_scale = magnitude.clamp(min=torch.finfo(torch.float32).tiny)
+    return is_int4, effective_scale

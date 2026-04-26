@@ -143,3 +143,27 @@ def test_mixfp4_rejects_invalid_global_scale():
             assert "weight_global_scale" in str(err)
         else:
             raise AssertionError("invalid global_scale should be rejected")
+
+
+def test_mixfp4_fake_quantize_interprets_scale_sign_bit():
+    from compressed_tensors.quantization import fake_quantize
+
+    int4_group = torch.tensor(
+        [-7, -6, -5, -4, -3, -2, -1, 0, 0, 1, 2, 3, 4, 5, 6, 7],
+        dtype=torch.float32,
+    )
+    fp4_group = torch.tensor(
+        [-6, -4, -3, -2, -1.5, -1, -0.5, 0, 0, 0.5, 1, 1.5, 2, 3, 4, 6],
+        dtype=torch.float32,
+    )
+    weight = torch.stack([int4_group, fp4_group])
+    scale = _flagged_scale(torch.tensor([[True], [False]]))
+    zero_point = torch.zeros_like(scale)
+    global_scale = torch.tensor([1.0], dtype=torch.float32)
+    args = preset_name_to_scheme("MIXFP4A16", ["Linear"]).weights
+
+    quantized = fake_quantize(
+        weight, scale, zero_point, args, global_scale=global_scale
+    )
+
+    assert torch.equal(quantized, weight)
