@@ -106,10 +106,9 @@ class FP8BlockDequantizer(Converter):
             if param_name in disallowed_names:
                 raise ValueError(f"Found unexpected non-targeted tensor {name}")
 
-    def create_config(self, config: dict) -> dict:
+    def update_config(self, config: dict) -> dict:
         # Only remove quantization config if the quantization method is fp8
-        quantization_config = config.get("quantization_config")
-        if quantization_config and quantization_config["quant_method"] == "fp8":
+        if config.get("quant_method", None) == "fp8":
             return {}
 
         return config

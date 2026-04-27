@@ -45,7 +45,7 @@ class PrintInfoConverter(Converter):
         """No dependencies."""
         return set()
 
-    def create_config(self, config: dict[str, object]) -> dict[str, object]:
+    def update_config(self, config: dict[str, object]) -> dict[str, object]:
         """Pass through config unchanged."""
         return config
 
@@ -82,7 +82,7 @@ class ScaleConverter(Converter):
         """No dependencies."""
         return set()
 
-    def create_config(self, config: dict[str, object]) -> dict[str, object]:
+    def update_config(self, config: dict[str, object]) -> dict[str, object]:
         """Pass through config unchanged."""
         return config
 

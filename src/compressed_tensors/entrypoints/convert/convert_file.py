@@ -36,27 +36,27 @@ def write_checkpoint_quantization_config(
     config.
 
     :param save_directory: directory containing the model config file
-    :param converter: Converter instance whose create_config() produces the
+    :param converter: Converter instance whose update_config() produces the
         updated quantization config
     """
+    # apply updates to quantization config
     for converter in converters:
-        quant_config_data = converter.create_config(quant_config_data)
-
-    quant_config_data[COMPRESSION_VERSION_NAME] = ct_version
+        quant_config_data = converter.update_config(quant_config_data)
 
     config_file_path = find_config_path(save_directory)
     if config_file_path is not None:
         with open(config_file_path, "r") as file:
             config_data = json.load(file)
 
-        if quant_config_data is None:
-            # if no new quant config, make sure checkpoint quant config is empty
+        # add/remove quantization config data to config.json
+        if not quant_config_data:
             if QUANTIZATION_CONFIG_NAME in config_data:
                 del config_data[QUANTIZATION_CONFIG_NAME]
         else:
-            # if new quant config, overwrite checkpoint quant config
+            quant_config_data[COMPRESSION_VERSION_NAME] = ct_version
             config_data[QUANTIZATION_CONFIG_NAME] = quant_config_data
 
+        # write config.json
         with open(config_file_path, "w") as file:
             json.dump(config_data, file, indent=2, sort_keys=True)
 

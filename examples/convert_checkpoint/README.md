@@ -90,7 +90,7 @@ class MyConverter(Converter):
         """Return additional tensor names needed to process weight_name."""
         return set()
     
-    def create_config(self, config: dict[str, object]) -> dict[str, object]:
+    def update_config(self, config: dict[str, object]) -> dict[str, object]:
         """Update quantization config based on conversion."""
         return config
 ```
@@ -112,4 +112,4 @@ python examples/convert_checkpoint/multi_converter_example.py
 - Use `max_workers` to control parallelism across shards
 - Converters process each shard independently
 - For multi-converter setups, all converters process the same shard before moving to the next
-- Quantization configs are updated by calling each converter's `create_config()` in sequence
+- Quantization configs are updated by calling each converter's `update_config()` in sequence

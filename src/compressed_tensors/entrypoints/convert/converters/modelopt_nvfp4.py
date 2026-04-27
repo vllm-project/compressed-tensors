@@ -130,7 +130,7 @@ class ModelOptNvfp4Converter(Converter):
 
         return set()
 
-    def create_config(self, config: dict) -> dict:
+    def update_config(self, config: dict) -> dict:
         merge_quantization_config(
             config,
             new_config_groups=QuantizationScheme(

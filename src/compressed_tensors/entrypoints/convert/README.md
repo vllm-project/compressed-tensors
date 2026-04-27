@@ -21,7 +21,7 @@ The conversion logic is implemented through the `Converter` protocol, which defi
 
 - `validate(tensors)`: Validate that tensors can be converted
 - `process(tensors)`: Transform tensor names and values in-place
-- `create_config()`: Generate the QuantizationConfig
+- `update_config()`: Generate the QuantizationConfig
 
 ### Available Converters
 
