@@ -32,6 +32,11 @@ def _run_compress_decompress(scheme_name, expected_format, actorder, device):
         for name, param in list(module.named_parameters()):
             param.fill_(1)
 
+    if expected_format == CompressionFormat.mixfp4_pack_quantized:
+        module.weight_scale = nn.Parameter(
+            module.weight_scale.to(torch.float8_e4m3fn), requires_grad=False
+        )
+
     # Record pre-compression state dict shapes and dtypes.
     # Filter out None entries (e.g. bias=None when bias=False).
     pre_state = {
@@ -52,6 +57,12 @@ def _run_compress_decompress(scheme_name, expected_format, actorder, device):
         if name in pre_state:
             pre_shape, pre_dtype = pre_state[name]
             assert tensor.shape == pre_shape
+            if (
+                expected_format == CompressionFormat.mixfp4_pack_quantized
+                and name == "weight_scale"
+            ):
+                assert tensor.dtype == torch.bfloat16
+                continue
             assert tensor.dtype == pre_dtype
 
 

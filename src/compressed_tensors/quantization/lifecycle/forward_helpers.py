@@ -305,46 +305,73 @@ def _apply_mixfp4_quantize_op(
     global_scale: torch.Tensor | None,
 ) -> torch.Tensor:
     """Apply MixFP4 fake-quantization using scale sign bits as codebook flags."""
-    if zero_point is not None and torch.any(zero_point != 0):
+    if (
+        zero_point is not None
+        and not zero_point.is_meta
+        and torch.any(zero_point != 0)
+    ):
         raise ValueError("MixFP4 only supports symmetric zero points")
 
     is_int4, effective_scale = _split_mixfp4_scale(scale, global_scale)
+    output_dtype = dtype if dtype is not None else x.dtype
+    zero_scale = effective_scale == 0
+    safe_effective_scale = torch.where(
+        zero_scale, torch.ones_like(effective_scale), effective_scale
+    )
 
     if not do_quantize:
         dequantized = x.to(effective_scale.dtype) * effective_scale
-        if dtype is not None:
-            dequantized = dequantized.to(dtype)
-        return dequantized
+        return dequantized.to(output_dtype)
 
-    scaled = x / effective_scale
+    scaled = x / safe_effective_scale
     fp4_quantized = round_to_quantized_type_args(
         tensor=scaled, args=args, min=q_min, max=q_max
     )
     int4_quantized = scaled.round().clamp(-_INT4_QMAX, _INT4_QMAX)
     quantized = torch.where(is_int4, int4_quantized, fp4_quantized)
+    quantized = torch.where(zero_scale, torch.zeros_like(quantized), quantized)
 
     if not do_dequantize:
-        if dtype is not None:
-            quantized = quantized.to(dtype)
-        return quantized
+        return quantized.to(output_dtype)
 
-    return quantized.to(effective_scale.dtype) * effective_scale
+    return (quantized.to(effective_scale.dtype) * effective_scale).to(output_dtype)
 
 
 def _split_mixfp4_scale(
     scale: torch.Tensor, global_scale: torch.Tensor | None
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Extract INT4 flags and effective magnitudes from MixFP4 scales."""
-    if scale.dtype == torch.float8_e4m3fn:
-        raw = scale.contiguous().view(torch.uint8)
-        is_int4 = (raw & _MIXFP4_FLAG_BIT).ne(0)
-        magnitude = (raw & 0x7F).view(torch.float8_e4m3fn).to(torch.float32)
-    else:
-        is_int4 = torch.signbit(scale)
-        magnitude = scale.abs().to(torch.float8_e4m3fn).to(torch.float32)
+    if scale.dtype != torch.float8_e4m3fn:
+        raise ValueError("MixFP4 expects float8_e4m3fn weight_scale")
+
+    raw = scale.contiguous().view(torch.uint8)
+    is_int4 = (raw & _MIXFP4_FLAG_BIT).ne(0)
+    magnitude = (raw & 0x7F).view(torch.float8_e4m3fn).to(torch.float32)
 
     if global_scale is not None:
-        magnitude = magnitude / global_scale.to(torch.float32)
+        magnitude = _apply_mixfp4_global_scale(magnitude, global_scale)
 
-    effective_scale = magnitude.clamp(min=torch.finfo(torch.float32).tiny)
-    return is_int4, effective_scale
+    return is_int4, magnitude
+
+
+def _apply_mixfp4_global_scale(
+    scale: torch.Tensor, global_scale: torch.Tensor
+) -> torch.Tensor:
+    """Apply NVFP4-style global scale broadcasting."""
+    global_scale = global_scale.to(torch.float32)
+    if not global_scale.is_meta:
+        if not torch.isfinite(global_scale).all().item() or not (
+            global_scale > 0
+        ).all().item():
+            raise ValueError("MixFP4 expects a finite positive weight_global_scale")
+    if global_scale.ndim == 1 and global_scale.numel() == scale.size(0):
+        global_scale = global_scale.reshape(-1, *([1] * (scale.ndim - 1)))
+    elif (
+        global_scale.ndim == 1
+        and scale.ndim > 1
+        and global_scale.numel() == scale.size(-2)
+    ):
+        global_scale = global_scale.reshape(1, -1, *([1] * (scale.ndim - 2)))
+    elif global_scale.ndim == scale.ndim - 1 and scale.shape[-1] == 1:
+        global_scale = global_scale.unsqueeze(-1)
+    return scale / global_scale

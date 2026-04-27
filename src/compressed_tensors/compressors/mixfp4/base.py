@@ -58,8 +58,12 @@ class MixFP4PackedCompressor(BaseCompressor):
 
     @classmethod
     def _decompress_scale(cls, scale: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
-        """Cast stored scales to the requested dense validation dtype."""
-        return scale.to(dtype)
+        """Decode stored scale magnitudes without interpreting flags as signs."""
+        if scale.dtype != torch.float8_e4m3fn:
+            raise ValueError("MixFP4 decompression expects float8_e4m3fn weight_scale")
+        raw = scale.contiguous().view(torch.uint8)
+        magnitude = (raw & 0x7F).view(torch.float8_e4m3fn)
+        return magnitude.to(dtype)
 
     @classmethod
     def _validate_scheme(cls, scheme: QuantizationScheme) -> QuantizationArgs:
@@ -80,6 +84,10 @@ class MixFP4PackedCompressor(BaseCompressor):
     ) -> TensorStateDict:
         """Pack dense weights while preserving flags in ``weight_scale``."""
         state_dict = state_dict.copy()
+        if "weight" not in state_dict:
+            raise ValueError("MixFP4 compression requires weight")
+        if "weight_scale" not in state_dict:
+            raise ValueError("MixFP4 compression requires weight_scale")
         weight = state_dict.pop("weight")
         scale = state_dict.pop("weight_scale")
         global_scale = state_dict.get("weight_global_scale", None)

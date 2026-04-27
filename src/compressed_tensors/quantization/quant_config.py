@@ -3,6 +3,7 @@
 
 from collections import defaultdict
 from enum import Enum
+import logging
 from typing import Annotated, Any
 
 from compressed_tensors.config import CompressionFormat
@@ -14,6 +15,9 @@ from compressed_tensors.quantization.quant_scheme import (
 from compressed_tensors.quantization.utils import is_module_quantized, module_type
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 __all__ = [
@@ -140,7 +144,9 @@ class QuantizationConfig(BaseModel):
         try:
             self.format = CompressionFormat(self.format).value
         except ValueError:
-            pass
+            _LOGGER.debug(
+                "Unknown compression format %r; leaving it unchanged", self.format
+            )
 
         for group_name, targets_or_scheme in self.config_groups.items():
             if isinstance(targets_or_scheme, QuantizationScheme):

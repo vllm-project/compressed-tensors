@@ -18,25 +18,29 @@ def _split_scale(
     scale: torch.Tensor, global_scale: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Return (is_int4 flag, effective dequant scale) from flagged FP8 scales."""
-    if global_scale.numel() != 1:
-        raise ValueError("MixFP4 expects a scalar weight_global_scale")
-
     if scale.dtype != torch.float8_e4m3fn:
-        is_int4 = torch.signbit(scale)
-        mag_fp8 = scale.abs().to(torch.float8_e4m3fn)
-        mag_f32 = mag_fp8.to(torch.float32)
-    else:
-        raw = scale.contiguous().view(torch.uint8)
-        is_int4 = (raw & _FP8_FLAG_BIT).ne(0)
-        mag_fp8 = (raw & 0x7F).view(torch.float8_e4m3fn)
-        mag_f32 = mag_fp8.to(torch.float32)
+        raise ValueError("MixFP4 expects float8_e4m3fn weight_scale")
 
-    gs = global_scale.to(torch.float32).reshape(-1)[0]
-    if not global_scale.is_meta:
-        if not torch.isfinite(gs).item() or gs.item() <= 0:
-            raise ValueError("MixFP4 expects a finite positive weight_global_scale")
-    eff_scale = (mag_f32 / gs).clamp(min=torch.finfo(torch.float32).tiny)
+    raw = scale.contiguous().view(torch.uint8)
+    is_int4 = (raw & _FP8_FLAG_BIT).ne(0)
+    mag_fp8 = (raw & 0x7F).view(torch.float8_e4m3fn)
+    mag_f32 = mag_fp8.to(torch.float32)
+
+    eff_scale = _apply_global_scale(mag_f32, global_scale)
     return is_int4, eff_scale
+
+
+def _apply_global_scale(scale: torch.Tensor, global_scale: torch.Tensor) -> torch.Tensor:
+    """Apply NVFP4-style global scale broadcasting."""
+    global_scale = global_scale.to(torch.float32)
+    if not global_scale.is_meta:
+        if not torch.isfinite(global_scale).all().item() or not (
+            global_scale > 0
+        ).all().item():
+            raise ValueError("MixFP4 expects a finite positive weight_global_scale")
+    if global_scale.ndim == 1 and global_scale.numel() == scale.size(0):
+        global_scale = global_scale.reshape(-1, *([1] * (scale.ndim - 1)))
+    return scale / global_scale
 
 
 def pack_mixfp4_to_uint8(
@@ -65,14 +69,19 @@ def pack_mixfp4_to_uint8(
         scale.to(weight.device), global_scale.to(weight.device)
     )
 
+    zero_scale = eff_scale == 0
+    safe_eff_scale = torch.where(zero_scale, torch.ones_like(eff_scale), eff_scale)
     scaled = (
-        weight.to(torch.float32).view(n, groups, group_size) / eff_scale.unsqueeze(-1)
+        weight.to(torch.float32).view(n, groups, group_size)
+        / safe_eff_scale.unsqueeze(-1)
     )
     nibble_fp4 = _encode_fp4_nibble(_round_to_e2m1(scaled))
     q_int4 = scaled.round().clamp(-_INT4_MAX, _INT4_MAX).to(torch.int32)
     nibble_int4 = _encode_int4_nibble(q_int4)
 
-    nibbles = torch.where(is_int4.unsqueeze(-1), nibble_int4, nibble_fp4).view(n, k)
+    nibbles = torch.where(is_int4.unsqueeze(-1), nibble_int4, nibble_fp4)
+    nibbles = torch.where(zero_scale.unsqueeze(-1), torch.zeros_like(nibbles), nibbles)
+    nibbles = nibbles.view(n, k)
     low = nibbles[:, 0::2]
     high = nibbles[:, 1::2]
     return ((high << 4) | low).to(torch.uint8)
@@ -133,7 +142,7 @@ def _encode_fp4_nibble(q_fp4: torch.Tensor) -> torch.Tensor:
     """Encode signed E2M1 FP4 values as one 4-bit code per element."""
     codebook = _E2M1_CODEBOOK.to(q_fp4.device)
     sign_bit = torch.signbit(q_fp4).to(torch.uint8) << 3
-    idx = (q_fp4.abs().unsqueeze(-1) == codebook).to(torch.uint8).argmax(dim=-1)
+    idx = (q_fp4.abs().unsqueeze(-1) - codebook).abs().argmin(dim=-1)
     return sign_bit | idx.to(torch.uint8)
 
 
