@@ -48,7 +48,10 @@ class Converter(Protocol):
 
     def create_config(self, config: dict) -> dict:
         """
-        Given existing quantization config, return new quantization config
+        Update quantization config to reflect processing done by this converter
+
+        :param config: existing quantization config
+        :return: new quantization config with processing
         """
         raise NotImplementedError()
 
