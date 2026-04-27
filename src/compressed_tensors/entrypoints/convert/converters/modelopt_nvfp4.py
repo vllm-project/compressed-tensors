@@ -6,12 +6,10 @@ from typing import Iterable
 import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.quantization import (
-    QuantizationArgs,
-    QuantizationConfig,
-    QuantizationScheme,
-    QuantizationStatus,
+from compressed_tensors.entrypoints.convert.converters.helpers import (
+    merge_quantization_config,
 )
+from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
 from compressed_tensors.quantization.quant_scheme import NVFP4
 from compressed_tensors.utils.match import match_name, match_quantizable_tensors
 

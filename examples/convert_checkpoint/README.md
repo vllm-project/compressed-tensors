@@ -20,12 +20,6 @@ This directory contains examples demonstrating how to use the `convert_checkpoin
 
 ### Multi-Converter Examples
 
-**`simple_multi_converter.py`** ⭐ **Start here**
-- Minimal, runnable example with Qwen2.5-0.5B (very small model)
-- Shows how to pass multiple converters as a list
-- Demonstrates custom converters that print info and scale weights
-- Perfect for understanding the multi-converter workflow
-
 **`multi_converter_example.py`**
 - Comprehensive example with multiple patterns:
   - Custom `ScaleBiasConverter` for scaling weights
@@ -95,15 +89,12 @@ class MyConverter(Converter):
         return config
 ```
 
-See `simple_multi_converter.py` for complete examples.
+See `multi_converter_example.py` for complete examples.
 
 ## Running Examples
 
 ```bash
-# Run the simple multi-converter example
-python examples/convert_checkpoint/simple_multi_converter.py
-
-# Run other examples (uncomment the desired function first)
+# Run the multi-converter example (uncomment the desired function first)
 python examples/convert_checkpoint/multi_converter_example.py
 ```
 
