@@ -38,9 +38,10 @@ class PackedQuantizationCompressor(BaseCompressor):
         param_names = (
             "weight_packed",
             "weight_scale",
-            "weight_zero_point",
             "weight_shape",
         )
+        if not getattr_chain(scheme, "weights.symmetric", True):
+            param_names += ("weight_zero_point",)
         if getattr_chain(scheme, "weights.actorder", None) == ActivationOrdering.GROUP:
             return param_names + ("weight_g_idx",)
         return param_names
@@ -97,8 +98,7 @@ class PackedQuantizationCompressor(BaseCompressor):
         Decompress a per-module state dict.
 
         Unpacks ``weight_packed`` back to the original weight, removes
-        ``weight_packed`` and ``weight_shape``, and unpacks the zero-point
-        if present.
+        ``weight_packed``, and unpacks the zero-point if present.
 
         :param state_dict: local-name state dict (weight_packed, weight_scale, …)
         :param quantization_args: quantization parameters for the weight

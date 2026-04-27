@@ -14,7 +14,7 @@ from compressed_tensors.quantization import (
     QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from compressed_tensors.utils import TensorStateDict
+from compressed_tensors.utils import TensorStateDict, getattr_chain
 
 
 __all__ = ["NVFP4PackedCompressor"]
@@ -31,12 +31,14 @@ class NVFP4PackedCompressor(BaseCompressor):
 
     @classmethod
     def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
-        return (
+        param_names = (
             "weight_packed",
             "weight_scale",
-            "weight_zero_point",
             "weight_global_scale",
         )
+        if not getattr_chain(scheme, "weights.symmetric", True):
+            param_names += ("weight_zero_point",)
+        return param_names
 
     @classmethod
     def _compress_scale(

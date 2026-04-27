@@ -30,7 +30,7 @@ class FP8BlockDequantizer(Converter):
         self.weight_block_size = weight_block_size
         self.dtype = dtype
 
-    def process(self, tensors: dict[str, torch.Tensor]):
+    def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Dequantize the fp8 block tensors (weight, weight_scale_inv) to full-precision
         weight tensors in dtype provided to constructor
@@ -47,6 +47,8 @@ class FP8BlockDequantizer(Converter):
                     tensors[f"{module_name}.weight_scale_inv"],
                 )
                 del tensors[f"{module_name}.weight_scale_inv"]
+
+        return tensors
 
     def validate(self, tensors: dict[str, torch.Tensor]):
         """

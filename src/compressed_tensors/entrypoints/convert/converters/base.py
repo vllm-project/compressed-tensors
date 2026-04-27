@@ -22,17 +22,24 @@ class Converter(Protocol):
     pointer to torch.Tensor, and create the QuantizationConfig
     """
 
-    def process(self, tensors: dict[str, torch.Tensor]):
+    def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Operate on safetensors file in-place, to convert it into a compressed-tensors
-        compatible format.
-        e.g. rename tensor, or invert weights to match compressed-tensors convention.
+        Process tensors, returning converted set to be saved in a safetensors file.
+        Converted tensors are dequantized (i.e. no quantization config) or in a
+        compressed-tensors compatible format.
+
+        Examples:
+        - rename tensor or invert weights to match compressed-tensors convention.
+        - dequantize to full-precision
 
         :param tensors: dictionary of tensor name to tensor, as loaded from
         safetensors file. Tensor name is a concatenation of module name and
         parameter name, e.g.
         - `model.layers.0.self_attn.q_proj.weight`
         - `model.layers.0.mlp.up_proj.weight_packed`
+
+        :returns: dictionary of converted tensor name to tensor, to be saved in a
+        safetensors file. Same format as input param tensors.
         """
         raise NotImplementedError()
 

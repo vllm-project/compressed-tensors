@@ -1,11 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import json
+import os
+from typing import Iterable
 
 import torch
+from compressed_tensors.base import QUANTIZATION_CONFIG_NAME
 from compressed_tensors.compressors import BaseCompressor
+from compressed_tensors.compressors.format import infer_module_format
+from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.quantization import QuantizationConfig
+from compressed_tensors.quantization import QuantizationConfig, QuantizationMetadata
 from compressed_tensors.utils.match import match_name, match_quantizable_tensors
+from compressed_tensors.utils.safetensors_load import get_checkpoint_files
+from transformers.file_utils import CONFIG_NAME
 
 
 class CompressedTensorsDequantizer(Converter):
@@ -16,13 +24,37 @@ class CompressedTensorsDequantizer(Converter):
 
     def __init__(
         self,
-        quant_config: QuantizationConfig,
+        model_stub: str | os.PathLike,
+        ignore: Iterable[str] = tuple(),
+        quant_config_key: str = QUANTIZATION_CONFIG_NAME,
         dtype=torch.bfloat16,
     ):
-        self.quant_config = quant_config
         self.dtype = dtype
 
-    def process(self, tensors: dict[str, torch.Tensor]):
+        # load quantization config from model_stub
+        model_files = get_checkpoint_files(model_stub)
+        if CONFIG_NAME in model_files:
+            resolved_path = model_files[CONFIG_NAME]
+        elif "params.json" in model_files:
+            resolved_path = model_files["params.json"]
+        else:
+            raise ValueError("Could not find config.json file")
+
+        with open(resolved_path, "r") as f:
+            config = json.load(f)
+            quant_config = config
+            for key_segment in quant_config_key.split("."):
+                quant_config = quant_config[key_segment]
+            self.quant_config = QuantizationConfig.model_validate(quant_config)
+
+        # hydrate with additional ignore and inferred scheme formats
+        self.quant_config.ignore += list(ignore)
+        for scheme in self.quant_config.config_groups.values():
+            scheme.format = CompressionFormat(
+                infer_module_format(torch.nn.Linear, scheme)
+            )
+
+    def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Dequantize compressed tensors to full-precision weight tensors in dtype
         provided to constructor
@@ -30,12 +62,19 @@ class CompressedTensorsDequantizer(Converter):
         dequantized_tensors = {}
 
         for scheme in self.quant_config.config_groups.values():
-            compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
-            for module_name, _ in match_quantizable_tensors(
+            compressor = BaseCompressor.get_value_from_registry(scheme.format)
+            param_names = compressor.compression_param_names(scheme)
+            for module_name, tensor_name in match_quantizable_tensors(
                 tensors,
                 self.quant_config.ignore,
                 scheme.targets,
+                allow_nonquantizable=True,
             ):
+                param_name = tensor_name.rsplit(".", 1)[1]
+
+                if param_name != param_names[0]:
+                    continue
+
                 # Create state dict of param_name -> torch.Tensor
                 state_dict = {
                     f"{param_name}": tensors.pop(f"{module_name}.{param_name}")
@@ -44,18 +83,24 @@ class CompressedTensorsDequantizer(Converter):
 
                 dequantized_state_dict = compressor.decompress(state_dict, scheme)
 
-                # Add to dequantized tensors
-                dequantized_tensors.update(
-                    {
-                        f"{module_name}.{param_name}": dequantized_state_dict[
-                            param_name
-                        ]
-                        for param_name in dequantized_state_dict
-                    }
-                )
+                # Add only weight param to dequantized tensors
+                dequantized_tensors[f"{module_name}.weight"] = dequantized_state_dict[
+                    "weight"
+                ]
 
-        # Copy over any remaining ignored/untargeted tensors
-        return dequantized_tensors | tensors
+        # Copy over any remaining ignored/untargeted tensors,
+        # skipping lingering activation and kv cache qparams
+        for name, tensor in tensors.items():
+            if any(
+                [
+                    name.endswith(param_name)
+                    for param_name in QuantizationMetadata.all_qparam_names()
+                ]
+            ):
+                continue
+            dequantized_tensors[name] = tensor
+
+        return dequantized_tensors
 
     def validate(self, tensors: dict[str, torch.Tensor]):
         """
@@ -63,14 +108,16 @@ class CompressedTensorsDequantizer(Converter):
         untargeted layers have unexpected tensor names
         """
         consumed_keys = set()
+        matched_modules = set()
         for scheme in self.quant_config.config_groups.values():
-            compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
+            compressor = BaseCompressor.get_value_from_registry(scheme.format)
             param_names = compressor.compression_param_names(scheme)
             for module_name, _ in match_quantizable_tensors(
                 tensors,
                 self.quant_config.ignore,
                 scheme.targets,
             ):
+                matched_modules.add(module_name)
                 for param_name in param_names:
                     expected_key = f"{module_name}.{param_name}"
 
@@ -79,22 +126,15 @@ class CompressedTensorsDequantizer(Converter):
 
                     consumed_keys.add(expected_key)
 
-        # Assert all targeted tensors have been consumed
-        for scheme in self.quant_config.config_groups.values():
-            unconsumed_tensor_names = [
-                tensor_name
-                for _, tensor_name in match_quantizable_tensors(
-                    tensors,
-                    self.quant_config.ignore,
-                    scheme.targets,
-                    allow_nonquantizable=True,
-                )
-                if tensor_name not in consumed_keys
-            ]
-            assert (
-                len(unconsumed_tensor_names) > 0
-            ), f"Found f{len(unconsumed_tensor_names)} unconsumed keys -- "
+        unconsumed_tensor_names = [
+            name
+            for name in tensors
+            if name not in consumed_keys and name.rsplit(".", 1)[0] in matched_modules
+        ]
+        assert len(unconsumed_tensor_names) == 0, (
+            f"Found {len(unconsumed_tensor_names)} unconsumed keys -- "
             f"{unconsumed_tensor_names}"
+        )
 
         return
 
@@ -111,21 +151,23 @@ class CompressedTensorsDequantizer(Converter):
         """
         module_name, param_name = weight_name.rsplit(".", 1)
 
+        if any(
+            [match_name(module_name, ignore) for ignore in self.quant_config.ignore]
+        ):
+            return set()
+
         for scheme in self.quant_config.config_groups.values():
-            compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
+            compressor = BaseCompressor.get_value_from_registry(scheme.format)
             compression_param_names = compressor.compression_param_names(scheme)
-            if (
-                any([match_name(module_name, target) for target in scheme.targets])
-                and not any(
-                    [
-                        match_name(module_name, ignore)
-                        for ignore in self.quant_config.ignore
-                    ]
-                )
-                and param_name == compression_param_names[0]
+
+            if "Linear" in scheme.targets or any(
+                [match_name(module_name, target) for target in scheme.targets]
             ):
-                return set(
-                    f"{module_name}.{param_name}"
-                    for param_name in compression_param_names[1:]
-                )
+                if param_name == compression_param_names[0]:
+                    return set(
+                        f"{module_name}.{param_name}"
+                        for param_name in compression_param_names[1:]
+                    )
+                else:
+                    return set()
         return set()

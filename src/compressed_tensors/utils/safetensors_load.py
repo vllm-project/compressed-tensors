@@ -136,6 +136,12 @@ def find_safetensors_index_file(model_files: dict[str, str]) -> str | None:
         if file_path.endswith(SAFE_WEIGHTS_INDEX_NAME):
             return resolved_path
 
+    # Fallback when names like consolidated.safetensors.index.json are used
+    # as is the case for RedHatAI/Mistral-Small-4-119B-2603-NVFP4
+    for file_path, resolved_path in model_files.items():
+        if file_path.endswith(".safetensors.index.json"):
+            return resolved_path
+
     return None
 
 

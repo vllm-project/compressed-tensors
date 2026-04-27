@@ -36,10 +36,11 @@ class NaiveQuantizationCompressor(BaseCompressor):
         param_names = (
             "weight",
             "weight_scale",
-            "weight_zero_point",
         )
+        if not getattr_chain(scheme, "weights.symmetric", True):
+            param_names += ("weight_zero_point",)
         if getattr_chain(scheme, "weights.actorder", None) == ActivationOrdering.GROUP:
-            return param_names + ("weight_g_idx",)
+            param_names += ("weight_g_idx",)
         return param_names
 
     @classmethod
