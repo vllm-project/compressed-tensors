@@ -95,8 +95,9 @@ class FP8BlockDequantizer(Converter):
             if param_name in disallowed_names:
                 raise ValueError(f"Found unexpected non-targeted tensor {name}")
 
-    def create_config(self) -> QuantizationConfig | None:
-        return None
+    def create_config(self, config: dict[str, object]) -> dict[str, object]:
+        # Dequantizer removes quantization, so remove quantization config
+        return {}
 
     def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, suffix = weight_name.rsplit(".", 1)
