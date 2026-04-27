@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from math import ceil
-from types import SimpleNamespace
 
 import pytest
 import torch
@@ -22,6 +21,26 @@ def pytest_addoption(parser):
         default=False,
         help="Emulate XPU device identity on CUDA hardware via TorchFunctionMode",
     )
+
+
+class _FakeDeviceType(str):
+    """A string subclass that acts like a device type but has a .type attribute.
+
+    Inheriting from str allows it to be passed to torch.device() directly,
+    where DeviceRemapMode will remap it to the real device type.
+    """
+
+    def __new__(cls, fake_type: str, real_type: str = None):
+        # Create the string with the fake type value
+        instance = super().__new__(cls, fake_type)
+        instance.type = fake_type
+        instance._fake_type = fake_type
+        instance._real_type = real_type  # Store for assert_device_equal
+        instance.index = None  # Device index (shadows str.index method)
+        return instance
+
+    def __repr__(self):
+        return f"device(type='{self.type}')"
 
 
 def pytest_configure(config):
@@ -45,10 +64,12 @@ def pytest_configure(config):
     config._emulate_orig_current_accelerator = torch.accelerator.current_accelerator
     config._emulate_orig_device_count = torch.accelerator.device_count
     config._emulate_orig_is_available = torch.accelerator.is_available
+    config._emulate_orig_current_device_index = torch.accelerator.current_device_index
 
     # Snapshot real values before mocking
     real_device_count = torch.accelerator.device_count()
     real_is_available = torch.accelerator.is_available()
+    real_current_device_index = torch.accelerator.current_device_index
 
     # Layer 1: DeviceRemapMode
     mode = DeviceRemapMode(fake_type=fake_type, real_type=real_type)
@@ -56,14 +77,15 @@ def pytest_configure(config):
     config._emulate_device_remap_mode = mode
 
     # Layer 2: Mock accelerator identity
-    # Use SimpleNamespace for current_accelerator (reports "xpu"), but also
-    # mock device_count and is_available to return real values directly —
-    # they internally call current_accelerator() and try to hash the result,
-    # which fails with SimpleNamespace.
-    fake_accel = SimpleNamespace(type=fake_type)
+    # Return a device-like object that has .type="xpu" and can be stringified
+    # to "xpu" for torch.device() calls (which will then be remapped by DeviceRemapMode)
+    fake_accel = _FakeDeviceType(fake_type, real_type)
     torch.accelerator.current_accelerator = lambda: fake_accel
     torch.accelerator.device_count = lambda: real_device_count
     torch.accelerator.is_available = lambda: real_is_available
+    # Patch current_device_index() to use the real device
+    # instead of trying to initialize the fake XPU backend
+    torch.accelerator.current_device_index = real_current_device_index
 
     # Layer 3: Patch is_accelerator_type to accept both types
     import compressed_tensors.utils as _utils
@@ -94,6 +116,9 @@ def pytest_unconfigure(config):
         torch.accelerator.current_accelerator = orig_accel
         torch.accelerator.device_count = config._emulate_orig_device_count
         torch.accelerator.is_available = config._emulate_orig_is_available
+        torch.accelerator.current_device_index = (
+            config._emulate_orig_current_device_index
+        )
 
     orig_is_accel = getattr(config, "_emulate_orig_is_accelerator_type", None)
     if orig_is_accel is not None:

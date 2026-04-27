@@ -34,7 +34,26 @@ def assert_device_equal(
     cur_index = torch.accelerator.current_device_index()
     a_index = cur_index if device_a.index is None else device_a.index
     b_index = cur_index if device_b.index is None else device_b.index
-    assert device_a.type == device_b.type and a_index == b_index
+
+    # Handle device emulation: when --emulate-xpu is active, tensors created
+    # on "xpu" actually live on the real accelerator, so their .device reports
+    # the real type. Normalize device types: if one matches the fake type and
+    # the other matches the real type, treat them as equal.
+    accel = torch.accelerator.current_accelerator()
+    fake_type = accel.type
+    real_type = getattr(accel, "_real_type", None)
+
+    a_type = device_a.type
+    b_type = device_b.type
+
+    # If emulation is active, normalize: fake_type and real_type are equivalent
+    if real_type is not None:
+        if a_type == real_type:
+            a_type = fake_type
+        if b_type == real_type:
+            b_type = fake_type
+
+    assert a_type == b_type and a_index == b_index
 
 
 def assert_tensor_equal(
