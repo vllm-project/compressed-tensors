@@ -19,10 +19,10 @@ from compressed_tensors.entrypoints.convert.converters import (
 )
 from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
+    get_qconfig_data,
     get_weight_map,
     is_weights_file,
     update_safetensors_index,
-    get_qconfig_data,
 )
 from loguru import logger
 

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import warnings
 from typing import Iterable
 
 import torch
@@ -25,6 +26,12 @@ class FP8BlockDequantizer(Converter):
         weight_block_size: tuple[int] = (128, 128),
         dtype=torch.bfloat16,
     ):
+        warnings.warn(
+            "FP8BlockDequantizer assumes the resulting model will not use "
+            "FP8 quantization. The quantization config will be removed if "
+            "the quantization_method is 'fp8'.",
+            UserWarning,
+        )
         self.ignore = ignore
         self.targets = targets
         self.weight_block_size = weight_block_size
@@ -96,8 +103,13 @@ class FP8BlockDequantizer(Converter):
                 raise ValueError(f"Found unexpected non-targeted tensor {name}")
 
     def create_config(self, config: dict[str, object]) -> dict[str, object]:
-        # Dequantizer removes quantization, so remove quantization config
-        return {}
+        # Only remove quantization config if the quantization method is fp8
+        quantization_config = config.get("quantization_config")
+        if quantization_config and quantization_config["quant_method"] == "fp8":
+            # Remove the quantization config for fp8 quantized models
+            return {}
+        # Otherwise, preserve the existing config
+        return config
 
     def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, suffix = weight_name.rsplit(".", 1)
