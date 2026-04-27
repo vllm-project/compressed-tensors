@@ -46,12 +46,9 @@ class Converter(Protocol):
         """
         raise NotImplementedError()
 
-    def create_config(self) -> QuantizationConfig | None:
+    def create_config(self, config: dict[str, object]) -> dict[str, object]:
         """
-        Create compressed-tensors QuantizationConfig so that it can be set in the
-        new model checkpoint's config.json.
-        If the converter is moving checkpoint to full-precision, have this function
-        return None, and quantization_config will be removed from config.json
+        Given existing quantization config, return new quantization config
         """
         raise NotImplementedError()
 

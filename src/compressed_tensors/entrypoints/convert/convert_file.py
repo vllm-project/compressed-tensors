@@ -25,7 +25,8 @@ __all__ = [
 
 def write_checkpoint_quantization_config(
     save_directory: str | os.PathLike,
-    converter: Converter,
+    converters: list[Converter],
+    quant_config_data: dict,
 ):
     """
     Write the quantization config produced by `converter` into the model config
@@ -38,10 +39,10 @@ def write_checkpoint_quantization_config(
     :param converter: Converter instance whose create_config() produces the
         updated quantization config
     """
-    quant_config_data = None
-    if (quant_config := converter.create_config()) is not None:
-        quant_config_data = quant_config.model_dump()
-        quant_config_data[COMPRESSION_VERSION_NAME] = ct_version
+    for converter in converters:
+        quant_config_data = converter.create_config(quant_config_data)
+
+    quant_config_data[COMPRESSION_VERSION_NAME] = ct_version
 
     config_file_path = find_config_path(save_directory)
     if config_file_path is not None:

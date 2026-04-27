@@ -7,3 +7,4 @@
 from .base import *
 from .modelopt_nvfp4 import *
 from .fp8block_dequantizer import *
+from .fp8_compressed_tensors import *
