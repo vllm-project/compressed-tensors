@@ -46,7 +46,7 @@ class Converter(Protocol):
         """
         raise NotImplementedError()
 
-    def create_config(self, config: dict[str, object]) -> dict[str, object]:
+    def create_config(self, config: dict) -> dict:
         """
         Given existing quantization config, return new quantization config
         """
