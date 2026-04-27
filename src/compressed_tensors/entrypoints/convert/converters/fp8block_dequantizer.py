@@ -5,8 +5,12 @@ import warnings
 from typing import Iterable
 
 import torch
+from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.quantization import QuantizationConfig
+from compressed_tensors.entrypoints.convert.converters.helpers import (
+    merge_quantization_config,
+)
+from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import (
     maybe_pad_tensor_for_block_quant,
 )
@@ -108,8 +112,13 @@ class FP8BlockDequantizer(Converter):
         if quantization_config and quantization_config["quant_method"] == "fp8":
             # Remove the quantization config for fp8 quantized models
             return {}
-        # Otherwise, preserve the existing config
-        return config
+
+        # Otherwise, merge with existing compressed-tensors config
+        return merge_quantization_config(
+            config=config,
+            new_ignore=list(self.ignore),
+            new_format=CompressionFormat.dense.value,
+        )
 
     def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, suffix = weight_name.rsplit(".", 1)
