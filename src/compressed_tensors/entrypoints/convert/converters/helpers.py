@@ -4,7 +4,7 @@
 from typing import Any
 
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationStatus
+from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 
 
 __all__ = ["merge_quantization_config"]
@@ -27,9 +27,9 @@ def merge_quantization_config(
     :param new_format: New format (uses mixed_precision if different from existing)
     :return: Updated config dict
     """
-    quantization_config = config.get("quantization_config")
+    quantization_config = config.get("quantization_config", {})
     if not quantization_config:
-        return config
+        quantization_config = QuantizationConfig(config_groups={}).model_dump()
 
     if quantization_config.get("quant_method") != "compressed-tensors":
         return config

@@ -130,19 +130,15 @@ class ModelOptNvfp4Converter(Converter):
 
         return set()
 
-    def create_config(self, config) -> dict:
-        quant_config = QuantizationConfig(
-            config_groups={
-                "from_model_opt_nvfp4": QuantizationScheme(
-                    **NVFP4,
-                    targets=self.targets,
-                    format=CompressionFormat.nvfp4_pack_quantized.value,
-                )
-            },
-            ignore=self.ignore,
-            kv_cache_scheme=self.kv_cache_scheme,
-            format=CompressionFormat.nvfp4_pack_quantized.value,
-            quantization_status=QuantizationStatus.COMPRESSED.value,
+    def create_config(self, config: dict) -> dict:
+        merge_quantization_config(
+            config,
+            new_config_groups=QuantizationScheme(
+                **NVFP4,
+                targets=self.targets,
+                format=CompressionFormat.nvfp4_pack_quantized.value,
+            ),
+            new_ignore=self.ignore,
+            new_kv_cache_scheme=self.kv_cache_scheme,
+            new_format=CompressionFormat.nvfp4_pack_quantized.value,
         )
-        config.update(quant_config.model_dump())
-        return config
