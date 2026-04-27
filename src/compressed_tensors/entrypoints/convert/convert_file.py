@@ -69,7 +69,7 @@ def write_checkpoint_quantization_config(
 
 def validate_file(
     inverse_weight_map: InverseWeightMap,
-    converter: Converter,
+    converters: list[Converter],
 ):
     """
     Validate that each quantizable tensor in a safetensors file can be quantized.
@@ -79,18 +79,18 @@ def validate_file(
         build_inverse_weight_map() in the job-building phase.
         Example: {"/path/shard0.safetensors": ["q_proj.weight"],
                   "/path/shard1.safetensors": ["k_proj.weight", "v_proj.weight"]}
-    :param converter: converter we wish to apply to the checkpoint,
-        e.g. conversion of some layers from some format to compressed-tensors
+    :param converters: list of converters to apply to the checkpoint in sequence
     """
     tensors = load_tensors_from_inverse_weight_map(inverse_weight_map)
 
-    converter.validate(tensors)
+    for converter in converters:
+        converter.validate(tensors)
 
 
 def convert_file(
     inverse_weight_map: InverseWeightMap,
     save_path: str | os.PathLike,
-    converter: Converter,
+    converters: list[Converter],
 ) -> tuple[int, dict[str, str]]:
     """
     Convert tensors in a given safetensors file
@@ -101,14 +101,14 @@ def convert_file(
         Example: {"/path/shard0.safetensors": ["q_proj.weight"],
                   "/path/shard1.safetensors": ["k_proj.weight", "v_proj.weight"]}
     :param save_path: save path of file with quantized weights
-    :param converter: converter we wish to apply to the checkpoint,
-        e.g. conversion of some layers from some format to compressed-tensors
+    :param converters: list of converters to apply to the checkpoint in sequence
     :returns: tuple of (total_size, weight_map), respectively the total size in bytes
         of the saved file and dictionary of weight name -> save path
     """
     tensors = load_tensors_from_inverse_weight_map(inverse_weight_map)
 
-    converter.process(tensors)
+    for converter in converters:
+        converter.process(tensors)
 
     save_file(tensors, save_path)
     total_size = sum(tensor.nbytes for tensor in tensors.values())

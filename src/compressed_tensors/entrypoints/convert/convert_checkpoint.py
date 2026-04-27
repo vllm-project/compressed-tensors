@@ -79,13 +79,12 @@ def convert_checkpoint(
                 raise ValueError(
                     f"Could not find inverse_weight_map for shard {shard_name}"
                 )
-            for _converter in converter:
-                validate_jobs.append(
-                    (validate_file, inverse_weight_maps[shard_name], _converter)
-                )
-                convert_jobs.append(
-                    (convert_file, inverse_weight_maps[shard_name], save_path, _converter)
-                )
+            validate_jobs.append(
+                (validate_file, inverse_weight_maps[shard_name], converter)
+            )
+            convert_jobs.append(
+                (convert_file, inverse_weight_maps[shard_name], save_path, converter)
+            )
 
         else:
             if is_weights_file(shard_name):
