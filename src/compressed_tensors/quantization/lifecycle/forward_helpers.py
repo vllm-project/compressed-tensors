@@ -288,6 +288,7 @@ _INT4_QMAX = 7.0
 
 
 def _is_mixfp4_args(args: QuantizationArgs) -> bool:
+    """Return whether quantization args use a MixFP4 observer marker."""
     return getattr(args, "observer", None) in _MIXFP4_OBSERVERS
 
 
@@ -303,6 +304,7 @@ def _apply_mixfp4_quantize_op(
     do_dequantize: bool,
     global_scale: torch.Tensor | None,
 ) -> torch.Tensor:
+    """Apply MixFP4 fake-quantization using scale sign bits as codebook flags."""
     if zero_point is not None and torch.any(zero_point != 0):
         raise ValueError("MixFP4 only supports symmetric zero points")
 
@@ -332,6 +334,7 @@ def _apply_mixfp4_quantize_op(
 def _split_mixfp4_scale(
     scale: torch.Tensor, global_scale: torch.Tensor | None
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Extract INT4 flags and effective magnitudes from MixFP4 scales."""
     if scale.dtype == torch.float8_e4m3fn:
         raw = scale.contiguous().view(torch.uint8)
         is_int4 = (raw & _MIXFP4_FLAG_BIT).ne(0)

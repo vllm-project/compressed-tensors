@@ -52,15 +52,18 @@ class MixFP4PackedCompressor(BaseCompressor):
     def _compress_scale(
         cls, scale: torch.Tensor, weights: QuantizationArgs
     ) -> torch.Tensor:
+        """Cast flagged per-group scales to the configured storage dtype."""
         scale_dtype = weights.scale_dtype or torch.float8_e4m3fn
         return scale.to(scale_dtype)
 
     @classmethod
     def _decompress_scale(cls, scale: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+        """Cast stored scales to the requested dense validation dtype."""
         return scale.to(dtype)
 
     @classmethod
     def _validate_scheme(cls, scheme: QuantizationScheme) -> QuantizationArgs:
+        """Validate that the scheme matches the MixFP4 W4A16 contract."""
         weights = scheme.weights
         if weights is None:
             raise ValueError("MixFP4 compression requires weight quantization args")
@@ -75,6 +78,7 @@ class MixFP4PackedCompressor(BaseCompressor):
     def compress(
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
+        """Pack dense weights while preserving flags in ``weight_scale``."""
         state_dict = state_dict.copy()
         weight = state_dict.pop("weight")
         scale = state_dict.pop("weight_scale")
@@ -98,6 +102,7 @@ class MixFP4PackedCompressor(BaseCompressor):
     def decompress(
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
+        """Restore dense BF16 weights from packed MixFP4 checkpoint tensors."""
         state_dict = state_dict.copy()
         packed = state_dict.pop("weight_packed")
         scale = state_dict.get("weight_scale")
@@ -135,6 +140,7 @@ class MixFP4PackedCompressor(BaseCompressor):
 
     @staticmethod
     def _is_mixfp4_weight_args(weights: QuantizationArgs | None) -> bool:
+        """Return whether weight args describe symmetric group-16 W4A16 FP4."""
         return (
             weights is not None
             and weights.num_bits == 4

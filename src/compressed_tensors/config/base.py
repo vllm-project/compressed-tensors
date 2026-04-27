@@ -29,6 +29,7 @@ class CompressionFormat(str, Enum):
 
     @classmethod
     def _missing_(cls, value):
+        """Canonicalize legacy compression format aliases."""
         if value == "mixed-fp4-int4-pack-quantized":
             return cls.mixfp4_pack_quantized
         return None

@@ -121,6 +121,7 @@ def unpack_mixfp4_from_uint8(
 
 
 def _round_to_e2m1(x: torch.Tensor) -> torch.Tensor:
+    """Round values to the nearest unsigned E2M1 magnitude with sign."""
     codebook = _E2M1_CODEBOOK.to(x.device)
     sign = torch.sign(x)
     mag = x.abs().clamp(max=_FP4_MAX)
@@ -129,6 +130,7 @@ def _round_to_e2m1(x: torch.Tensor) -> torch.Tensor:
 
 
 def _encode_fp4_nibble(q_fp4: torch.Tensor) -> torch.Tensor:
+    """Encode signed E2M1 FP4 values as one 4-bit code per element."""
     codebook = _E2M1_CODEBOOK.to(q_fp4.device)
     sign_bit = torch.signbit(q_fp4).to(torch.uint8) << 3
     idx = (q_fp4.abs().unsqueeze(-1) == codebook).to(torch.uint8).argmax(dim=-1)
@@ -136,12 +138,14 @@ def _encode_fp4_nibble(q_fp4: torch.Tensor) -> torch.Tensor:
 
 
 def _encode_int4_nibble(q_int4: torch.Tensor) -> torch.Tensor:
+    """Encode signed INT4 values using sign-magnitude nibbles."""
     sign_bit = (q_int4 < 0).to(torch.uint8) << 3
     mag = q_int4.abs().to(torch.uint8).clamp(max=_INT4_MAX)
     return sign_bit | mag
 
 
 def _decode_fp4_nibble(nibble: torch.Tensor) -> torch.Tensor:
+    """Decode one E2M1 FP4 sign-magnitude nibble per element."""
     codebook = _E2M1_CODEBOOK.to(nibble.device)
     sign = ((nibble >> 3) & 1).to(torch.bool)
     mag = codebook[(nibble & 0x07).to(torch.long)]
@@ -149,6 +153,7 @@ def _decode_fp4_nibble(nibble: torch.Tensor) -> torch.Tensor:
 
 
 def _decode_int4_nibble(nibble: torch.Tensor) -> torch.Tensor:
+    """Decode one signed INT4 sign-magnitude nibble per element."""
     sign = ((nibble >> 3) & 1).to(torch.bool)
     mag = (nibble & 0x07).to(torch.float32)
     return torch.where(sign, -mag, mag)
