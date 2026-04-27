@@ -163,7 +163,7 @@ def get_weight_map(model_files: dict[str, str]) -> dict[str, str]:
         return {tensor: SAFE_WEIGHTS_NAME for tensor in file.keys()}
     
 
-def get_qconfig_data(model_files: str) -> dict[str, object]:
+def get_qconfig_data(model_files: dict[str, str]) -> dict[str, object]:
     if "config.json" in model_files:
         with open(model_files["config.json"], "r") as file:
             return json.load(file).get("quantization_config", dict())
