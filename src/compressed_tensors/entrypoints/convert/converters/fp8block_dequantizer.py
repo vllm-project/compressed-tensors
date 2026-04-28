@@ -32,12 +32,9 @@ class FP8BlockDequantizer(Converter):
 
     def process(self, tensors: dict[str, torch.Tensor]):
         """
-        Map the modelopt NVFP4 tensors to the appropriate compressed-tensors
-        NVFP4 format.
-        Some tensors require rename, some require inversion
-        - 1 / input_scale -> input_global_scale
-        - weight -> weight_packed
-        - 1 / weight_scale_2 -> weight_global_scale
+        Dequantize the targeted fp8 tensors
+
+        :param tensors: dictionary containing quantized weights and scales
         """
         for module_name, name in match_quantizable_tensors(
             tensors, self.ignore, self.targets, allow_nonquantizable=True
