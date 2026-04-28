@@ -99,7 +99,11 @@ class FP8BlockDequantizer(Converter):
         return None
 
     def get_dependencies(self, weight_name: str) -> set[str]:
-        module_name, suffix = weight_name.rsplit(".", 1)
+        if "." in weight_name:
+            module_name, suffix = weight_name.rsplit(".", 1)
+        else:
+            module_name, suffix = "", weight_name
+
         if (
             any([match_name(module_name, target) for target in self.targets])
             and not any([match_name(module_name, ignore) for ignore in self.ignore])
