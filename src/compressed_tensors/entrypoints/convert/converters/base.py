@@ -7,6 +7,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Protocol
 
 import torch
+from compressed_tensors.utils import deprecated
 from compressed_tensors.utils.safetensors_load import InverseWeightMap
 
 
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 class Converter(Protocol):
     """
     Converter interface, to modify safetensors files based on tensor name and
-    pointer to torch.Tensor, and create the QuantizationConfig
+    pointer to torch.Tensor, and create the quantization config
     """
 
     def process(self, tensors: dict[str, torch.Tensor]):
@@ -46,12 +47,12 @@ class Converter(Protocol):
         """
         raise NotImplementedError()
 
-    def create_config(self) -> QuantizationConfig | None:
+    def update_config(self, config: dict) -> dict:
         """
-        Create compressed-tensors QuantizationConfig so that it can be set in the
-        new model checkpoint's config.json.
-        If the converter is moving checkpoint to full-precision, have this function
-        return None, and quantization_config will be removed from config.json
+        Update quantization config to reflect processing done by this converter
+
+        :param config: existing quantization config
+        :return: new quantization config with processing
         """
         raise NotImplementedError()
 
@@ -63,6 +64,10 @@ class Converter(Protocol):
 
         :returns: set[str] of dependency weight names
         """
+        raise NotImplementedError()
+
+    @deprecated("Converter.update_config")
+    def create_config(self) -> QuantizationConfig | None:
         raise NotImplementedError()
 
 
