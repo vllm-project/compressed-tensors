@@ -23,7 +23,7 @@ class DiskCache(OffloadCache):
     """
     Handles offloading and onloading tensors from/to disk.
 
-    Tensors usually start as a key in safetensors file, converted by (TODO NAME).
+    The DiskCache index is usually populated from `accelerate` at model load time.
     New or updated tensors are written to new safetensors files in `offload_dir`.
 
     Tensors are stored in memory as meta tensors. The mapping between offloaded meta
