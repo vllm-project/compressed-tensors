@@ -179,6 +179,23 @@ def test_mixfp4_decompress_rejects_non_fp8_scale():
         MixFP4PackedCompressor.decompress(state_dict, scheme)
 
 
+def test_mixfp4_compress_casts_live_signed_scale_to_fp8():
+    scheme = preset_name_to_scheme("MIXFP4A16", ["Linear"])
+    flagged = _flagged_scale(torch.tensor([[False], [True]]))
+    state_dict = {
+        "weight": torch.ones((2, 16), dtype=torch.bfloat16),
+        "weight_scale": flagged.to(torch.bfloat16),
+        "weight_global_scale": torch.tensor([1.0], dtype=torch.float32),
+    }
+
+    compressed = MixFP4PackedCompressor.compress(state_dict, scheme)
+
+    assert compressed["weight_scale"].dtype == torch.float8_e4m3fn
+    assert torch.equal(
+        compressed["weight_scale"].view(torch.uint8), flagged.view(torch.uint8)
+    )
+
+
 def test_mixfp4_zero_scale_group_packs_to_zero_nibbles():
     weight = torch.full((1, 16), 7.0, dtype=torch.bfloat16)
     scale = torch.zeros((1, 1), dtype=torch.float8_e4m3fn)

@@ -96,13 +96,18 @@ class MixFP4PackedCompressor(BaseCompressor):
         if global_scale is None:
             raise ValueError("MixFP4 compression requires weight_global_scale")
 
+        # During calibration the live qparam tensor may keep the module dtype
+        # (for example bf16). Cast once to the canonical FP8 storage dtype so
+        # the selector bit is interpreted exactly as it will be serialized.
+        scale = cls._compress_scale(scale, weights)
+
         state_dict["weight_packed"] = pack_mixfp4_to_uint8(
             weight=weight,
             scale=scale,
             global_scale=global_scale,
             group_size=weights.group_size,
         )
-        state_dict["weight_scale"] = cls._compress_scale(scale, weights)
+        state_dict["weight_scale"] = scale
         state_dict = cls._remove_symmetric_zp(state_dict, scheme)
         return state_dict
 
