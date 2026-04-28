@@ -18,15 +18,6 @@ This directory contains examples demonstrating how to use the `convert_checkpoin
 - Dequantizes DeepSeek FP8 model to dense format
 - Another example of `FP8BlockDequantizer`
 
-### Multi-Converter Examples
-
-**`multi_converter_example.py`**
-- Comprehensive example with multiple patterns:
-  - Custom `ScaleBiasConverter` for scaling weights
-  - Custom `DtypeConverter` for changing tensor dtypes  
-  - Practical example combining `FP8BlockDequantizer` with custom transformations
-- Shows how converters are applied sequentially
-
 ## Usage
 
 ### Single Converter
@@ -44,7 +35,7 @@ convert_checkpoint(
 )
 ```
 
-### Multiple Converters (NEW)
+### Multiple Converters
 
 ```python
 from compressed_tensors.entrypoints.convert import convert_checkpoint
@@ -88,19 +79,3 @@ class MyConverter(Converter):
         """Update quantization config based on conversion."""
         return config
 ```
-
-See `multi_converter_example.py` for complete examples.
-
-## Running Examples
-
-```bash
-# Run the multi-converter example (uncomment the desired function first)
-python examples/convert_checkpoint/multi_converter_example.py
-```
-
-## Notes
-
-- Use `max_workers` to control parallelism across shards
-- Converters process each shard independently
-- For multi-converter setups, all converters process the same shard before moving to the next
-- Quantization configs are updated by calling each converter's `update_config()` in sequence
