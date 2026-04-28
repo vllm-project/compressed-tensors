@@ -36,6 +36,8 @@ class DiskCache(OffloadCache):
     index: ClassVar[dict[torch.Tensor, dict[str, str]]] = {}
 
     # file path -> reference count, to handle shared tensors (fixes #638)
+    # prevents double deletions, but will keep files alive for too long
+    # when references are dropped when not using `__del__`
     _file_refcounts: ClassVar[defaultdict[str, int]] = defaultdict(int)
 
     # directory where new tensors are written to
@@ -132,6 +134,8 @@ class DiskCache(OffloadCache):
             del self._file_refcounts[file_path]
             assert os.path.basename(file_path).startswith(self._new_file_prefix)
             os.remove(file_path)
+            del self.index[offloaded]
+
         super().__delitem__(key)
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
