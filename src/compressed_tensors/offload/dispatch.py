@@ -91,6 +91,7 @@ def dispatch_with_map(
     """
     from compressed_tensors.offload.cache.helpers import validate_shm_segment_limit
 
+    logger.debug(f"Dispatching with device map:\n{device_map}")
     validate_shm_segment_limit(model, device_map)
 
     for name, (onload_device, offload_device) in tqdm(
