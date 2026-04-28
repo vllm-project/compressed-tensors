@@ -400,7 +400,7 @@ def is_narrow_match(
     targets = [targets] if isinstance(targets, str) else targets
     module = module if module is not None else model.get_submodule(name)
 
-    parent_name = name.rsplit(".", 1)[0]
+    parent_name, _, __ = name.rpartition(".")
     parent = model.get_submodule(parent_name)
 
     return any(

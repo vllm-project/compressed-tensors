@@ -39,7 +39,7 @@ class FP8BlockDequantizer(Converter):
         for module_name, name in match_quantizable_tensors(
             tensors, self.ignore, self.targets, allow_nonquantizable=True
         ):
-            param_name = name.rsplit(".", 1)[-1]
+            _, __, param_name = name.rpartition(".")
 
             if param_name == "weight":
                 # weight * weight_scale_inv -> dequantized weight
@@ -63,7 +63,7 @@ class FP8BlockDequantizer(Converter):
             )
         ]
         for name in targeted_names:
-            module_name, param_name = name.rsplit(".", 1)
+            module_name, _, param_name = name.rpartition(".")
 
             if param_name not in allowed_names:
                 raise ValueError(f"Found unexpected targeted tensor {name}")
@@ -87,7 +87,7 @@ class FP8BlockDequantizer(Converter):
             name for name in tensors.keys() if name not in targeted_names
         ]
         for name in untargeted_names:
-            param_name = name.rsplit(".", 1)[-1]
+            _, __, param_name = name.rpartition(".")
 
             if param_name in disallowed_names:
                 raise ValueError(f"Found unexpected non-targeted tensor {name}")
