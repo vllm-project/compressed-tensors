@@ -32,6 +32,7 @@ class QuantizationMetadata:
             for suffix in (
                 "global_scale",
                 "scale",
+                "shape",
                 "zero_point",
                 "g_idx",
             )

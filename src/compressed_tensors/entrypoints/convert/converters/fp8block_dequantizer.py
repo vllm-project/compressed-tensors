@@ -30,14 +30,10 @@ class FP8BlockDequantizer(Converter):
         self.weight_block_size = weight_block_size
         self.dtype = dtype
 
-    def process(self, tensors: dict[str, torch.Tensor]):
+    def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Map the modelopt NVFP4 tensors to the appropriate compressed-tensors
-        NVFP4 format.
-        Some tensors require rename, some require inversion
-        - 1 / input_scale -> input_global_scale
-        - weight -> weight_packed
-        - 1 / weight_scale_2 -> weight_global_scale
+        Dequantize the fp8 block tensors (weight, weight_scale_inv) to full-precision
+        weight tensors in dtype provided to constructor
         """
         for module_name, name in match_quantizable_tensors(
             tensors, self.ignore, self.targets, allow_nonquantizable=True
@@ -51,6 +47,8 @@ class FP8BlockDequantizer(Converter):
                     tensors[f"{module_name}.weight_scale_inv"],
                 )
                 del tensors[f"{module_name}.weight_scale_inv"]
+
+        return tensors
 
     def validate(self, tensors: dict[str, torch.Tensor]):
         """

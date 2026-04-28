@@ -33,6 +33,17 @@ class BaseCompressor(RegistryMixin, ABC):
     """
 
     @classmethod
+    def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        """
+        Returns a tuple of compression parameter names introduced by
+        the compressor during compression
+        """
+        raise NotImplementedError(
+            f"{cls.__name__} does not implement the classmethod "
+            "compression_param_names interface"
+        )
+
+    @classmethod
     def compress(
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:

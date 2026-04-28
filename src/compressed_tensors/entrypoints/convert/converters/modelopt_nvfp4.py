@@ -32,7 +32,7 @@ class ModelOptNvfp4Converter(Converter):
         self.targets = targets
         self.kv_cache_scheme = kv_cache_scheme
 
-    def process(self, tensors: dict[str, torch.Tensor]):
+    def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Map the modelopt NVFP4 tensors to the appropriate compressed-tensors
         NVFP4 format.
@@ -75,6 +75,8 @@ class ModelOptNvfp4Converter(Converter):
                     tensors[name] = tensors[name].to(
                         self.kv_cache_scheme.scale_dtype or torch.bfloat16
                     )
+
+        return tensors
 
     def validate(self, tensors: dict[str, torch.Tensor]):
         """
