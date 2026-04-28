@@ -99,7 +99,9 @@ class ModelOptNvfp4Converter(Converter):
 
         disallowed_names = ["input_scale", "weight_scale", "weight_scale_2"]
         untargeted_names = [
-            name for name in tensors.keys() if name not in targeted_names
+            name
+            for name in tensors.keys()
+            if name not in targeted_names and not match_name(name, self.ignore)
         ]
         for name in untargeted_names:
             param_name = name.rsplit(".", 1)[-1]
