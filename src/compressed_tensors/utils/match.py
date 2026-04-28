@@ -480,10 +480,7 @@ def match_quantizable_tensors(
         criterion.
     """
     for name in list(tensors.keys()):
-        if "." in name:
-            module_name, param_name = name.rsplit(".", 1)
-        else:
-            module_name, param_name = "", name
+        module_name, _, param_name = name.rpartition(".")
 
         is_quantizable = allow_nonquantizable or (
             (param_name == "weight") and not module_name.endswith("norm")
