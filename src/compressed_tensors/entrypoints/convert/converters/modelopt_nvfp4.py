@@ -108,11 +108,11 @@ class ModelOptNvfp4Converter(Converter):
                 raise ValueError(f"Hit unexpected non-targeted tensor {name}")
 
     def get_dependencies(self, weight_name: str) -> set[str]:
-        module_name, _, suffix = weight_name.rpartition(".")
+        module_name, _, param_name = weight_name.rpartition(".")
         if (
             any([match_name(module_name, target) for target in self.targets])
             and not any([match_name(module_name, ignore) for ignore in self.ignore])
-            and suffix == "weight"
+            and param_name == "weight"
         ):
             deps = {
                 f"{module_name}.input_scale",

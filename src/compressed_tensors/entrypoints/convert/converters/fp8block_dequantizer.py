@@ -96,7 +96,7 @@ class FP8BlockDequantizer(Converter):
         return None
 
     def get_dependencies(self, weight_name: str) -> set[str]:
-        module_name, _, param_name = name.rpartition(".")
+        module_name, _, param_name = weight_name.rpartition(".")
 
         if (
             any([match_name(module_name, target) for target in self.targets])
