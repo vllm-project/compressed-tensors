@@ -179,6 +179,7 @@ def get_cache_kwargs(module: torch.nn.Module, default: dict | None = None) -> di
     Get any ancillary kwargs needed for the module OffloadCache
 
     :param module: module to check
+    :param default: dictionary of kwargs to update with additional arguments
     :return: dict of cache kwargs
     """
     kwargs = default.copy() if default is not None else {}
