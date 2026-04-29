@@ -24,6 +24,20 @@ def _apply_quantize_op(
     global_scale: torch.Tensor | None,
 ) -> torch.Tensor:
     """Dispatch to the appropriate quantization kernel."""
+    if _is_mixfp4_args(args):
+        return _apply_mixfp4_quantize_op(
+            x=x,
+            scale=scale,
+            zero_point=zero_point,
+            q_min=q_min,
+            q_max=q_max,
+            args=args,
+            dtype=dtype,
+            do_quantize=do_quantize,
+            do_dequantize=do_dequantize,
+            global_scale=global_scale,
+        )
+
     if do_quantize and do_dequantize:
         return _quantize_dequantize(
             x=x,
@@ -266,3 +280,98 @@ def _dequantize(
         dequant_value = dequant_value.to(dtype)
 
     return dequant_value
+
+
+_MIXFP4_OBSERVERS = {"mixfp4", "mixed_fp4_int4"}
+_MIXFP4_FLAG_BIT = 0x80
+_INT4_QMAX = 7.0
+
+
+def _is_mixfp4_args(args: QuantizationArgs) -> bool:
+    """Return whether quantization args use a MixFP4 observer marker."""
+    return getattr(args, "observer", None) in _MIXFP4_OBSERVERS
+
+
+def _apply_mixfp4_quantize_op(
+    x: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    q_min: torch.Tensor,
+    q_max: torch.Tensor,
+    args: QuantizationArgs,
+    dtype: torch.dtype | None,
+    do_quantize: bool,
+    do_dequantize: bool,
+    global_scale: torch.Tensor | None,
+) -> torch.Tensor:
+    """Apply MixFP4 fake-quantization using scale sign bits as codebook flags."""
+    if (
+        zero_point is not None
+        and not zero_point.is_meta
+        and torch.any(zero_point != 0)
+    ):
+        raise ValueError("MixFP4 only supports symmetric zero points")
+
+    is_int4, effective_scale = _split_mixfp4_scale(scale, global_scale)
+    output_dtype = dtype if dtype is not None else x.dtype
+    zero_scale = effective_scale == 0
+    safe_effective_scale = torch.where(
+        zero_scale, torch.ones_like(effective_scale), effective_scale
+    )
+
+    if not do_quantize:
+        dequantized = x.to(effective_scale.dtype) * effective_scale
+        return dequantized.to(output_dtype)
+
+    scaled = x / safe_effective_scale
+    fp4_quantized = round_to_quantized_type_args(
+        tensor=scaled, args=args, min=q_min, max=q_max
+    )
+    int4_quantized = scaled.round().clamp(-_INT4_QMAX, _INT4_QMAX)
+    quantized = torch.where(is_int4, int4_quantized, fp4_quantized)
+    quantized = torch.where(zero_scale, torch.zeros_like(quantized), quantized)
+
+    if not do_dequantize:
+        return quantized.to(output_dtype)
+
+    return (quantized.to(effective_scale.dtype) * effective_scale).to(output_dtype)
+
+
+def _split_mixfp4_scale(
+    scale: torch.Tensor, global_scale: torch.Tensor | None
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Extract INT4 flags and effective magnitudes from MixFP4 scales."""
+    if scale.dtype != torch.float8_e4m3fn:
+        raise ValueError("MixFP4 expects float8_e4m3fn weight_scale")
+
+    raw = scale.contiguous().view(torch.uint8)
+    is_int4 = (raw & _MIXFP4_FLAG_BIT).ne(0)
+    magnitude = (raw & 0x7F).view(torch.float8_e4m3fn).to(torch.float32)
+
+    if global_scale is not None:
+        magnitude = _apply_mixfp4_global_scale(magnitude, global_scale)
+
+    return is_int4, magnitude
+
+
+def _apply_mixfp4_global_scale(
+    scale: torch.Tensor, global_scale: torch.Tensor
+) -> torch.Tensor:
+    """Apply NVFP4-style global scale broadcasting."""
+    global_scale = global_scale.to(torch.float32)
+    if not global_scale.is_meta:
+        if not torch.isfinite(global_scale).all().item() or not (
+            global_scale > 0
+        ).all().item():
+            raise ValueError("MixFP4 expects a finite positive weight_global_scale")
+    if global_scale.ndim == 1 and global_scale.numel() == scale.size(0):
+        global_scale = global_scale.reshape(-1, *([1] * (scale.ndim - 1)))
+    elif (
+        global_scale.ndim == 1
+        and scale.ndim > 1
+        and global_scale.numel() == scale.size(-2)
+    ):
+        global_scale = global_scale.reshape(1, -1, *([1] * (scale.ndim - 2)))
+    elif global_scale.ndim == scale.ndim - 1 and scale.shape[-1] == 1:
+        global_scale = global_scale.unsqueeze(-1)
+    return scale / global_scale

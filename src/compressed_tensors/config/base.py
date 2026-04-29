@@ -23,8 +23,16 @@ class CompressionFormat(str, Enum):
     marlin_24 = "marlin-24"  # legacy format
     mixed_precision = "mixed-precision"
     nvfp4_pack_quantized = "nvfp4-pack-quantized"
+    mixfp4_pack_quantized = "mixfp4-pack-quantized"
     mxfp4_pack_quantized = "mxfp4-pack-quantized"
     mxfp8_quantized = "mxfp8-quantized"
+
+    @classmethod
+    def _missing_(cls, value):
+        """Canonicalize legacy compression format aliases."""
+        if value == "mixed-fp4-int4-pack-quantized":
+            return cls.mixfp4_pack_quantized
+        return None
 
 
 @unique

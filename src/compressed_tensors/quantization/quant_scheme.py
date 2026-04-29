@@ -180,6 +180,37 @@ NVFP4 = dict(
     ),
 )
 
+MIXFP4A16 = dict(
+    weights=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=16,
+        observer="mixfp4",
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=FP8_E4M3_DATA.dtype,
+    ),
+    format=CompressionFormat.mixfp4_pack_quantized,
+)
+
+# Backward-compatible preset name used by early MixFP4 experiments.
+NVFP4_INT4_MIXED = dict(
+    weights=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=16,
+        observer="mixed_fp4_int4",
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=FP8_E4M3_DATA.dtype,
+    ),
+    format=CompressionFormat.mixfp4_pack_quantized,
+)
+
 MXFP4A16 = dict(
     weights=QuantizationArgs(
         num_bits=4,
@@ -421,6 +452,8 @@ PRESET_SCHEMES = {
     "FP8_BLOCK": FP8_BLOCK,
     "NVFP4A16": NVFP4A16,
     "NVFP4": NVFP4,
+    "MIXFP4A16": MIXFP4A16,
+    "NVFP4_INT4_MIXED": NVFP4_INT4_MIXED,
     "MXFP4A16": MXFP4A16,
     "MXFP4": MXFP4,
     "MXFP8A16": MXFP8A16,
