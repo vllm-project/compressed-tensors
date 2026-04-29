@@ -8,5 +8,5 @@ def test_download_model(model_id):
     print("DOWNLOADING MODEL ", model_id)
     from transformers import AutoModelForCausalLM
 
-    model = AutoModelForCausalLM(model_id)
+    model = AutoModelForCausalLM.from_pretrained(model_id)
     print("GOT MODEL ", model)

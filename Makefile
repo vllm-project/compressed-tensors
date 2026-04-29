@@ -22,7 +22,7 @@ style:
 # run tests for the repo
 test:
 	@echo "Running python tests";
-	pytest -sra tests/test_compressors/test_download;
+	pytest -sra tests/test_compressors/test_download.py;
 
 # creates wheel file
 build:
