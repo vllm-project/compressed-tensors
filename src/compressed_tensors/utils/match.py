@@ -400,7 +400,7 @@ def is_narrow_match(
     targets = [targets] if isinstance(targets, str) else targets
     module = module if module is not None else model.get_submodule(name)
 
-    parent_name = name.rsplit(".", 1)[0]
+    parent_name, _, __ = name.rpartition(".")
     parent = model.get_submodule(parent_name)
 
     return any(
@@ -480,7 +480,7 @@ def match_quantizable_tensors(
         criterion.
     """
     for name in list(tensors.keys()):
-        module_name, param_name = name.rsplit(".", 1)
+        module_name, _, param_name = name.rpartition(".")
 
         is_quantizable = allow_nonquantizable or (
             (param_name == "weight") and not module_name.endswith("norm")

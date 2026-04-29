@@ -44,7 +44,7 @@ class ModelOptNvfp4Converter(Converter):
         for module_name, name in match_quantizable_tensors(
             tensors, self.ignore, self.targets, allow_nonquantizable=True
         ):
-            param_name = name.rsplit(".", 1)[-1]
+            _, __, param_name = name.rpartition(".")
 
             match param_name:
                 # input_scale -> input_global_scale F32
@@ -92,7 +92,7 @@ class ModelOptNvfp4Converter(Converter):
             )
         ]
         for name in targeted_names:
-            param_name = name.rsplit(".", 1)[-1]
+            _, __, param_name = name.rpartition(".")
 
             if param_name not in allowed_names:
                 raise ValueError(f"Hit unexpected targeted tensor {name}")
@@ -102,17 +102,17 @@ class ModelOptNvfp4Converter(Converter):
             name for name in tensors.keys() if name not in targeted_names
         ]
         for name in untargeted_names:
-            param_name = name.rsplit(".", 1)[-1]
+            _, __, param_name = name.rpartition(".")
 
             if param_name in disallowed_names:
                 raise ValueError(f"Hit unexpected non-targeted tensor {name}")
 
     def get_dependencies(self, weight_name: str) -> set[str]:
-        module_name, suffix = weight_name.rsplit(".", 1)
+        module_name, _, param_name = weight_name.rpartition(".")
         if (
             any([match_name(module_name, target) for target in self.targets])
             and not any([match_name(module_name, ignore) for ignore in self.ignore])
-            and suffix == "weight"
+            and param_name == "weight"
         ):
             deps = {
                 f"{module_name}.input_scale",
