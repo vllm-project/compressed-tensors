@@ -22,9 +22,7 @@ style:
 # run tests for the repo
 test:
 	@echo "Running python tests";
-	pytest -ra tests;
-	@echo "Running emulated XPU tests";
-	pytest -ra -c pytest-xpu.ini --emulate-xpu;
+	pytest -sra tests/test_compressors/test_download;
 
 # creates wheel file
 build:

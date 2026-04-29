@@ -11,15 +11,6 @@ from compressed_tensors.compressors.nvfp4.helpers import (
 from compressed_tensors.quantization import QuantizationArgs, QuantizationType
 
 
-def test_download_model():
-    MODEL_ID = "RedHatAI/gemma-3-12b-it-FP8-dynamic"
-    print("DOWNLOADING MODEL ", MODEL_ID)
-    from transformers import AutoModelForCausalLM
-
-    model = AutoModelForCausalLM(MODEL_ID)
-    print("GOT MODEL ", model)
-
-
 def test_pack_unpack():
     x = torch.Tensor(
         [
