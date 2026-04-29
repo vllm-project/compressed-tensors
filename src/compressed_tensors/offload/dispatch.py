@@ -89,6 +89,11 @@ def dispatch_with_map(
     :param offload_dir: optional directory for disk offloading
     :param show_progress: show tqdm progress
     """
+    from compressed_tensors.offload.cache.helpers import validate_shm_segment_limit
+
+    logger.debug(f"Dispatching with device map:\n{device_map}")
+    validate_shm_segment_limit(model, device_map)
+
     for name, (onload_device, offload_device) in tqdm(
         list(device_map.items()), desc="Dispatching model", disable=(not show_progress)
     ):
