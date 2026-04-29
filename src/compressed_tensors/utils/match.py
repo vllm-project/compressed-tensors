@@ -55,13 +55,129 @@ def match_named_modules(
 
     unmatched_targets = set(targets)
 
+    # Performance optimization: Pre-process targets and ignores to avoid O(N × M) loop
+    # For large MoE models (18K+ modules), this reduces ~925K iterations to ~18K
+    # by pre-compiling regex and using set-based lookups. See: transformers#44276
+
+    # Separate targets by type for efficient matching
+    exact_targets = set()
+    regex_targets = []
+    class_targets = set()
+
+    for target in targets:
+        if target.startswith("re:"):
+            # Pre-compile regex patterns once instead of per-module
+            regex_str = target.removeprefix("re:")
+            compiled = re.compile(regex_str)
+            regex_targets.append((target, compiled))
+        elif "." in target or "_" in target:
+            # Likely a module name path (e.g., "model.layers.0.mlp")
+            exact_targets.add(target)
+        else:
+            # Likely a class name (e.g., "Linear") - could be both
+            exact_targets.add(target)
+            class_targets.add(target)
+
+    # Pre-process ignore patterns similarly
+    exact_ignores = set()
+    regex_ignores = []
+    class_ignores = set()
+
+    for ign in ignore:
+        if ign.startswith("re:"):
+            regex_str = ign.removeprefix("re:")
+            compiled = re.compile(regex_str)
+            regex_ignores.append((ign, compiled))
+        elif "." in ign or "_" in ign:
+            exact_ignores.add(ign)
+        else:
+            exact_ignores.add(ign)
+            class_ignores.add(ign)
+
     for name, module in model.named_modules():
-        for target in targets:
-            if is_match(name, module, target, fused=fused):
-                unmatched_targets -= {target}
-                if not is_match(name, module, ignore, fused=fused):
-                    yield name, module
-                break
+        if isinstance(module, InternalModule):
+            continue
+
+        # Fast path: O(1) exact name match using sets
+        matched_target = None
+        if name in exact_targets:
+            matched_target = name
+
+        # Check fused module paths if exact match failed
+        if not matched_target and fused is not None:
+            for fused_suffix, shard_suffixes in fused.items():
+                if name.endswith(fused_suffix):
+                    name_stripped = name.removesuffix(fused_suffix)
+                    for shard_suffix in shard_suffixes:
+                        reconstructed = name_stripped + shard_suffix
+                        if reconstructed in exact_targets:
+                            matched_target = reconstructed
+                            break
+                        # Check regex against reconstructed name
+                        for target, compiled_regex in regex_targets:
+                            if compiled_regex.match(reconstructed):
+                                matched_target = target
+                                break
+                    if matched_target:
+                        break
+
+        # Check pre-compiled regex patterns
+        if not matched_target:
+            for target, compiled_regex in regex_targets:
+                if compiled_regex.match(name):
+                    matched_target = target
+                    break
+
+        # Check class names if no name match
+        if not matched_target:
+            for target in class_targets:
+                if _match_class(module, target):
+                    matched_target = target
+                    break
+
+        if matched_target:
+            unmatched_targets.discard(matched_target)
+
+            # Check if this module should be ignored (same optimized approach)
+            should_ignore = False
+
+            # Fast path: exact ignore
+            if name in exact_ignores:
+                should_ignore = True
+
+            # Check fused paths for ignores
+            if not should_ignore and fused is not None:
+                for fused_suffix, shard_suffixes in fused.items():
+                    if name.endswith(fused_suffix):
+                        name_stripped = name.removesuffix(fused_suffix)
+                        for shard_suffix in shard_suffixes:
+                            reconstructed = name_stripped + shard_suffix
+                            if reconstructed in exact_ignores:
+                                should_ignore = True
+                                break
+                            for _, compiled_regex in regex_ignores:
+                                if compiled_regex.match(reconstructed):
+                                    should_ignore = True
+                                    break
+                        if should_ignore:
+                            break
+
+            # Check regex ignores
+            if not should_ignore:
+                for _, compiled_regex in regex_ignores:
+                    if compiled_regex.match(name):
+                        should_ignore = True
+                        break
+
+            # Check class ignores
+            if not should_ignore:
+                for ign in class_ignores:
+                    if _match_class(module, ign):
+                        should_ignore = True
+                        break
+
+            if not should_ignore:
+                yield name, module
 
     if warn_on_fail:
         for target in unmatched_targets:
