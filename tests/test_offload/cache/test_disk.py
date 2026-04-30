@@ -128,3 +128,62 @@ def test_files(tmp_path):
     files = os.listdir(offload_dir)
     assert len(DiskCache.index) == 0
     assert len(files) == 0
+
+
+@pytest.mark.unit
+def test_shared_tensor_refcounts(tmp_path):
+    """
+    Test that the file reference counting mechanism correctly handles shared
+    tensors (like tied lm_head and embed_tokens weights) by not deleting files
+    until all references are removed.
+    """
+    offload_dir = tmp_path / "offload_dir"
+    os.mkdir(offload_dir)
+
+    # Reset class state
+    DiskCache.index = {}
+    DiskCache._file_refcounts.clear()
+
+    cache = DiskCache("cpu", offload_dir=str(offload_dir))
+
+    # Create a tensor and offload it
+    tensor = torch.zeros(10)
+    cache["weight1"] = tensor
+
+    # Get the file path for the first weight
+    files = os.listdir(offload_dir)
+    assert len(files) == 1
+    file_path = str(offload_dir / files[0])
+
+    # Verify reference count is 1
+    assert DiskCache._file_refcounts[file_path] == 1
+
+    # Simulate tied tensors by creating a second meta tensor that points
+    # to the same file. This mimics what happens when lm_head and
+    # embed_tokens share the same weights
+    from compressed_tensors.offload.utils import send_tensors
+
+    offloaded2 = send_tensors(tensor, device="meta")
+    cache.offloaded_values["weight2"] = offloaded2
+
+    # Manually set up the index entry to point to the same file
+    # (simulating tied tensors)
+    DiskCache.index[offloaded2] = {
+        "safetensors_file": file_path,
+        "weight_name": "weight",
+        "dtype": "float32",
+    }
+    DiskCache._file_refcounts[file_path] += 1
+    assert DiskCache._file_refcounts[file_path] == 2
+
+    # Delete first reference - file should NOT be deleted
+    del cache["weight1"]
+    files = os.listdir(offload_dir)
+    assert len(files) == 1, "File should still exist after first deletion"
+    assert DiskCache._file_refcounts[file_path] == 1
+
+    # Delete second reference - now file SHOULD be deleted
+    del cache["weight2"]
+    files = os.listdir(offload_dir)
+    assert len(files) == 0, "File should be deleted after all references removed"
+    assert file_path not in DiskCache._file_refcounts
