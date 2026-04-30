@@ -27,7 +27,7 @@ from tests.testing_utils import requires_gpu
 
 @pytest.fixture()
 def onload_device():
-    return torch.device("cuda")
+    return torch.accelerator.current_accelerator()
 
 
 @pytest.fixture()
@@ -207,7 +207,7 @@ def test_distributed_async_update(tmp_path):
     # Ensure directory creation completes before other ranks proceed
     dist.barrier()
 
-    onload_device = torch.device("cuda")
+    onload_device = torch.accelerator.current_accelerator()
     cache = DistributedDiskCache(onload_device, offload_dir=str(offload_dir))
 
     # Initialize two tensors in the cache
