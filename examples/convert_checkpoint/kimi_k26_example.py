@@ -19,7 +19,6 @@ convert_checkpoint(
     save_directory=SAVE_DIR,
     converter=CompressedTensorsDequantizer(
         MODEL_ID,
-        quant_config_key="text_config.quantization_config",
         ignore=[
             "re:.*mlp.gate$",
             "re:.*lm_head",

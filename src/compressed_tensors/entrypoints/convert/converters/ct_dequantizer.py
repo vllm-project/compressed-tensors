@@ -1,18 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-import json
 import os
 from typing import Iterable
 
+import pydantic
 import torch
-from compressed_tensors.base import QUANTIZATION_CONFIG_NAME
 from compressed_tensors.compressors import BaseCompressor
 from compressed_tensors.compressors.format import infer_module_format
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
 from compressed_tensors.quantization import QuantizationConfig, QuantizationMetadata
 from compressed_tensors.utils.match import match_name, match_quantizable_tensors
-from compressed_tensors.utils.safetensors_load import get_checkpoint_files
+from compressed_tensors.utils.safetensors_load import (
+    get_checkpoint_files,
+    get_quantization_config,
+)
 from transformers.file_utils import CONFIG_NAME
 
 
@@ -26,7 +28,6 @@ class CompressedTensorsDequantizer(Converter):
         self,
         model_stub: str | os.PathLike,
         ignore: Iterable[str] = tuple(),
-        quant_config_key: str = QUANTIZATION_CONFIG_NAME,
         dtype=torch.bfloat16,
     ):
         self.dtype = dtype
@@ -34,18 +35,23 @@ class CompressedTensorsDequantizer(Converter):
         # load quantization config from model_stub
         model_files = get_checkpoint_files(model_stub)
         if CONFIG_NAME in model_files:
-            resolved_path = model_files[CONFIG_NAME]
+            config_resolved_path = model_files[CONFIG_NAME]
         elif "params.json" in model_files:
-            resolved_path = model_files["params.json"]
+            config_resolved_path = model_files["params.json"]
         else:
             raise ValueError("Could not find config.json file")
 
-        with open(resolved_path, "r") as f:
-            config = json.load(f)
-            quant_config = config
-            for key_segment in quant_config_key.split("."):
-                quant_config = quant_config[key_segment]
-            self.quant_config = QuantizationConfig.model_validate(quant_config)
+        quant_config_data = get_quantization_config(config_resolved_path)
+        if quant_config_data is None:
+            raise ValueError("Could not find quantization_config in config.json")
+
+        try:
+            self.quant_config = QuantizationConfig.model_validate(quant_config_data)
+        except pydantic.ValidationError as e:
+            raise ValueError(
+                "Model quantization config was found, but it does not match expected "
+                "compressed-tensors quantization format"
+            ) from e
 
         # hydrate with additional ignore and inferred scheme formats
         self.quant_config.ignore += list(ignore)
