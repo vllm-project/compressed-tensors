@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
@@ -37,6 +38,9 @@ class DiskCache(OffloadCache):
     # directory where new tensors are written to
     offload_dir: str
     _new_file_prefix = "ct_disk_cache"
+
+    # shared parameter tracking: data_ptr -> (file_path, ref_count)
+    _storage_refs: dict[int, tuple[str, int]] = dict()
 
     def __init__(
         self,
@@ -97,32 +101,66 @@ class DiskCache(OffloadCache):
         if offloaded is None:
             offloaded = send_tensors(tensor, device="meta")
 
-        file_name = f"{self._new_file_prefix}{id(offloaded)}.safetensors"
-        file_path = os.path.join(self.offload_dir, file_name)
+        storage_key = tensor.data_ptr()
+
+        # reuse existing file if storage is already offloaded
+        if storage_key in self._storage_refs:
+            file_path, ref_count = self._storage_refs[storage_key]
+            self._storage_refs[storage_key] = (file_path, ref_count + 1)
+        else:
+            # create new file for new storage
+            file_name = f"{self._new_file_prefix}{id(offloaded)}.safetensors"
+            file_path = os.path.join(self.offload_dir, file_name)
+            save_file({"weight": tensor}, file_path)
+            self._storage_refs[storage_key] = (file_path, 1)
+
         self.index[offloaded] = {
             "safetensors_file": file_path,
             "weight_name": "weight",
             "dtype": str(tensor.dtype).removeprefix("torch."),
         }
 
-        save_file({"weight": tensor}, file_path)
+        # register finalizer for automatic cleanup
+        weakref.finalize(offloaded, self._decref_storage, storage_key)
+
         return offloaded
+
+    @classmethod
+    def _decref_storage(cls, storage_key: int):
+        """
+        Decrement reference count for shared storage and delete file when count reaches zero
+
+        :param storage_key: data_ptr of original tensor storage
+        """
+        if storage_key not in cls._storage_refs:
+            return
+
+        file_path, ref_count = cls._storage_refs[storage_key]
+        if ref_count <= 1:
+            # last reference - delete file and tracking
+            if os.path.basename(file_path).startswith(cls._new_file_prefix):
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass  # file may already be deleted
+            del cls._storage_refs[storage_key]
+        else:
+            # decrement reference count
+            cls._storage_refs[storage_key] = (file_path, ref_count - 1)
 
     def __delitem__(self, key: str):
         """
-        Remove the offload associated with `key`. If a new file was created to store
-        updated tensor data, that new tensor data file is deleted.
+        Remove the offload associated with `key`. File deletion is handled
+        automatically by weakref finalizers when all references are removed.
 
         Any references to onloaded tensors held by this class are invalidated.
 
         :param key: name of tensor to invalidate
         """
         offloaded = self.offloaded_values[key]
-        file_path = self.index[offloaded]["safetensors_file"]
-        if os.path.basename(file_path).startswith(self._new_file_prefix):
-            os.remove(file_path)
         del self.index[offloaded]
         super().__delitem__(key)
+        # file cleanup handled by weakref.finalize when offloaded tensor is GC'd
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
