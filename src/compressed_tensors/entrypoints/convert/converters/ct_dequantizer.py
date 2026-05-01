@@ -137,10 +137,11 @@ class CompressedTensorsDequantizer(Converter):
             for name in tensors
             if name not in consumed_keys and name.rsplit(".", 1)[0] in matched_modules
         ]
-        assert len(unconsumed_tensor_names) == 0, (
-            f"Found {len(unconsumed_tensor_names)} unconsumed keys -- "
-            f"{unconsumed_tensor_names}"
-        )
+        if len(unconsumed_tensor_names) != 0:
+            raise ValueError(
+                f"Found {len(unconsumed_tensor_names)} unconsumed keys -- "
+                f"{unconsumed_tensor_names}"
+            )
 
         return
 
