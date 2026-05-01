@@ -7,10 +7,7 @@ from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters.ct_dequantizer import (
     CompressedTensorsDequantizer,
 )
-from compressed_tensors.quantization import (
-    QuantizationConfig,
-    QuantizationScheme,
-)
+from compressed_tensors.quantization import QuantizationConfig, QuantizationScheme
 from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
     QuantizationStrategy,
