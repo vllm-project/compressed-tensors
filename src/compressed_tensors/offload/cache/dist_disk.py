@@ -51,7 +51,7 @@ class DistributedDiskCache(DiskCache):
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
-        Write new param data to file that already exists. Only rank 0 writes,
+        Write new param data to file that already exists. Only source rank writes,
         then all ranks wait at barrier to ensure write completes before reads.
 
         :param offloaded: meta tensors representating parameter to update

@@ -45,13 +45,13 @@ class DistributedDeviceCache(DeviceCache):
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
-        Update the offloaded device value with new data, broadcasting from rank 0
+        Update the offloaded device value with new data, broadcasting from source rank
         to all other ranks.
 
         :param offloaded: device tensor to update
         :param data: new data to copy from
         """
-        if is_source_process() and data is not None:
+        if is_source_process():
             super().update_offload(offloaded, data)
 
         # broadcast the updated data to all ranks

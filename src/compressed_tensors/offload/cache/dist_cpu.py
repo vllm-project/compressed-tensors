@@ -62,7 +62,7 @@ class DistributedCPUCache(CPUCache):
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
-        Update the offloaded cpu value with new data. Only rank 0 writes to avoid
+        Update the offloaded cpu value with new data. Only source rank writes to avoid
         race conditions, then all ranks wait at barrier.
 
         :param offloaded: cpu tensor in shared memory to update
