@@ -22,7 +22,6 @@ from tests.test_offload.conftest import assert_device_equal, torchrun
 from tests.testing_utils import requires_gpu
 
 
-
 # Note that tests only require at least 1 accelerator
 # because different ranks can share the same device.
 
