@@ -48,6 +48,7 @@ def test_to_accelerate_module(offload_device, tmp_path):
         offload_module(linear, accelerator_device, offload_device)
 
     _offload_device = to_accelerate_module(linear, name="", hf_disk_index={})
+
     assert _offload_device == str(norm_device(offload_device))
 
 
