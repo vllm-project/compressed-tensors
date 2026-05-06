@@ -17,7 +17,6 @@ from compressed_tensors.quantization import (
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 from compressed_tensors.utils import TensorStateDict, getattr_chain
 
-
 __all__ = ["PackedQuantizationCompressor"]
 
 
@@ -43,7 +42,7 @@ class PackedQuantizationCompressor(BaseCompressor):
         if not getattr_chain(scheme, "weights.symmetric", True):
             param_names += ("weight_zero_point",)
         if getattr_chain(scheme, "weights.actorder", None) == ActivationOrdering.GROUP:
-            return param_names + ("weight_g_idx",)
+            param_names += ("weight_g_idx",)
         return param_names
 
     @classmethod

@@ -50,6 +50,15 @@ def _create_dummy_tensors():
         "model.layers.0.mlp.down_proj.weight": torch.randint(
             -128, 127, (64, 64), dtype=torch.int8
         ),
+        "model.language_model.layers.0.input_layernorm.weight": torch.randn(
+            64, 1, dtype=torch.bfloat16
+        ),
+        "model.language_model.layers.0.pre_feedforward_layernorm.weight": torch.randn(
+            64, 1, dtype=torch.bfloat16
+        ),
+        "model.language_model.layers.0.post_feedforward_layernorm.weight": torch.randn(
+            64, 1, dtype=torch.bfloat16
+        ),
         "model.layers.0.mlp.down_proj.weight_scale": torch.rand(
             64, 1, dtype=torch.float32
         ),

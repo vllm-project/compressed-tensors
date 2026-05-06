@@ -92,7 +92,7 @@ class CompressedTensorsDequantizer(Converter):
                 # Add only weight param to dequantized tensors
                 dequantized_tensors[f"{module_name}.weight"] = dequantized_state_dict[
                     "weight"
-                ]
+                ].to(self.dtype)
 
         # Copy over any remaining ignored/untargeted tensors,
         # skipping lingering activation and kv cache qparams

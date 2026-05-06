@@ -15,7 +15,6 @@ from compressed_tensors.utils import (
     replace_direct_state_dict,
 )
 
-
 __all__ = ["BaseCompressor", "compress_module", "decompress_module"]
 
 
@@ -35,8 +34,10 @@ class BaseCompressor(RegistryMixin, ABC):
     @classmethod
     def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
         """
-        Returns a tuple of compression parameter names introduced by
-        the compressor during compression
+        Returns a tuple of compression parameter names introduced by the compressor
+        during compression. This is necessary so that the state dict can be recreated
+        to pass into decompress in model-free pathways. See example usage in
+        compressed_tensors.entrypoints.convert.converters.CompressedTensorsDequantizer
         """
         raise NotImplementedError(
             f"{cls.__name__} does not implement the classmethod "
