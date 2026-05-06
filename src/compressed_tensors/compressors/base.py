@@ -15,6 +15,7 @@ from compressed_tensors.utils import (
     replace_direct_state_dict,
 )
 
+
 __all__ = ["BaseCompressor", "compress_module", "decompress_module"]
 
 
