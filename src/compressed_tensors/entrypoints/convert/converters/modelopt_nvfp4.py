@@ -36,7 +36,6 @@ class ModelOptNvfp4Converter(Converter):
         if self.kv_cache_scheme is not None:
             self.param_names += ["k_scale", "v_scale"]
 
-
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Map the modelopt NVFP4 tensors to the appropriate compressed-tensors
@@ -88,11 +87,11 @@ class ModelOptNvfp4Converter(Converter):
         Ensure all tensor names of targeted layers are expected and no
         untargeted layers have unexpected tensor names
         """
-       
+
         targeted_names = [
             name
             for _, name in match_quantizable_tensors(
-                tensors, self.ignore, self.targets,param_targets=self.param_names
+                tensors, self.ignore, self.targets, param_targets=self.param_names
             )
         ]
         for name in targeted_names:

@@ -6,6 +6,7 @@ from enum import Enum
 from compressed_tensors.offload.module import unwrap_offload_forward
 from torch.nn import Module
 
+
 __all__ = ["QuantizationMetadata", "KVCacheScaleType"]
 
 

@@ -11,6 +11,7 @@ from typing import Iterator
 import torch
 from compressed_tensors.utils.internal import InternalModule
 
+
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
@@ -463,8 +464,9 @@ def match_quantizable_tensors(
     allow_nonquantizable: bool = False,
 ) -> Iterator[tuple[str, str]]:
     """
-    Match all quantizable tensors that are targeted and not ignored. Inputs "targets"
-        and "ignore" operate on module names. Their naming is left accordingly.
+    Match all quantizable tensors that are targeted and not ignored. Note that inputs
+        "targets" and "ignore" operate on module names, matching their usage elsewhere
+        in `compressed_tensors.utils.match`.
 
     :param tensors: Mapping of name in safetensors file to actual tensor
     :param ignore: ignore individual tensor if any match is found within elements in

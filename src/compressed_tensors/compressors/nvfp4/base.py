@@ -11,11 +11,12 @@ from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationScheme,
-    QuantizationType,
     QuantizationStrategy,
+    QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 from compressed_tensors.utils import TensorStateDict, getattr_chain
+
 
 __all__ = ["NVFP4PackedCompressor"]
 

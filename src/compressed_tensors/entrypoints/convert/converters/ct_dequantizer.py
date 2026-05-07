@@ -9,14 +9,8 @@ from compressed_tensors.compressors import BaseCompressor
 from compressed_tensors.compressors.format import infer_module_format
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.quantization import (
-    QuantizationConfig,
-    KVCacheScaleType,
-)
-from compressed_tensors.utils.match import (
-    match_name,
-    match_quantizable_tensors,
-)
+from compressed_tensors.quantization import KVCacheScaleType, QuantizationConfig
+from compressed_tensors.utils.match import match_name, match_quantizable_tensors
 from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
     get_quantization_config,
