@@ -21,7 +21,6 @@ convert_checkpoint(
             "re:.*mlp.gate$",
             "re:.*lm_head",
             "re:.*embed_tokens$",
-            "re:.*norm$",
             # ignore anything not in language_model
             "re:.*mm_projector.*",
             "re:.*vision.*",
