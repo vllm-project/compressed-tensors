@@ -9,7 +9,10 @@ from compressed_tensors.compressors import BaseCompressor
 from compressed_tensors.compressors.format import infer_module_format
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.quantization import QuantizationConfig, QuantizationMetadata
+from compressed_tensors.quantization import (
+    QuantizationConfig,
+    KVCacheScaleType,
+)
 from compressed_tensors.utils.match import match_name, match_quantizable_tensors
 from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
@@ -94,15 +97,10 @@ class CompressedTensorsDequantizer(Converter):
                     "weight"
                 ].to(self.dtype)
 
-        # Copy over any remaining ignored/untargeted tensors,
-        # skipping lingering activation and kv cache qparams
+        # Copy over any remaining ignored/untargeted tensors, skipping kv cache qparams
+        kv_cache_param_names = [v.value for v in KVCacheScaleType]
         for name, tensor in tensors.items():
-            if any(
-                [
-                    name.endswith(param_name)
-                    for param_name in QuantizationMetadata.all_qparam_names()
-                ]
-            ):
+            if any([name.endswith(param_name) for param_name in kv_cache_param_names]):
                 continue
             dequantized_tensors[name] = tensor
 
