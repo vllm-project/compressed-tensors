@@ -11,7 +11,6 @@ from typing import Iterator
 import torch
 from compressed_tensors.utils.internal import InternalModule
 
-
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
@@ -460,38 +459,53 @@ def match_quantizable_tensors(
     tensors: Mapping[str, torch.Tensor],
     ignore: Iterable[str],
     targets: Iterable[str] = tuple(),
+    param_targets: Iterable[str] = ("weight",),
     allow_nonquantizable: bool = False,
 ) -> Iterator[tuple[str, str]]:
     """
-    Match all quantizable tensors that are not ignored and are
-    targeted
+    Match all quantizable tensors that are targeted and not ignored. Inputs "targets"
+        and "ignore" operate on module names. Their naming is left accordingly.
 
     :param tensors: Mapping of name in safetensors file to actual tensor
-    :param ignore: ignore individual tensor if any match is found with
-        elements in ignore (regex allowed)
-    :param targets: include if any match is found with elements in targets
-        (regex allowed). Unlike model-based matching utils, this only checks
-        names, not classes. If empty or if "Linear" is included, assume targets
-        is all-inclusive.
-    :param allow_nonquantizable: Override to include non-quantizable tensors,
-        useful when performing other processing on tensors beyond quantization.
+    :param ignore: ignore individual tensor if any match is found within elements in
+        ignore when compared to module name (regex allowed)
+    :param targets: include if any match is found within elements in targets when
+        compared to module name (regex allowed). Unlike model-based matching utils,
+        this only checks names, not classes. If empty or if "Linear" is included, assume
+        targets is all-inclusive.
+    :param param_targets: same as targets, but for param name instead of module name.
+        Useful when qparam names like "weight_scale", "weight_packed", etc. need to be
+        matched as well (regex allowed).
+    :param allow_nonquantizable: Override to include non-quantizable modules, like
+        layernorms. Note that this list must be kept up-to-date with naming conventions,
+        unless a more concrete check can be found without necessitating loading the
+        model up in transformers, or inspecting the model def code itself.
 
     :return: iterator of module_name and full tensor name meeting filtering
         criterion.
     """
     for name in list(tensors.keys()):
-        module_name, param_name = name.rsplit(".", 1)
+        module_name, _, param_name = name.rpartition(".")
 
-        is_quantizable = allow_nonquantizable or (
-            (param_name == "weight") and not module_name.endswith("norm")
+        if not allow_nonquantizable and module_name.endswith("norm"):
+            continue
+
+        is_param_targeted = any(
+            (match_name(param_name, target)) for target in param_targets
         )
+        if not is_param_targeted:
+            continue
 
-        if len(targets) == 0 or "Linear" in targets:
-            is_targeted = True
-        else:
-            is_targeted = any((match_name(module_name, target)) for target in targets)
+        is_module_targeted = (
+            len(targets) == 0
+            or "Linear" in targets
+            or any((match_name(module_name, target)) for target in targets)
+        )
+        if not is_module_targeted:
+            continue
 
-        is_ignored = any(match_name(module_name, ign) for ign in ignore)
+        is_module_ignored = any(match_name(module_name, ign) for ign in ignore)
+        if is_module_ignored:
+            continue
 
-        if is_quantizable and is_targeted and not is_ignored:
-            yield module_name, name
+        yield module_name, name

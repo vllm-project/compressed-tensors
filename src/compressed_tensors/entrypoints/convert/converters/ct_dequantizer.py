@@ -13,7 +13,10 @@ from compressed_tensors.quantization import (
     QuantizationConfig,
     KVCacheScaleType,
 )
-from compressed_tensors.utils.match import match_name, match_quantizable_tensors
+from compressed_tensors.utils.match import (
+    match_name,
+    match_quantizable_tensors,
+)
 from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
     get_quantization_config,
@@ -75,19 +78,14 @@ class CompressedTensorsDequantizer(Converter):
             param_names = compressor.compression_param_names(scheme)
             for module_name, tensor_name in match_quantizable_tensors(
                 tensors,
-                self.quant_config.ignore,
-                scheme.targets,
-                allow_nonquantizable=True,
+                ignore=self.quant_config.ignore,
+                targets=scheme.targets,
+                param_targets=[param_names[0]],
             ):
-                param_name = tensor_name.rsplit(".", 1)[1]
-
-                if param_name != param_names[0]:
-                    continue
-
                 # Create state dict of param_name -> torch.Tensor
                 state_dict = {
                     f"{param_name}": tensors.pop(f"{module_name}.{param_name}")
-                    for param_name in compressor.compression_param_names(scheme)
+                    for param_name in param_names
                 }
 
                 dequantized_state_dict = compressor.decompress(state_dict, scheme)
@@ -120,6 +118,7 @@ class CompressedTensorsDequantizer(Converter):
                 tensors,
                 self.quant_config.ignore,
                 scheme.targets,
+                param_targets=[param_names[0]],
             ):
                 matched_modules.add(module_name)
                 for param_name in param_names:
@@ -133,7 +132,7 @@ class CompressedTensorsDequantizer(Converter):
         unconsumed_tensor_names = [
             name
             for name in tensors
-            if name not in consumed_keys and name.rsplit(".", 1)[0] in matched_modules
+            if name not in consumed_keys and name.rpartition(".")[0] in matched_modules
         ]
         if len(unconsumed_tensor_names) != 0:
             raise ValueError(
@@ -154,7 +153,7 @@ class CompressedTensorsDequantizer(Converter):
 
         If weight_name is untargeted or ignored, an empty set is returned
         """
-        module_name, param_name = weight_name.rsplit(".", 1)
+        module_name, _, param_name = weight_name.rpartition(".")
 
         if any(
             [match_name(module_name, ignore) for ignore in self.quant_config.ignore]
