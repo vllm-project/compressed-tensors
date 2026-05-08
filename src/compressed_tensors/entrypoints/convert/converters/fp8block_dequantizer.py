@@ -30,7 +30,7 @@ class FP8BlockDequantizer(Converter):
         self.weight_block_size = weight_block_size
         self.dtype = dtype
 
-        self.param_names = ["weight", "weight_scale"]
+        self.param_names = ["weight", "weight_scale_inv"]
 
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
@@ -57,7 +57,6 @@ class FP8BlockDequantizer(Converter):
         Ensure all tensor names of targeted layers are expected and no
         untargeted layers have unexpected tensor names
         """
-        allowed_names = ["weight", "weight_scale_inv"]
 
         targeted_names = [
             name
