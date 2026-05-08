@@ -33,7 +33,7 @@ The conversion logic is implemented through the `Converter` protocol, which defi
 **AutoAWQConverter**: Converts AutoAWQ GEMM checkpoints to compressed-tensors W4A16 format
 - Unpacks AutoAWQ `qweight` and `qzeros` tensors
 - Reorders packed values from AutoAWQ's bit layout into compressed-tensors' signed integer convention
-- Supports `naive-quantized` and `pack-quantized` output formats
+- Emits `pack-quantized` compressed-tensors checkpoints
 
 ## Usage Example
 

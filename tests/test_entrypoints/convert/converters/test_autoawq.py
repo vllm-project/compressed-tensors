@@ -4,12 +4,9 @@
 import pytest
 import torch
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.entrypoints.convert import (
-    AutoAWQConverter,
-    reverse_awq_order,
-    unpack_awq,
-)
+from compressed_tensors.entrypoints.convert import AutoAWQConverter
 from compressed_tensors.quantization import QuantizationStatus
+from transformers import AutoConfig
 
 
 def _pack_int4(values: torch.Tensor) -> torch.Tensor:
@@ -25,8 +22,8 @@ def test_unpack_awq_and_reverse_order():
     packed_values = torch.tensor([[0, 1, 2, 3, 4, 5, 6, 7]], dtype=torch.int8)
     qweight = _pack_int4(packed_values)
 
-    unpacked, _ = unpack_awq(qweight, None, bits=4)
-    reordered, _ = reverse_awq_order(unpacked, None, bits=4)
+    unpacked, _ = AutoAWQConverter.unpack_awq(qweight, None, bits=4)
+    reordered, _ = AutoAWQConverter.reverse_awq_order(unpacked, None, bits=4)
 
     assert torch.equal(torch.bitwise_and(unpacked, 15), packed_values)
     assert torch.equal(
@@ -36,10 +33,12 @@ def test_unpack_awq_and_reverse_order():
 
 
 @pytest.mark.unit
-def test_autoawq_converter_processes_gemm_tensors():
+@pytest.mark.parametrize("zero_point", [True, False])
+def test_autoawq_converter_processes_gemm_tensors(zero_point):
     converter = AutoAWQConverter(
         group_size=2,
         targets=[r"re:.*proj$"],
+        zero_point=zero_point,
     )
     qweight_values = torch.tensor(
         [
@@ -56,6 +55,8 @@ def test_autoawq_converter_processes_gemm_tensors():
         "model.layers.0.mlp.up_proj.scales": scales,
         "model.embed_tokens.weight": torch.ones(4, 4),
     }
+    if not zero_point:
+        del tensors["model.layers.0.mlp.up_proj.qzeros"]
 
     converter.validate(tensors)
     converter.process(tensors)
@@ -63,57 +64,18 @@ def test_autoawq_converter_processes_gemm_tensors():
     assert "model.layers.0.mlp.up_proj.qweight" not in tensors
     assert "model.layers.0.mlp.up_proj.qzeros" not in tensors
     assert "model.layers.0.mlp.up_proj.scales" not in tensors
-    assert tensors["model.layers.0.mlp.up_proj.weight"].shape == (8, 2)
-    assert tensors["model.layers.0.mlp.up_proj.weight"].dtype == torch.int8
-    assert tensors["model.layers.0.mlp.up_proj.weight_scale"].shape == (8, 1)
-    assert tensors["model.layers.0.mlp.up_proj.weight_scale"].is_contiguous()
-    assert tensors["model.layers.0.mlp.up_proj.weight_zero_point"].shape == (8, 1)
-
-    assert torch.equal(
-        tensors["model.layers.0.mlp.up_proj.weight_zero_point"],
-        torch.zeros(8, 1, dtype=torch.int8),
-    )
-    assert torch.equal(
-        tensors["model.layers.0.mlp.up_proj.weight"][:, 0],
-        torch.tensor([0, 4, 1, 5, 2, 6, 3, 7], dtype=torch.int8),
-    )
-    assert torch.equal(
-        tensors["model.layers.0.mlp.up_proj.weight"][:, 1],
-        torch.tensor([-8, -4, -7, -3, -6, -2, -5, -1], dtype=torch.int8),
-    )
-
-
-@pytest.mark.unit
-def test_autoawq_converter_processes_packed_gemm_tensors():
-    converter = AutoAWQConverter(
-        group_size=2,
-        targets=[r"re:.*proj$"],
-        quantization_format=CompressionFormat.pack_quantized.value,
-    )
-    tensors = {
-        "model.layers.0.mlp.up_proj.qweight": _pack_int4(
-            torch.tensor(
-                [
-                    [8, 9, 10, 11, 12, 13, 14, 15],
-                    [0, 1, 2, 3, 4, 5, 6, 7],
-                ],
-                dtype=torch.int8,
-            )
-        ),
-        "model.layers.0.mlp.up_proj.qzeros": _pack_int4(
-            torch.full((1, 8), 8, dtype=torch.int8)
-        ),
-        "model.layers.0.mlp.up_proj.scales": torch.ones(1, 8, dtype=torch.float16),
-    }
-
-    converter.process(tensors)
-
     assert "model.layers.0.mlp.up_proj.weight" not in tensors
     assert tensors["model.layers.0.mlp.up_proj.weight_packed"].shape == (8, 1)
     assert torch.equal(
         tensors["model.layers.0.mlp.up_proj.weight_shape"], torch.tensor([8, 2])
     )
-    assert tensors["model.layers.0.mlp.up_proj.weight_zero_point"].shape == (1, 1)
+    assert tensors["model.layers.0.mlp.up_proj.weight_scale"].shape == (8, 1)
+    assert tensors["model.layers.0.mlp.up_proj.weight_scale"].is_contiguous()
+
+    if zero_point:
+        assert tensors["model.layers.0.mlp.up_proj.weight_zero_point"].shape == (1, 1)
+    else:
+        assert "model.layers.0.mlp.up_proj.weight_zero_point" not in tensors
 
 
 @pytest.mark.unit
@@ -126,7 +88,6 @@ def test_autoawq_converter_config_from_autoawq_config():
             "version": "gemm",
             "modules_to_not_convert": ["vision_tower"],
         },
-        quantization_format=CompressionFormat.pack_quantized.value,
     )
 
     config = converter.create_config()
@@ -142,6 +103,37 @@ def test_autoawq_converter_config_from_autoawq_config():
 
 
 @pytest.mark.unit
+def test_autoawq_converter_from_pretrained(monkeypatch):
+    class MockConfig:
+        quantization_config = {
+            "quant_method": "awq",
+            "bits": 4,
+            "group_size": 32,
+            "zero_point": True,
+            "version": "gemm",
+            "modules_to_not_convert": ["visual"],
+        }
+
+    def mock_from_pretrained(model_name_or_path, trust_remote_code=False):
+        assert model_name_or_path == "test/model"
+        assert trust_remote_code is True
+        return MockConfig()
+
+    monkeypatch.setattr(AutoConfig, "from_pretrained", mock_from_pretrained)
+
+    converter = AutoAWQConverter.from_pretrained(
+        "test/model",
+        trust_remote_code=True,
+    )
+
+    assert converter.bits == 4
+    assert converter.group_size == 32
+    assert converter.zero_point is True
+    assert converter.version == "gemm"
+    assert converter.ignore == ["lm_head", "re:.*visual.*"]
+
+
+@pytest.mark.unit
 def test_autoawq_converter_dependencies():
     converter = AutoAWQConverter(targets=[r"re:.*down_proj$"])
 
@@ -150,6 +142,14 @@ def test_autoawq_converter_dependencies():
         "model.layers.0.mlp.down_proj.scales",
     }
     assert converter.get_dependencies("model.layers.0.mlp.up_proj.qweight") == set()
+
+    symmetric_converter = AutoAWQConverter(
+        targets=[r"re:.*down_proj$"],
+        zero_point=False,
+    )
+    assert symmetric_converter.get_dependencies(
+        "model.layers.0.mlp.down_proj.qweight"
+    ) == {"model.layers.0.mlp.down_proj.scales"}
 
 
 @pytest.mark.unit
