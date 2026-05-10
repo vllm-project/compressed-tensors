@@ -36,54 +36,6 @@ class AutoAWQConverter(Converter):
 
     AWQ_REVERSE_ORDER = [0, 4, 1, 5, 2, 6, 3, 7]
 
-    @staticmethod
-    def unpack_awq(
-        qweight: torch.Tensor, qzeros: torch.Tensor | None, bits: int
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        """
-        Unpack AutoAWQ GEMM int32-packed weights and zero-points into int8 values.
-        """
-        shifts = torch.arange(0, 32, bits, device=qweight.device)
-
-        iweights = torch.bitwise_right_shift(
-            qweight[:, :, None], shifts[None, None, :]
-        ).to(torch.int8)
-        iweights = iweights.view(iweights.shape[0], -1)
-
-        if qzeros is None:
-            return iweights, None
-
-        izeros = torch.bitwise_right_shift(
-            qzeros[:, :, None], shifts[None, None, :]
-        ).to(torch.int8)
-        izeros = izeros.view(izeros.shape[0], -1)
-
-        return iweights, izeros
-
-    @staticmethod
-    def reverse_awq_order(
-        iweights: torch.Tensor, izeros: torch.Tensor | None, bits: int
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        """
-        Undo AutoAWQ's special intra-int32 packing order.
-        """
-        reverse_order_tensor = torch.arange(
-            iweights.shape[-1],
-            dtype=torch.int32,
-            device=iweights.device,
-        )
-        reverse_order_tensor = reverse_order_tensor.view(-1, 32 // bits)
-        reverse_order_tensor = reverse_order_tensor[
-            :, AutoAWQConverter.AWQ_REVERSE_ORDER
-        ]
-        reverse_order_tensor = reverse_order_tensor.view(-1)
-
-        iweights = iweights[:, reverse_order_tensor]
-        if izeros is not None:
-            izeros = izeros[:, reverse_order_tensor]
-
-        return iweights, izeros
-
     def __init__(
         self,
         bits: int = 4,
@@ -179,7 +131,7 @@ class AutoAWQConverter(Converter):
 
     def validate(self, tensors: dict[str, torch.Tensor]):
         for name in tensors:
-            module_name, param_name = name.rsplit(".", 1)
+            module_name, _, param_name = name.rpartition(".")
 
             if param_name in {"qweight", "qzeros", "scales"}:
                 if not self._is_targeted(module_name):
@@ -216,7 +168,7 @@ class AutoAWQConverter(Converter):
         )
 
     def get_dependencies(self, weight_name: str) -> set[str]:
-        module_name, suffix = weight_name.rsplit(".", 1)
+        module_name, _, suffix = weight_name.rpartition(".")
         if suffix == "qweight" and self._is_targeted(module_name):
             dependencies = {f"{module_name}.scales"}
             if self.zero_point:
@@ -262,3 +214,51 @@ class AutoAWQConverter(Converter):
             return True
 
         return any(match_name(module_name, target) for target in self.targets)
+
+    @staticmethod
+    def unpack_awq(
+        qweight: torch.Tensor, qzeros: torch.Tensor | None, bits: int
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """
+        Unpack AutoAWQ GEMM int32-packed weights and zero-points into int8 values.
+        """
+        shifts = torch.arange(0, 32, bits, device=qweight.device)
+
+        iweights = torch.bitwise_right_shift(
+            qweight[:, :, None], shifts[None, None, :]
+        ).to(torch.int8)
+        iweights = iweights.view(iweights.shape[0], -1)
+
+        if qzeros is None:
+            return iweights, None
+
+        izeros = torch.bitwise_right_shift(
+            qzeros[:, :, None], shifts[None, None, :]
+        ).to(torch.int8)
+        izeros = izeros.view(izeros.shape[0], -1)
+
+        return iweights, izeros
+
+    @staticmethod
+    def reverse_awq_order(
+        iweights: torch.Tensor, izeros: torch.Tensor | None, bits: int
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """
+        Undo AutoAWQ's special intra-int32 packing order.
+        """
+        reverse_order_tensor = torch.arange(
+            iweights.shape[-1],
+            dtype=torch.int32,
+            device=iweights.device,
+        )
+        reverse_order_tensor = reverse_order_tensor.view(-1, 32 // bits)
+        reverse_order_tensor = reverse_order_tensor[
+            :, AutoAWQConverter.AWQ_REVERSE_ORDER
+        ]
+        reverse_order_tensor = reverse_order_tensor.view(-1)
+
+        iweights = iweights[:, reverse_order_tensor]
+        if izeros is not None:
+            izeros = izeros[:, reverse_order_tensor]
+
+        return iweights, izeros
