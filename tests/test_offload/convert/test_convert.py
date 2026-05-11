@@ -5,9 +5,8 @@ import os
 
 import pytest
 import torch
-from compressed_tensors.distributed import is_source_process
+from compressed_tensors.distributed import init_dist, is_source_process
 from compressed_tensors.offload import disable_onloading, from_accelerate, to_accelerate
-from compressed_tensors.distributed import init_dist
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 

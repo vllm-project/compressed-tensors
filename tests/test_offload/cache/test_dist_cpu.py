@@ -4,10 +4,10 @@
 import pytest
 import torch
 import torch.distributed as dist
+from compressed_tensors.distributed import init_dist
 from compressed_tensors.offload import disable_onloading
 from compressed_tensors.offload.cache.dist_cpu import DistributedCPUCache
 from loguru import logger as loguru_logger
-from compressed_tensors.distributed import init_dist
 from tests.test_offload.cache.helpers import (
     _test_delete,
     _test_disable_offloading,
@@ -19,7 +19,6 @@ from tests.test_offload.cache.helpers import (
     _test_shared_attributes,
     _test_tensor_subclass,
 )
-from compressed_tensors.distributed import init_dist
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 

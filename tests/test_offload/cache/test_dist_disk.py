@@ -6,11 +6,11 @@ import os
 import pytest
 import torch
 import torch.distributed as dist
+from compressed_tensors.distributed import init_dist
 from compressed_tensors.offload import disable_onloading
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 from safetensors import safe_open
-from compressed_tensors.distributed import init_dist
 from tests.test_offload.cache.helpers import (
     _test_delete,
     _test_disable_offloading,
@@ -22,7 +22,6 @@ from tests.test_offload.cache.helpers import (
     _test_shared_attributes,
     _test_tensor_subclass,
 )
-from compressed_tensors.distributed import init_dist
 from tests.test_offload.conftest import assert_tensor_equal, torchrun
 from tests.testing_utils import requires_gpu
 

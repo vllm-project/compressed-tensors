@@ -7,9 +7,9 @@ from weakref import ref
 import pytest
 import torch
 import torch.distributed as dist
+from compressed_tensors.distributed import init_dist
 from compressed_tensors.offload import disable_onloading
 from compressed_tensors.offload.cache.dist_device import DistributedDeviceCache
-from compressed_tensors.distributed import init_dist
 from tests.test_offload.cache.helpers import (
     _test_delete,
     _test_disable_onloading,
@@ -19,7 +19,6 @@ from tests.test_offload.cache.helpers import (
     _test_shared_attributes,
     _test_tensor_subclass,
 )
-from compressed_tensors.distributed import init_dist
 from tests.test_offload.conftest import assert_device_equal, torchrun
 from tests.testing_utils import requires_gpu
 

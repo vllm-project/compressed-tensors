@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from compressed_tensors.distributed import init_dist
 from compressed_tensors.offload import (
     disable_onloading,
     from_accelerate,
@@ -13,7 +14,6 @@ from compressed_tensors.offload import (
 from compressed_tensors.offload.convert import to_accelerate
 from compressed_tensors.offload.convert.from_accelerate import _infer_module_device
 from compressed_tensors.offload.load import load_offloaded_model, patch_from_pretrained
-from compressed_tensors.distributed import init_dist
 from tests.test_offload.conftest import (
     assert_device_equal,
     skip_if_mps_device,

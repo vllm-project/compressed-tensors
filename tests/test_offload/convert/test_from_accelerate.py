@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import torch
 import torch.distributed as dist
-from compressed_tensors.distributed import is_source_process
+from compressed_tensors.distributed import init_dist, is_source_process
 from compressed_tensors.offload import (
     disable_onloading,
     from_accelerate,
@@ -18,7 +18,6 @@ from compressed_tensors.offload.cache import CPUCache, DeviceCache, DiskCache
 from compressed_tensors.offload.convert.from_accelerate import (
     remove_accelerate_from_module,
 )
-from compressed_tensors.distributed import init_dist
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM
