@@ -6,7 +6,6 @@ from collections.abc import Iterable
 from typing import Any, cast
 
 import torch
-from transformers import AutoConfig
 from compressed_tensors.compressors.pack_quantized.helpers import pack_to_int32
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
@@ -19,6 +18,7 @@ from compressed_tensors.quantization import (
     QuantizationType,
 )
 from compressed_tensors.utils.match import match_name
+from transformers import AutoConfig
 
 
 __all__ = ["AutoAWQConverter"]
@@ -64,7 +64,6 @@ class AutoAWQConverter(Converter):
         targets: Iterable[str] = ("Linear",),
         trust_remote_code: bool = False,
     ) -> "AutoAWQConverter":
-        
 
         config = AutoConfig.from_pretrained(
             model_name_or_path, trust_remote_code=trust_remote_code
@@ -118,9 +117,7 @@ class AutoAWQConverter(Converter):
             )
 
             tensors[f"{module_name}.weight_scale"] = weight_scale
-            tensors[f"{module_name}.weight_packed"] = pack_to_int32(
-                weight, self.bits
-            )
+            tensors[f"{module_name}.weight_packed"] = pack_to_int32(weight, self.bits)
             tensors[f"{module_name}.weight_shape"] = torch.tensor(weight.shape)
 
             if weight_zero_point is not None:
