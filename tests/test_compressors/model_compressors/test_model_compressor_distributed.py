@@ -8,6 +8,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from compressed_tensors import ModelCompressor
+from compressed_tensors.distributed import init_dist
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationConfig,
@@ -79,6 +80,7 @@ class TwoLayerModel(nn.Module):
 @torchrun(world_size=2)
 def test_compress_model_distributed_basic():
     """Test basic distributed compression via ModelCompressor."""
+    init_dist()
     model = TwoLayerModel()
     setup_quantized_module(model.layer1)
     setup_quantized_module(model.layer2)
@@ -109,6 +111,7 @@ def test_compress_model_distributed_basic():
 @torchrun(world_size=2)
 def test_compress_model_distributed_consistency():
     """Test that all ranks have consistent state after distributed compression."""
+    init_dist()
     model = TwoLayerModel()
     setup_quantized_module(model.layer1)
     setup_quantized_module(model.layer2)
@@ -149,6 +152,7 @@ def test_compress_model_distributed_consistency():
 @torchrun(world_size=2)
 def test_compress_model_distributed_no_quantized_modules():
     """Test distributed compression with no quantized modules."""
+    init_dist()
     model = TwoLayerModel()
     # Don't set up quantization schemes
 
@@ -168,6 +172,7 @@ def test_compress_model_distributed_no_quantized_modules():
 @torchrun(world_size=2)
 def test_compress_model_distributed_partial_quantization():
     """Test distributed compression with only some modules quantized."""
+    init_dist()
     model = TwoLayerModel()
     setup_quantized_module(model.layer1)
     # Don't quantize layer2
@@ -187,6 +192,7 @@ def test_compress_model_distributed_partial_quantization():
 @torchrun(world_size=2)
 def test_compress_decompress_distributed_roundtrip():
     """Test compress then decompress in distributed mode."""
+    init_dist()
     model = TwoLayerModel()
     setup_quantized_module(model.layer1)
     setup_quantized_module(model.layer2)
@@ -228,6 +234,7 @@ def test_compress_decompress_distributed_roundtrip():
 @torchrun(world_size=2)
 def test_compress_model_distributed_many_layers():
     """Test distributed compression with many layers for load balancing."""
+    init_dist()
 
     class ManyLayerModel(nn.Module):
         def __init__(self, num_layers=10):
@@ -271,6 +278,7 @@ def test_compress_model_distributed_many_layers():
 @torchrun(world_size=2)
 def test_compress_model_distributed_force_format():
     """Test that force_compression_format works in distributed mode."""
+    init_dist()
     model = TwoLayerModel()
     setup_quantized_module(model.layer1)
     setup_quantized_module(model.layer2)
@@ -293,6 +301,7 @@ def test_compress_model_distributed_force_format():
 @torchrun(world_size=2)
 def test_compress_model_distributed_from_pretrained():
     """Test from_pretrained_model entrypoint works with distributed compression."""
+    init_dist()
     model = TwoLayerModel()
     setup_quantized_module(model.layer1)
     setup_quantized_module(model.layer2)
@@ -317,6 +326,7 @@ def test_compress_model_distributed_from_pretrained():
 @torchrun(world_size=2)
 def test_compress_model_distributed_hook_triggers():
     """Test that decompression hook triggers correctly in distributed mode."""
+    init_dist()
     model = TwoLayerModel()
     setup_quantized_module(model.layer1)
     setup_quantized_module(model.layer2)

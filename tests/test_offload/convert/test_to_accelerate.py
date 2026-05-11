@@ -8,6 +8,7 @@ import torch
 from compressed_tensors.offload import dispatch_with_map, offload_module, to_accelerate
 from compressed_tensors.offload.convert.helpers import norm_device
 from compressed_tensors.offload.convert.to_accelerate import to_accelerate_module
+from compressed_tensors.distributed import init_dist
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 
@@ -80,4 +81,5 @@ def test_to_accelerate(accel_device, tmp_path):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_to_accelerate_dist(accel_device, tmp_path):
+    init_dist()
     test_to_accelerate(accel_device, tmp_path)

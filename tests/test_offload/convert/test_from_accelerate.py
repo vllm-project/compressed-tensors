@@ -18,6 +18,7 @@ from compressed_tensors.offload.cache import CPUCache, DeviceCache, DiskCache
 from compressed_tensors.offload.convert.from_accelerate import (
     remove_accelerate_from_module,
 )
+from compressed_tensors.distributed import init_dist
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM
@@ -132,6 +133,7 @@ def test_from_accelerate(accel_device, tmp_path):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_from_accelerate_dist(accel_device, tmp_path):
+    init_dist()
     test_from_accelerate(accel_device, tmp_path)
 
 

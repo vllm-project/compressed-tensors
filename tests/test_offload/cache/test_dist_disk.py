@@ -10,6 +10,7 @@ from compressed_tensors.offload import disable_onloading
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 from safetensors import safe_open
+from compressed_tensors.distributed import init_dist
 from tests.test_offload.cache.helpers import (
     _test_delete,
     _test_disable_offloading,
@@ -21,6 +22,7 @@ from tests.test_offload.cache.helpers import (
     _test_shared_attributes,
     _test_tensor_subclass,
 )
+from compressed_tensors.distributed import init_dist
 from tests.test_offload.conftest import assert_tensor_equal, torchrun
 from tests.testing_utils import requires_gpu
 
@@ -39,6 +41,7 @@ def offload_device():
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_delete(offload_device, onload_device, offload_cache):
+    init_dist()
     _test_delete(offload_device, onload_device, offload_cache)
 
 
@@ -46,6 +49,7 @@ def test_delete(offload_device, onload_device, offload_cache):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_disable_offloading(offload_device, onload_device, offload_cache):
+    init_dist()
     _test_disable_offloading(offload_device, onload_device, offload_cache)
 
 
@@ -53,6 +57,7 @@ def test_disable_offloading(offload_device, onload_device, offload_cache):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_disable_onloading(offload_device, onload_device, offload_cache):
+    init_dist()
     _test_disable_onloading(offload_device, onload_device, offload_cache)
 
 
@@ -60,6 +65,7 @@ def test_disable_onloading(offload_device, onload_device, offload_cache):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_garbage_collect(offload_device, onload_device, offload_cache):
+    init_dist()
     _test_garbage_collect(offload_device, onload_device, offload_cache)
 
 
@@ -67,6 +73,7 @@ def test_garbage_collect(offload_device, onload_device, offload_cache):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_offload(offload_device, onload_device, offload_cache):
+    init_dist()
     _test_offload(offload_device, onload_device, offload_cache)
 
 
@@ -74,6 +81,7 @@ def test_offload(offload_device, onload_device, offload_cache):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_onload(offload_device, onload_device, offload_cache):
+    init_dist()
     _test_onload(offload_device, onload_device, offload_cache)
 
 
@@ -81,6 +89,7 @@ def test_onload(offload_device, onload_device, offload_cache):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_onloading(offload_device, onload_device, offload_cache):
+    init_dist()
     _test_onloading(offload_device, onload_device, offload_cache)
 
 
@@ -88,6 +97,7 @@ def test_onloading(offload_device, onload_device, offload_cache):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_shared_attributes(offload_device, onload_device, offload_cache):
+    init_dist()
     _test_shared_attributes(offload_device, onload_device, offload_cache)
 
 
@@ -95,6 +105,7 @@ def test_shared_attributes(offload_device, onload_device, offload_cache):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_tensor_subclass(offload_device, onload_device, offload_cache):
+    init_dist()
     _test_tensor_subclass(offload_device, onload_device, offload_cache)
 
 
@@ -102,6 +113,7 @@ def test_tensor_subclass(offload_device, onload_device, offload_cache):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_distributed_offload(onload_device, tmp_path):
+    init_dist()
     # Broadcast directory path from rank 0 to all ranks
     if dist.get_rank() == 0:
         offload_dir = tmp_path / "offload_dir"
@@ -139,6 +151,7 @@ def test_distributed_offload(onload_device, tmp_path):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_distributed_files(tmp_path):
+    init_dist()
     # Broadcast directory path from rank 0 to all ranks
     if dist.get_rank() == 0:
         offload_dir = tmp_path / "offload_dir"
@@ -200,6 +213,7 @@ def test_distributed_async_update(tmp_path):
     Test that different ranks can update different tensors asynchronously,
     and that values are correct after a barrier.
     """
+    init_dist()
     offload_dir = tmp_path / "offload_dir"
     if dist.get_rank() == 0:
         os.mkdir(offload_dir)

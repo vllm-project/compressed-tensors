@@ -13,6 +13,7 @@ from compressed_tensors.offload import (
 from compressed_tensors.offload.convert import to_accelerate
 from compressed_tensors.offload.convert.from_accelerate import _infer_module_device
 from compressed_tensors.offload.load import load_offloaded_model, patch_from_pretrained
+from compressed_tensors.distributed import init_dist
 from tests.test_offload.conftest import (
     assert_device_equal,
     skip_if_mps_device,
@@ -103,6 +104,7 @@ def test_load(device_map, max_memory, first, second, tmp_path):
 @requires_gpu(2)
 @torchrun(world_size=2)
 def test_load_dist(tmp_path):
+    init_dist()
     for parameters in TEST_PARAMETERS:
         test_load(*parameters, tmp_path=tmp_path)
 
