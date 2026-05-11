@@ -160,6 +160,12 @@ class DiskCache(OffloadCache):
 
     @classmethod
     def _disk_finalizer(cls, tensor_id: int):
+        """
+        Finalizer attached to tensors when they are assigned in `DiskCache.index`.
+        Deletes tensor from `DiskCache.index` and deletes associated safetensors file.
+
+        :param tensor_id: id of offloaded meta tensor
+        """
         file_path = cls.index[tensor_id]["safetensors_file"]
         assert os.path.basename(file_path).startswith(cls._new_file_prefix)
         os.remove(file_path)
