@@ -123,7 +123,7 @@ class AutoAWQConverter(Converter):
             if weight_zero_point is not None:
                 weight_zero_point = pack_to_int32(
                     weight_zero_point, self.bits, packed_dim=0
-                )
+                ).contiguous()
                 tensors[f"{module_name}.weight_zero_point"] = weight_zero_point
 
     def validate(self, tensors: dict[str, torch.Tensor]):
