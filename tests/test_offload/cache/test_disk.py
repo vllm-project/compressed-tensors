@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import gc
 import os
 
 import pytest
@@ -100,7 +101,7 @@ def test_files(tmp_path):
     os.mkdir(offload_dir)
 
     # initial write
-    DiskCache.index = {}
+    DiskCache.index.clear()
     cache = DiskCache("cpu", offload_dir=str(offload_dir))
     tensor = torch.zeros(10)
     cache["weight"] = tensor
@@ -123,8 +124,9 @@ def test_files(tmp_path):
         read_tensor = file.get_tensor("weight")
         assert_tensor_equal(read_tensor, tensor)
 
-    # delete
-    del cache["weight"]
+    # delete all references
+    del cache, tensor
+    gc.collect()
     files = os.listdir(offload_dir)
     assert len(DiskCache.index) == 0
     assert len(files) == 0

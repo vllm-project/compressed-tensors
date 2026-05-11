@@ -5,9 +5,9 @@
 
 from .base import OffloadCache
 from .cpu import CPUCache
+from .cpu_utils import catch_cpu_mem_error
 from .device import DeviceCache
 from .disk import DiskCache
 from .dist_cpu import DistributedCPUCache
 from .dist_device import DistributedDeviceCache
 from .dist_disk import DistributedDiskCache
-from .utils import catch_cpu_mem_error
