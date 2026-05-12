@@ -77,32 +77,45 @@ def assert_tensor_equal(
         assert torch.equal(tensor_a, tensor_b)
 
 
-def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def torchrun(
+    world_size: int = 1, init_dist: bool = False
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
     Pytest decorator to run a test within parallel torchrun subprocesses.
 
     This decorator automatically spawns torchrun when the test is run with regular
     pytest.
-    When running under torchrun (detected via TORCHELASTIC_RUN_ID env var), it simply
-    runs the test. The test is responsible for its own distributed initialization.
+    When running under torchrun (detected via TORCHELASTIC_RUN_ID env var), it
+    optionally initializes the distributed process group before running the test.
 
     Usage:
         @pytest.mark.unit
         @requires_gpu(2)
-        @torchrun(world_size=2)
+        @torchrun(world_size=2, init_dist=True)
         def test_distributed_feature():
-            # Test must handle its own distributed setup
+            # Distributed already initialized
+            ...
+
+        @torchrun(world_size=2)  # init_dist=False by default
+        def test_custom_init():
+            # Handle your own distributed setup
+            from compressed_tensors.distributed import init_dist
             init_dist()
             ...
 
     :param world_size: number of ranks to spawn
+    :param init_dist: whether to automatically call init_dist() (default: False)
     """
 
     def decorator(func: FunctionType):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # We're running in a torchrun subprocess: just run the test
+            # We're running in a torchrun subprocess: optionally init then run the test
             if "TORCHELASTIC_RUN_ID" in os.environ:
+                if init_dist:
+                    from compressed_tensors.distributed import init_dist as _init_dist
+
+                    _init_dist()
                 return func(*args, **kwargs)
 
             # First time calling in the main process:

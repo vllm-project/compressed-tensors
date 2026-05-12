@@ -8,7 +8,6 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from compressed_tensors.compressors.model_compressors import ModelCompressor
-from compressed_tensors.distributed import init_dist
 from compressed_tensors.offload import offload_module
 from compressed_tensors.quantization import (
     QuantizationArgs,
@@ -84,10 +83,9 @@ def setup_quantized_model(model: nn.Module, bits: int = 4) -> nn.Module:
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_model_compression():
     """Test end-to-end distributed model compression."""
-    init_dist()
     model = TwoLayerModel()
     setup_quantized_model(model)
 
@@ -112,10 +110,9 @@ def test_distributed_model_compression():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_consistency():
     """Test that all ranks have consistent state after distributed compression."""
-    init_dist()
     model = TwoLayerModel()
     setup_quantized_model(model)
 
@@ -154,10 +151,9 @@ def test_distributed_compression_consistency():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_with_offload():
     """Test distributed compression with offloaded modules."""
-    init_dist()
     model = TwoLayerModel()
     setup_quantized_model(model)
 
@@ -178,10 +174,9 @@ def test_distributed_compression_with_offload():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_decompress_roundtrip():
     """Test that distributed compression + decompression preserves values."""
-    init_dist()
     model = TwoLayerModel()
     setup_quantized_model(model)
 
@@ -211,10 +206,9 @@ def test_distributed_compression_decompress_roundtrip():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_many_layers():
     """Test distributed compression with many layers to ensure load balancing."""
-    init_dist()
 
     class ManyLayerModel(nn.Module):
         def __init__(self, num_layers=10):
@@ -246,10 +240,9 @@ def test_distributed_compression_many_layers():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_skips_non_quantized():
     """Test that non-quantized layers are skipped in distributed compression."""
-    init_dist()
 
     class MixedModel(nn.Module):
         def __init__(self):
@@ -303,10 +296,9 @@ def test_distributed_compression_skips_non_quantized():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_empty_model():
     """Test distributed compression with an empty model."""
-    init_dist()
     model = nn.Sequential()
 
     q_config = create_quantization_config(bits=4, format="pack-quantized")
@@ -319,10 +311,9 @@ def test_distributed_compression_empty_model():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_single_layer():
     """Test distributed compression with a single layer."""
-    init_dist()
 
     class SingleLayerModel(nn.Module):
         def __init__(self):

@@ -4,7 +4,6 @@
 import pytest
 import torch
 import torch.distributed as dist
-from compressed_tensors.distributed import init_dist
 from compressed_tensors.offload import disable_onloading
 from compressed_tensors.offload.cache.dist_cpu import DistributedCPUCache
 from loguru import logger as loguru_logger
@@ -35,81 +34,71 @@ def offload_device():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_delete(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_delete(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_disable_offloading(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_disable_offloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_disable_onloading(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_disable_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_garbage_collect(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_garbage_collect(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_offload(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_offload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_onload(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_onload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_onloading(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_shared_attributes(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_shared_attributes(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_tensor_subclass(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_tensor_subclass(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_offload(onload_device):
-    init_dist()
     cache = DistributedCPUCache(onload_device)
     tensor = torch.zeros((5, 2))
     cache["tensor"] = tensor
@@ -131,9 +120,8 @@ def test_distributed_offload(onload_device):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_shared_cpu_offload(onload_device):
-    init_dist()
     cache = DistributedCPUCache(onload_device)
     tensor = torch.zeros((5, 2))
     cache["tensor"] = tensor
@@ -154,13 +142,12 @@ def test_shared_cpu_offload(onload_device):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_async_update(onload_device):
     """
     Test that different ranks can update different tensors asynchronously,
     and that values are correct after a barrier.
     """
-    init_dist()
     cache = DistributedCPUCache(onload_device)
 
     # Initialize two tensors in the cache
@@ -196,9 +183,8 @@ def test_distributed_async_update(onload_device):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_offload_logs_memory_hint(onload_device):
-    init_dist()
     cache = DistributedCPUCache(onload_device)
 
     original_share_memory = torch.Tensor.share_memory_

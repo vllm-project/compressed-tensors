@@ -7,7 +7,6 @@ from weakref import ref
 import pytest
 import torch
 import torch.distributed as dist
-from compressed_tensors.distributed import init_dist
 from compressed_tensors.offload import disable_onloading
 from compressed_tensors.offload.cache.dist_device import DistributedDeviceCache
 from tests.test_offload.cache.helpers import (
@@ -39,17 +38,15 @@ def offload_device():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_delete(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_delete(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_disable_offloading(onload_device):
-    init_dist()
     # unlike other device caches, the onload is not garbage collected
     cache = DistributedDeviceCache(onload_device)
     cache["weight"] = torch.ones(10)
@@ -76,17 +73,15 @@ def test_disable_offloading(onload_device):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_disable_onloading(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_disable_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_garbage_collect(onload_device):
-    init_dist()
     # unlike other device caches, the onload is not garbage collected
     cache = DistributedDeviceCache(onload_device)
     cache["weight"] = torch.ones(10)
@@ -100,49 +95,43 @@ def test_garbage_collect(onload_device):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_offload(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_offload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_onload(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_onload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_onloading(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_shared_attributes(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_shared_attributes(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_tensor_subclass(offload_device, onload_device, offload_cache):
-    init_dist()
     _test_tensor_subclass(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_offload(onload_device):
-    init_dist()
     cache = DistributedDeviceCache(onload_device)
     tensor = torch.zeros((5, 2))
     cache["tensor"] = tensor
@@ -164,10 +153,9 @@ def test_distributed_offload(onload_device):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_offload_fp8(onload_device):
     """FP8 tensors should broadcast successfully and preserve their dtype"""
-    init_dist()
     float8_dtypes = [
         torch.float8_e4m3fn,
         torch.float8_e5m2,
@@ -186,9 +174,8 @@ def test_distributed_offload_fp8(onload_device):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replicated_device_offload(onload_device):
-    init_dist()
     cache = DistributedDeviceCache(onload_device)
     tensor = torch.empty((5, 2))
     cache["tensor"] = tensor

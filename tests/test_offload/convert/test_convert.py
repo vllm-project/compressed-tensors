@@ -5,7 +5,7 @@ import os
 
 import pytest
 import torch
-from compressed_tensors.distributed import init_dist, is_source_process
+from compressed_tensors.distributed import is_source_process
 from compressed_tensors.offload import disable_onloading, from_accelerate, to_accelerate
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
@@ -78,7 +78,6 @@ def test_conversion_lifecycle(accel_device, tmp_path):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_conversion_lifecycle_dist(accel_device, tmp_path):
-    init_dist()
     test_conversion_lifecycle(accel_device, tmp_path)

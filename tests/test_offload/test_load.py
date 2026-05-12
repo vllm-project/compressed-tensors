@@ -5,7 +5,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from compressed_tensors.distributed import init_dist
 from compressed_tensors.offload import (
     disable_onloading,
     from_accelerate,
@@ -102,9 +101,8 @@ def test_load(device_map, max_memory, first, second, tmp_path):
 
 @pytest.mark.integration
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_load_dist(tmp_path):
-    init_dist()
     for parameters in TEST_PARAMETERS:
         test_load(*parameters, tmp_path=tmp_path)
 
