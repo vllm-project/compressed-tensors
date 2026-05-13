@@ -7,6 +7,7 @@ from .base import *
 
 # New per-format directories
 from .dense import *
+from .int4_quantized import *
 from .model_compressors import *
 from .mxfp4 import *
 from .mxfp8 import *
