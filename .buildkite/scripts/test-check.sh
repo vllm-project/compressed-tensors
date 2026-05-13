@@ -3,7 +3,8 @@
 cat /etc/issue
 
 # install uv/compilers and check env
-apk add --no-cache curl build-base
+#apk add --no-cache curl build-base
+apt-get update && apt-get install -y curl g++ gcc make
 curl -LsSf https://astral.sh/uv/install.sh | env UV_VERSION=0.8.15 sh
 export LD_LIBRARY_PATH=/usr/local/nvidia/lib64
 export PATH="$HOME/.local/bin:/usr/local/nvidia/bin:$PATH"
