@@ -13,13 +13,17 @@ steps:
               - name: tests
                 image: buildkite/agent:latest
                 command:
-                  - apt-get update
-                  - apt-get install -y curl
-                  - curl -LsSf https://astral.sh/uv/install.sh | sh
-                  - export LD_LIBRARY_PATH=/usr/local/nvidia/lib64
-                  - export PATH="$HOME/.local/bin:/usr/local/nvidia/bin:$PATH"
-                  - nvidia-smi
-                  - uv --version
+                  - bash
+                  - -exc
+                args:
+                  - | 
+                  cat /etc/issue
+                  apk add --no-cache curl
+                  curl -LsSf https://astral.sh/uv/install.sh | sh
+                  export LD_LIBRARY_PATH=/usr/local/nvidia/lib64
+                  export PATH="$HOME/.local/bin:/usr/local/nvidia/bin:$PATH"
+                  nvidia-smi
+                  uv --version
 
                 resources:
                   limits:
