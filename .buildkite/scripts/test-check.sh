@@ -12,7 +12,7 @@ nvidia-smi
 uv --version
 
 # install code and run tests
-uv venv testvenv --python 3.10
+uv venv testvenv --python 3.12
 source testvenv/bin/activate
 
 export UV_TORCH_BACKEND=cu130
