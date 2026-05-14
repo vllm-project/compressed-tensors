@@ -360,7 +360,7 @@ FP8 = dict(
         strategy=QuantizationStrategy.TENSOR,
         symmetric=True,
         dynamic=False,
-        observer="static_minmax"
+        observer="static_minmax",
     ),
 )
 
