@@ -78,6 +78,6 @@ def test_to_accelerate(accel_device, tmp_path):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_to_accelerate_dist(accel_device, tmp_path):
     test_to_accelerate(accel_device, tmp_path)

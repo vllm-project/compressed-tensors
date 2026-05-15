@@ -101,7 +101,7 @@ def test_load(device_map, max_memory, first, second, tmp_path):
 
 @pytest.mark.integration
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_load_dist(tmp_path):
     for parameters in TEST_PARAMETERS:
         test_load(*parameters, tmp_path=tmp_path)
