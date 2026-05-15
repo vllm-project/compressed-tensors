@@ -130,14 +130,14 @@ def test_from_accelerate(accel_device, tmp_path):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_from_accelerate_dist(accel_device, tmp_path):
     test_from_accelerate(accel_device, tmp_path)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 @torch.no_grad()
 def test_dist_disk_safetensors_update(tmp_path):
     offload_folder = tmp_path / "offload_folder"

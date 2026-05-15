@@ -76,7 +76,7 @@ class TwoLayerModel(nn.Module):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_compress_model_distributed_basic():
     """Test basic distributed compression via ModelCompressor."""
     model = TwoLayerModel()
@@ -106,7 +106,7 @@ def test_compress_model_distributed_basic():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_compress_model_distributed_consistency():
     """Test that all ranks have consistent state after distributed compression."""
     model = TwoLayerModel()
@@ -146,7 +146,7 @@ def test_compress_model_distributed_consistency():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_compress_model_distributed_no_quantized_modules():
     """Test distributed compression with no quantized modules."""
     model = TwoLayerModel()
@@ -165,7 +165,7 @@ def test_compress_model_distributed_no_quantized_modules():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_compress_model_distributed_partial_quantization():
     """Test distributed compression with only some modules quantized."""
     model = TwoLayerModel()
@@ -184,7 +184,7 @@ def test_compress_model_distributed_partial_quantization():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_compress_decompress_distributed_roundtrip():
     """Test compress then decompress in distributed mode."""
     model = TwoLayerModel()
@@ -225,7 +225,7 @@ def test_compress_decompress_distributed_roundtrip():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_compress_model_distributed_many_layers():
     """Test distributed compression with many layers for load balancing."""
 
@@ -268,7 +268,7 @@ def test_compress_model_distributed_many_layers():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_compress_model_distributed_force_format():
     """Test that force_compression_format works in distributed mode."""
     model = TwoLayerModel()
@@ -290,7 +290,7 @@ def test_compress_model_distributed_force_format():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_compress_model_distributed_from_pretrained():
     """Test from_pretrained_model entrypoint works with distributed compression."""
     model = TwoLayerModel()
@@ -314,7 +314,7 @@ def test_compress_model_distributed_from_pretrained():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_compress_model_distributed_hook_triggers():
     """Test that decompression hook triggers correctly in distributed mode."""
     model = TwoLayerModel()

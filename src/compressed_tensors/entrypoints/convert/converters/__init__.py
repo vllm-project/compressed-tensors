@@ -5,6 +5,7 @@
 # isort: skip_file
 
 from .base import *
+from .ct_dequantizer import *
+from .autoawq import *
 from .modelopt_nvfp4 import *
 from .fp8block_dequantizer import *
-from .ct_dequantizer import *

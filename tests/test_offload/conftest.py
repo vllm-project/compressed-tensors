@@ -10,7 +10,6 @@ from typing import Any, Callable, Literal, Optional
 
 import pytest
 import torch
-import torch.distributed as dist
 from compressed_tensors.offload.utils import send_tensors
 
 
@@ -78,56 +77,81 @@ def assert_tensor_equal(
         assert torch.equal(tensor_a, tensor_b)
 
 
-def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def torchrun(
+    world_size: int = 1, init_dist: bool = False
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
-    Test a function within parallel `torchrun` subprocesses, each running with `pytest`
-    ```
-    # (main) -> (torchrun) -
-    #              \\-- (rank 0)
-    #              \\-- (rank 1)
-    ```
+    Pytest decorator to run a test within parallel torchrun subprocesses.
+
+    This decorator automatically spawns torchrun when the test is run with regular
+    pytest.
+    When running under torchrun (detected via TORCHELASTIC_RUN_ID env var), it
+    optionally initializes the distributed process group before running the test.
+
+    Usage:
+        @pytest.mark.unit
+        @requires_gpu(2)
+        @torchrun(world_size=2, init_dist=True)
+        def test_distributed_feature():
+            # Distributed already initialized
+            ...
+
+        @torchrun(world_size=2)  # init_dist=False by default
+        def test_custom_init():
+            # Handle your own distributed setup
+            from compressed_tensors.distributed import init_dist
+            init_dist()
+            ...
 
     :param world_size: number of ranks to spawn
+    :param init_dist: whether to automatically call init_dist() (default: False)
     """
 
     def decorator(func: FunctionType):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # We're running in a torchrun subprocess:
-            # init distributed and run test func
+            # We're running in a torchrun subprocess: optionally init then run the test
             if "TORCHELASTIC_RUN_ID" in os.environ:
-                rank = int(os.environ["RANK"])
-                local_rank = int(os.environ["LOCAL_RANK"])
+                if init_dist:
+                    from compressed_tensors.distributed import init_dist as _init_dist
 
-                torch.accelerator.set_device_index(local_rank)
-                accel_type = torch.accelerator.current_accelerator().type
-                dist.init_process_group(
-                    backend=dist.get_default_backend_for_device(
-                        torch.device(accel_type, local_rank)
-                    ),
-                    init_method="env://",
-                    rank=rank,
-                    world_size=world_size,
-                    device_id=local_rank,
-                )
-                dist.barrier()
-
+                    _init_dist()
                 return func(*args, **kwargs)
 
             # First time calling in the main process:
             # trigger torchrun with this function as the pytest target
             else:
-                file_path = sys.modules.get(func.__module__).__file__
+                module = sys.modules.get(func.__module__)
+                if module is None:
+                    raise RuntimeError(
+                        f"Can't find module {func.__module__} for func {func.__name__}"
+                    )
+                file_path = module.__file__
+                if file_path is None:
+                    raise RuntimeError(
+                        f"Module {func.__module__} has no __file__ attribute"
+                    )
                 func_name = func.__name__
 
-                cmd = (
-                    f"{sys.executable} "
-                    f"-m torch.distributed.run --nproc_per_node {world_size} "
-                    "--log-dir /tmp/torchrun-logs --tee 3 --role torchrun "
-                    f"-m pytest {file_path}::{func_name} -sx"
-                )
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "torch.distributed.run",
+                    "--nproc_per_node",
+                    str(world_size),
+                    "--log-dir",
+                    "/tmp/torchrun-logs",
+                    "--tee",
+                    "3",
+                    "--role",
+                    "torchrun",
+                    "-m",
+                    "pytest",
+                    f"{file_path}::{func_name}",
+                    "-sx",
+                ]
 
-                proc = subprocess.run(cmd.split(" "))
+                proc = subprocess.run(cmd)
                 assert proc.returncode == 0
 
         return wrapper
