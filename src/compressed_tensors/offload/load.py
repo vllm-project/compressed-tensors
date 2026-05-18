@@ -24,7 +24,9 @@ cls_to_patch = _BaseAutoModelClass | PreTrainedModel
 
 
 @contextlib.contextmanager
-def load_offloaded_model(extra_cpu_mem: int = 5e9):
+def load_offloaded_model(
+    model_class: type[cls_to_patch] | None = None, extra_cpu_mem: int = 5e9
+):
     """
     Context manager used to load a transformers model with offloading implemented by
     compressed-tensors.
@@ -38,15 +40,21 @@ def load_offloaded_model(extra_cpu_mem: int = 5e9):
     `device_map="auto_offload"`, which means that the model will load as many parameters
     can fit onto the cpu, and any extra parameters will be loaded on disk.
 
+    :param model_class: explicit class to patch. If None, patches all classes in the
+        caller's frame that are subclasses of _BaseAutoModelClass or PreTrainedModel.
     :param extra_cpu_mem: extra cpu memory to reserve for any operations not related to
         model loading (bytes). Defaults to 5Gb.
     """
-    frame = _get_caller_frame()
-
     with contextlib.ExitStack() as stack:
-        for obj in frame.f_globals.values():
-            if isinstance(obj, type) and issubclass(obj, cls_to_patch):
-                stack.enter_context(patch_from_pretrained(obj, extra_cpu_mem))
+        if model_class is not None:
+            # Explicit class provided, patch only that class
+            stack.enter_context(patch_from_pretrained(model_class, extra_cpu_mem))
+        else:
+            # No class provided, use frame-based patching
+            frame = _get_caller_frame()
+            for obj in frame.f_globals.values():
+                if isinstance(obj, type) and issubclass(obj, cls_to_patch):
+                    stack.enter_context(patch_from_pretrained(obj, extra_cpu_mem))
 
         yield
 
