@@ -347,18 +347,10 @@ A context manager that patches `from_pretrained` on transformers model classes. 
 ```python
 from transformers import AutoModelForCausalLM
 
-# Option 1: Automatic patching (patches all model classes in caller's scope)
 with load_offloaded_model():
     model = AutoModelForCausalLM.from_pretrained(
         "meta-llama/Llama-3-8B",
         device_map="auto_offload",  # CT-specific: only cpu/disk, no GPU
-    )
-
-# Option 2: Explicit class patching (more targeted, recommended)
-with load_offloaded_model(model_class=AutoModelForCausalLM):
-    model = AutoModelForCausalLM.from_pretrained(
-        "meta-llama/Llama-3-8B",
-        device_map="auto_offload",
     )
 ```
 
