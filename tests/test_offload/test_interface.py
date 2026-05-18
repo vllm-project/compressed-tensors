@@ -16,6 +16,9 @@ from compressed_tensors.offload import (
     get_execution_device,
     get_offloaded_device,
     update_offload_parameter,
+    update_onload_parameter,
+    update_parameter,
+    update_parameter_async,
 )
 from compressed_tensors.offload.cache import CPUCache
 from compressed_tensors.offload.module import offload_module
@@ -108,6 +111,78 @@ def test_update_offload_parameter_only(offloaded_linear: torch.nn.Linear):
             offload = offloaded_linear.weight
         assert offload == 1
         assert offloaded_linear.weight != offload
+
+
+@pytest.mark.unit
+@requires_gpu
+@pytest.mark.parametrize("offload", (True, False))
+def test_update_onload_parameter(linear: torch.nn.Linear, cache, offload):
+    init_data = torch.tensor(0.0, device=OFFLOAD_DEVICE)
+    linear.weight = torch.nn.Parameter(init_data, requires_grad=False)
+    if offload:
+        offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+
+    assert linear.weight == 0
+
+    # when offloading is active, update_onload_parameter is a no-op
+    update_onload_parameter(linear, "weight", torch.tensor(1))
+    if offload:
+        assert linear.weight == 0
+    else:
+        assert linear.weight == 1
+
+    # when offloading is disabled, onloaded values can be updated
+    with disable_offloading():
+        update_onload_parameter(linear, "weight", torch.tensor(2))
+        assert linear.weight == 2
+
+    # after exiting disable_offloading, offloaded value is restored
+    if offload:
+        assert linear.weight == 0
+    else:
+        assert linear.weight == 2
+
+
+@pytest.mark.unit
+@requires_gpu
+@pytest.mark.parametrize("offload", (True, False))
+def test_update_parameter(linear: torch.nn.Linear, offload):
+    linear.weight = torch.nn.Parameter(torch.tensor(0.0, device=OFFLOAD_DEVICE))
+    if offload:
+        offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+
+    # Update both (default behavior)
+    update_parameter(linear, "weight", torch.tensor(1.0))
+    assert linear.weight == 1.0
+
+    # Update only offload
+    update_parameter(linear, "weight", torch.tensor(2.0), update_onload=False)
+    assert linear.weight == 2.0
+
+    # Update only onload - no effect when offloading is active
+    update_parameter(linear, "weight", torch.tensor(3.0), update_offload=False)
+    if offload:
+        assert linear.weight == 2.0  # offload value unchanged
+    else:
+        assert linear.weight == 3.0
+
+
+@pytest.mark.unit
+@requires_gpu
+@pytest.mark.parametrize("offload", (True, False))
+def test_update_parameter_async(linear: torch.nn.Linear, offload):
+    """Test update_parameter_async updates without synchronization barriers."""
+    linear.weight = torch.nn.Parameter(torch.tensor(0.0, device=OFFLOAD_DEVICE))
+    if offload:
+        offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+
+    # Update both (default behavior)
+    update_parameter_async(linear, "weight", torch.tensor(1.0))
+    assert linear.weight == 1.0
+
+    # Update only offload
+    update_parameter_async(linear, "weight", torch.tensor(2.0), update_onload=False)
+    assert linear.weight == 2.0
 
 
 @pytest.mark.unit
