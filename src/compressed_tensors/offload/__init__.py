@@ -162,7 +162,7 @@ def update_onload_parameter(module: torch.nn.Module, name: str, data: torch.Tens
     """
     if (
         not isinstance(module._parameters, OffloadCache)
-        or not module._parameters.offloading_disabled
+        or module._parameters.offloading_disabled
     ):
         getattr(module, name).copy_(data)
 
@@ -200,6 +200,8 @@ def update_parameter(
     if update_onload:
         if is_distributed():
             # only source rank has data; synchronize
+            device = get_execution_device(module)
+            data = data.to(device, copy=True)  # not very performant
             dist.broadcast(data, src=get_source_rank())
 
         # now all ranks have data: update local onloads

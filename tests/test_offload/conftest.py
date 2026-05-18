@@ -140,7 +140,7 @@ def torchrun(
                     "--nproc_per_node",
                     str(world_size),
                     "--log-dir",
-                    "/tmp/torchrun-logs",
+                    "tmp/torchrun-logs",
                     "--tee",
                     "3",
                     "--role",
@@ -149,6 +149,7 @@ def torchrun(
                     "pytest",
                     f"{file_path}::{func_name}",
                     "-sx",
+                    '--basetemp="tmp"',
                 ]
 
                 proc = subprocess.run(cmd)
