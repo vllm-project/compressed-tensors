@@ -100,7 +100,7 @@ class AutoAWQConverter(Converter):
             targets=targets,
         )
 
-    def process(self, tensors: dict[str, torch.Tensor]):
+    def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         for name in list(tensors):
             if not name.endswith(".qweight"):
                 continue
@@ -125,6 +125,7 @@ class AutoAWQConverter(Converter):
                     weight_zero_point, self.bits, packed_dim=0
                 ).contiguous()
                 tensors[f"{module_name}.weight_zero_point"] = weight_zero_point
+        return tensors
 
     def validate(self, tensors: dict[str, torch.Tensor]):
         for name in tensors:
