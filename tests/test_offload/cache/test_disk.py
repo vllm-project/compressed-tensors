@@ -128,3 +128,69 @@ def test_files(tmp_path):
     files = os.listdir(offload_dir)
     assert len(DiskCache.index) == 0
     assert len(files) == 0
+
+
+@pytest.mark.unit
+def test_clean_offload_dir(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    os.mkdir(offload_dir)
+
+    # Create multiple cache entries
+    DiskCache.index = {}
+    cache = DiskCache("cpu", offload_dir=str(offload_dir))
+    cache["weight1"] = torch.zeros(10)
+    cache["weight2"] = torch.ones(10)
+    cache["weight3"] = torch.randn(10)
+
+    # Verify files were created
+    files = os.listdir(offload_dir)
+    assert len(DiskCache.index) == 3
+    assert len(files) == 3
+
+    # Clean up all files
+    files_cleaned = DiskCache.clean_offload_dir()
+    assert files_cleaned == 3
+
+    # Verify cleanup
+    files = os.listdir(offload_dir)
+    assert len(DiskCache.index) == 0
+    assert len(files) == 0
+
+
+@pytest.mark.unit
+def test_clean_offload_dir_with_symlinks(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    checkpoint_dir = tmp_path / "checkpoint"
+    os.mkdir(offload_dir)
+    os.mkdir(checkpoint_dir)
+
+    # Create a checkpoint file
+    checkpoint_file = checkpoint_dir / "model.safetensors"
+    from safetensors.torch import save_file
+
+    save_file({"weight": torch.zeros(10)}, str(checkpoint_file))
+
+    # Create symlink via create_checkpoint_symlink
+    DiskCache.index = {}
+    offloaded = torch.empty(10, device="meta")
+    weight_info = {
+        "safetensors_file": str(checkpoint_file),
+        "weight_name": "weight",
+        "dtype": "float32",
+    }
+    DiskCache.create_checkpoint_symlink(offloaded, weight_info, str(offload_dir))
+
+    # Verify symlink was created
+    files = os.listdir(offload_dir)
+    assert len(files) == 1
+    assert os.path.islink(offload_dir / files[0])
+
+    # Clean up should remove symlink but not target
+    files_cleaned = DiskCache.clean_offload_dir()
+    assert files_cleaned == 1
+
+    # Verify symlink removed but target still exists
+    files = os.listdir(offload_dir)
+    assert len(files) == 0
+    assert checkpoint_file.exists()
+    assert len(DiskCache.index) == 0
