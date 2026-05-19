@@ -173,3 +173,33 @@ def test_get_vllm_module_type():
     assert get_vllm_module_type("JetMoeTopKGating") == "Linear"
     assert get_vllm_module_type("Qwen3NextGatedDeltaNet") == "Linear"
     assert get_vllm_module_type("JetMoeTopKGating") == "Linear"
+
+
+def test_imatrix_mse_weight_observer_requires_calibration_data():
+    from compressed_tensors.quantization import QuantizationArgs
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_1": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(observer="imatrix_mse"),
+            )
+        }
+    )
+
+    assert config.requires_calibration_data()
+
+
+def test_default_weight_observer_does_not_require_calibration_data():
+    from compressed_tensors.quantization import QuantizationArgs
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_1": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(),
+            )
+        }
+    )
+
+    assert not config.requires_calibration_data()
