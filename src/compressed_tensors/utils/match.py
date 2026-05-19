@@ -11,7 +11,6 @@ from typing import Iterator
 import torch
 from compressed_tensors.utils.internal import InternalModule
 
-
 _LOGGER: logging.Logger = logging.getLogger(__name__)
 
 
