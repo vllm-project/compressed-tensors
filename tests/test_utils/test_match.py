@@ -359,6 +359,73 @@ class TestMatchNamedModules:
         }
         assert expanded_targets == expected_targets
 
+    def test_large_moe_performance(self):
+        """
+        Performance regression test for large MoE models.
+
+        This test ensures that match_named_modules doesn't regress to O(N × M)
+        complexity for models with many modules (e.g., fine-grained MoE).
+
+        Context: Qwen3-30B-A3B has ~18.5K Linear modules (48 layers × 128 experts).
+        Before optimization, this caused 3+ minute hangs during model loading.
+        With optimization, matching should complete in <5 seconds.
+
+        See: huggingface/transformers#44276, compressed-tensors issue report
+        """
+        import time
+
+        # Create a large MoE model similar to Qwen3-30B-A3B scale
+        # 48 layers × 128 experts × 3 projections = ~18K modules
+        # Use smaller scale for tests (8 layers × 32 experts) to keep CI fast
+        num_layers = 8
+        num_experts = 32  # ~8 × 32 × 3 = ~768 modules
+
+        model = DummyMoEModel(num_layers=num_layers, num_experts=num_experts)
+
+        # Create a realistic set of targets (similar to quantization config)
+        targets = [
+            "Linear",  # Class match
+            "re:.*gate_proj$",  # Regex match
+            "re:.*up_proj$",  # Regex match
+            "re:.*down_proj$",  # Regex match
+            "re:layers\\.\\d+\\.mlp\\.experts\\.\\d+\\..*",  # Complex regex
+            "post_attention_layernorm",  # Exact match
+        ]
+
+        ignore = [
+            "re:.*layernorm.*",  # Ignore pattern
+        ]
+
+        # Time the matching operation
+        start_time = time.time()
+        matches = list(match_named_modules(model, targets, ignore))
+        elapsed_time = time.time() - start_time
+
+        # Verify we found matches
+        assert len(matches) > 0, "Should find matching modules"
+
+        # Verify we found the expected number of modules (rough estimate)
+        # Each layer has num_experts × 3 projections = 96 modules per layer
+        # With 8 layers: ~768 Linear modules
+        expected_min_matches = num_layers * num_experts * 3
+        assert len(matches) >= expected_min_matches * 0.9, (
+            f"Expected at least {expected_min_matches * 0.9:.0f} matches, "
+            f"got {len(matches)}"
+        )
+
+        # Performance assertion: should complete in reasonable time
+        # With optimization: O(N + M) should be <1s for 768 modules
+        # Without optimization: O(N × M) would be several seconds
+        max_time = 2.0  # seconds (generous to account for CI variance)
+        assert elapsed_time < max_time, (
+            f"match_named_modules took {elapsed_time:.2f}s for {len(matches)} "
+            f"modules, expected <{max_time}s. This suggests O(N×M) regression."
+        )
+
+        # Additional verification: check we matched the right types
+        linear_matches = [m for _, m in matches if isinstance(m, nn.Linear)]
+        assert len(linear_matches) > 0, "Should match Linear modules"
+
 
 class TestMatchNamedParameters:
     """Test cases for match_named_parameters function"""
