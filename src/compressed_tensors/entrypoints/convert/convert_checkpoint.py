@@ -19,6 +19,7 @@ from compressed_tensors.entrypoints.convert.converters import (
 )
 from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
+    get_qconfig_data,
     get_weight_map,
     is_weights_file,
     update_safetensors_index,
@@ -32,7 +33,7 @@ __all__ = ["convert_checkpoint", "exec_jobs"]
 def convert_checkpoint(
     model_stub: str | os.PathLike,
     save_directory: str | os.PathLike,
-    converter: Converter,
+    converter: Converter | list[Converter],
     max_workers: int = 1,
 ):
     """
@@ -54,15 +55,17 @@ def convert_checkpoint(
     """
     # get all model_files for checkpoint
     model_files = get_checkpoint_files(model_stub)
-
     weight_map = get_weight_map(model_files)
+    qconfig = get_qconfig_data(model_files)
+
+    converter = converter if isinstance(converter, list) else [converter]
 
     # Build inverse_weight_maps, so that each job knows how to load up every necessary
     # weight and its dependencies
     inverse_weight_maps = build_inverse_weight_maps(
         weight_map=weight_map,
         model_files=model_files,
-        converters=[converter],
+        converters=converter,
     )
 
     # Build validation/conversion jobs, copy over any other file
@@ -103,7 +106,7 @@ def convert_checkpoint(
         weight_map.update(_weight_map)
 
     # Update config and safetensors index
-    write_checkpoint_quantization_config(save_directory, converter)
+    write_checkpoint_quantization_config(save_directory, converter, qconfig)
     update_safetensors_index(save_directory, total_size, weight_map)
 
 

@@ -6,12 +6,10 @@ from typing import Iterable
 import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.quantization import (
-    QuantizationArgs,
-    QuantizationConfig,
-    QuantizationScheme,
-    QuantizationStatus,
+from compressed_tensors.entrypoints.convert.converters.helpers import (
+    merge_quantization_config,
 )
+from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
 from compressed_tensors.quantization.quant_scheme import NVFP4
 from compressed_tensors.utils.match import match_name, match_quantizable_tensors
 
@@ -130,17 +128,15 @@ class ModelOptNvfp4Converter(Converter):
 
         return set()
 
-    def create_config(self) -> QuantizationConfig:
-        return QuantizationConfig(
-            config_groups={
-                "config_group_0": QuantizationScheme(
-                    **NVFP4,
-                    targets=self.targets,
-                    format=CompressionFormat.nvfp4_pack_quantized.value,
-                )
-            },
-            ignore=self.ignore,
-            kv_cache_scheme=self.kv_cache_scheme,
-            format=CompressionFormat.nvfp4_pack_quantized.value,
-            quantization_status=QuantizationStatus.COMPRESSED.value,
+    def update_config(self, config: dict) -> dict:
+        return merge_quantization_config(
+            config,
+            new_config_groups=QuantizationScheme(
+                **NVFP4,
+                targets=self.targets,
+                format=CompressionFormat.nvfp4_pack_quantized.value,
+            ),
+            new_ignore=self.ignore,
+            new_kv_cache_scheme=self.kv_cache_scheme,
+            new_format=CompressionFormat.nvfp4_pack_quantized.value,
         )

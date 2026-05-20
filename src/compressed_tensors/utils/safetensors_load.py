@@ -6,6 +6,7 @@ import os
 import re
 import struct
 from collections.abc import Iterable
+from typing import Any
 
 import torch
 from huggingface_hub import list_repo_files
@@ -161,6 +162,14 @@ def get_weight_map(model_files: dict[str, str]) -> dict[str, str]:
     # create from model.safetensors
     with safe_open(model_files[SAFE_WEIGHTS_NAME], framework="pt") as file:
         return {tensor: SAFE_WEIGHTS_NAME for tensor in file.keys()}
+
+
+def get_qconfig_data(model_files: dict[str, str]) -> dict[str, Any]:
+    if "config.json" in model_files:
+        with open(model_files["config.json"], "r") as file:
+            return json.load(file).get("quantization_config", dict())
+
+    return dict()
 
 
 def update_safetensors_index(
