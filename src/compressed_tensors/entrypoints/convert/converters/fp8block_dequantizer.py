@@ -32,17 +32,14 @@ class FP8BlockDequantizer(Converter):
 
     def process(self, tensors: dict[str, torch.Tensor]):
         """
-        Map the modelopt NVFP4 tensors to the appropriate compressed-tensors
-        NVFP4 format.
-        Some tensors require rename, some require inversion
-        - 1 / input_scale -> input_global_scale
-        - weight -> weight_packed
-        - 1 / weight_scale_2 -> weight_global_scale
+        Dequantize the targeted fp8 tensors
+
+        :param tensors: dictionary containing quantized weights and scales
         """
         for module_name, name in match_quantizable_tensors(
             tensors, self.ignore, self.targets, allow_nonquantizable=True
         ):
-            param_name = name.rsplit(".", 1)[-1]
+            _, __, param_name = name.rpartition(".")
 
             if param_name == "weight":
                 # weight * weight_scale_inv -> dequantized weight
@@ -66,7 +63,7 @@ class FP8BlockDequantizer(Converter):
             )
         ]
         for name in targeted_names:
-            module_name, param_name = name.rsplit(".", 1)
+            module_name, _, param_name = name.rpartition(".")
 
             if param_name not in allowed_names:
                 raise ValueError(f"Found unexpected targeted tensor {name}")
@@ -90,7 +87,7 @@ class FP8BlockDequantizer(Converter):
             name for name in tensors.keys() if name not in targeted_names
         ]
         for name in untargeted_names:
-            param_name = name.rsplit(".", 1)[-1]
+            _, __, param_name = name.rpartition(".")
 
             if param_name in disallowed_names:
                 raise ValueError(f"Found unexpected non-targeted tensor {name}")
@@ -99,11 +96,12 @@ class FP8BlockDequantizer(Converter):
         return None
 
     def get_dependencies(self, weight_name: str) -> set[str]:
-        module_name, suffix = weight_name.rsplit(".", 1)
+        module_name, _, param_name = weight_name.rpartition(".")
+
         if (
             any([match_name(module_name, target) for target in self.targets])
             and not any([match_name(module_name, ignore) for ignore in self.ignore])
-            and suffix == "weight"
+            and param_name == "weight"
         ):
             return {f"{module_name}.weight_scale_inv"}
         return set()

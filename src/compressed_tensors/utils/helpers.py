@@ -109,7 +109,7 @@ def tensor_follows_mask_structure(tensor, mask: str = "2:4") -> bool:
 
 def replace_module(model: torch.nn.Module, name: str, new_module: torch.nn.Module):
     if "." in name:
-        parent_name = name.rsplit(".", 1)[0]
+        parent_name, _, __ = name.rpartition(".")
         child_name = name[len(parent_name) + 1 :]
         parent = model.get_submodule(parent_name)
     else:
