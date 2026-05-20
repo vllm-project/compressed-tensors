@@ -239,3 +239,88 @@ def test_distributed_async_update(tmp_path):
         offloaded_1 = cache["tensor_1"]
         assert_tensor_equal(offloaded_0, torch.ones(10) * 1.0, "disk")
         assert_tensor_equal(offloaded_1, torch.ones(10) * 2.0, "disk")
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2)
+def test_distributed_shared_tensor_refcounts(tmp_path):
+    """
+    Test that the file reference counting mechanism correctly handles shared
+    tensors in a distributed setting.
+    """
+    # Broadcast directory path from rank 0 to all ranks
+    if dist.get_rank() == 0:
+        offload_dir = tmp_path / "offload_dir"
+        os.mkdir(offload_dir)
+        broadcast_obj = [str(offload_dir)]
+    else:
+        broadcast_obj = [None]
+
+    dist.broadcast_object_list(broadcast_obj, src=0)
+    offload_dir = broadcast_obj[0]
+
+    # Ensure directory creation completes before other ranks proceed
+    dist.barrier()
+
+    # Reset class state
+    DiskCache.index = {}
+    DiskCache._file_refcounts.clear()
+
+    cache = DistributedDiskCache("cpu", offload_dir=offload_dir)
+
+    # Create a tensor and offload it
+    tensor = torch.zeros(10)
+    cache["weight1"] = tensor
+
+    # Verify reference count is 1
+    if dist.get_rank() == 0:
+        files = os.listdir(offload_dir)
+        assert len(files) == 1
+        file_path = str(offload_dir) + "/" + files[0]
+        assert DiskCache._file_refcounts[file_path] == 1
+
+    dist.barrier()
+
+    # Simulate tied tensors by creating a second meta tensor that points
+    # to the same file
+    from compressed_tensors.offload.utils import send_tensors
+
+    offloaded2 = send_tensors(tensor, device="meta")
+    cache.offloaded_values["weight2"] = offloaded2
+
+    # Get the file path from weight1's index entry
+    offloaded1 = cache.offloaded_values["weight1"]
+    shared_file_path = DiskCache.index[offloaded1]["safetensors_file"]
+
+    # Manually set up the index entry to point to the same file
+    DiskCache.index[offloaded2] = {
+        "safetensors_file": shared_file_path,
+        "weight_name": "weight",
+        "dtype": "float32",
+    }
+    DiskCache._file_refcounts[shared_file_path] += 1
+
+    # Verify reference count is 2
+    if dist.get_rank() == 0:
+        assert DiskCache._file_refcounts[file_path] == 2
+
+    dist.barrier()
+
+    # Delete first reference - file should NOT be deleted
+    del cache["weight1"]
+    if dist.get_rank() == 0:
+        files = os.listdir(offload_dir)
+        assert len(files) == 1, "File should still exist after first deletion"
+        assert DiskCache._file_refcounts[file_path] == 1
+
+    dist.barrier()
+
+    # Delete second reference - now file SHOULD be deleted
+    del cache["weight2"]
+    if dist.get_rank() == 0:
+        files = os.listdir(offload_dir)
+        assert len(files) == 0, "File should be deleted after all references removed"
+        assert file_path not in DiskCache._file_refcounts
+
+    dist.barrier()
