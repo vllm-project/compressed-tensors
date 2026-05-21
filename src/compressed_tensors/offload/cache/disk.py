@@ -4,6 +4,7 @@
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
+from weakref import finalize
 
 import torch
 from compressed_tensors.distributed import is_source_process
@@ -31,8 +32,8 @@ class DiskCache(OffloadCache):
 
     offload_device = "disk"
 
-    # offloaded tensors -> weight info
-    index: dict[torch.Tensor, dict[str, str]] = dict()
+    # id(offloaded tensors) -> weight info
+    index: dict[int, dict[str, str]] = dict()
 
     # directory where new tensors are written to
     offload_dir: str
@@ -66,7 +67,7 @@ class DiskCache(OffloadCache):
         if offloaded is None:
             return None
 
-        weight_info = self.index[offloaded]
+        weight_info = self.index[id(offloaded)]
         device = _get_safe_open_device(self.onload_device)
 
         with safe_open(
@@ -91,7 +92,7 @@ class DiskCache(OffloadCache):
             return None
 
         if tensor.device.type == "meta":
-            assert tensor in self.index
+            assert id(tensor) in self.index
             return tensor
 
         if offloaded is None:
@@ -99,30 +100,15 @@ class DiskCache(OffloadCache):
 
         file_name = f"{self._new_file_prefix}{id(offloaded)}.safetensors"
         file_path = os.path.join(self.offload_dir, file_name)
-        self.index[offloaded] = {
+        self.index[id(offloaded)] = {
             "safetensors_file": file_path,
             "weight_name": "weight",
             "dtype": str(tensor.dtype).removeprefix("torch."),
         }
 
         save_file({"weight": tensor}, file_path)
+        finalize(offloaded, self._disk_finalizer, id(offloaded))
         return offloaded
-
-    def __delitem__(self, key: str):
-        """
-        Remove the offload associated with `key`. If a new file was created to store
-        updated tensor data, that new tensor data file is deleted.
-
-        Any references to onloaded tensors held by this class are invalidated.
-
-        :param key: name of tensor to invalidate
-        """
-        offloaded = self.offloaded_values[key]
-        file_path = self.index[offloaded]["safetensors_file"]
-        if os.path.basename(file_path).startswith(self._new_file_prefix):
-            os.remove(file_path)
-        del self.index[offloaded]
-        super().__delitem__(key)
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
@@ -132,8 +118,8 @@ class DiskCache(OffloadCache):
         :param data: new data
         """
         # get weight info from index
-        assert offloaded in self.index, "Cannot find offload to update"
-        weight_info = self.index[offloaded]
+        assert id(offloaded) in self.index, "Cannot find offload to update"
+        weight_info = self.index[id(offloaded)]
         file_path = weight_info["safetensors_file"]
         weight_name = weight_info["weight_name"]
         dtype = getattr(torch, weight_info["dtype"])
@@ -153,9 +139,7 @@ class DiskCache(OffloadCache):
         weight_info: dict,
         offload_dir: str | os.PathLike | None,
     ) -> None:
-        assert (
-            is_source_process()
-        ), "Must call on rank 0 to avoid id collisions between ranks"
+        assert is_source_process(), "Must call on source rank to avoid id collisions"
         if offload_dir is None:
             raise ValueError(
                 "Must provide an `offload_dir` to perform disk offloading "
@@ -167,11 +151,25 @@ class DiskCache(OffloadCache):
         # Resolve relative paths to absolute paths for symlink creation
         source_path = Path(weight_info["safetensors_file"]).resolve()
         os.symlink(source_path, file_path)
-        cls.index[offloaded] = {
+        cls.index[id(offloaded)] = {
             "safetensors_file": file_path,
             "weight_name": weight_info["weight_name"],
             "dtype": weight_info["dtype"],
         }
+        finalize(offloaded, cls._disk_finalizer, id(offloaded))
+
+    @classmethod
+    def _disk_finalizer(cls, tensor_id: int):
+        """
+        Finalizer attached to tensors when they are assigned in `DiskCache.index`.
+        Deletes tensor from `DiskCache.index` and deletes associated safetensors file.
+
+        :param tensor_id: id of offloaded meta tensor
+        """
+        file_path = cls.index[tensor_id]["safetensors_file"]
+        assert os.path.basename(file_path).startswith(cls._new_file_prefix)
+        os.remove(file_path)
+        del cls.index[tensor_id]
 
 
 def _get_safe_open_device(device: "DeviceLikeType") -> str:
