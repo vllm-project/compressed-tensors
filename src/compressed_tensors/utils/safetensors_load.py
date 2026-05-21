@@ -8,6 +8,7 @@ import struct
 from collections.abc import Iterable
 
 import torch
+from compressed_tensors.base import QUANTIZATION_CONFIG_NAME
 from huggingface_hub import list_repo_files
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -26,6 +27,7 @@ __all__ = [
     "load_tensors_from_inverse_weight_map",
     "is_quantization_param",
     "find_config_path",
+    "get_quantization_config",
     "find_safetensors_index_path",
     "find_safetensors_index_file",
     "get_weight_map",
@@ -113,15 +115,51 @@ def find_safetensors_index_path(save_directory: str | os.PathLike) -> str | None
 
 def find_config_path(save_directory: str | os.PathLike) -> str | None:
     """
-    Search save_directory for a model config file (config.json or params.json).
+    Search save_directory for a model config file
+    - check first for config.json
+    - then for params.json
+
+    If still not found, returns None
 
     :param save_directory: directory to search
     :return: absolute path to the config file, or None if not found
     """
-    for file_name in os.listdir(save_directory):
-        if file_name in (CONFIG_NAME, "params.json"):
-            return os.path.join(save_directory, file_name)
+    file_names = os.listdir(save_directory)
+    if CONFIG_NAME in file_names:
+        return os.path.join(save_directory, CONFIG_NAME)
+    elif "params.json" in file_names:
+        return os.path.join(save_directory, "params.json")
     return None
+
+
+def get_quantization_config(config_path: str) -> dict | None:
+    """
+    Given path to a checkpoint's config.json file, get quantization config
+
+    Follow cascading pattern in vllm:
+    - check "quantization_config"
+    - check "text_config.quantization_config"
+    - check "compression_config"
+    If still not found, returns None
+
+    https://github.com/vllm-project/vllm/blob/v0.20.0/vllm/model_executor/model_loader/weight_utils.py#L259-L278
+
+    :param config_path: resolved path to config.json
+    :return: quantization config as dictionary pulled from config.json. If not found,
+        returns None.
+    """
+    with open(config_path, "r") as f:
+        config = json.load(f)
+
+    quant_config = None
+    if QUANTIZATION_CONFIG_NAME in config:
+        quant_config = config[QUANTIZATION_CONFIG_NAME]
+    elif "text_config" in config and QUANTIZATION_CONFIG_NAME in config["text_config"]:
+        quant_config = config["text_config"][QUANTIZATION_CONFIG_NAME]
+    elif "compression_config" in config:
+        quant_config = config["compression_config"]
+
+    return quant_config
 
 
 def find_safetensors_index_file(model_files: dict[str, str]) -> str | None:
@@ -134,6 +172,12 @@ def find_safetensors_index_file(model_files: dict[str, str]) -> str | None:
     """
     for file_path, resolved_path in model_files.items():
         if file_path.endswith(SAFE_WEIGHTS_INDEX_NAME):
+            return resolved_path
+
+    # Fallback when names like consolidated.safetensors.index.json are used
+    # as is the case for RedHatAI/Mistral-Small-4-119B-2603-NVFP4
+    for file_path, resolved_path in model_files.items():
+        if file_path.endswith(".safetensors.index.json"):
             return resolved_path
 
     return None

@@ -34,70 +34,70 @@ def offload_device():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_delete(offload_device, onload_device, offload_cache):
     _test_delete(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_disable_offloading(offload_device, onload_device, offload_cache):
     _test_disable_offloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_disable_onloading(offload_device, onload_device, offload_cache):
     _test_disable_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_garbage_collect(offload_device, onload_device, offload_cache):
     _test_garbage_collect(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_offload(offload_device, onload_device, offload_cache):
     _test_offload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_onload(offload_device, onload_device, offload_cache):
     _test_onload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_onloading(offload_device, onload_device, offload_cache):
     _test_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_shared_attributes(offload_device, onload_device, offload_cache):
     _test_shared_attributes(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_tensor_subclass(offload_device, onload_device, offload_cache):
     _test_tensor_subclass(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_offload(onload_device):
     cache = DistributedCPUCache(onload_device)
     tensor = torch.zeros((5, 2))
@@ -120,7 +120,7 @@ def test_distributed_offload(onload_device):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_shared_cpu_offload(onload_device):
     cache = DistributedCPUCache(onload_device)
     tensor = torch.zeros((5, 2))
@@ -142,7 +142,7 @@ def test_shared_cpu_offload(onload_device):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_async_update(onload_device):
     """
     Test that different ranks can update different tensors asynchronously,
@@ -183,7 +183,7 @@ def test_distributed_async_update(onload_device):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_offload_logs_memory_hint(onload_device):
     cache = DistributedCPUCache(onload_device)
 
