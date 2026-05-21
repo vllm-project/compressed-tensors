@@ -32,7 +32,11 @@ class ModelOptNvfp4Converter(Converter):
         self.targets = targets
         self.kv_cache_scheme = kv_cache_scheme
 
-    def process(self, tensors: dict[str, torch.Tensor]):
+        self.param_names = ["input_scale", "weight", "weight_scale", "weight_scale_2"]
+        if self.kv_cache_scheme is not None:
+            self.param_names += ["k_scale", "v_scale"]
+
+    def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Map the modelopt NVFP4 tensors to the appropriate compressed-tensors
         NVFP4 format.
@@ -42,9 +46,9 @@ class ModelOptNvfp4Converter(Converter):
         - 1 / weight_scale_2 -> weight_global_scale
         """
         for module_name, name in match_quantizable_tensors(
-            tensors, self.ignore, self.targets, allow_nonquantizable=True
+            tensors, self.ignore, self.targets, param_targets=self.param_names
         ):
-            param_name = name.rsplit(".", 1)[-1]
+            param_name = name.rpartition(".")[-1]
 
             match param_name:
                 # input_scale -> input_global_scale F32
@@ -76,43 +80,45 @@ class ModelOptNvfp4Converter(Converter):
                         self.kv_cache_scheme.scale_dtype or torch.bfloat16
                     )
 
+        return tensors
+
     def validate(self, tensors: dict[str, torch.Tensor]):
         """
         Ensure all tensor names of targeted layers are expected and no
         untargeted layers have unexpected tensor names
         """
-        allowed_names = ["input_scale", "weight", "weight_scale", "weight_scale_2"]
-        if self.kv_cache_scheme is not None:
-            allowed_names += ["k_scale", "v_scale"]
 
         targeted_names = [
             name
             for _, name in match_quantizable_tensors(
-                tensors, self.ignore, self.targets, allow_nonquantizable=True
+                tensors, self.ignore, self.targets, param_targets=self.param_names
             )
         ]
         for name in targeted_names:
-            param_name = name.rsplit(".", 1)[-1]
+            param_name = name.rpartition(".")[-1]
 
-            if param_name not in allowed_names:
-                raise ValueError(f"Hit unexpected targeted tensor {name}")
-
-        disallowed_names = ["input_scale", "weight_scale", "weight_scale_2"]
+        disallowed_names = [
+            "input_scale",
+            "weight_scale",
+            "weight_scale_2",
+            "k_scale",
+            "v_scale",
+        ]
         untargeted_names = [
             name for name in tensors.keys() if name not in targeted_names
         ]
         for name in untargeted_names:
-            param_name = name.rsplit(".", 1)[-1]
+            param_name = name.rpartition(".")[-1]
 
             if param_name in disallowed_names:
                 raise ValueError(f"Hit unexpected non-targeted tensor {name}")
 
     def get_dependencies(self, weight_name: str) -> set[str]:
-        module_name, suffix = weight_name.rsplit(".", 1)
+        module_name, _, param_name = weight_name.rpartition(".")
         if (
             any([match_name(module_name, target) for target in self.targets])
             and not any([match_name(module_name, ignore) for ignore in self.ignore])
-            and suffix == "weight"
+            and param_name == "weight"
         ):
             deps = {
                 f"{module_name}.input_scale",

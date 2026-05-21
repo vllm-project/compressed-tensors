@@ -30,19 +30,17 @@ class FP8BlockDequantizer(Converter):
         self.weight_block_size = weight_block_size
         self.dtype = dtype
 
-    def process(self, tensors: dict[str, torch.Tensor]):
+        self.param_names = ["weight", "weight_scale_inv"]
+
+    def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Map the modelopt NVFP4 tensors to the appropriate compressed-tensors
-        NVFP4 format.
-        Some tensors require rename, some require inversion
-        - 1 / input_scale -> input_global_scale
-        - weight -> weight_packed
-        - 1 / weight_scale_2 -> weight_global_scale
+        Dequantize the fp8 block tensors (weight, weight_scale_inv) to full-precision
+        weight tensors in dtype provided to constructor
         """
         for module_name, name in match_quantizable_tensors(
-            tensors, self.ignore, self.targets, allow_nonquantizable=True
+            tensors, self.ignore, self.targets, param_targets=self.param_names
         ):
-            param_name = name.rsplit(".", 1)[-1]
+            param_name = name.rpartition(".")[-1]
 
             if param_name == "weight":
                 # weight * weight_scale_inv -> dequantized weight
@@ -52,24 +50,23 @@ class FP8BlockDequantizer(Converter):
                 )
                 del tensors[f"{module_name}.weight_scale_inv"]
 
+        return tensors
+
     def validate(self, tensors: dict[str, torch.Tensor]):
         """
         Ensure all tensor names of targeted layers are expected and no
         untargeted layers have unexpected tensor names
         """
-        allowed_names = ["weight", "weight_scale_inv"]
 
         targeted_names = [
             name
             for _, name in match_quantizable_tensors(
-                tensors, self.ignore, self.targets, allow_nonquantizable=True
+                tensors, self.ignore, self.targets, param_targets=self.param_names
             )
         ]
         for name in targeted_names:
-            module_name, param_name = name.rsplit(".", 1)
+            module_name, _, param_name = name.rpartition(".")
 
-            if param_name not in allowed_names:
-                raise ValueError(f"Found unexpected targeted tensor {name}")
             if (
                 param_name == "weight"
                 and f"{module_name}.weight_scale_inv" not in tensors
@@ -99,11 +96,11 @@ class FP8BlockDequantizer(Converter):
         return None
 
     def get_dependencies(self, weight_name: str) -> set[str]:
-        module_name, suffix = weight_name.rsplit(".", 1)
+        module_name, _, param_name = weight_name.rpartition(".")
         if (
             any([match_name(module_name, target) for target in self.targets])
             and not any([match_name(module_name, ignore) for ignore in self.ignore])
-            and suffix == "weight"
+            and param_name == "weight"
         ):
             return {f"{module_name}.weight_scale_inv"}
         return set()

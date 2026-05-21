@@ -32,9 +32,14 @@ class QuantizationStatus(str, Enum):
     - Initialized: Quantization parameters are initialized to empty values
     - Calibration: Quantization parameters are being calibrated, observers are attached
     - Frozen: Quantization parameters are fully calibrated, observers are removed
-    - Compressed: All parameters are quantized to target dtype
-    - Decompressed: Parameters are converted back into frozen state,
-        additionally, weight qdq is skipped during forward passes for better performance
+    - Compressed: All parameters are quantized to target dtype. If the weight param is
+        no longer applicable (i.e. if "weight" has been converted to "weight_packed"),
+        the weight param is pruned from the module.
+    - Decompressed: Parameters are converted back into frozen state. Quantization params
+        remain on the module so that the module can be compressed, but params are
+        pruned if they are no longer applicable or needed for compression
+        (i.e. if "weight_packed" has been converted to "weight").
+        Additionally, weight qdq is skipped during forward passes for better performance
     """
 
     INITIALIZED = "initialized"

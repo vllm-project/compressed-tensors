@@ -9,12 +9,13 @@ from compressed_tensors.compressors.pack_quantized.helpers import (
 )
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
+    ActivationOrdering,
     QuantizationScheme,
     QuantizationStrategy,
     QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from compressed_tensors.utils import TensorStateDict
+from compressed_tensors.utils import TensorStateDict, getattr_chain
 
 
 __all__ = ["PackedQuantizationCompressor"]
@@ -31,6 +32,24 @@ class PackedQuantizationCompressor(BaseCompressor):
     """
     Compresses a quantized model by packing every eight 4-bit weights into an int32.
     """
+
+    @classmethod
+    def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        param_names = (
+            "weight_packed",
+            "weight_scale",
+            "weight_shape",
+        )
+        if not getattr_chain(scheme, "weights.symmetric", True):
+            param_names += ("weight_zero_point",)
+        if getattr_chain(scheme, "weights.actorder", None) == ActivationOrdering.GROUP:
+            param_names += ("weight_g_idx",)
+        if (
+            getattr_chain(scheme, "input_activations.strategy", None)
+            == QuantizationStrategy.TENSOR_GROUP
+        ):
+            param_names += ("input_global_scale",)
+        return param_names
 
     @classmethod
     def compress(
@@ -84,8 +103,7 @@ class PackedQuantizationCompressor(BaseCompressor):
         Decompress a per-module state dict.
 
         Unpacks ``weight_packed`` back to the original weight, removes
-        ``weight_packed`` and ``weight_shape``, and unpacks the zero-point
-        if present.
+        ``weight_packed``, and unpacks the zero-point if present.
 
         :param state_dict: local-name state dict (weight_packed, weight_scale, …)
         :param quantization_args: quantization parameters for the weight
