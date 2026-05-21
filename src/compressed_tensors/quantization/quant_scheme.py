@@ -276,7 +276,8 @@ W8A16 = dict(
     weights=QuantizationArgs(
         num_bits=8,
         type=QuantizationType.INT,
-        strategy=QuantizationStrategy.CHANNEL,
+        strategy=QuantizationStrategy.GROUP,
+        group_size=128,
         symmetric=True,
         dynamic=False,
     ),
