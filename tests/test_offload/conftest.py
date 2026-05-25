@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
-import socket
 import subprocess
 import sys
 from functools import wraps
@@ -108,12 +107,6 @@ def torchrun(
     :param init_dist: whether to automatically call init_dist() (default: False)
     """
 
-    def get_free_port() -> int:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            sock.listen(1)
-            return int(sock.getsockname()[1])
-
     def decorator(func: FunctionType):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -139,7 +132,6 @@ def torchrun(
                         f"Module {func.__module__} has no __file__ attribute"
                     )
                 func_name = func.__name__
-                master_port = get_free_port()
 
                 cmd = [
                     sys.executable,
