@@ -44,11 +44,8 @@ def pack_to_int32(
     if value.dtype is not torch.int8:
         raise ValueError("Tensor must be quantized to torch.int8 before packing")
 
-    if num_bits > 8:
-        raise ValueError("Packing is only supported for less than 8 bits")
-
-    if num_bits < 1:
-        raise ValueError(f"num_bits must be at least 1, got {num_bits}")
+    if not 1 <= num_bits <= 8:
+        raise ValueError(f"Packing is only supported for num_bits in [1, 8], got {num_bits}")
 
     # Handle N-dimensional tensors (e.g. MoE 3D weights) by packing each 2D slice
     if value.ndim > 2:
@@ -111,8 +108,8 @@ def unpack_from_int32(
             f"Expected {torch.int32} but got {value.dtype}, Aborting unpack."
         )
 
-    if num_bits > 8:
-        raise ValueError("Unpacking is only supported for less than 8 bits")
+    if not 1 <= num_bits <= 8:
+        raise ValueError(f"Unpacking is only supported for num_bits in [1, 8], got {num_bits}")
 
     # Handle N-dimensional tensors (e.g. MoE 3D weights) by unpacking each 2D slice
     if value.ndim > 2:
