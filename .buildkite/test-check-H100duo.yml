@@ -6,6 +6,10 @@ steps:
     plugins:
       - kubernetes:
           podSpec:
+            serviceAccountName:
+              buildkite-anyuid
+            securityContext:
+              fsGroup: 0
             nodeSelector:
               vllm.ci/gpu-pool: nm-h100
 
@@ -16,6 +20,10 @@ steps:
                 command:
                   - chmod +x .buildkite/scripts/test-check.sh
                   - .buildkite/scripts/test-check.sh
+
+                securityContext:
+                  runAsUser: 0
+                  runAsGroup: 0
 
                 resources:
                   limits:
