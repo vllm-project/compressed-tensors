@@ -1,0 +1,4 @@
+steps:
+  - label: "Upload test pipeline"
+    command: |
+      buildkite-agent pipeline upload .buildkite/test-check-A100duo.yml

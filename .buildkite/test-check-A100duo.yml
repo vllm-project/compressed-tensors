@@ -1,0 +1,46 @@
+steps:
+  - label: "Compressed-tensor tests"
+    agents:
+      queue: RedHat-H100-WDC
+
+    plugins:
+      - kubernetes:
+          podSpec:
+            serviceAccountName:
+              buildkite-anyuid
+            securityContext:
+              fsGroup: 0
+            nodeSelector:
+              vllm.ci/gpu-pool: nm-a100
+
+            containers:
+              - name: tests
+                #image: buildkite/agent:latest
+                image: buildkite/agent:3-ubuntu
+                command:
+                  - chmod +x .buildkite/scripts/test-check.sh
+                  - .buildkite/scripts/test-check.sh
+
+                securityContext:
+                  runAsUser: 0
+                  runAsGroup: 0
+
+                resources:
+                  limits:
+                    nvidia.com/gpu: 2
+
+                volumeMounts:
+                  - name: ci-cache
+                    mountPath: /model-cache
+                    readOnly: false
+                  - name: devshm
+                    mountPath: /dev/shm
+
+            volumes:
+              - name: ci-cache
+                hostPath:
+                  path: /var/mnt/ci-cache
+                  type: DirectoryOrCreate
+              - name: devshm
+                emptyDir:
+                  medium: Memory
