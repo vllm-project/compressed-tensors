@@ -31,8 +31,8 @@ PACK_ZP_STRATS = [
 class PackedQuantizationCompressor(BaseCompressor):
     """
     Compresses a quantized weight by packing multiple sub-8-bit INT values into an
-    int32. Supports num_bits in [1, 8]; each int32 holds ``pack_factor = 32 // num_bits``
-    values, with any unused high bits left as zero.
+    int32. Supports num_bits in [1, 8]; each int32 holds
+    ``pack_factor = 32 // num_bits`` values, with any unused high bits left as zero.
     """
 
     @classmethod

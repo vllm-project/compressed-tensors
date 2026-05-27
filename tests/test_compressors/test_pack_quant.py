@@ -405,8 +405,8 @@ def test_pack_to_int32(num_bits, values, expected_values):
 )
 def test_unpack_from_int32(num_bits, values, expected_tensor):
     unpacked_tensor = unpack_from_int32(values, num_bits, expected_tensor.shape)
-    assert torch.equal(unpacked_tensor, unpacked_tensor)
-    assert unpacked_tensor.dtype == unpacked_tensor.dtype
+    assert torch.equal(unpacked_tensor, expected_tensor)
+    assert unpacked_tensor.dtype == expected_tensor.dtype
 
 
 @pytest.mark.parametrize(
