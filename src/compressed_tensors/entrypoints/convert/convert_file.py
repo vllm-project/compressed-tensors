@@ -87,8 +87,7 @@ def validate_file(
     :param converter: converter we wish to apply to the checkpoint,
         e.g. conversion of some layers from some format to compressed-tensors
     """
-    tensors = load_tensors_from_inverse_weight_map(inverse_weight_map)
-
+    tensors = load_tensors_from_inverse_weight_map(inverse_weight_map, "meta")
     converter.validate(tensors)
 
 

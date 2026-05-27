@@ -456,6 +456,25 @@ safetensors files that must be loaded/processed together. Used in conjunction
 with `load_tensors_from_inverse_weight_map`
 """
 
+str_to_torch_dtype = {
+    "BOOL": torch.bool,
+    "U8": torch.uint8,
+    "I8": torch.int8,
+    "I16": torch.int16,
+    "U16": torch.uint16,
+    "F16": torch.float16,
+    "BF16": torch.bfloat16,
+    "I32": torch.int32,
+    "U32": torch.uint32,
+    "F32": torch.float32,
+    "F64": torch.float64,
+    "I64": torch.int64,
+    "U64": torch.uint64,
+    "F8_E4M3": torch.float8_e4m3fn,
+    "F8_E5M2": torch.float8_e5m2,
+    "F8_E8M0": torch.float8_e8m0fnu,
+}
+
 
 def load_tensors_from_inverse_weight_map(
     inverse_weight_map: InverseWeightMap,
@@ -478,18 +497,26 @@ def load_tensors_from_inverse_weight_map(
     """
     tensors: dict[str, torch.Tensor] = {}
     for source_file, tensor_names in inverse_weight_map.items():
-        with safe_open(source_file, framework="pt", device=str(device)) as f:
+        with safe_open(source_file, framework="pt") as f:
             keys = f.keys()
             # if tensor_names is empty, pull all tensors
             if tensor_names is None or len(tensor_names) == 0:
                 tensor_names = keys
+
             for tensor_name in tensor_names:
                 if tensor_name not in keys:
                     raise ValueError(
                         f"Expected to find tensor {tensor_name} in "
                         f"{source_file}, but tensor was not found."
                     )
-                tensors[tensor_name] = f.get_tensor(tensor_name)
+                
+                if device == "meta":
+                    _slice = f.get_slice(tensor_name)
+                    k_dtype = _slice.get_dtype()
+                    dtype = str_to_torch_dtype[k_dtype]
+                    tensors[tensor_name] = torch.empty(size=_slice.get_shape(), dtype=dtype, device="meta")
+                else:
+                    tensors[tensor_name] = f.get_tensor(tensor_name).to(device)
     return tensors
 
 

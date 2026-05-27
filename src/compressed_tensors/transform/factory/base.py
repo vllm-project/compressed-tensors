@@ -79,7 +79,7 @@ class TransformFactory(RegistryMixin, ABC):
         """
         raise NotImplementedError()
 
-    def apply_to_model(self, model: Module, use_tqdm=True):
+    def apply_to_model(self, model: Module, use_tqdm: bool = True):
         """
         Create transforms and apply them to the model
 
@@ -88,7 +88,7 @@ class TransformFactory(RegistryMixin, ABC):
         modules_args = [
             (module, arg)
             for arg in self.scheme.apply
-            for _, module in match_named_modules(model, arg.targets, arg.ignore)
+            for _, module in match_named_modules(model, arg.targets, arg.ignore, warn_on_fail=True)
         ]
 
         desc = f"Applying {self.name} transforms"
