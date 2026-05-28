@@ -36,6 +36,13 @@ steps:
                   - name: devshm
                     mountPath: /dev/shm
 
+                env:
+                  - name: HF_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: hf-token-secret
+                        key: token
+
             volumes:
               - name: ci-cache
                 hostPath:
