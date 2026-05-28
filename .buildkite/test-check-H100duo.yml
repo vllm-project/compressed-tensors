@@ -11,6 +11,8 @@ steps:
               fsGroup: 0
               runAsUser: 0
               runAsGroup: 0
+              seLinuxOptions:
+                type: spc_t
             nodeSelector:
               vllm.ci/gpu-pool: nm-h100
 
