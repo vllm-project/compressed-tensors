@@ -33,8 +33,6 @@ steps:
                 securityContext:
                   runAsUser: 0
                   runAsGroup: 0
-                  privileged: true
-                  allowPrivilegeEscalation: true
 
                 volumeMounts:
                   - name: ci-cache
