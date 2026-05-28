@@ -6,35 +6,24 @@ steps:
     plugins:
       - kubernetes:
           podSpec:
-            serviceAccountName:
-              buildkite-anyuid
+            serviceAccountName: buildkite-anyuid
             securityContext:
               fsGroup: 0
-              #runAsUser: 0
-              #runAsGroup: 0
+              runAsUser: 0
+              runAsGroup: 0
             nodeSelector:
               vllm.ci/gpu-pool: nm-h100
 
             containers:
               - name: tests
-                #image: buildkite/agent:latest
                 image: buildkite/agent:3-ubuntu
                 command:
-                  - /bin/bash
-                  - -exec
-
-                args:
-                  - |
-                      chmod +x .buildkite/scripts/test-check.sh
-                      .buildkite/scripts/test-check.sh
+                  - chmod +x .buildkite/scripts/test-check.sh
+                  - .buildkite/scripts/test-check.sh
 
                 resources:
                   limits:
                     nvidia.com/gpu: 2
-
-                securityContext:
-                  runAsUser: 0
-                  runAsGroup: 0
 
                 volumeMounts:
                   - name: ci-cache
