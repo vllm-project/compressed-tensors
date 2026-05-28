@@ -12,7 +12,7 @@ steps:
               runAsUser: 0
               runAsGroup: 0
             nodeSelector:
-              vllm.ci/gpu-pool: nm-h100
+              vllm.ci/gpu-pool: upstream-ci-h100
 
             containers:
               - name: tests
