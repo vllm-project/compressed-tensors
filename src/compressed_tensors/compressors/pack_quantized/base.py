@@ -2,7 +2,10 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
-from compressed_tensors.compressors.base import BaseCompressor
+from compressed_tensors.compressors.base import (
+    COMPRESSIBLE_MODULE_TYPES,
+    BaseCompressor,
+)
 from compressed_tensors.compressors.pack_quantized.helpers import (
     pack_to_int32,
     unpack_from_int32,
@@ -142,7 +145,7 @@ class PackedQuantizationCompressor(BaseCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Pack quantized matches weight-only INT quantization with 1..8 bits."""
         return (
-            module_type == torch.nn.Linear
+            module_type in COMPRESSIBLE_MODULE_TYPES
             and scheme.weights is not None
             and scheme.input_activations is None
             and 1 <= scheme.weights.num_bits <= 8
