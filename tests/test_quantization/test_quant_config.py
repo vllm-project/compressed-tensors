@@ -94,3 +94,33 @@ def test_to_dict():
     # Deserialize from dict
     reloaded = QuantizationConfig.model_validate(config_dict)
     assert config == reloaded
+
+
+def test_imatrix_mse_weight_observer_requires_calibration_data():
+    from compressed_tensors.quantization import QuantizationArgs
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_1": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(observer="imatrix_mse"),
+            )
+        }
+    )
+
+    assert config.requires_calibration_data()
+
+
+def test_default_weight_observer_does_not_require_calibration_data():
+    from compressed_tensors.quantization import QuantizationArgs
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_1": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(),
+            )
+        }
+    )
+
+    assert not config.requires_calibration_data()
