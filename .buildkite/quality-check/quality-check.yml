@@ -1,0 +1,14 @@
+steps:
+  - label: "Compressed-tensors quality checks"
+    agents:
+      queue: RedHat-ModelOpt-Util
+
+    plugins:
+      - kubernetes:
+          podSpec:
+            containers:
+              - name: quality
+                image: buildkite/agent:3-ubuntu
+                command:
+                  - chmod +x .buildkite/quality-check/scripts/quality-check.sh
+                  - .buildkite/quality-check/scripts/quality-check.sh

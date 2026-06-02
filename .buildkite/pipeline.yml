@@ -4,3 +4,7 @@ steps:
     command: |
       PIPELINE_FILE="$${TEST_RUNNER:-H100duo}"
       buildkite-agent pipeline upload .buildkite/test-check/test-check-$${PIPELINE_FILE}.yml
+  # Quality check pipeline
+  - label: ":pipeline: Upload quality-check pipeline"
+    command: |
+      buildkite-agent pipeline upload .buildkite/quality-check/quality-check.yml
