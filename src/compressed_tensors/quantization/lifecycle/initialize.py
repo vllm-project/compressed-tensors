@@ -161,8 +161,11 @@ def initialize_qparams(
     if dynamic is True:
         return
 
-    # 0. Create global scale for tensor-group quantization
-    if strategy == QuantizationStrategy.TENSOR_GROUP:
+    # 0. Create global scale for tensor-group/tensor-block quantization
+    if strategy in (
+        QuantizationStrategy.TENSOR_GROUP,
+        QuantizationStrategy.TENSOR_BLOCK,
+    ):
         init_global_scale = Parameter(
             torch.empty(1, dtype=torch.float32, device=device),
             requires_grad=False,
@@ -203,7 +206,7 @@ def initialize_qparams(
             )
             module.register_parameter(f"{base_name}_g_idx", init_g_idx)
 
-    elif strategy == QuantizationStrategy.BLOCK:
+    elif strategy in (QuantizationStrategy.BLOCK, QuantizationStrategy.TENSOR_BLOCK):
         assert quantization_args.block_structure is not None
         if len(observed_shape) < 2:
             raise ValueError("Block quant requires at least 2 observed dimensions")
