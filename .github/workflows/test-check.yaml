@@ -10,6 +10,10 @@ on:
       - main
       - 'release/*'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python-tests:
     runs-on: ibm-wdc-k8s-vllm-h100-duo
@@ -48,3 +52,55 @@ jobs:
           shell: bash
         - name: "🔬 Running tests"
           run: make test
+  python-tests-xpu:
+    runs-on: intel-xpu-b60
+    env:
+        IMAGE_NAME: vllm-xpu-test:py312
+    steps:
+        - uses: actions/checkout@v4
+          with:
+            fetch-depth: 0
+            fetch-tags: true
+        - name: Build docker image if not exist or Dockerfile changed
+          run: |-
+            set -eo pipefail
+            DOCKERFILE=.github/docker/Dockerfile.xpu
+            CURRENT_HASH=$(md5sum "$DOCKERFILE" | awk '{print $1}')
+            NEED_BUILD=false
+            if [[ ! $(docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -Fx "$IMAGE_NAME") ]]; then
+              NEED_BUILD=true
+            else
+              EXISTING_HASH=$(docker inspect --format='{{index .Config.Labels "dockerfile.hash"}}' "$IMAGE_NAME" 2>/dev/null || echo "")
+              if [[ "$CURRENT_HASH" != "$EXISTING_HASH" ]]; then
+                echo "Dockerfile changed (old=$EXISTING_HASH, new=$CURRENT_HASH), rebuilding image..."
+                NEED_BUILD=true
+              fi
+            fi
+            if [[ "$NEED_BUILD" == "true" ]]; then
+              docker build --build-arg USER_ID=$(id -u) --build-arg GROUP_ID=$(id -g) --label "dockerfile.hash=$CURRENT_HASH" -t "$IMAGE_NAME" -f "$DOCKERFILE" .
+            fi
+            docker images | grep "vllm-xpu-test"
+          shell: bash
+        - name: Set up docker container
+          run: |-
+            set -eo pipefail
+            CONTAINER_NAME=vllm-test-container-${NODE_LABEL}
+            if [[ $(docker ps -a --format '{{.Names}}' | grep -Fx "$CONTAINER_NAME") ]]; then
+              docker rm -f $CONTAINER_NAME
+            fi
+            docker run -tid --disable-content-trust --privileged --name $CONTAINER_NAME -v ${{ github.workspace }}:/workspace -w /workspace $IMAGE_NAME
+            echo "Show the container list after docker run ... "
+            docker ps -a | grep "$CONTAINER_NAME"
+            echo "CONTAINER_NAME=$CONTAINER_NAME" > $GITHUB_ENV
+          shell: bash
+        - name: "⚙️ Install dependencies"
+          run: |-
+            docker exec  $CONTAINER_NAME \
+              bash -c "uv pip install --upgrade pip setuptools && \
+              uv pip install .[dev] --extra-index-url https://download.pytorch.org/whl/xpu"
+        - name: "🔬 Running tests"
+          run: |-
+            docker exec -e NUMA_NODE=${NUMA_NODE} -e NUMA_CPUSET=${NUMA_CPUSET} -e ZE_AFFINITY_MASK=${ZE_AFFINITY_MASK} $CONTAINER_NAME \
+              bash -c "numactl --physcpubind=${NUMA_CPUSET:-84-111} --membind=${NUMA_NODE:-3} make test-xpu"
+        - name: Clean up docker container
+          run: docker rm -f $CONTAINER_NAME
