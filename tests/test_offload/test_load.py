@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -138,3 +139,49 @@ def test_patch_forwards_positional_args(mock_from_accelerate):
     assert received["path"] == "org/model"
     assert received["kwargs"]["device_map"] == "cpu"
     assert received["kwargs"]["torch_dtype"] == "auto"
+
+
+@pytest.mark.unit
+@skip_if_mps_device
+@patch("compressed_tensors.offload.load.from_accelerate")
+def test_auto_offload_defaults_offload_folder(mock_from_accelerate):
+    """Regression for vllm-project/llm-compressor#2788: `auto_offload` without an
+    explicit `offload_folder` must inject one shared default folder, so disk
+    offloading does not fail inside `DiskCache` and all modules use one dir."""
+    received = {}
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+            received["kwargs"] = kwargs
+            return MagicMock()
+
+    with patch_from_pretrained(FakeModel, extra_cpu_mem=0):
+        FakeModel.from_pretrained("org/model", device_map="auto_offload")
+
+    assert received["kwargs"]["device_map"] == "auto"
+    folder = received["kwargs"].get("offload_folder")
+    assert folder is not None
+    assert os.path.isdir(folder)
+
+
+@pytest.mark.unit
+@skip_if_mps_device
+@patch("compressed_tensors.offload.load.from_accelerate")
+def test_auto_offload_respects_explicit_offload_folder(mock_from_accelerate, tmp_path):
+    """An explicit `offload_folder` must pass through unchanged."""
+    received = {}
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+            received["kwargs"] = kwargs
+            return MagicMock()
+
+    explicit = str(tmp_path / "my_offload")
+    with patch_from_pretrained(FakeModel, extra_cpu_mem=0):
+        FakeModel.from_pretrained(
+            "org/model", device_map="auto_offload", offload_folder=explicit
+        )
+
+    assert received["kwargs"]["offload_folder"] == explicit

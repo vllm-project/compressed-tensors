@@ -5,6 +5,7 @@ import contextlib
 import inspect
 import os
 import shutil
+import tempfile
 from functools import wraps
 from types import FrameType
 
@@ -38,7 +39,9 @@ def load_offloaded_model(
 
     In addition to the standard `device_map` options, this context also supports
     `device_map="auto_offload"`, which means that the model will load as many parameters
-    can fit onto the cpu, and any extra parameters will be loaded on disk.
+    can fit onto the cpu, and any extra parameters will be loaded on disk. If you do not
+    pass `offload_folder`, the wrapper creates one temporary directory and shares it
+    across all disk-offloaded modules.
 
     :param model_class: explicit class to patch. If None, patches all classes in the
         caller's frame that are subclasses of _BaseAutoModelClass or PreTrainedModel.
@@ -80,6 +83,17 @@ def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
             kwargs["device_map"] = "auto"
             if "max_memory" not in kwargs:
                 kwargs["max_memory"] = _get_cpu_memory(extra_cpu_mem)
+            # Disk-offloaded modules need one shared directory for checkpoint
+            # symlinks and written-back tensors. Without a default, `DiskCache`
+            # rejects the load and the zero-config `auto_offload` path breaks.
+            # See https://github.com/vllm-project/llm-compressor/issues/2788
+            if kwargs.get("offload_folder") is None:
+                kwargs["offload_folder"] = tempfile.mkdtemp(prefix="ct_auto_offload_")
+                logger.info(
+                    "`auto_offload` created a temporary offload folder at "
+                    f"`{kwargs['offload_folder']}`. Pass `offload_folder` to "
+                    "`from_pretrained` to control its placement."
+                )
 
         # Unless the user specifies, use our memory estimates, which take into
         # account distributed setups and extra cpu reserved memory
