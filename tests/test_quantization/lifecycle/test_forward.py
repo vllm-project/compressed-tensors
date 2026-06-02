@@ -228,6 +228,23 @@ def test_set_forward_quantized_compressed_status(
     assert torch.allclose(output, expected_output)
 
 
+def test_tensor_block_fake_quantize_uses_block_path():
+    x = torch.randn(32, 32)
+    scale = torch.ones(2, 2)
+    zero_point = torch.zeros(2, 2)
+    block_args = QuantizationArgs(strategy="block", block_structure=[16, 16])
+    tensor_block_args = QuantizationArgs(
+        strategy="tensor_block",
+        block_structure=[16, 16],
+    )
+
+    block_output = fake_quantize(x, scale, zero_point, block_args)
+    tensor_block_output = fake_quantize(x, scale, zero_point, tensor_block_args)
+
+    assert tensor_block_output.shape == x.shape
+    assert torch.equal(tensor_block_output, block_output)
+
+
 def test_set_forward_quantized_with_output_activations(
     mock_per_tensor_calibration, create_quantization_scheme
 ):

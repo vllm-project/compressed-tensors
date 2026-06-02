@@ -195,7 +195,10 @@ def _process_quantization(
 ) -> torch.Tensor:
     q_min, q_max = calculate_range(args, x.device)
 
-    if args.strategy == QuantizationStrategy.BLOCK:
+    if args.strategy in (
+        QuantizationStrategy.BLOCK,
+        QuantizationStrategy.TENSOR_BLOCK,
+    ):
         return _process_block(
             x,
             scale,
