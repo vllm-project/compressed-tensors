@@ -9,7 +9,7 @@ git fetch --tags --unshallow 2>/dev/null || git fetch --tags
 
 # install system dependencies and uv
 apt-get update && apt-get install -y curl g++ gcc make
-curl -LsSf https://astral.sh/uv/install.sh | env UV_VERSION=0.8.15 sh
+curl -LsSf https://astral.sh/uv/install.sh | env UV_VERSION=0.11.18 sh
 
 # set up GPU and path
 export LD_LIBRARY_PATH=/usr/local/nvidia/lib64
