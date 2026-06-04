@@ -1,0 +1,6 @@
+steps:
+  # Test check pipeline
+  - label: ":pipeline: Upload test-check pipeline"
+    command: |
+      PIPELINE_FILE="$${TEST_RUNNER:-H100duo}"
+      buildkite-agent pipeline upload .buildkite/test-check/test-check-$${PIPELINE_FILE}.yml
