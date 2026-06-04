@@ -41,7 +41,7 @@ def load_offloaded_model(
     `device_map="auto_offload"`, which means that the model will load as many parameters
     can fit onto the cpu, and any extra parameters will be loaded on disk. If you do not
     pass `offload_folder`, the wrapper creates one temporary directory and shares it
-    across all disk-offloaded modules.
+    across all disk-offloaded modules
 
     :param model_class: explicit class to patch. If None, patches all classes in the
         caller's frame that are subclasses of _BaseAutoModelClass or PreTrainedModel.
