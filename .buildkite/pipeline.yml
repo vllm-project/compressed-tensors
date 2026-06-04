@@ -1,6 +1,19 @@
 steps:
+  # Runner selection (only shown on manual triggers from UI)
+  - input: "Select GPU runner for tests"
+    if: build.source == "ui"
+    fields:
+      - select: "GPU Runner"
+        key: "test-runner"
+        default: "H100duo"
+        options:
+          - label: "H100 Duo (WDC)"
+            value: "H100duo"
+          - label: "L4 Solo (GCP)"
+            value: "L4solo"
+
   # Test check pipeline
   - label: ":pipeline: Upload test-check pipeline"
     command: |
-      PIPELINE_FILE="$${TEST_RUNNER:-H100duo}"
-      buildkite-agent pipeline upload .buildkite/test-check/test-check-$${PIPELINE_FILE}.yml
+      RUNNER=$$(buildkite-agent meta-data get "test-runner" --default "H100duo")
+      buildkite-agent pipeline upload .buildkite/test-check/test-check-$${RUNNER}.yml
