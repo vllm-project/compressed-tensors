@@ -54,10 +54,10 @@ def _create_dummy_tensors(device: torch.device = torch.device("cpu")):
             "model.language_model.layers.0.input_layernorm.weight": torch.randn(
                 64, 1, dtype=torch.bfloat16
             ),
-            "model.language_model.layers.0.pre_feedforward_layernorm.weight": torch.randn(
+            "model.language_model.layers.0.pre_feedforward_layernorm.weight": torch.randn(  # noqa: E501
                 64, 1, dtype=torch.bfloat16
             ),
-            "model.language_model.layers.0.post_feedforward_layernorm.weight": torch.randn(
+            "model.language_model.layers.0.post_feedforward_layernorm.weight": torch.randn(  # noqa: E501
                 64, 1, dtype=torch.bfloat16
             ),
             "model.layers.0.mlp.down_proj.weight_scale": torch.rand(
