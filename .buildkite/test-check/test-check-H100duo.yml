@@ -1,5 +1,5 @@
 steps:
-  - label: "Compressed-tensors tests on H100 duo"
+  - label: "Compressed-Tensors Smoke, Sanity and Regression - H100 duo"
     agents:
       queue: RedHat-H100-WDC
 
