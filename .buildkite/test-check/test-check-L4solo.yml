@@ -1,5 +1,5 @@
 steps:
-  - label: "Compressed-tensors tests on L4 solo"
+  - label: "Compressed-Tensors Smoke, Sanity and Regression - L4 solo"
     agents:
       queue: RedHat-L4-GCP
 
