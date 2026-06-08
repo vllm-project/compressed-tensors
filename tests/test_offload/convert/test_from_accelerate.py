@@ -143,7 +143,7 @@ def test_dist_disk_safetensors_update(tmp_path):
     offload_folder = tmp_path / "offload_folder"
     os.makedirs(offload_folder, exist_ok=True)
 
-    with load_offloaded_model(AutoModelForCausalLM):
+    with load_offloaded_model():
         model = AutoModelForCausalLM.from_pretrained(
             "Qwen/Qwen3-0.6B",
             dtype="auto",
