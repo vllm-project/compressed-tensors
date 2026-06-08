@@ -12,18 +12,16 @@ from compressed_tensors.distributed import is_distributed, is_source_process
 from compressed_tensors.offload.convert import from_accelerate
 from compressed_tensors.utils import patch_attr
 from loguru import logger
-from transformers import PreTrainedModel
-from transformers.models.auto.modeling_auto import _BaseAutoModelClass
+from transformers import AutoModelForCausalLM, PreTrainedModel
 
 
 __all__ = ["load_offloaded_model"]
 
 
-cls_to_patch = _BaseAutoModelClass | PreTrainedModel
-
-
 @contextlib.contextmanager
-def load_offloaded_model(model_class: type[cls_to_patch], extra_cpu_mem: int = 5e9):
+def load_offloaded_model(
+    model_class: type[PreTrainedModel] = AutoModelForCausalLM, extra_cpu_mem: int = 5e9
+):
     """
     Context manager used to load a transformers model with offloading implemented by
     compressed-tensors.
