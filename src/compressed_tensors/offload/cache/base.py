@@ -82,7 +82,7 @@ class OffloadCache(MutableMapping, ABC):
                 return DistributedDiskCache
             case ("meta", True):
                 raise ValueError(
-                    f"Attmpted to create OffloadCache of type {device_type} and "
+                    f"Attempted to create OffloadCache of type {device_type} and "
                     f"distributed={distributed}. This may be a downstream result of "
                     "attempting to offload a model to disk without having at least one "
                     "module on CPU. Please increase the amount of CPU memory available "
