@@ -33,9 +33,10 @@ PACK_ZP_STRATS = [
 @BaseCompressor.register(name=CompressionFormat.pack_quantized.value)
 class PackedQuantizationCompressor(BaseCompressor):
     """
-    Compresses a quantized weight by packing multiple sub-8-bit INT values into an
-    int32. Supports num_bits in [1, 8]; each int32 holds
-    ``pack_factor = 32 // num_bits`` values, with any unused high bits left as zero.
+    Compresses a quantized weight by packing multiple sub-8-bit INT values into
+    int32s using dense cross-element packing. Supports num_bits in [1, 8]; 32
+    consecutive elements are packed into exactly num_bits int32 words with no
+    wasted bits.
     """
 
     @classmethod
@@ -143,11 +144,10 @@ class PackedQuantizationCompressor(BaseCompressor):
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
-        """Pack quantized matches weight-only INT quantization with 1..8 bits."""
+        """Pack quantized matches INT weight quantization with 1..8 bits."""
         return (
             module_type in COMPRESSIBLE_MODULE_TYPES
             and scheme.weights is not None
-            and scheme.input_activations is None
             and 1 <= scheme.weights.num_bits <= 8
             and scheme.weights.type == QuantizationType.INT.value
         )

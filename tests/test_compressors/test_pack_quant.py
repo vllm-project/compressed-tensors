@@ -24,6 +24,35 @@ from compressed_tensors.quantization.quant_args import ActivationOrdering
 from torch.nn.modules import Linear, Sequential
 
 
+def _old_pack_to_int32(value: torch.Tensor, num_bits: int) -> torch.Tensor:
+    """Element-aligned packing: pack_factor elements per int32, no cross-word splits."""
+    pack_factor = 32 // num_bits
+    offset = 1 << (num_bits - 1)
+    value = (value + offset).to(torch.uint8).to(torch.int32)
+    rows, cols = value.shape
+    padded = math.ceil(cols / pack_factor) * pack_factor
+    if padded > cols:
+        value = torch.nn.functional.pad(value, (0, padded - cols))
+    output = torch.zeros(rows, padded // pack_factor, dtype=torch.int32)
+    for i in range(pack_factor):
+        output |= value[:, i::pack_factor] << (i * num_bits)
+    return output
+
+
+def _old_unpack_from_int32(
+    value: torch.Tensor, num_bits: int, shape: torch.Size
+) -> torch.Tensor:
+    """Inverse of _old_pack_to_int32."""
+    pack_factor = 32 // num_bits
+    mask = (1 << num_bits) - 1
+    rows, num_ints = value.shape
+    output = torch.zeros(rows, num_ints * pack_factor, dtype=torch.int32)
+    for i in range(pack_factor):
+        output[:, i::pack_factor] = (value >> (i * num_bits)) & mask
+    offset = 1 << (num_bits - 1)
+    return (output[:, : shape[1]] - offset).to(torch.int8)
+
+
 def get_dummy_quant_config(
     num_bits=4, strategy=None, group_size=None, actorder=None, symmetric=True
 ) -> QuantizationConfig:
@@ -79,7 +108,7 @@ def test_quant_format(shape):
 
     assert compressed["weight_packed"].dtype == torch.int32
     expected_rows = shape[0]
-    expected_columns = math.ceil(shape[1] / 8)
+    expected_columns = math.ceil(shape[1] / 32) * 4  # 4-bit: 32 elems → 4 int32 words
     assert compressed["weight_packed"].shape == (expected_rows, expected_columns)
     assert torch.equal(compressed["weight_shape"], torch.tensor(shape))
     assert compressed["weight_scale"].dtype == torch.float32
@@ -135,8 +164,8 @@ def test_pack_unpack_roundtrip(num_bits, shape):
     packed = pack_to_int32(value, num_bits)
     assert packed.dtype == torch.int32
 
-    pack_factor = 32 // num_bits
-    assert packed.shape == (shape[0], math.ceil(shape[1] / pack_factor))
+    # Dense packing: 32 elements → num_bits int32 words
+    assert packed.shape == (shape[0], math.ceil(shape[1] / 32) * num_bits)
 
     unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
     assert torch.equal(unpacked, value)
@@ -265,36 +294,43 @@ def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration
 @pytest.mark.parametrize(
     "num_bits,values,expected_values",
     [
+        # Dense packing: 32 elements → num_bits int32 words per group.
+        # Inputs with K < 32 are padded to 32, producing trailing zero words.
+        # 4-bit: 32 elems → 4 words; 8-bit: 32 elems → 8 words.
         (
             4,
             torch.tensor([[1]]),
-            torch.tensor([[9]], dtype=torch.int32),
+            torch.tensor([[9, 0, 0, 0]], dtype=torch.int32),
         ),
         (
             8,
             torch.tensor([[1]]),
-            torch.tensor([[129]], dtype=torch.int32),
+            torch.tensor([[129, 0, 0, 0, 0, 0, 0, 0]], dtype=torch.int32),
         ),
-        (4, torch.tensor([[1, 2, 3, 4]]), torch.tensor([[52137]], dtype=torch.int32)),
+        (
+            4,
+            torch.tensor([[1, 2, 3, 4]]),
+            torch.tensor([[52137, 0, 0, 0]], dtype=torch.int32),
+        ),
         (
             4,
             torch.tensor([[-8, -7, -6, -5, -4, -3, -2, -1]]),
-            torch.tensor([[1985229328]], dtype=torch.int32),
+            torch.tensor([[1985229328, 0, 0, 0]], dtype=torch.int32),
         ),
         (
             8,
             torch.tensor([[1, 2, 3, 4]]),
-            torch.tensor([[-2071756159]], dtype=torch.int32),
+            torch.tensor([[-2071756159, 0, 0, 0, 0, 0, 0, 0]], dtype=torch.int32),
         ),
         (
             8,
             torch.tensor([[-128, -127, -126, -125]]),
-            torch.tensor([[50462976]], dtype=torch.int32),
+            torch.tensor([[50462976, 0, 0, 0, 0, 0, 0, 0]], dtype=torch.int32),
         ),
         (
             4,
             torch.tensor([[-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4]]),
-            torch.tensor([[1985229328, 52137]], dtype=torch.int32),
+            torch.tensor([[1985229328, 52137, 0, 0]], dtype=torch.int32),
         ),
         (
             4,
@@ -304,12 +340,18 @@ def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration
                     [1, 2, 3, 4, -8, -8, -8, -8, -8, -7, -6, -5, -4, -3, -2, -1],
                 ]
             ),
-            torch.tensor([[1985229328, 52137], [52137, 1985229328]], dtype=torch.int32),
+            torch.tensor(
+                [[1985229328, 52137, 0, 0], [52137, 1985229328, 0, 0]],
+                dtype=torch.int32,
+            ),
         ),
         (
             8,
             torch.tensor([[1, 2, 3, 4], [-128, -127, -126, -125]]),
-            torch.tensor([[-2071756159], [50462976]], dtype=torch.int32),
+            torch.tensor(
+                [[-2071756159, 0, 0, 0, 0, 0, 0, 0], [50462976, 0, 0, 0, 0, 0, 0, 0]],
+                dtype=torch.int32,
+            ),
         ),
         (
             8,
@@ -320,7 +362,11 @@ def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration
                 ]
             ),
             torch.tensor(
-                [[-2071756159, 50462976], [50462976, -2071756159]], dtype=torch.int32
+                [
+                    [-2071756159, 50462976, 0, 0, 0, 0, 0, 0],
+                    [50462976, -2071756159, 0, 0, 0, 0, 0, 0],
+                ],
+                dtype=torch.int32,
             ),
         ),
     ],
@@ -335,46 +381,51 @@ def test_pack_to_int32(num_bits, values, expected_values):
 @pytest.mark.parametrize(
     "num_bits,values,expected_tensor",
     [
+        # Inputs use the dense packed format (num_bits words per 32-element group).
+        # Trailing zero words represent zero-padded elements beyond the original K.
         (
             4,
-            torch.tensor([[9]], dtype=torch.int32),
+            torch.tensor([[9, 0, 0, 0]], dtype=torch.int32),
             torch.tensor([[1]], dtype=torch.int8),
         ),
         (
             8,
-            torch.tensor([[129]], dtype=torch.int32),
+            torch.tensor([[129, 0, 0, 0, 0, 0, 0, 0]], dtype=torch.int32),
             torch.tensor([[1]], dtype=torch.int8),
         ),
         (
             4,
-            torch.tensor([[52137]], dtype=torch.int32),
+            torch.tensor([[52137, 0, 0, 0]], dtype=torch.int32),
             torch.tensor([[1, 2, 3, 4]], dtype=torch.int8),
         ),
         (
             4,
-            torch.tensor([[1985229328]], dtype=torch.int32),
+            torch.tensor([[1985229328, 0, 0, 0]], dtype=torch.int32),
             torch.tensor([[-8, -7, -6, -5, -4, -3, -2, -1]], dtype=torch.int8),
         ),
         (
             8,
-            torch.tensor([[-2071756159]], dtype=torch.int32),
+            torch.tensor([[-2071756159, 0, 0, 0, 0, 0, 0, 0]], dtype=torch.int32),
             torch.tensor([[1, 2, 3, 4]], dtype=torch.int8),
         ),
         (
             8,
-            torch.tensor([[50462976]], dtype=torch.int32),
+            torch.tensor([[50462976, 0, 0, 0, 0, 0, 0, 0]], dtype=torch.int32),
             torch.tensor([[-128, -127, -126, -125]], dtype=torch.int8),
         ),
         (
             4,
-            torch.tensor([[1985229328, 52137]], dtype=torch.int32),
+            torch.tensor([[1985229328, 52137, 0, 0]], dtype=torch.int32),
             torch.tensor(
                 [[-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4]], dtype=torch.int8
             ),
         ),
         (
             4,
-            torch.tensor([[1985229328, 52137], [52137, 1985229328]], dtype=torch.int32),
+            torch.tensor(
+                [[1985229328, 52137, 0, 0], [52137, 1985229328, 0, 0]],
+                dtype=torch.int32,
+            ),
             torch.tensor(
                 [
                     [-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4, -8, -8, -8, -8],
@@ -385,13 +436,20 @@ def test_pack_to_int32(num_bits, values, expected_values):
         ),
         (
             8,
-            torch.tensor([[-2071756159], [50462976]], dtype=torch.int32),
+            torch.tensor(
+                [[-2071756159, 0, 0, 0, 0, 0, 0, 0], [50462976, 0, 0, 0, 0, 0, 0, 0]],
+                dtype=torch.int32,
+            ),
             torch.tensor([[1, 2, 3, 4], [-128, -127, -126, -125]], dtype=torch.int8),
         ),
         (
             8,
             torch.tensor(
-                [[-2071756159, 50462976], [50462976, -2071756159]], dtype=torch.int32
+                [
+                    [-2071756159, 50462976, 0, 0, 0, 0, 0, 0],
+                    [50462976, -2071756159, 0, 0, 0, 0, 0, 0],
+                ],
+                dtype=torch.int32,
             ),
             torch.tensor(
                 [
@@ -495,3 +553,66 @@ def test_pack_unpack_3d_matches_stacked_2d():
         [pack_to_int32(value[i], num_bits) for i in range(value.shape[0])]
     )
     assert torch.equal(packed_3d, packed_2d)
+
+
+def test_pack_unpack_dense_7bit():
+    """7-bit dense packing: 32 elements must pack into exactly 7 int32 words."""
+    num_bits = 7
+    shape = (32, 32)
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
+
+    packed = pack_to_int32(value, num_bits)
+    assert packed.dtype == torch.int32
+    # Dense packing: 32 elements × 7 bits = 224 bits = 7 × 32-bit words
+    assert packed.shape == (32, 7), f"expected (32, 7), got {packed.shape}"
+
+    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
+    assert torch.equal(unpacked, value)
+
+    # Verify element 4 specifically — first element that spans a word boundary.
+    # Element 4 starts at bit 28 (word 0), with 4 bits in word 0 and 3 bits in word 1.
+    single_row = torch.zeros(1, 32, dtype=torch.int8)
+    single_row[0, 4] = 63  # 0b0111111 — all 7 bits set
+    packed_single = pack_to_int32(single_row, num_bits)
+    # Lower 4 bits (0b1111) at bits 28-31 of word 0
+    assert (packed_single[0, 0] >> 28) & 0xF == 0xF
+    # Upper 3 bits (0b111) at bits 0-2 of word 1
+    assert packed_single[0, 1] & 0x7 == 0x7
+
+
+@pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("shape", [(256, 1024), (512, 100), (128, 33)])
+def test_new_pack_unpack_roundtrip_all_bits(num_bits, shape):
+    """New pack→unpack round-trips correctly for all bit widths and shapes."""
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
+    packed = pack_to_int32(value, num_bits)
+    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
+    assert torch.equal(unpacked, value)
+
+
+@pytest.mark.parametrize("num_bits", [1, 2, 4, 8])
+@pytest.mark.parametrize("shape", [(256, 1024), (512, 100), (128, 33)])
+def test_old_pack_new_unpack_roundtrip(num_bits, shape):
+    """Tensors packed with the old element-aligned code unpack correctly with new code.
+
+    Only power-of-2 bit widths are tested: old checkpoints with non-power-of-2
+    bit widths don't exist (CT was only used for 4-bit/8-bit before this change),
+    and the bit layouts differ for non-power-of-2 widths so compatibility is
+    not possible without a full repack.
+    """
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
+    old_packed = _old_pack_to_int32(value, num_bits)
+    unpacked = unpack_from_int32(old_packed, num_bits, torch.Size(shape))
+    assert torch.equal(unpacked, value)
+
+
+@pytest.mark.parametrize("num_bits", [1, 2, 4, 8])
+@pytest.mark.parametrize("k", [32, 64, 128, 1024])
+def test_power_of_2_bits_same_packed_output(num_bits, k):
+    """For power-of-2 bit widths with K divisible by 32, new and old produce identical packed tensors."""
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, (64, k), dtype=torch.int8)
+    assert torch.equal(pack_to_int32(value, num_bits), _old_pack_to_int32(value, num_bits))
