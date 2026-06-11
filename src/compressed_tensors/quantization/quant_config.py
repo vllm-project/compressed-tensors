@@ -287,7 +287,7 @@ def get_vllm_module_type(module: torch.nn.Module) -> str:
     """
 
     module_type = type(module).__name__
-    if "Gate" in module_type or "Router" in module_type:
+    if "Router" in module_type or "Gate" in module_type or "Gating" in module_type:
         module_type = "Linear"
 
     return module_type
