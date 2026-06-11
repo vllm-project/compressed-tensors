@@ -27,7 +27,11 @@ from compressed_tensors.entrypoints.convert import GemmaConverter, convert_check
 
 # Audio-tower linears whose dtype the Transformers Gemma4 code reads directly;
 # dequantize these to dense bf16 (see module docstring).
-DEQUANTIZE_TARGETS = [r"ffw_layer_1", r"lconv1d\.linear_start", r"self_attn\.post"]
+DEQUANTIZE_TARGETS = [
+    r"(?:^|\.)ffw_layer_1$",
+    r"(?:^|\.)lconv1d\.linear_start$",
+    r"(?:^|\.)self_attn\.post$",
+]
 
 MODEL_IDS = [
     "google/gemma-4-E2B-it-qat-mobile-transformers",

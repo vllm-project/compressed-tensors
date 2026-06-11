@@ -145,8 +145,9 @@ class GemmaConverter(Converter):
     The source (e.g. ``google/gemma-4-E*B-it-qat-mobile-transformers``) stores
     symmetric INT weights with per-module bit-widths from a
     ``quantization_config.module_quant_configs`` regex map: linear ``<module>.weight``
-    as uint8 (2/4-bit packed) or int8 (8-bit) with per-channel ``<module>.weight_scale``,
-    and embeddings as ``<module>.embedding_quantized`` + ``<module>.embedding_scale``.
+    as uint8 (2/4-bit packed) or int8 (8-bit) with per-channel
+    ``<module>.weight_scale``, and embeddings as ``<module>.embedding_quantized`` +
+    ``<module>.embedding_scale``.
 
     Each quantized weight is unpacked to signed int8 and re-packed into CT's int32
     ``weight_packed`` (value-exact), and ``quantization_config`` is rewritten for vLLM's
@@ -352,7 +353,7 @@ class GemmaConverter(Converter):
         return deps
 
     def validate(self, tensors: dict[str, torch.Tensor]):
-        for name, tensor in tensors.items():
+        for name in tensors:
             plan = self._by_weight_key.get(name)
             if plan is None:
                 continue
