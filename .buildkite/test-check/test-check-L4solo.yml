@@ -1,0 +1,36 @@
+steps:
+  - label: "Compressed-Tensors Smoke, Sanity and Regression - L4 solo"
+    agents:
+      queue: RedHat-L4-GCP
+
+    plugins:
+      - kubernetes:
+          podSpec:
+            nodeSelector:
+              pool: L4solo
+
+            containers:
+              - name: tests
+                image: buildkite/agent:3-ubuntu
+                command:
+                  - chmod +x .buildkite/test-check/scripts/test-check.sh
+                  - .buildkite/test-check/scripts/test-check.sh
+
+                resources:
+                  limits:
+                    nvidia.com/gpu: 1
+
+                volumeMounts:
+                  - name: model-cache
+                    mountPath: /model-cache
+                    readOnly: false
+                  - name: dshm
+                    mountPath: /dev/shm
+
+            volumes:
+              - name: model-cache
+                persistentVolumeClaim:
+                  claimName: buildkite-podpvc-ssd-blue
+              - name: dshm
+                emptyDir:
+                  medium: Memory

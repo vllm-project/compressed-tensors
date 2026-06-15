@@ -29,9 +29,12 @@ acclerate = pytest.importorskip("accelerate")
 @pytest.mark.unit
 @requires_gpu
 def test_remove_accelerate_from_module_device(accel_device):
-    # there"s no way to force accelerate to "offload" to cuda. Instead, it just
-    # stays on cuda with no hooks
-    linear = torch.nn.Linear(5, 5, device="cuda:0")
+    # there"s no way to force accelerate to "offload" to Torch accelerator. Instead,
+    # it just stays on Torch accelerator with no hooks
+
+    current_accelerator = torch.accelerator.current_accelerator()
+
+    linear = torch.nn.Linear(5, 5, device=current_accelerator)
     assert remove_accelerate_from_module(linear) == (accel_device, accel_device, None)
     assert not hasattr(linear, "_hf_hook")
 
@@ -45,11 +48,12 @@ def test_remove_accelerate_from_module_device(accel_device):
 def test_remove_accelerate_from_module_cpu(accel_device):
     from accelerate.big_modeling import dispatch_model
 
+    current_accelerator = torch.accelerator.current_accelerator()
     linear = torch.nn.Linear(5, 5)
     dispatch_model(
         linear,
         {"": "cpu"},
-        main_device="cuda",
+        main_device=current_accelerator,
         state_dict=linear.state_dict(),
         force_hooks=True,
     )
@@ -69,6 +73,7 @@ def test_remove_accelerate_from_module_disk(accel_device, tmp_path):
     # `dispatch_model` is also super buggy, and requires at least one cpu device
     from accelerate.big_modeling import dispatch_model
 
+    current_accelerator = torch.accelerator.current_accelerator()
     offload_dir = tmp_path / "offload_dir"
     os.mkdir(offload_dir)
 
@@ -77,7 +82,7 @@ def test_remove_accelerate_from_module_disk(accel_device, tmp_path):
     dispatch_model(
         model,
         {"0": "disk", "fake_module": "cpu"},
-        main_device="cuda",
+        main_device=current_accelerator,
         force_hooks=True,
         offload_dir=offload_dir,
     )
@@ -125,14 +130,14 @@ def test_from_accelerate(accel_device, tmp_path):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_from_accelerate_dist(accel_device, tmp_path):
     test_from_accelerate(accel_device, tmp_path)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 @torch.no_grad()
 def test_dist_disk_safetensors_update(tmp_path):
     offload_folder = tmp_path / "offload_folder"
@@ -151,7 +156,7 @@ def test_dist_disk_safetensors_update(tmp_path):
         if dist.get_rank() == 0:
             checkpoint_files = {}
             for file_path in Path(offload_folder).glob("*.safetensors"):
-                if not file_path.name.startswith(DiskCache._new_file_prefix):
+                if not file_path.name.startswith(DiskCache._ct_file_prefix):
                     with open(file_path, "rb") as f:
                         checkpoint_files[file_path.name] = hashlib.sha256(
                             f.read()

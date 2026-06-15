@@ -32,7 +32,7 @@ class TwoLayerModel(nn.Module):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_to_meta():
     """Test that to_meta correctly moves module tensors to meta device."""
     module = SimpleLinear(5, 5)
@@ -53,7 +53,7 @@ def test_to_meta():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_basic():
     """Test basic replace_module_parallel functionality."""
     modules = [SimpleLinear(10, 10) for _ in range(4)]
@@ -83,7 +83,7 @@ def test_replace_module_parallel_basic():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_with_offload():
     """Test replace_module_parallel with offloaded modules."""
     modules = [SimpleLinear(10, 10) for _ in range(4)]
@@ -116,7 +116,7 @@ def test_replace_module_parallel_with_offload():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_state_broadcast():
     """Test that state is correctly broadcast across ranks."""
     modules = [SimpleLinear(5, 5) for _ in range(2)]
@@ -139,7 +139,7 @@ def test_replace_module_parallel_state_broadcast():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_non_processing_ranks_use_meta():
     """Test that non-processing ranks temporarily use meta device."""
     modules = [SimpleLinear(10, 10) for _ in range(2)]
@@ -163,7 +163,7 @@ def test_replace_module_parallel_non_processing_ranks_use_meta():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_preserves_module_structure():
     """Test that module structure is preserved after parallel processing."""
     module = SimpleLinear(5, 5)
@@ -186,7 +186,7 @@ def test_replace_module_parallel_preserves_module_structure():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_empty_list():
     """Test replace_module_parallel with empty module list."""
     modules = []
@@ -205,7 +205,7 @@ def test_replace_module_parallel_empty_list():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_single_module():
     """Test replace_module_parallel with a single module."""
     module = SimpleLinear(10, 10)
@@ -221,7 +221,7 @@ def test_replace_module_parallel_single_module():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_many_modules():
     """Test replace_module_parallel with many modules."""
     modules = [SimpleLinear(10, 10) for _ in range(20)]
@@ -244,7 +244,7 @@ def test_replace_module_parallel_many_modules():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_custom_weight_function():
     """Test replace_module_parallel with custom weight function."""
     modules = [SimpleLinear(10, 10) for _ in range(4)]
@@ -266,7 +266,7 @@ def test_replace_module_parallel_custom_weight_function():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_exception_handling():
     """Test that exceptions in apply_fn are properly propagated."""
     module = SimpleLinear(10, 10)
@@ -281,7 +281,7 @@ def test_replace_module_parallel_exception_handling():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_parameter_replacement():
     """Test replace_module_parallel when parameters are replaced."""
     module = SimpleLinear(10, 10)
@@ -301,7 +301,7 @@ def test_replace_module_parallel_parameter_replacement():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_adds_new_parameters():
     """Test replace_module_parallel when new parameters are added."""
     module = SimpleLinear(10, 10)
@@ -319,7 +319,7 @@ def test_replace_module_parallel_adds_new_parameters():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_removes_parameters():
     """Test replace_module_parallel when parameters are removed."""
     module = SimpleLinear(10, 10)
@@ -337,7 +337,7 @@ def test_replace_module_parallel_removes_parameters():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_with_buffers():
     """Test replace_module_parallel with modules that have buffers."""
 
@@ -362,7 +362,7 @@ def test_replace_module_parallel_with_buffers():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_to_meta_preserves_parameter_properties():
     """Test that to_meta preserves parameter properties like requires_grad."""
     module = SimpleLinear(5, 5)
@@ -377,7 +377,7 @@ def test_to_meta_preserves_parameter_properties():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_replace_module_parallel_rank_consistency():
     """Test that all ranks see the same final state."""
     modules = [SimpleLinear(5, 5) for _ in range(4)]

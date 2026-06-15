@@ -5,13 +5,14 @@ from collections import defaultdict
 from enum import Enum
 from typing import Annotated, Any
 
+import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
 from compressed_tensors.quantization.quant_scheme import (
     QuantizationScheme,
     preset_name_to_scheme,
 )
-from compressed_tensors.quantization.utils import is_module_quantized, module_type
+from compressed_tensors.quantization.utils import is_module_quantized
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
@@ -32,9 +33,14 @@ class QuantizationStatus(str, Enum):
     - Initialized: Quantization parameters are initialized to empty values
     - Calibration: Quantization parameters are being calibrated, observers are attached
     - Frozen: Quantization parameters are fully calibrated, observers are removed
-    - Compressed: All parameters are quantized to target dtype
-    - Decompressed: Parameters are converted back into frozen state,
-        additionally, weight qdq is skipped during forward passes for better performance
+    - Compressed: All parameters are quantized to target dtype. If the weight param is
+        no longer applicable (i.e. if "weight" has been converted to "weight_packed"),
+        the weight param is pruned from the module.
+    - Decompressed: Parameters are converted back into frozen state. Quantization params
+        remain on the module so that the module can be compressed, but params are
+        pruned if they are no longer applicable or needed for compression
+        (i.e. if "weight_packed" has been converted to "weight").
+        Additionally, weight qdq is skipped during forward passes for better performance
     """
 
     INITIALIZED = "initialized"
@@ -184,7 +190,7 @@ class QuantizationConfig(BaseModel):
         kv_cache_scheme: QuantizationArgs | None = None
 
         for name, submodule in model.named_modules():
-            layer_type: str = module_type(submodule)
+            layer_type: str = get_vllm_module_type(submodule)
 
             # add config group if quantized non-attention or attention quant
             has_config_group = is_module_quantized(submodule) and (
@@ -270,3 +276,18 @@ class QuantizationConfig(BaseModel):
 
     # TODO set `extra="forbid"` when upstream transformers is compatible
     model_config = ConfigDict(extra="ignore")
+
+
+def get_vllm_module_type(module: torch.nn.Module) -> str:
+    """
+    Returns a string representing the module type used when loading in vLLM.
+    This is typically going to be the same as the `torch.nn.Module` type,
+    however specific cases like MoE gate layers need to be treated like "Linear"
+    layers for the purposes of config matching.
+    """
+
+    module_type = type(module).__name__
+    if "Router" in module_type or "Gate" in module_type or "Gating" in module_type:
+        module_type = "Linear"
+
+    return module_type

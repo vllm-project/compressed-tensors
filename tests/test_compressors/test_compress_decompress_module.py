@@ -4,17 +4,25 @@
 import pytest
 import torch
 import torch.nn as nn
+from compressed_tensors.compressors import ModelCompressor
 from compressed_tensors.compressors.base import compress_module, decompress_module
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     ActivationOrdering,
+    QuantizationArgs,
+    QuantizationConfig,
+    QuantizationScheme,
+    apply_quantization_config,
     initialize_module_for_quantization,
     preset_name_to_scheme,
 )
+from compressed_tensors.quantization.utils import is_module_quantized
 from compressed_tensors.utils import get_direct_state_dict
 
 
-def _run_compress_decompress(scheme_name, expected_format, actorder, device):
+def _run_compress_decompress(
+    scheme_name, expected_format, actorder, device, module=None, targets=("Linear",)
+):
     if device == "cuda" and not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
@@ -22,8 +30,10 @@ def _run_compress_decompress(scheme_name, expected_format, actorder, device):
     # Use 256x256 to avoid degenerate scale shapes (e.g. (N,1) for FP8_BLOCK)
     # that trip up block-vs-channel strategy inference in dequantize.
     # Start in bfloat16 so NVFP4 decompression (which returns bfloat16) preserves dtype.
-    module = nn.Linear(256, 256, bias=False).to(dtype=torch.bfloat16, device=device)
-    scheme = preset_name_to_scheme(scheme_name, ["Linear"])
+    if module is None:
+        module = nn.Linear(256, 256, bias=False)
+    module = module.to(dtype=torch.bfloat16, device=device)
+    scheme = preset_name_to_scheme(scheme_name, list(targets))
     if actorder is not None:
         scheme.weights.actorder = actorder
     initialize_module_for_quantization(module, scheme)
@@ -89,3 +99,73 @@ def test_compress_decompress_module(scheme_name, expected_format, actorder, devi
 @pytest.mark.parametrize("device", ["cpu", "meta", "cuda"])
 def test_compress_decompress_module_mxfp4(scheme_name, expected_format, device):
     _run_compress_decompress(scheme_name, expected_format, None, device)
+
+
+@pytest.mark.parametrize(
+    "scheme_name,expected_format,actorder",
+    [
+        ("UNQUANTIZED", CompressionFormat.dense, None),
+        ("W8A16", CompressionFormat.pack_quantized, None),
+        ("W4A16", CompressionFormat.pack_quantized, None),
+        ("W4A16", CompressionFormat.pack_quantized, ActivationOrdering.GROUP),
+        ("W4A16_ASYM", CompressionFormat.pack_quantized, None),
+        ("NVFP4A16", CompressionFormat.nvfp4_pack_quantized, None),
+        ("MXFP4A16", CompressionFormat.mxfp4_pack_quantized, None),
+    ],
+)
+@pytest.mark.parametrize("device", ["cpu", "meta", "cuda"])
+def test_compress_decompress_embedding(scheme_name, expected_format, actorder, device):
+    # Embeddings are compressed the same way as Linear weights: weight-only
+    # (weight-and-activation schemes don't apply since embeddings consume indices).
+    module = nn.Embedding(256, 256)
+    _run_compress_decompress(
+        scheme_name,
+        expected_format,
+        actorder,
+        device,
+        module=module,
+        targets=("Embedding",),
+    )
+
+
+def test_linear_only_config_leaves_embedding_untouched():
+    # Embedding compression is opt-in: a module is only compressed if it has a
+    # quantization_scheme attached, which apply_quantization_config does only for
+    # matched targets. A Linear-only config must leave embeddings fully untouched.
+    class TinyModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = nn.Embedding(64, 128)
+            self.proj = nn.Linear(128, 64, bias=False)
+
+    model = TinyModel()
+    embed_weight_before = model.embed.weight.detach().clone()
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(num_bits=4, symmetric=True),
+            )
+        }
+    )
+    apply_quantization_config(model, config)
+
+    # Only the Linear is targeted; the Embedding gets no scheme.
+    assert is_module_quantized(model.proj)
+    assert not is_module_quantized(model.embed)
+    assert not hasattr(model.embed, "quantization_scheme")
+
+    ModelCompressor.from_pretrained_model(model).compress_model(model)
+
+    # Linear is compressed (weight replaced by packed params)...
+    proj_keys = set(get_direct_state_dict(model.proj).keys())
+    assert "weight_packed" in proj_keys
+    assert "weight" not in proj_keys
+
+    # ...but the Embedding is byte-for-byte unchanged: no packed params, no
+    # status attribute, original weight preserved.
+    embed_keys = set(get_direct_state_dict(model.embed).keys())
+    assert embed_keys == {"weight"}
+    assert not hasattr(model.embed, "quantization_status")
+    assert torch.equal(model.embed.weight, embed_weight_before)
