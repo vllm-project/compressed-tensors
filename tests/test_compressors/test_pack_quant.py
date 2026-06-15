@@ -612,7 +612,8 @@ def test_old_pack_new_unpack_roundtrip(num_bits, shape):
 @pytest.mark.parametrize("num_bits", [1, 2, 4, 8])
 @pytest.mark.parametrize("k", [32, 64, 128, 1024])
 def test_power_of_2_bits_same_packed_output(num_bits, k):
-    """For power-of-2 bit widths with K divisible by 32, new and old produce identical packed tensors."""
+    """For power-of-2 bit widths with K divisible by 32, new and old produce identical
+    packed tensors."""
     lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
     value = torch.randint(lo, hi + 1, (64, k), dtype=torch.int8)
     assert torch.equal(
