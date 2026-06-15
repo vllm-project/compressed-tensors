@@ -615,4 +615,6 @@ def test_power_of_2_bits_same_packed_output(num_bits, k):
     """For power-of-2 bit widths with K divisible by 32, new and old produce identical packed tensors."""
     lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
     value = torch.randint(lo, hi + 1, (64, k), dtype=torch.int8)
-    assert torch.equal(pack_to_int32(value, num_bits), _old_pack_to_int32(value, num_bits))
+    assert torch.equal(
+        pack_to_int32(value, num_bits), _old_pack_to_int32(value, num_bits)
+    )
