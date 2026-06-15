@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import gc
 import os
 
 import pytest
@@ -134,6 +135,8 @@ def test_distributed_offload(onload_device, tmp_path):
     with disable_onloading():
         assert_tensor_equal(cache["tensor"], tensor.to("meta"))
 
+    dist.barrier()
+
 
 @pytest.mark.unit
 @requires_gpu(2)
@@ -185,7 +188,9 @@ def test_distributed_files(tmp_path):
             assert_tensor_equal(read_tensor, tensor)
 
     # delete
-    del cache["weight"]
+    del cache, tensor
+    gc.collect()
+    dist.barrier()
     assert len(DiskCache.index) == 0
     if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
         files = os.listdir(offload_dir)

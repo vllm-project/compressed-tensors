@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from weakref import finalize
+
 import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import get_source_rank, is_source_process
@@ -46,6 +48,23 @@ class DistributedDiskCache(DiskCache):
                 "dtype": broadcast_obj[2],
             }
 
-        # wait for write to finish
+        # wait for write to finish, add finalizer
         dist.barrier()
+        finalize(offloaded, self._disk_finalizer, id(offloaded))
         return offloaded
+
+    @classmethod
+    def _disk_finalizer(cls, tensor_id: int):
+        """
+        Finalizer attached to tensors when they are assigned in `DiskCache.index`.
+        Deletes tensor from `DiskCache.index` and deletes associated safetensors file.
+        Only rank 0 deletes files.
+
+        :param tensor_id: id of offloaded meta tensor
+        """
+        if is_source_process():
+            super()._disk_finalizer(tensor_id)
+        else:
+            file_path = cls.index[tensor_id]["safetensors_file"]
+            assert cls._is_ct_file_path(file_path)
+            del cls.index[tensor_id]
