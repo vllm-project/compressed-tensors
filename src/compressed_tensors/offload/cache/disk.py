@@ -24,7 +24,7 @@ class DiskCache(OffloadCache):
     """
     Handles offloading and onloading tensors from/to disk.
 
-    Tensors usually start as a key in safetensors file, converted by (TODO NAME).
+    Tensors usually start as a key in safetensors file, converted by `from_accelerate`.
     New or updated tensors are written to new safetensors files in `offload_dir`.
 
     Tensors are stored in memory as meta tensors. The mapping between offloaded meta
@@ -169,7 +169,7 @@ class DiskCache(OffloadCache):
         :param tensor_id: id of offloaded meta tensor
         """
         file_path = cls.index[tensor_id]["safetensors_file"]
-        assert _is_ct_file_path(file_path)
+        assert cls._is_ct_file_path(file_path)
         os.remove(file_path)
         del cls.index[tensor_id]
 
