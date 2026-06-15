@@ -49,19 +49,3 @@ class DistributedDiskCache(DiskCache):
         # wait for write to finish
         dist.barrier()
         return offloaded
-
-    def __delitem__(self, key: str):
-        """
-        Remove the offload associated with `key`. If a new file was created to store
-        updated tensor data, that new tensor data file is deleted.
-
-        Any references to onloaded tensors held by this class are invalidated.
-
-        :param key: name of tensor to invalidate
-        """
-        if is_source_process():
-            super().__delitem__(key)
-        else:
-            offloaded = self.offloaded_values[key]
-            del self.index[id(offloaded)]
-            super(DiskCache, self).__delitem__(key)

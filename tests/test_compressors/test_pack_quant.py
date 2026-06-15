@@ -125,7 +125,24 @@ def test_repack_8bit(value):
     assert torch.equal(value, unpacked)
 
 
-@pytest.mark.parametrize("num_bits", [4, 8])
+@pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("shape", [(256, 1024), (512, 100), (128, 33)])
+def test_pack_unpack_roundtrip(num_bits, shape):
+    """Pack/unpack roundtrip preserves values for all supported bit widths."""
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
+
+    packed = pack_to_int32(value, num_bits)
+    assert packed.dtype == torch.int32
+
+    pack_factor = 32 // num_bits
+    assert packed.shape == (shape[0], math.ceil(shape[1] / pack_factor))
+
+    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
+    assert torch.equal(unpacked, value)
+
+
+@pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
 def test_compress_decompress_match(num_bits):
     """Round-trip compress → decompress in memory."""
     module_sd = {
@@ -388,8 +405,8 @@ def test_pack_to_int32(num_bits, values, expected_values):
 )
 def test_unpack_from_int32(num_bits, values, expected_tensor):
     unpacked_tensor = unpack_from_int32(values, num_bits, expected_tensor.shape)
-    assert torch.equal(unpacked_tensor, unpacked_tensor)
-    assert unpacked_tensor.dtype == unpacked_tensor.dtype
+    assert torch.equal(unpacked_tensor, expected_tensor)
+    assert unpacked_tensor.dtype == expected_tensor.dtype
 
 
 @pytest.mark.parametrize(

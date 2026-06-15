@@ -2,29 +2,26 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
-import inspect
 import os
 import shutil
 from functools import wraps
-from types import FrameType
 
 import psutil
 import torch
 from compressed_tensors.distributed import is_distributed, is_source_process
 from compressed_tensors.offload.convert import from_accelerate
+from compressed_tensors.utils import patch_attr
 from loguru import logger
-from transformers import PreTrainedModel
-from transformers.models.auto.modeling_auto import _BaseAutoModelClass
+from transformers import AutoModelForCausalLM, PreTrainedModel
 
 
 __all__ = ["load_offloaded_model"]
 
 
-cls_to_patch = _BaseAutoModelClass | PreTrainedModel
-
-
 @contextlib.contextmanager
-def load_offloaded_model(extra_cpu_mem: int = 5e9):
+def load_offloaded_model(
+    model_class: type[PreTrainedModel] = AutoModelForCausalLM, extra_cpu_mem: int = 5e9
+):
     """
     Context manager used to load a transformers model with offloading implemented by
     compressed-tensors.
@@ -38,25 +35,19 @@ def load_offloaded_model(extra_cpu_mem: int = 5e9):
     `device_map="auto_offload"`, which means that the model will load as many parameters
     can fit onto the cpu, and any extra parameters will be loaded on disk.
 
+    :param model_class: model class to patch
     :param extra_cpu_mem: extra cpu memory to reserve for any operations not related to
         model loading (bytes). Defaults to 5Gb.
     """
-    frame = _get_caller_frame()
+    original_from_pretrained = model_class.from_pretrained
+    patched_fn_called = False
 
-    with contextlib.ExitStack() as stack:
-        for obj in frame.f_globals.values():
-            if isinstance(obj, type) and issubclass(obj, cls_to_patch):
-                stack.enter_context(patch_from_pretrained(obj, extra_cpu_mem))
+    @classmethod
+    @wraps(original_from_pretrained)
+    def patched(cls, *args, **kwargs):
+        nonlocal patched_fn_called
+        patched_fn_called = True
 
-        yield
-
-
-@contextlib.contextmanager
-def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
-    original_func = obj.from_pretrained.__func__
-
-    @wraps(original_func)
-    def from_pretrained(cls, *args, **kwargs):
         kwargs.setdefault("device_map", None)
 
         # Rank 0 does loading, other ranks init on meta device
@@ -78,16 +69,22 @@ def patch_from_pretrained(obj: cls_to_patch, extra_cpu_mem: int):
         elif "max_memory" not in kwargs:
             kwargs["max_memory"] = _get_device_memory() | _get_cpu_memory(extra_cpu_mem)
 
-        model = original_func(cls, *args, **kwargs)
+        model = original_from_pretrained(*args, **kwargs)
         from_accelerate(model)  # rank 0 shares weights with ranks via offload/broadcast
 
         return model
 
-    try:
-        obj.from_pretrained = from_pretrained.__get__(obj)
-        yield
-    finally:
-        obj.from_pretrained = original_func.__get__(obj)
+    with patch_attr(model_class, "from_pretrained", patched):
+        try:
+            yield
+        finally:
+            if not patched_fn_called:
+                logger.warning(
+                    f"`{model_class.__name__}.from_pretrained` was never called. If "
+                    "you are loading with a model class other than "
+                    f"{model_class.__name__}, please pass as argument to "
+                    "`load_offloaded_model`"
+                )
 
 
 def _get_device_memory() -> dict[int, int]:
@@ -119,15 +116,3 @@ def _get_shared_memory() -> int:
             "Could not find shared memory at `/dev/shm`. Please add platform suppport"
         )
         return psutil.virtual_memory().available
-
-
-def _get_caller_frame() -> FrameType:
-    frame = inspect.currentframe()
-    frame = frame.f_back.f_back  # skip this function's caller's frame
-    while frame is not None and "contextlib" in frame.f_code.co_filename:
-        frame = frame.f_back  # skip contextlib frames
-
-    if frame is None:
-        raise RuntimeError("Could not find caller frame")
-
-    return frame

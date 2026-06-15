@@ -12,7 +12,7 @@ from compressed_tensors.offload import (
 )
 from compressed_tensors.offload.convert import to_accelerate
 from compressed_tensors.offload.convert.from_accelerate import _infer_module_device
-from compressed_tensors.offload.load import load_offloaded_model, patch_from_pretrained
+from compressed_tensors.offload.load import load_offloaded_model
 from tests.test_offload.conftest import (
     assert_device_equal,
     skip_if_mps_device,
@@ -58,7 +58,7 @@ TEST_PARAMETERS = [
 @requires_gpu
 @pytest.mark.parametrize("device_map,max_memory,first,second", TEST_PARAMETERS)
 def test_load(device_map, max_memory, first, second, tmp_path):
-    with load_offloaded_model():
+    with load_offloaded_model(AutoModelForCausalLM):
         model = AutoModelForCausalLM.from_pretrained(
             "Qwen/Qwen3-0.6B",
             device_map=device_map,
@@ -101,7 +101,7 @@ def test_load(device_map, max_memory, first, second, tmp_path):
 
 @pytest.mark.integration
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_load_dist(tmp_path):
     for parameters in TEST_PARAMETERS:
         test_load(*parameters, tmp_path=tmp_path)
@@ -131,7 +131,7 @@ def test_patch_forwards_positional_args(mock_from_accelerate):
             received["kwargs"] = kwargs
             return MagicMock()
 
-    with patch_from_pretrained(FakeModel, extra_cpu_mem=0):
+    with load_offloaded_model(FakeModel, extra_cpu_mem=0):
         FakeModel.from_pretrained("org/model", device_map="cpu", torch_dtype="auto")
 
     assert received["cls"] is FakeModel

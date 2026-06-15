@@ -130,14 +130,14 @@ def test_from_accelerate(accel_device, tmp_path):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_from_accelerate_dist(accel_device, tmp_path):
     test_from_accelerate(accel_device, tmp_path)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 @torch.no_grad()
 def test_dist_disk_safetensors_update(tmp_path):
     offload_folder = tmp_path / "offload_folder"
@@ -156,7 +156,7 @@ def test_dist_disk_safetensors_update(tmp_path):
         if dist.get_rank() == 0:
             checkpoint_files = {}
             for file_path in Path(offload_folder).glob("*.safetensors"):
-                if not file_path.name.startswith(DiskCache._new_file_prefix):
+                if not file_path.name.startswith(DiskCache._ct_file_prefix):
                     with open(file_path, "rb") as f:
                         checkpoint_files[file_path.name] = hashlib.sha256(
                             f.read()
