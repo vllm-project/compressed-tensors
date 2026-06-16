@@ -4,3 +4,8 @@ steps:
     command: |
       PIPELINE_FILE="$${TEST_RUNNER:-H100duo}"
       buildkite-agent pipeline upload .buildkite/test-check/test-check-$${PIPELINE_FILE}.yml
+  # Test check pipeline on XPU
+  - label: "Compressed-Tensors Smoke, Sanity and Regression on XPU"
+    command: |
+      PIPELINE_FILE=xpu
+      buildkite-agent pipeline upload .buildkite/test-check/test-check-$${PIPELINE_FILE}.yml
