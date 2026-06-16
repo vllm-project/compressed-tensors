@@ -92,7 +92,17 @@ def dispatch_with_map(
     for name, (onload_device, offload_device) in tqdm(
         list(device_map.items()), desc="Dispatching model", disable=(not show_progress)
     ):
-        module = model.get_submodule(name)
+        try:
+            module = model.get_submodule(name)
+        except AttributeError:
+            # The device map is authored from the source rank's view of the
+            # module tree. On other ranks, sharded structures -- e.g. an
+            # nn.ModuleList of routed MoE experts where slots the rank does
+            # not own are None placeholders -- legitimately lack some of
+            # these submodules. Skip map entries with no local module rather
+            # than crashing the dispatch.
+            logger.debug(f"Skipping '{name}' from device map: not present locally")
+            continue
 
         if offload_device == "disk":
             offload_module(
