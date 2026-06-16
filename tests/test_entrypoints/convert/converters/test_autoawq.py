@@ -157,4 +157,6 @@ def test_autoawq_converter_validate_requires_dependencies():
     converter = AutoAWQConverter()
 
     with pytest.raises(ValueError, match="without corresponding"):
-        converter.validate({"model.layers.0.mlp.down_proj.qweight": torch.zeros(1, 1)})
+        converter.validate(
+            {"model.layers.0.mlp.down_proj.qweight": torch.zeros(1, 1, device="meta")}
+        )

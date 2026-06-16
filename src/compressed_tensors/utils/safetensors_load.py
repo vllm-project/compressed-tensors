@@ -39,6 +39,24 @@ __all__ = [
 WeightMappingType = dict[str, str]
 NestedWeightMappingType = dict[str, WeightMappingType]
 
+str_to_torch_dtype = {
+    "BOOL": torch.bool,
+    "U8": torch.uint8,
+    "I8": torch.int8,
+    "I16": torch.int16,
+    "U16": torch.uint16,
+    "F16": torch.float16,
+    "BF16": torch.bfloat16,
+    "I32": torch.int32,
+    "U32": torch.uint32,
+    "F32": torch.float32,
+    "F64": torch.float64,
+    "I64": torch.int64,
+    "U64": torch.uint64,
+    "F8_E4M3": torch.float8_e4m3fn,
+    "F8_E5M2": torch.float8_e5m2,
+}
+
 
 def is_weights_file(file_name: str) -> bool:
     """
@@ -478,8 +496,8 @@ def load_tensors_from_inverse_weight_map(
     """
     tensors: dict[str, torch.Tensor] = {}
     for source_file, tensor_names in inverse_weight_map.items():
-        with safe_open(source_file, framework="pt", device=str(device)) as f:
-            keys = f.keys()
+        with safe_open(source_file, framework="pt") as file:
+            keys = file.keys()
             # if tensor_names is empty, pull all tensors
             if tensor_names is None or len(tensor_names) == 0:
                 tensor_names = keys
@@ -489,7 +507,17 @@ def load_tensors_from_inverse_weight_map(
                         f"Expected to find tensor {tensor_name} in "
                         f"{source_file}, but tensor was not found."
                     )
-                tensors[tensor_name] = f.get_tensor(tensor_name)
+                if str(device) == "meta":
+                    _slice = file.get_slice(tensor_name)
+                    dtype = str_to_torch_dtype[_slice.get_dtype()]
+                    size = _slice.get_shape()
+                    tensors[tensor_name] = torch.empty(
+                        size=size, dtype=dtype, device="meta"
+                    )
+                else:
+                    tensors[tensor_name] = file.get_tensor(tensor_name).to(
+                        device=device
+                    )
     return tensors
 
 
