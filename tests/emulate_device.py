@@ -38,10 +38,17 @@ class DeviceRemapMode(TorchFunctionMode):
                 return torch.device(self.real_type, arg.index)
         elif isinstance(arg, str) and self._device_pat.match(arg):
             return arg.replace(self.fake_type, self.real_type, 1)
+        elif hasattr(arg, "type") and hasattr(arg, "_fake_type"):
+            # Handle _FakeDeviceType from conftest - convert to string and remap
+            return str(arg).replace(self.fake_type, self.real_type, 1)
         return arg
 
     def __torch_function__(self, func, types, args=(), kwargs=None):
         kwargs = kwargs or {}
+        # Don't remap torch.device() calls - let them create fake-type devices
+        # Only remap actual tensor operations
+        if func is torch.device:
+            return func(*args, **kwargs)
         new_args = tuple(self._remap(a) for a in args)
         new_kwargs = {k: self._remap(v) for k, v in kwargs.items()}
         return func(*new_args, **new_kwargs)

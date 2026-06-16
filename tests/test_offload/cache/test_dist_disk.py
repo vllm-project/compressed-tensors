@@ -27,7 +27,7 @@ from tests.testing_utils import requires_gpu
 
 @pytest.fixture()
 def onload_device():
-    return torch.device("cuda")
+    return torch.accelerator.current_accelerator()
 
 
 @pytest.fixture()
@@ -37,70 +37,70 @@ def offload_device():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_delete(offload_device, onload_device, offload_cache):
     _test_delete(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_disable_offloading(offload_device, onload_device, offload_cache):
     _test_disable_offloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_disable_onloading(offload_device, onload_device, offload_cache):
     _test_disable_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_garbage_collect(offload_device, onload_device, offload_cache):
     _test_garbage_collect(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_offload(offload_device, onload_device, offload_cache):
     _test_offload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_onload(offload_device, onload_device, offload_cache):
     _test_onload(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_onloading(offload_device, onload_device, offload_cache):
     _test_onloading(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_shared_attributes(offload_device, onload_device, offload_cache):
     _test_shared_attributes(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_tensor_subclass(offload_device, onload_device, offload_cache):
     _test_tensor_subclass(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_offload(onload_device, tmp_path):
     # Broadcast directory path from rank 0 to all ranks
     if dist.get_rank() == 0:
@@ -137,7 +137,7 @@ def test_distributed_offload(onload_device, tmp_path):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_files(tmp_path):
     # Broadcast directory path from rank 0 to all ranks
     if dist.get_rank() == 0:
@@ -194,7 +194,7 @@ def test_distributed_files(tmp_path):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_async_update(tmp_path):
     """
     Test that different ranks can update different tensors asynchronously,
@@ -207,7 +207,7 @@ def test_distributed_async_update(tmp_path):
     # Ensure directory creation completes before other ranks proceed
     dist.barrier()
 
-    onload_device = torch.device("cuda")
+    onload_device = torch.accelerator.current_accelerator()
     cache = DistributedDiskCache(onload_device, offload_dir=str(offload_dir))
 
     # Initialize two tensors in the cache

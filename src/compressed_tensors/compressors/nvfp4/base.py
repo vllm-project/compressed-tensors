@@ -2,7 +2,10 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
-from compressed_tensors.compressors.base import BaseCompressor
+from compressed_tensors.compressors.base import (
+    COMPRESSIBLE_MODULE_TYPES,
+    BaseCompressor,
+)
 from compressed_tensors.compressors.nvfp4.helpers import (
     pack_fp4_to_uint8,
     unpack_fp4_from_uint8,
@@ -11,10 +14,11 @@ from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationScheme,
+    QuantizationStrategy,
     QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
-from compressed_tensors.utils import TensorStateDict
+from compressed_tensors.utils import TensorStateDict, getattr_chain
 
 
 __all__ = ["NVFP4PackedCompressor"]
@@ -28,6 +32,22 @@ class NVFP4PackedCompressor(BaseCompressor):
     Weights of each quantized layer are packed into uint8. Only supports
     symmetric weight compression.
     """
+
+    @classmethod
+    def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        param_names = (
+            "weight_packed",
+            "weight_scale",
+            "weight_global_scale",
+        )
+        if not getattr_chain(scheme, "weights.symmetric", True):
+            param_names += ("weight_zero_point",)
+        if (
+            getattr_chain(scheme, "input_activations.strategy", None)
+            == QuantizationStrategy.TENSOR_GROUP
+        ):
+            param_names += ("input_global_scale",)
+        return param_names
 
     @classmethod
     def _compress_scale(
@@ -115,7 +135,7 @@ class NVFP4PackedCompressor(BaseCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """NVFP4 matches FP4 with group_size != 32 (or None)."""
         return (
-            module_type == torch.nn.Linear
+            module_type in COMPRESSIBLE_MODULE_TYPES
             and scheme.weights is not None
             and scheme.weights.num_bits == 4
             and scheme.weights.type == QuantizationType.FLOAT.value

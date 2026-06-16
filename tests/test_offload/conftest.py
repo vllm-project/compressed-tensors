@@ -10,8 +10,15 @@ from typing import Any, Callable, Literal, Optional
 
 import pytest
 import torch
-import torch.distributed as dist
 from compressed_tensors.offload.utils import send_tensors
+
+
+accelerator_device = torch.accelerator.current_accelerator()
+
+skip_if_mps_device = pytest.mark.skipif(
+    accelerator_device.type == "mps",
+    reason="[Known issue] https://github.com/pytorch/pytorch/issues/167447",
+)
 
 
 def assert_device_equal(
@@ -26,7 +33,26 @@ def assert_device_equal(
     cur_index = torch.accelerator.current_device_index()
     a_index = cur_index if device_a.index is None else device_a.index
     b_index = cur_index if device_b.index is None else device_b.index
-    assert device_a.type == device_b.type and a_index == b_index
+
+    # Handle device emulation: when --emulate-xpu is active, tensors created
+    # on "xpu" actually live on the real accelerator, so their .device reports
+    # the real type. Normalize device types: if one matches the fake type and
+    # the other matches the real type, treat them as equal.
+    accel = torch.accelerator.current_accelerator()
+    fake_type = accel.type
+    real_type = getattr(accel, "_real_type", None)
+
+    a_type = device_a.type
+    b_type = device_b.type
+
+    # If emulation is active, normalize: fake_type and real_type are equivalent
+    if real_type is not None:
+        if a_type == real_type:
+            a_type = fake_type
+        if b_type == real_type:
+            b_type = fake_type
+
+    assert a_type == b_type and a_index == b_index
 
 
 def assert_tensor_equal(
@@ -51,56 +77,81 @@ def assert_tensor_equal(
         assert torch.equal(tensor_a, tensor_b)
 
 
-def torchrun(world_size: int = 1) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def torchrun(
+    world_size: int = 1, init_dist: bool = False
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """
-    Test a function within parallel `torchrun` subprocesses, each running with `pytest`
-    ```
-    # (main) -> (torchrun) -
-    #              \\-- (rank 0)
-    #              \\-- (rank 1)
-    ```
+    Pytest decorator to run a test within parallel torchrun subprocesses.
+
+    This decorator automatically spawns torchrun when the test is run with regular
+    pytest.
+    When running under torchrun (detected via TORCHELASTIC_RUN_ID env var), it
+    optionally initializes the distributed process group before running the test.
+
+    Usage:
+        @pytest.mark.unit
+        @requires_gpu(2)
+        @torchrun(world_size=2, init_dist=True)
+        def test_distributed_feature():
+            # Distributed already initialized
+            ...
+
+        @torchrun(world_size=2)  # init_dist=False by default
+        def test_custom_init():
+            # Handle your own distributed setup
+            from compressed_tensors.distributed import init_dist
+            init_dist()
+            ...
 
     :param world_size: number of ranks to spawn
+    :param init_dist: whether to automatically call init_dist() (default: False)
     """
 
     def decorator(func: FunctionType):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # We're running in a torchrun subprocess:
-            # init distributed and run test func
+            # We're running in a torchrun subprocess: optionally init then run the test
             if "TORCHELASTIC_RUN_ID" in os.environ:
-                rank = int(os.environ["RANK"])
-                local_rank = int(os.environ["LOCAL_RANK"])
+                if init_dist:
+                    from compressed_tensors.distributed import init_dist as _init_dist
 
-                torch.accelerator.set_device_index(local_rank)
-                accel_type = torch.accelerator.current_accelerator().type
-                dist.init_process_group(
-                    backend=dist.get_default_backend_for_device(
-                        torch.device(accel_type, local_rank)
-                    ),
-                    init_method="env://",
-                    rank=rank,
-                    world_size=world_size,
-                    device_id=local_rank,
-                )
-                dist.barrier()
-
+                    _init_dist()
                 return func(*args, **kwargs)
 
             # First time calling in the main process:
             # trigger torchrun with this function as the pytest target
             else:
-                file_path = sys.modules.get(func.__module__).__file__
+                module = sys.modules.get(func.__module__)
+                if module is None:
+                    raise RuntimeError(
+                        f"Can't find module {func.__module__} for func {func.__name__}"
+                    )
+                file_path = module.__file__
+                if file_path is None:
+                    raise RuntimeError(
+                        f"Module {func.__module__} has no __file__ attribute"
+                    )
                 func_name = func.__name__
 
-                cmd = (
-                    f"{sys.executable} "
-                    f"-m torch.distributed.run --nproc_per_node {world_size} "
-                    "--log-dir /tmp/torchrun-logs --tee 3 --role torchrun "
-                    f"-m pytest {file_path}::{func_name} -sx"
-                )
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "torch.distributed.run",
+                    "--nproc_per_node",
+                    str(world_size),
+                    "--log-dir",
+                    "/tmp/torchrun-logs",
+                    "--tee",
+                    "3",
+                    "--role",
+                    "torchrun",
+                    "-m",
+                    "pytest",
+                    f"{file_path}::{func_name}",
+                    "-sx",
+                ]
 
-                proc = subprocess.run(cmd.split(" "))
+                proc = subprocess.run(cmd)
                 assert proc.returncode == 0
 
         return wrapper

@@ -276,7 +276,8 @@ W8A16 = dict(
     weights=QuantizationArgs(
         num_bits=8,
         type=QuantizationType.INT,
-        strategy=QuantizationStrategy.CHANNEL,
+        strategy=QuantizationStrategy.GROUP,
+        group_size=128,
         symmetric=True,
         dynamic=False,
     ),
@@ -360,6 +361,7 @@ FP8 = dict(
         strategy=QuantizationStrategy.TENSOR,
         symmetric=True,
         dynamic=False,
+        observer="static_minmax",
     ),
 )
 

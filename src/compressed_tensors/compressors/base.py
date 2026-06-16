@@ -16,7 +16,19 @@ from compressed_tensors.utils import (
 )
 
 
-__all__ = ["BaseCompressor", "compress_module", "decompress_module"]
+__all__ = [
+    "BaseCompressor",
+    "compress_module",
+    "decompress_module",
+    "COMPRESSIBLE_MODULE_TYPES",
+]
+
+
+# Module types whose weights can be compressed/decompressed. Compression operates
+# on a per-module weight state dict and is agnostic to the module's forward, so any
+# module that stores a quantizable 2D `weight` works. Quantization of these types is
+# initialized in `initialize_module_for_quantization`.
+COMPRESSIBLE_MODULE_TYPES = (torch.nn.Linear, torch.nn.Embedding)
 
 
 class BaseCompressor(RegistryMixin, ABC):
@@ -31,6 +43,19 @@ class BaseCompressor(RegistryMixin, ABC):
     Legacy sparse compressors (sparse_bitmask, sparse_24_bitmask, marlin_24) still
     use the instance-based interface and are instantiated via load_from_registry.
     """
+
+    @classmethod
+    def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        """
+        Returns a tuple of compression parameter names introduced by the compressor
+        during compression. This is necessary so that the state dict can be recreated
+        to pass into decompress in model-free pathways. See example usage in
+        compressed_tensors.entrypoints.convert.converters.CompressedTensorsDequantizer
+        """
+        raise NotImplementedError(
+            f"{cls.__name__} does not implement the classmethod "
+            "compression_param_names interface"
+        )
 
     @classmethod
     def compress(

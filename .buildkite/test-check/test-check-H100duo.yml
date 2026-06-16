@@ -1,0 +1,49 @@
+steps:
+  - label: "Compressed-Tensors Smoke, Sanity and Regression - H100 duo"
+    agents:
+      queue: RedHat-H100-WDC
+
+    plugins:
+      - kubernetes:
+          podSpec:
+            serviceAccountName: buildkite-anyuid
+            securityContext:
+              fsGroup: 0
+              runAsUser: 0
+              runAsGroup: 0
+            nodeSelector:
+              vllm.ci/gpu-pool: upstream-ci-h100
+
+            containers:
+              - name: tests
+                image: buildkite/agent:3-ubuntu
+                command:
+                  - chmod +x .buildkite/test-check/scripts/test-check.sh
+                  - .buildkite/test-check/scripts/test-check.sh
+
+                resources:
+                  limits:
+                    nvidia.com/gpu: 2
+
+                volumeMounts:
+                  - name: ci-cache
+                    mountPath: /model-cache
+                    readOnly: false
+                  - name: devshm
+                    mountPath: /dev/shm
+
+                env:
+                  - name: HF_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: hf-token-secret
+                        key: token
+
+            volumes:
+              - name: ci-cache
+                hostPath:
+                  path: /var/mnt/ci-cache
+                  type: DirectoryOrCreate
+              - name: devshm
+                emptyDir:
+                  medium: Memory
