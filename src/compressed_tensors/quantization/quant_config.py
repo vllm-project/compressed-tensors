@@ -25,6 +25,31 @@ __all__ = [
 ]
 
 
+def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]:
+    """Translate ignore list entries from HF module names to checkpoint names.
+
+    Transformers v5 may rename weight keys on load (e.g. vision_embedder ->
+    embed_vision).  The ignore list is built from ``model.named_modules()``
+    which uses HF names, but safetensors keys use checkpoint names.  This
+    applies the same reverse mapping that ``save_pretrained`` uses for weights.
+    """
+    weight_conversions = getattr(model, "_weight_conversions", None)
+    if not weight_conversions:
+        return ignore_list
+
+    inverted = [conv.reverse_transform() for conv in reversed(weight_conversions)]
+
+    result = []
+    for name in ignore_list:
+        for rev in inverted:
+            renamed, matched = rev.rename_source_key(name)
+            if matched is not None:
+                name = renamed
+        result.append(name)
+
+    return result
+
+
 class QuantizationStatus(str, Enum):
     """
     Enum storing the different states a quantized layer can be in
@@ -230,6 +255,8 @@ class QuantizationConfig(BaseModel):
                 consolidated_ignore += ignore_names
             # else we leave it off the ignore list, doesn't fall under any of the
             # existing quantization schemes so it won't be quantized
+
+        consolidated_ignore = _map_to_checkpoint_names(model, consolidated_ignore)
 
         # create config groups from all unique schemes
         config_groups = {}
