@@ -62,6 +62,7 @@ class DistributedDiskCache(DiskCache):
         if is_source_process():
             super()._disk_finalizer(tensor_id)
         else:
-            file_path = cls.index[tensor_id]["safetensors_file"]
-            assert cls._is_ct_file_path(file_path)
-            del cls.index[tensor_id]
+            if tensor_id in cls.index:  # multiple finalizers may be active
+                file_path = cls.index[tensor_id]["safetensors_file"]
+                assert cls._is_ct_file_path(file_path)
+                del cls.index[tensor_id]
