@@ -39,20 +39,6 @@ def _old_pack_to_int32(value: torch.Tensor, num_bits: int) -> torch.Tensor:
     return output
 
 
-def _old_unpack_from_int32(
-    value: torch.Tensor, num_bits: int, shape: torch.Size
-) -> torch.Tensor:
-    """Inverse of _old_pack_to_int32."""
-    pack_factor = 32 // num_bits
-    mask = (1 << num_bits) - 1
-    rows, num_ints = value.shape
-    output = torch.zeros(rows, num_ints * pack_factor, dtype=torch.int32)
-    for i in range(pack_factor):
-        output[:, i::pack_factor] = (value >> (i * num_bits)) & mask
-    offset = 1 << (num_bits - 1)
-    return (output[:, : shape[1]] - offset).to(torch.int8)
-
-
 def get_dummy_quant_config(
     num_bits=4, strategy=None, group_size=None, actorder=None, symmetric=True
 ) -> QuantizationConfig:
@@ -533,21 +519,23 @@ def test_zero_point_pack_unpack_consistency(num_bits, strategy):
     assert unpacked_zp.dtype == torch.int8
 
 
-def test_pack_unpack_3d_round_trip():
+@pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
+def test_pack_unpack_3d_round_trip(num_bits):
     """3D tensors (e.g. MoE expert weights) should pack/unpack correctly."""
-    num_bits = 4
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
     shape = (4, 8, 32)  # (num_experts, rows, cols)
-    value = torch.randint(-8, 7, shape, dtype=torch.int8)
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
     packed = pack_to_int32(value, num_bits)
     unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
     assert torch.equal(value, unpacked)
 
 
-def test_pack_unpack_3d_matches_stacked_2d():
+@pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
+def test_pack_unpack_3d_matches_stacked_2d(num_bits):
     """3D pack/unpack should match stacking individual 2D results."""
-    num_bits = 4
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
     shape = (4, 8, 32)
-    value = torch.randint(-8, 7, shape, dtype=torch.int8)
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
     packed_3d = pack_to_int32(value, num_bits)
     packed_2d = torch.stack(
         [pack_to_int32(value[i], num_bits) for i in range(value.shape[0])]
@@ -555,39 +543,17 @@ def test_pack_unpack_3d_matches_stacked_2d():
     assert torch.equal(packed_3d, packed_2d)
 
 
-def test_pack_unpack_dense_7bit():
-    """7-bit dense packing: 32 elements must pack into exactly 7 int32 words."""
-    num_bits = 7
-    shape = (32, 32)
+@pytest.mark.parametrize("num_bits", [3, 5, 6, 7])
+@pytest.mark.parametrize("shape", [(32, 32), (64, 64), (128, 33)])
+def test_pack_unpack_dense_non_power_of_2(num_bits, shape):
+    """Non-power-of-2 bit widths use cross-word-boundary packing."""
     lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
     value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
 
     packed = pack_to_int32(value, num_bits)
     assert packed.dtype == torch.int32
-    # Dense packing: 32 elements × 7 bits = 224 bits = 7 × 32-bit words
-    assert packed.shape == (32, 7), f"expected (32, 7), got {packed.shape}"
+    assert packed.shape == (shape[0], math.ceil(shape[1] * num_bits / 32))
 
-    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
-    assert torch.equal(unpacked, value)
-
-    # Verify element 4 specifically — first element that spans a word boundary.
-    # Element 4 starts at bit 28 (word 0), with 4 bits in word 0 and 3 bits in word 1.
-    single_row = torch.zeros(1, 32, dtype=torch.int8)
-    single_row[0, 4] = 63  # 0b0111111 — all 7 bits set
-    packed_single = pack_to_int32(single_row, num_bits)
-    # Lower 4 bits (0b1111) at bits 28-31 of word 0
-    assert (packed_single[0, 0] >> 28) & 0xF == 0xF
-    # Upper 3 bits (0b111) at bits 0-2 of word 1
-    assert packed_single[0, 1] & 0x7 == 0x7
-
-
-@pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
-@pytest.mark.parametrize("shape", [(256, 1024), (512, 100), (128, 33)])
-def test_new_pack_unpack_roundtrip_all_bits(num_bits, shape):
-    """New pack→unpack round-trips correctly for all bit widths and shapes."""
-    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
-    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
-    packed = pack_to_int32(value, num_bits)
     unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
     assert torch.equal(unpacked, value)
 
