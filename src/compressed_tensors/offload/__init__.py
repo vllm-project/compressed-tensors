@@ -53,6 +53,7 @@ __all__ = [
     # control movement
     "disable_onloading",
     "disable_offloading",
+    "force_local_cache",
     # manipulate parameters
     "update_offload_parameter",
     "get_execution_device",
@@ -108,6 +109,24 @@ def disable_onloading():
     """
     with OffloadCache.disable_onloading():
         yield
+
+
+def force_local_cache():
+    """
+    Context under which ``OffloadCache.cls_from_device`` always returns
+    non-distributed caches (``CPUCache``, ``DeviceCache``, ``DiskCache``)
+    even when ``torch.distributed`` is initialized.
+
+    Use when each DDP rank loads the model independently — all ranks
+    already have local parameters, so distributed broadcast is unnecessary.
+
+    Supports nesting.
+    """
+    from compressed_tensors.offload.cache.base import (
+        force_local_cache as _force_local_cache,
+    )
+
+    return _force_local_cache()
 
 
 def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Tensor):

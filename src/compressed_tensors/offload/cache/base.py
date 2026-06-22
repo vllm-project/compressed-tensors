@@ -10,6 +10,36 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.utils import is_accelerator_type
 
+# Depth counter: supports nested force_local_cache() contexts.
+# > 0 means cls_from_device returns non-distributed caches.
+_force_local_cache_depth = 0
+
+
+@contextlib.contextmanager
+def force_local_cache():
+    """Context under which :meth:`OffloadCache.cls_from_device` returns
+    non-distributed caches.
+
+    Increments a module-level depth counter; while the counter is > 0,
+    ``cls_from_device`` returns ``CPUCache`` / ``DeviceCache`` /
+    ``DiskCache`` instead of their distributed counterparts, even when
+    ``torch.distributed`` is initialized.
+
+    Use when each DDP rank loads the model independently (e.g. safetensors
+    mmap on CPU).  All ranks already have local parameters, so
+    ``DistributedCPUCache``'s per-parameter broadcast is unnecessary
+    overhead.
+
+    Supports nesting — the counter stays incremented until the outermost
+    context exits.
+    """
+    global _force_local_cache_depth
+    _force_local_cache_depth += 1
+    try:
+        yield
+    finally:
+        _force_local_cache_depth -= 1
+
 
 class OffloadCache(MutableMapping, ABC):
     """
@@ -65,7 +95,11 @@ class OffloadCache(MutableMapping, ABC):
         from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 
         device_type = torch.device(device).type if device != "disk" else "disk"
-        distributed = dist.is_available() and dist.is_initialized()
+        distributed = (
+            dist.is_available()
+            and dist.is_initialized()
+            and _force_local_cache_depth == 0
+        )
 
         match (device_type, distributed):
             case ("cpu", False):
