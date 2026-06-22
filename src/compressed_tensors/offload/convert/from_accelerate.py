@@ -153,7 +153,7 @@ def remove_accelerate_from_module(
             offload = tensor
             offload_dev = _set_or_validate_offload(offload_dev, "disk")
             assert offload.device.type == "meta"
-            assert isinstance(offload, (torch.nn.Parameter, torch.nn.Buffer))
+            assert isinstance(offload, torch.Tensor)
 
             # Copy accelerate's disk index into DiskCache for our later use
             if is_source_process():
