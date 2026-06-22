@@ -5,7 +5,7 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import get_source_rank, is_source_process
 from compressed_tensors.offload.cache.cpu import CPUCache
-from compressed_tensors.offload.cache.cpu_utils import catch_cpu_mem_error
+from compressed_tensors.offload.cache.utils import catch_cpu_mem_error
 from compressed_tensors.offload.utils import send_tensors, to_empty
 
 
