@@ -8,6 +8,7 @@ import torch
 from compressed_tensors.offload.cache import CPUCache, OffloadCache
 from compressed_tensors.offload.dispatch import (
     dispatch_model,
+    dispatch_with_map,
     get_device_memory,
     set_onload_device,
 )
@@ -73,6 +74,40 @@ def has_memory_requirements(device_memory: dict[torch.device, int]):
             return False
 
     return True
+
+
+@pytest.mark.unit
+def test_dispatch_with_map_skips_missing_local_modules():
+    # Sharded-MoE pattern: a device map is authored from the source rank's
+    # view of the model, then broadcast to every rank (see from_accelerate).
+    # On ranks that do not own a given routed expert, that ModuleList slot is
+    # a None placeholder, so dispatch_with_map must skip the map entry rather
+    # than crash in model.get_submodule (issue #711).
+    class MoEModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.experts = torch.nn.ModuleList(
+                [None, torch.nn.Linear(5, 5), None, torch.nn.Linear(5, 5)]
+            )
+
+    model = MoEModel()
+    cpu = torch.device("cpu")
+    device_map = {
+        "experts.0": (cpu, cpu),  # None placeholder on this rank
+        "experts.1": (cpu, cpu),
+        "experts.2": (cpu, cpu),  # None placeholder on this rank
+        "experts.3": (cpu, cpu),
+    }
+
+    with patch("compressed_tensors.offload.dispatch.offload_module") as mock_offload:
+        # must not raise AttributeError("`0` is not an nn.Module")
+        dispatch_with_map(model, device_map, show_progress=False)
+
+    dispatched = [call.args[0] for call in mock_offload.call_args_list]
+    # only the locally-present experts are dispatched; None slots are skipped
+    assert mock_offload.call_count == 2
+    assert model.experts[1] in dispatched
+    assert model.experts[3] in dispatched
 
 
 @pytest.mark.unit
