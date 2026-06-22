@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import pytest
+import torch
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_FORMAT,
     DEFAULT_QUANTIZATION_METHOD,
@@ -9,7 +10,9 @@ from compressed_tensors.quantization import (
     QuantizationScheme,
     QuantizationStatus,
 )
+from compressed_tensors.quantization.quant_config import _map_to_checkpoint_names
 from pydantic import ValidationError
+from transformers import AutoModelForImageTextToText
 
 
 def test_basic_config():
@@ -94,3 +97,64 @@ def test_to_dict():
     # Deserialize from dict
     reloaded = QuantizationConfig.model_validate(config_dict)
     assert config == reloaded
+
+
+@pytest.mark.parametrize(
+    "model_id,hf_ignores,checkpoint_ignores",
+    [
+        pytest.param(
+            "llava-hf/llava-interleave-qwen-0.5b-hf",
+            [
+                "lm_head",
+                "model.vision_tower.encoder.layers.0.self_attn.q_proj",
+                "model.multi_modal_projector.linear_1",
+            ],
+            [
+                "lm_head",
+                "vision_tower.vision_model.encoder.layers.0.self_attn.q_proj",
+                "multi_modal_projector.linear_1",
+            ],
+            id="llava",
+        ),
+        pytest.param(
+            "google/gemma-4-12b-it",
+            [
+                "lm_head",
+                "model.embed_vision.patch_dense",
+                "model.embed_vision.multimodal_embedder.embedding_projection",
+            ],
+            [
+                "lm_head",
+                "model.vision_embedder.patch_dense",
+                "model.embed_vision.embedding_projection",
+            ],
+            id="gemma4",
+        ),
+        pytest.param(
+            "Qwen/Qwen2-VL-2B-Instruct",
+            [
+                "lm_head",
+                "model.visual.merger.mlp.0",
+            ],
+            [
+                "lm_head",
+                "visual.merger.mlp.0",
+            ],
+            id="qwen2_vl",
+        ),
+    ],
+)
+def test_map_to_checkpoint_names(model_id, hf_ignores, checkpoint_ignores):
+    """Load a real model and verify that HF module names in the ignore list
+    are reverse-mapped to checkpoint key names.
+
+    Uses ``device_map="meta"`` so no weights are materialised -- only the
+    model structure and its ``_weight_conversions`` are needed.
+    """
+    model = AutoModelForImageTextToText.from_pretrained(
+        model_id, dtype=torch.float16, device_map="meta"
+    )
+
+    result = _map_to_checkpoint_names(model, hf_ignores)
+
+    assert result == checkpoint_ignores
