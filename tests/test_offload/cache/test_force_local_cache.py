@@ -4,10 +4,7 @@
 import pytest
 import torch
 import torch.distributed as dist
-from compressed_tensors.offload.cache.base import (
-    OffloadCache,
-    force_local_cache,
-)
+from compressed_tensors.offload.cache.base import OffloadCache, force_local_cache
 from tests.test_offload.conftest import torchrun
 from tests.testing_utils import requires_gpu
 

@@ -10,6 +10,7 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.utils import is_accelerator_type
 
+
 # Depth counter: supports nested force_local_cache() contexts.
 # > 0 means cls_from_device returns non-distributed caches.
 _force_local_cache_depth = 0
