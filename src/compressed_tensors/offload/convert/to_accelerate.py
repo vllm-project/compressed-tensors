@@ -112,17 +112,20 @@ def to_accelerate_module(
 
 
 def _to_accelerate_disk_index(
-    model: torch.nn.Module, index: dict[torch.Tensor, dict[str, str]]
+    model: torch.nn.Module, index: dict[int, dict[str, str]]
 ) -> dict[str, dict[str, str]]:
     from compressed_tensors.offload import disable_onloading  # circular dependency
 
     with disable_onloading():
-        offloaded_to_key = _invert_dict(model.state_dict(keep_vars=True))
+        inverse_state_dict = _invert_dict(model.state_dict(keep_vars=True))
+        offloaded_id_to_name = {
+            id(offloaded): name for offloaded, name in inverse_state_dict.items()
+        }
 
     return {
-        key: weight_info
-        for offloaded, weight_info in index.items()
-        for key in offloaded_to_key[offloaded]
+        name: weight_info
+        for offloaded_id, weight_info in index.items()
+        for name in offloaded_id_to_name[offloaded_id]
     }
 
 
