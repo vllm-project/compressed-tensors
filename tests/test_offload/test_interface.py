@@ -79,6 +79,7 @@ def test_update_offload_parameter(linear: torch.nn.Linear, cache, offload):
     linear.weight = torch.nn.Parameter(init_data, requires_grad=False)
     if offload:
         offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+    assert linear.weight == 0
 
     update_offload_parameter(linear, "weight", torch.tensor(1))
     assert linear.weight == 1
