@@ -6,6 +6,7 @@ import os
 
 import pytest
 import torch
+from compressed_tensors.offload import disable_onloading, offload_module
 from compressed_tensors.offload.cache.disk import DiskCache
 from safetensors import safe_open
 from tests.test_offload.cache.helpers import (
@@ -130,3 +131,28 @@ def test_files(tmp_path):
     files = os.listdir(offload_dir)
     assert len(DiskCache.index) == 0
     assert len(files) == 0
+
+
+def test_shared_tensors_delete(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    os.mkdir(offload_dir)
+
+    A = torch.nn.Linear(3, 5, bias=False)
+    B = torch.nn.Linear(3, 5, bias=False)
+
+    # emulates accelerate disk loading
+    offload_module(A, "cuda", "disk", offload_dir=str(offload_dir))
+    with disable_onloading():
+        B.weight = A.weight
+    offload_module(B, "cuda", "disk", offload_dir=str(offload_dir))
+    assert len(os.listdir(offload_dir)) == 1
+
+    # file remains undeleted
+    delattr(A, "weight")
+    gc.collect()
+    assert len(os.listdir(offload_dir)) == 1
+
+    # file only deleted once all references are deleted
+    delattr(B, "weight")
+    gc.collect()
+    assert len(os.listdir(offload_dir)) == 0

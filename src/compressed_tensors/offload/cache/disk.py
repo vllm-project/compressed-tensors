@@ -108,8 +108,13 @@ class DiskCache(OffloadCache):
 
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
         save_file({"weight": tensor}, file_path)
-        finalize(offloaded, self._disk_finalizer, id(offloaded))
         return offloaded
+
+    def __delitem__(self, key: str):
+        offloaded = self.offloaded_values[key]
+        assert id(offloaded) in self.index
+        finalize(offloaded, self._disk_finalizer, id(offloaded))
+        super().__delitem__(key)
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
@@ -158,7 +163,6 @@ class DiskCache(OffloadCache):
             "weight_name": weight_info["weight_name"],
             "dtype": weight_info["dtype"],
         }
-        finalize(offloaded, cls._disk_finalizer, id(offloaded))
 
     @classmethod
     def _disk_finalizer(cls, tensor_id: int):
@@ -168,10 +172,11 @@ class DiskCache(OffloadCache):
 
         :param tensor_id: id of offloaded meta tensor
         """
-        file_path = cls.index[tensor_id]["safetensors_file"]
-        assert cls._is_ct_file_path(file_path)
-        os.remove(file_path)
-        del cls.index[tensor_id]
+        if tensor_id in cls.index:  # multiple finalizers may be active
+            file_path = cls.index[tensor_id]["safetensors_file"]
+            assert cls._is_ct_file_path(file_path)
+            os.remove(file_path)
+            del cls.index[tensor_id]
 
     @classmethod
     def _is_ct_file_path(cls, file_path: str) -> bool:

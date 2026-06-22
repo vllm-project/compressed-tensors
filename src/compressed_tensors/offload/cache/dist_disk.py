@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from weakref import finalize
-
 import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import get_source_rank, is_source_process
@@ -48,9 +46,8 @@ class DistributedDiskCache(DiskCache):
                 "dtype": broadcast_obj[2],
             }
 
-        # wait for write to finish, add finalizer
+        # wait for write to finish
         dist.barrier()
-        finalize(offloaded, self._disk_finalizer, id(offloaded))
         return offloaded
 
     @classmethod
