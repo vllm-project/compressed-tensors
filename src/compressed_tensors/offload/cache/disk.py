@@ -92,7 +92,7 @@ class DiskCache(OffloadCache):
             return None
 
         if tensor.device.type == "meta":
-            assert tensor in self.index
+            assert id(tensor) in self.index
             return tensor
 
         if offloaded is None:
@@ -133,7 +133,7 @@ class DiskCache(OffloadCache):
         :param data: new data
         """
         # get weight info from index
-        assert offloaded in self.index, "Cannot find offload to update"
+        assert id(offloaded) in self.index, "Cannot find offload to update"
         weight_info = self.index[id(offloaded)]
         file_path = weight_info["safetensors_file"]
         weight_name = weight_info["weight_name"]

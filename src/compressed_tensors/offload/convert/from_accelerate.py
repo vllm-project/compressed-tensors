@@ -186,7 +186,7 @@ def _save_ct_index_entry(
     offloaded: torch.Tensor,
 ):
     # already indexed from a previous round-trip (e.g. to_accelerate -> from_accelerate)
-    if offloaded in DiskCache.index:
+    if id(offloaded) in DiskCache.index:
         return
 
     entry: dict = dataset.index[name]
