@@ -39,10 +39,10 @@ def test_genuinely_missing_attribute_still_raises():
     qkv.add_past_key_values(real)
 
     with pytest.raises(AttributeError):
-        qkv.this_attr_does_not_exist_anywhere
+        getattr(qkv, "this_attr_does_not_exist_anywhere")
 
 
 def test_missing_attribute_raises_when_no_cache_attached():
     qkv = _make_qkv_cache()  # past_key_values is None
     with pytest.raises(AttributeError):
-        qkv.layers
+        getattr(qkv, "layers")
