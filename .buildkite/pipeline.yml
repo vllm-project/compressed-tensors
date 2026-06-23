@@ -1,6 +1,16 @@
 steps:
   # Test check pipeline
-  - label: "Compressed-Tensors Smoke, Sanity and Regression"
+  - label: ":gear: Compressed-Tensors Smoke, Sanity and Regression"
     command: |
-      PIPELINE_FILE="$${TEST_RUNNER:-H100duo}"
-      buildkite-agent pipeline upload .buildkite/test-check/test-check-$${PIPELINE_FILE}.yml
+      RUNNER=$$(buildkite-agent meta-data get "test-runner" --default "H100duo")
+      echo "╔══════════════════════════════════════════╗"
+      echo "║          BUILD SUMMARY                   ║"
+      echo "╠══════════════════════════════════════════╣"
+      echo "║ Triggered by : $${BUILDKITE_BUILD_CREATOR}"
+      echo "║ Source        : $${BUILDKITE_SOURCE}"
+      echo "║ Branch        : $${BUILDKITE_BRANCH}"
+      echo "║ Commit        : $${BUILDKITE_COMMIT:0:8}"
+      echo "║ PR            : $${BUILDKITE_PULL_REQUEST:-none}"
+      echo "║ GPU Runner    : $${RUNNER}"
+      echo "╚══════════════════════════════════════════╝"
+      buildkite-agent pipeline upload .buildkite/test-check/test-check-$${RUNNER}.yml
