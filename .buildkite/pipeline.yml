@@ -2,7 +2,7 @@ steps:
   # Test check pipeline
   - label: ":gear: Compressed-Tensors Smoke, Sanity and Regression"
     command: |
-      RUNNER=$$(buildkite-agent meta-data get "test-runner" --default "L4solo")
+      RUNNER=$$(buildkite-agent meta-data get "test-runner" --default "H100duo")
       echo "╔══════════════════════════════════════════╗"
       echo "║          BUILD SUMMARY                   ║"
       echo "╠══════════════════════════════════════════╣"
