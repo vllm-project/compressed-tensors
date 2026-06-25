@@ -136,6 +136,15 @@ def test_tie_offload_parameter(offload):
 
 
 @pytest.mark.unit
+def test_tie_offload_parameter_kind_mismatch():
+    module = torch.nn.Linear(5, 5, bias=False, device=OFFLOAD_DEVICE)
+    module.register_buffer("buf", torch.zeros(5, 5, device=OFFLOAD_DEVICE))
+    # Tying a parameter to a buffer would violate module invariants.
+    with pytest.raises(TypeError):
+        tie_offload_parameter(module, "weight", module, "buf")
+
+
+@pytest.mark.unit
 @requires_gpu
 def test_get_execution_device(linear: torch.nn.Linear, cache):
     assert_device_equal(get_execution_device(linear), OFFLOAD_DEVICE)

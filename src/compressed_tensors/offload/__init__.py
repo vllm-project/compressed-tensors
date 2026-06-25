@@ -176,13 +176,18 @@ def tie_offload_parameter(
 
     def _cache(module: torch.nn.Module, name: str):
         if name in module._parameters:
-            return module._parameters
+            return module._parameters, "parameter"
         if name in module._buffers:
-            return module._buffers
+            return module._buffers, "buffer"
         raise AttributeError(f"{type(module)} has no attribute {name}")
 
-    src_cache = _cache(src_module, src_name)
-    dst_cache = _cache(dst_module, dst_name)
+    src_cache, src_kind = _cache(src_module, src_name)
+    dst_cache, dst_kind = _cache(dst_module, dst_name)
+    if src_kind != dst_kind:
+        raise TypeError(
+            f"Cannot tie destination {dst_kind} {dst_name!r} "
+            f"to source {src_kind} {src_name!r}"
+        )
 
     if isinstance(src_cache, OffloadCache) and isinstance(dst_cache, OffloadCache):
         # Store the source's offloaded tensor by reference (no copy/onload).
