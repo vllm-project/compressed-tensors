@@ -111,8 +111,9 @@ def test_update_offload_parameter_with_grad(linear: torch.nn.Linear):
 
 @pytest.mark.unit
 @requires_gpu
-@pytest.mark.parametrize("offload", (True, False))
-def test_tie_offload_parameter(offload):
+@pytest.mark.parametrize("src_offload", (True, False))
+@pytest.mark.parametrize("dst_offload", (True, False))
+def test_tie_offload_parameter(src_offload, dst_offload):
     src = torch.nn.Linear(5, 5, bias=False, device=OFFLOAD_DEVICE)
     dst = torch.nn.Linear(5, 5, bias=False, device=OFFLOAD_DEVICE)
     src.weight = torch.nn.Parameter(
@@ -121,13 +122,15 @@ def test_tie_offload_parameter(offload):
     dst.weight = torch.nn.Parameter(
         torch.zeros(5, 5, device=OFFLOAD_DEVICE), requires_grad=False
     )
-    if offload:
+    if src_offload:
         offload_module(src, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+    if dst_offload:
         offload_module(dst, ONLOAD_DEVICE, OFFLOAD_DEVICE)
 
     tie_offload_parameter(dst, "weight", src, "weight")
 
-    # dst now references src's (offloaded) storage rather than a copy
+    # dst references src's storage rather than a copy, even when only one side
+    # is offloaded
     with disable_onloading():
         assert dst._parameters["weight"] is src._parameters["weight"]
 

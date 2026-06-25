@@ -189,8 +189,9 @@ def tie_offload_parameter(
             f"to source {src_kind} {src_name!r}"
         )
 
-    if isinstance(src_cache, OffloadCache) and isinstance(dst_cache, OffloadCache):
-        # Store the source's offloaded tensor by reference (no copy/onload).
+    if isinstance(src_cache, OffloadCache) or isinstance(dst_cache, OffloadCache):
+        # Read/store the source tensor by reference (no copy/onload) so the alias
+        # holds even when only one side is offloaded.
         with OffloadCache.disable_onloading():
             dst_cache[dst_name] = src_cache[src_name]
     else:
