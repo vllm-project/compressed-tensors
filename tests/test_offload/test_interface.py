@@ -15,6 +15,7 @@ from compressed_tensors.offload import (
     get_cache_kwargs,
     get_execution_device,
     get_offloaded_device,
+    tie_offload_parameter,
     update_offload_parameter,
 )
 from compressed_tensors.offload.cache import CPUCache
@@ -106,6 +107,32 @@ def test_update_offload_parameter_with_grad(linear: torch.nn.Linear):
     offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     update_offload_parameter(linear, "weight", ones)
     assert_tensor_equal(linear.weight, ones, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+@pytest.mark.parametrize("offload", (True, False))
+def test_tie_offload_parameter(offload):
+    src = torch.nn.Linear(5, 5, bias=False, device=OFFLOAD_DEVICE)
+    dst = torch.nn.Linear(5, 5, bias=False, device=OFFLOAD_DEVICE)
+    src.weight = torch.nn.Parameter(
+        torch.ones(5, 5, device=OFFLOAD_DEVICE), requires_grad=False
+    )
+    dst.weight = torch.nn.Parameter(
+        torch.zeros(5, 5, device=OFFLOAD_DEVICE), requires_grad=False
+    )
+    if offload:
+        offload_module(src, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+        offload_module(dst, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+
+    tie_offload_parameter(dst, "weight", src, "weight")
+
+    # dst now references src's (offloaded) storage rather than a copy
+    with disable_onloading():
+        assert dst._parameters["weight"] is src._parameters["weight"]
+
+    with align_module_device(src), align_module_device(dst):
+        assert torch.equal(dst.weight, torch.ones(5, 5, device=dst.weight.device))
 
 
 @pytest.mark.unit
