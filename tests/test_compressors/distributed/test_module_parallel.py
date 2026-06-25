@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
+
 import pytest
 import torch
 import torch.distributed as dist
@@ -405,3 +407,46 @@ def test_replace_module_parallel_rank_consistency():
             assert rank_checksums == gathered[0], "Ranks have different states!"
     else:
         dist.gather_object(checksums, None, dst=0)
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
+def test_disk_module_parallel(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    os.mkdir(offload_dir)
+    modules = [SimpleLinear(10, 10), SimpleLinear(10, 10)]
+    offload_module(modules[0], "cuda", "disk", offload_dir=offload_dir)
+    offload_module(modules[1], "cuda", "disk", offload_dir=offload_dir)
+
+    def apply_fn(m):
+        device = m.weight.device
+        delattr(m, "weight")
+        m.weight_reconstructed = torch.nn.Parameter(torch.empty(1, device=device))
+
+    replace_module_parallel(modules, apply_fn, module_size)
+    for module in modules:
+        assert not hasattr(module, "weight")
+        assert module.weight_reconstructed.device.type == "cuda"
+    dist.barrier()
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
+def test_cpu_module_parallel():
+    """Test that all ranks see the same final state."""
+    modules = [SimpleLinear(10, 10), SimpleLinear(10, 10)]
+    offload_module(modules[0], "cuda", "cpu")
+    offload_module(modules[1], "cuda", "cpu")
+
+    def apply_fn(m):
+        device = m.weight.device
+        delattr(m, "weight")
+        m.weight_reconstructed = torch.nn.Parameter(torch.empty(1, device=device))
+
+    replace_module_parallel(modules, apply_fn, module_size)
+    for module in modules:
+        assert not hasattr(module, "weight")
+        assert module.weight_reconstructed.device.type == "cuda"
+    dist.barrier()
