@@ -14,8 +14,31 @@ steps:
       echo "║ GPU Runner    : $${RUNNER}"
       echo "╚══════════════════════════════════════════╝"
       buildkite-agent pipeline upload .buildkite/test-check/test-check-$${RUNNER}.yml
-  # Test check pipeline on XPU
-  - label: "Compressed-Tensors Smoke, Sanity and Regression on XPU"
+  
+  # Detect changed paths for XPU gating
+  - label: ":mag: Detect XPU-relevant changes"
+    key: detect-xpu-changes
     command: |
+      git fetch origin main --depth=50
+      CHANGED=$$(git diff --name-only origin/main...HEAD)
+      echo "Changed files:"
+      echo "$$CHANGED"
+      if echo "$$CHANGED" | grep -qE '^(src/compressed_tensors/offload|tests/test_offload)/'; then
+        echo "XPU-relevant changes detected"
+        buildkite-agent meta-data set "run-xpu-tests" "true"
+      else
+        echo "No XPU-relevant changes"
+        buildkite-agent meta-data set "run-xpu-tests" "false"
+      fi
+
+  # Test check pipeline on XPU (only when relevant paths changed)
+  - label: "Compressed-Tensors Smoke, Sanity and Regression on XPU"
+    depends_on: detect-xpu-changes
+    command: |
+      RUN_XPU=$$(buildkite-agent meta-data get "run-xpu-tests" --default "false")
+      if [ "$$RUN_XPU" != "true" ]; then
+        echo "Skipping XPU tests: no changes under src/compressed_tensors/offload or tests/test_offload"
+        exit 0
+      fi
       RUNNER=xpu
       buildkite-agent pipeline upload .buildkite/test-check/test-check-$${RUNNER}.yml
