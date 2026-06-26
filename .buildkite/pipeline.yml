@@ -16,7 +16,7 @@ steps:
       buildkite-agent pipeline upload .buildkite/test-check/test-check-$${RUNNER}.yml
   
   # Test check pipeline on XPU (only when relevant paths changed)
-  - label: "Compressed-Tensors Smoke, Sanity and Regression on XPU"
+  - label: ":gear: Compressed-Tensors Smoke, Sanity and Regression on XPU"
     command: |
       git fetch origin main --depth=50
       CHANGED=$$(git diff --name-only origin/main...HEAD)
