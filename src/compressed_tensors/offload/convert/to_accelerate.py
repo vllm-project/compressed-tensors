@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from collections import defaultdict
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from compressed_tensors.offload.cache import DiskCache, OffloadCache
@@ -14,6 +14,10 @@ from compressed_tensors.offload.convert.helpers import (
 from compressed_tensors.offload.module import remove_module_offload
 from compressed_tensors.utils import patch_attr
 from loguru import logger
+
+
+if TYPE_CHECKING:
+    from accelerate.utils import OffloadedWeightsLoader
 
 
 __all__ = ["to_accelerate", "to_accelerate_module"]
@@ -42,7 +46,7 @@ def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
 def to_accelerate_module(
     module: torch.nn.Module,
     name: Optional[str] = None,
-    hf_weights_loader: Optional[object] = None,
+    hf_weights_loader: Optional["OffloadedWeightsLoader"] = None,
 ) -> str:
     """
     Convert a module from `compressed_tensors` offloading to `accelerate` offloading
@@ -112,7 +116,7 @@ def to_accelerate_module(
 
 def _to_accelerate_weights_loader(
     model: torch.nn.Module, index: dict[torch.Tensor, dict[str, str]]
-) -> Optional[object]:
+) -> Optional["OffloadedWeightsLoader"]:
     """
     Create an OffloadedWeightsLoader instance for accelerate offloading.
 
