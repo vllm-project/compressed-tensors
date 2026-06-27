@@ -491,3 +491,108 @@ def test_apply_attention():
         assert hasattr(layer.self_attn, "q_scale")
         assert hasattr(layer.self_attn, "k_scale")
         assert hasattr(layer.self_attn, "v_scale")
+
+
+linear_scheme = QuantizationScheme(targets=["Linear"])
+attention_scheme = QuantizationScheme(targets=["LlamaAttention"])
+attention_linears = QuantizationScheme(targets=[r"re:.*self_attn\..*"])
+mlp_linears = QuantizationScheme(targets=[r"re:.*mlp\..*"])
+down_proj_scheme = QuantizationScheme(targets=["re:.*down_proj"])
+
+
+@pytest.mark.parametrize(
+    "config, expected_schemes",
+    [
+        # all linears
+        (
+            QuantizationConfig(config_groups={"group_0": linear_scheme}),
+            {
+                p: linear_scheme
+                for p in [
+                    f"model.layers.{i}.self_attn.{k}_proj"
+                    for i in range(6)
+                    for k in "qkvo"
+                ]
+                + [
+                    f"model.layers.{i}.mlp.{k}_proj"
+                    for i in range(6)
+                    for k in ["gate", "up", "down"]
+                ]
+                + ["lm_head"]
+            },
+        ),
+        # only attention
+        (
+            QuantizationConfig(config_groups={"group_0": attention_scheme}),
+            {f"model.layers.{i}.self_attn": attention_scheme for i in range(6)},
+        ),
+        # linear and attention
+        (
+            QuantizationConfig(
+                config_groups={"attention": attention_scheme, "linear": linear_scheme},
+            ),
+            {
+                **{f"model.layers.{i}.self_attn": attention_scheme for i in range(6)},
+                **{
+                    p: linear_scheme
+                    for p in [
+                        f"model.layers.{i}.self_attn.{k}_proj"
+                        for i in range(6)
+                        for k in "qkvo"
+                    ]
+                    + [
+                        f"model.layers.{i}.mlp.{k}_proj"
+                        for i in range(6)
+                        for k in ["gate", "up", "down"]
+                    ]
+                    + ["lm_head"]
+                },
+            },
+        ),
+        # only down proj
+        (
+            QuantizationConfig(config_groups={"group_0": down_proj_scheme}),
+            {f"model.layers.{i}.mlp.down_proj": down_proj_scheme for i in range(6)},
+        ),
+        # attention linears and mlp linears as separate groups
+        (
+            QuantizationConfig(
+                config_groups={
+                    "attention_linears": attention_linears,
+                    "mlp_linears": mlp_linears,
+                },
+            ),
+            {
+                **{
+                    f"model.layers.{i}.self_attn.{k}_proj": attention_linears
+                    for i in range(6)
+                    for k in "qkvo"
+                },
+                **{
+                    f"model.layers.{i}.mlp.{k}_proj": mlp_linears
+                    for i in range(6)
+                    for k in ["gate", "up", "down"]
+                },
+            },
+        ),
+    ],
+)
+def test_apply_model(config, expected_schemes):
+    model = AutoModelForCausalLM.from_pretrained(
+        "nm-testing/tinysmokellama-3.2",
+        cache_dir="test-apply-model-cache",
+    )
+    apply_quantization_config(model, config)
+
+    for name, module in model.named_modules():
+        if name in expected_schemes:
+            assert hasattr(
+                module, "quantization_scheme"
+            ), f"{name} should have quantization_scheme"
+            assert (
+                module.quantization_scheme == expected_schemes[name]
+            ), f"{name} has wrong scheme"
+        else:
+            assert not hasattr(
+                module, "quantization_scheme"
+            ), f"{name} should not have quantization_scheme"
