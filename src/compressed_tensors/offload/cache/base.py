@@ -42,8 +42,8 @@ class OffloadCache(MutableMapping, ABC):
     # names -> offloaded tensors (populated from _parameters or _buffers)
     offloaded_values: dict[Hashable, torch.Tensor]
 
-    # offloaded tensors -> onloaded tensors (only when offloading is disabled)
-    keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
+    # id(offloaded tensor) -> onloaded tensor (only when offloading is disabled)
+    keep_onloaded_values: ClassVar[dict[int, torch.Tensor]] = dict()
 
     @classmethod
     def cls_from_device(
@@ -188,15 +188,15 @@ class OffloadCache(MutableMapping, ABC):
             return offloaded
 
         # check for cache hit
-        if offloaded in self.keep_onloaded_values:
-            return self.keep_onloaded_values[offloaded]
+        if id(offloaded) in self.keep_onloaded_values:
+            return self.keep_onloaded_values[id(offloaded)]
 
         # onload value
         onloaded = self.onload(offloaded)
 
         # when offloading is disabled, populate cache
         if self.offloading_disabled:
-            self.keep_onloaded_values[offloaded] = onloaded
+            self.keep_onloaded_values[id(offloaded)] = onloaded
 
         return onloaded
 
@@ -220,7 +220,7 @@ class OffloadCache(MutableMapping, ABC):
         if offloaded is not None and torch.is_same_size(offloaded, value):
             self.update_offload(offloaded, value)
 
-            onloaded = self.keep_onloaded_values.get(offloaded, None)
+            onloaded = self.keep_onloaded_values.get(id(offloaded), None)
             if onloaded is not None and onloaded is not offloaded:
                 onloaded.copy_(value)
 
@@ -239,8 +239,8 @@ class OffloadCache(MutableMapping, ABC):
         del self.offloaded_values[key]
 
         # remove strong ref
-        if offloaded in self.keep_onloaded_values:
-            del self.keep_onloaded_values[offloaded]
+        if id(offloaded) in self.keep_onloaded_values:
+            del self.keep_onloaded_values[id(offloaded)]
 
     def __contains__(self, key) -> bool:
         return key in self.offloaded_values

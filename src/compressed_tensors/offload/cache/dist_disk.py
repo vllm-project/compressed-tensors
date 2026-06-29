@@ -27,10 +27,11 @@ class DistributedDiskCache(DiskCache):
         if is_source_process():
             # write to disk
             offloaded = super().offload(tensor)
+            offloaded_id = id(offloaded)
             broadcast_obj = [
-                self.index[offloaded]["safetensors_file"],
-                self.index[offloaded]["weight_name"],
-                self.index[offloaded]["dtype"],
+                self.index[offloaded_id]["safetensors_file"],
+                self.index[offloaded_id]["weight_name"],
+                self.index[offloaded_id]["dtype"],
             ]
         else:
             offloaded = send_tensors(tensor, device="meta")
@@ -39,7 +40,7 @@ class DistributedDiskCache(DiskCache):
         dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
         if not is_source_process():
-            self.index[offloaded] = {
+            self.index[id(offloaded)] = {
                 "safetensors_file": broadcast_obj[0],
                 "weight_name": broadcast_obj[1],
                 "dtype": broadcast_obj[2],

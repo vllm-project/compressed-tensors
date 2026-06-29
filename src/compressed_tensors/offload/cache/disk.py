@@ -32,8 +32,8 @@ class DiskCache(OffloadCache):
 
     offload_device = "disk"
 
-    # offloaded tensors -> weight info
-    index: dict[torch.Tensor, dict[str, str]] = dict()
+    # id(offloaded tensor) -> weight info
+    index: dict[int, dict[str, str]] = dict()
 
     # directory where new tensors are written to
     offload_dir: str
@@ -67,7 +67,7 @@ class DiskCache(OffloadCache):
         if offloaded is None:
             return None
 
-        weight_info = self.index[offloaded]
+        weight_info = self.index[id(offloaded)]
         device = _get_safe_open_device(self.onload_device)
 
         with safe_open(
@@ -92,14 +92,14 @@ class DiskCache(OffloadCache):
             return None
 
         if tensor.device.type == "meta":
-            assert tensor in self.index
+            assert id(tensor) in self.index
             return tensor
 
         if offloaded is None:
             offloaded = send_tensors(tensor, device="meta")
 
         file_path = self._get_ct_file_path(self.offload_dir, offloaded)
-        self.index[offloaded] = {
+        self.index[id(offloaded)] = {
             "safetensors_file": file_path,
             "weight_name": "weight",
             "dtype": str(tensor.dtype).removeprefix("torch."),
@@ -119,10 +119,10 @@ class DiskCache(OffloadCache):
         :param key: name of tensor to invalidate
         """
         offloaded = self.offloaded_values[key]
-        file_path = self.index[offloaded]["safetensors_file"]
+        file_path = self.index[id(offloaded)]["safetensors_file"]
         if self._is_ct_file_path(file_path):
             os.remove(file_path)
-        del self.index[offloaded]
+        del self.index[id(offloaded)]
         super().__delitem__(key)
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
@@ -133,8 +133,8 @@ class DiskCache(OffloadCache):
         :param data: new data
         """
         # get weight info from index
-        assert offloaded in self.index, "Cannot find offload to update"
-        weight_info = self.index[offloaded]
+        assert id(offloaded) in self.index, "Cannot find offload to update"
+        weight_info = self.index[id(offloaded)]
         file_path = weight_info["safetensors_file"]
         weight_name = weight_info["weight_name"]
         dtype = getattr(torch, weight_info["dtype"])
@@ -169,7 +169,7 @@ class DiskCache(OffloadCache):
         file_path = cls._get_ct_file_path(offload_dir, offloaded)
 
         os.symlink(source_path, file_path)
-        cls.index[offloaded] = {
+        cls.index[id(offloaded)] = {
             "safetensors_file": file_path,
             "weight_name": weight_info["weight_name"],
             "dtype": weight_info["dtype"],
