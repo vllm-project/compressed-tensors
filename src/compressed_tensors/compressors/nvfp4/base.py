@@ -18,6 +18,7 @@ from compressed_tensors.quantization import (
     QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
+from compressed_tensors.quantization.quant_args import round_to_quantized_type_args
 from compressed_tensors.utils import TensorStateDict, getattr_chain
 
 
@@ -61,6 +62,59 @@ class NVFP4PackedCompressor(BaseCompressor):
         return scale.to(dtype)
 
     @classmethod
+    def _adjust_scale_for_four_over_six(
+        cls,
+        weight: torch.Tensor,
+        scale: torch.Tensor,
+        global_scale: torch.Tensor | None,
+        weights: QuantizationArgs,
+    ) -> torch.Tensor:
+        """
+        Pre-adjust per-group scales for Four Over Six: for each group, compare
+        MSE of standard quantization (scale-to-6) vs alternative (scale-to-4,
+        i.e. scale * 1.5). Groups where scale-to-4 wins get their scale
+        multiplied by 1.5 so that the stored scale reflects the actual
+        quantization used.
+        """
+        from compressed_tensors.quantization.utils import calculate_range
+
+        q_min, q_max = calculate_range(weights, weight.device)
+
+        group_size = weights.group_size
+        rows, cols = weight.shape
+        num_groups = cols // group_size
+        w_grouped = weight.reshape(rows, num_groups, group_size)
+
+        if global_scale is not None:
+            eff_scale = scale / global_scale
+        else:
+            eff_scale = scale.clone()
+
+        eff_scale_3d = eff_scale.unsqueeze(-1)
+
+        scaled_a = w_grouped / eff_scale_3d
+        q_a = round_to_quantized_type_args(
+            tensor=scaled_a, args=weights, min=q_min, max=q_max
+        )
+        dq_a = q_a.to(eff_scale.dtype) * eff_scale_3d
+
+        eff_scale_b = eff_scale * 1.5
+        eff_scale_b_3d = eff_scale_b.unsqueeze(-1)
+        scaled_b = w_grouped / eff_scale_b_3d
+        q_b = round_to_quantized_type_args(
+            tensor=scaled_b, args=weights, min=q_min, max=q_max
+        )
+        dq_b = q_b.to(eff_scale_b.dtype) * eff_scale_b_3d
+
+        mse_a = ((w_grouped - dq_a) ** 2).mean(dim=-1)
+        mse_b = ((w_grouped - dq_b) ** 2).mean(dim=-1)
+
+        use_4 = mse_b < mse_a
+        adjusted_scale = scale.clone()
+        adjusted_scale[use_4] = adjusted_scale[use_4] * 1.5
+        return adjusted_scale.to(scale.dtype)
+
+    @classmethod
     def compress(
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
@@ -81,6 +135,11 @@ class NVFP4PackedCompressor(BaseCompressor):
         global_scale = state_dict.get("weight_global_scale", None)
         zero_point = state_dict.get("weight_zero_point", None)
         weights = scheme.weights
+
+        if getattr(weights, "four_over_six", False):
+            scale = cls._adjust_scale_for_four_over_six(
+                weight, scale, global_scale, weights
+            )
 
         quantized_weight = quantize(
             x=weight,
