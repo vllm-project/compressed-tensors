@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import gc
 import os
 
 import pytest
 import torch
 import torch.distributed as dist
-from compressed_tensors.offload import disable_onloading
+from compressed_tensors.offload import disable_onloading, offload_module
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 from safetensors import safe_open
@@ -186,6 +187,8 @@ def test_distributed_files(tmp_path):
 
     # delete
     del cache["weight"]
+    gc.collect()
+    dist.barrier()
     assert len(DiskCache.index) == 0
     if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
         files = os.listdir(offload_dir)
@@ -239,3 +242,47 @@ def test_distributed_async_update(tmp_path):
         offloaded_1 = cache["tensor_1"]
         assert_tensor_equal(offloaded_0, torch.ones(10) * 1.0, "disk")
         assert_tensor_equal(offloaded_1, torch.ones(10) * 2.0, "disk")
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
+def test_shared_tensors_delete(tmp_path):
+    # Broadcast directory path from rank 0 to all ranks
+    if dist.get_rank() == 0:
+        offload_dir = tmp_path / "offload_dir"
+        os.mkdir(offload_dir)
+        broadcast_obj = [str(offload_dir)]
+    else:
+        broadcast_obj = [None]
+
+    dist.broadcast_object_list(broadcast_obj, src=0)
+    offload_dir = broadcast_obj[0]
+
+    A = torch.nn.Linear(3, 5, bias=False)
+    B = torch.nn.Linear(3, 5, bias=False)
+
+    # emulates accelerate disk loading
+    offload_module(A, "cuda", "disk", offload_dir=str(offload_dir))
+    with disable_onloading():
+        B.weight = A.weight
+    offload_module(B, "cuda", "disk", offload_dir=str(offload_dir))
+
+    # Synchronize before checking file count
+    dist.barrier()
+    if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
+        assert len(os.listdir(offload_dir)) == 1
+
+    # file remains undeleted
+    delattr(A, "weight")
+    gc.collect()
+    dist.barrier()
+    if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
+        assert len(os.listdir(offload_dir)) == 1
+
+    # file only deleted once all references are deleted
+    delattr(B, "weight")
+    gc.collect()
+    dist.barrier()
+    if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
+        assert len(os.listdir(offload_dir)) == 0

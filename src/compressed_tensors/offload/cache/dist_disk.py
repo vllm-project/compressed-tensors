@@ -27,10 +27,11 @@ class DistributedDiskCache(DiskCache):
         if is_source_process():
             # write to disk
             offloaded = super().offload(tensor)
+            offloaded_id = id(offloaded)
             broadcast_obj = [
-                self.index[offloaded]["safetensors_file"],
-                self.index[offloaded]["weight_name"],
-                self.index[offloaded]["dtype"],
+                self.index[offloaded_id]["safetensors_file"],
+                self.index[offloaded_id]["weight_name"],
+                self.index[offloaded_id]["dtype"],
             ]
         else:
             offloaded = send_tensors(tensor, device="meta")
@@ -39,7 +40,7 @@ class DistributedDiskCache(DiskCache):
         dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
         if not is_source_process():
-            self.index[offloaded] = {
+            self.index[id(offloaded)] = {
                 "safetensors_file": broadcast_obj[0],
                 "weight_name": broadcast_obj[1],
                 "dtype": broadcast_obj[2],
@@ -49,18 +50,19 @@ class DistributedDiskCache(DiskCache):
         dist.barrier()
         return offloaded
 
-    def __delitem__(self, key: str):
+    @classmethod
+    def _disk_finalizer(cls, tensor_id: int):
         """
-        Remove the offload associated with `key`. If a new file was created to store
-        updated tensor data, that new tensor data file is deleted.
+        Finalizer attached to tensors when they are assigned in `DiskCache.index`.
+        Deletes tensor from `DiskCache.index` and deletes associated safetensors file.
+        Only rank 0 deletes files.
 
-        Any references to onloaded tensors held by this class are invalidated.
-
-        :param key: name of tensor to invalidate
+        :param tensor_id: id of offloaded meta tensor
         """
         if is_source_process():
-            super().__delitem__(key)
+            super()._disk_finalizer(tensor_id)
         else:
-            offloaded = self.offloaded_values[key]
-            del self.index[offloaded]
-            super(DiskCache, self).__delitem__(key)
+            if tensor_id in cls.index:  # multiple finalizers may be active
+                file_path = cls.index[tensor_id]["safetensors_file"]
+                assert cls._is_ct_file_path(file_path)
+                del cls.index[tensor_id]

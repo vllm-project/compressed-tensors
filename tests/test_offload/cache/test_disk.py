@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import gc
 import os
 
 import pytest
 import torch
+from compressed_tensors.offload import disable_onloading, offload_module
 from compressed_tensors.offload.cache.disk import DiskCache
 from safetensors import safe_open
 from tests.test_offload.cache.helpers import (
@@ -100,7 +102,7 @@ def test_files(tmp_path):
     os.mkdir(offload_dir)
 
     # initial write
-    DiskCache.index = {}
+    DiskCache.index.clear()
     cache = DiskCache("cpu", offload_dir=str(offload_dir))
     tensor = torch.zeros(10)
     cache["weight"] = tensor
@@ -123,8 +125,34 @@ def test_files(tmp_path):
         read_tensor = file.get_tensor("weight")
         assert_tensor_equal(read_tensor, tensor)
 
-    # delete
-    del cache["weight"]
+    # delete all references
+    del cache, tensor
+    gc.collect()
     files = os.listdir(offload_dir)
     assert len(DiskCache.index) == 0
     assert len(files) == 0
+
+
+def test_shared_tensors_delete(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    os.mkdir(offload_dir)
+
+    A = torch.nn.Linear(3, 5, bias=False)
+    B = torch.nn.Linear(3, 5, bias=False)
+
+    # emulates accelerate disk loading
+    offload_module(A, "cuda", "disk", offload_dir=str(offload_dir))
+    with disable_onloading():
+        B.weight = A.weight
+    offload_module(B, "cuda", "disk", offload_dir=str(offload_dir))
+    assert len(os.listdir(offload_dir)) == 1
+
+    # file remains undeleted
+    delattr(A, "weight")
+    gc.collect()
+    assert len(os.listdir(offload_dir)) == 1
+
+    # file only deleted once all references are deleted
+    delattr(B, "weight")
+    gc.collect()
+    assert len(os.listdir(offload_dir)) == 0
