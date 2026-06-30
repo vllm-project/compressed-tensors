@@ -38,16 +38,25 @@ def test_to_accelerate_module(offload_device, tmp_path):
     accelerator_device = torch.accelerator.current_accelerator()
     linear = torch.nn.Linear(5, 5)
 
+    hf_weights_loader = None
     if offload_device == "disk":
         offload_dir = tmp_path / "offload_dir"
         os.mkdir(offload_dir)
         offload_module(
             linear, accelerator_device, offload_device, offload_dir=str(offload_dir)
         )
+        # Create a weights loader for disk offload
+        from accelerate.utils import OffloadedWeightsLoader
+
+        hf_weights_loader = OffloadedWeightsLoader(
+            index={}, save_folder=str(offload_dir)
+        )
     else:
         offload_module(linear, accelerator_device, offload_device)
 
-    _offload_device = to_accelerate_module(linear, name="", hf_disk_index={})
+    _offload_device = to_accelerate_module(
+        linear, name="", hf_weights_loader=hf_weights_loader
+    )
 
     assert _offload_device == str(norm_device(offload_device))
 

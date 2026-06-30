@@ -53,8 +53,18 @@ class FP4_E2M1_DATA(FloatArgs):
     min = -6.0
 
     @staticmethod
-    @torch.compile
     def cast_to_fp4(x):
+        # torch.compile guards on input rank, so rank-varying inputs (dense /
+        # MoE-expert / group-scaled activations) recompile the core once per
+        # rank and exhaust recompile_limit (#734). Flatten to rank-1 so the core
+        # (kept compiled per PR #331) is reused; flatten() keeps a stable 1-D size
+        # symbol that automatic dynamic shapes promotes, whereas reshape(-1)
+        # infers a rank-dependent numel that defeats it.
+        return FP4_E2M1_DATA._cast_to_fp4(x.flatten()).reshape(x.shape)
+
+    @staticmethod
+    @torch.compile
+    def _cast_to_fp4(x):
         sign = torch.sign(x)
         x = torch.abs(x)
         x[(x >= 0.0) & (x <= 0.25)] = 0.0
