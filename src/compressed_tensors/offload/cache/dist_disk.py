@@ -61,6 +61,7 @@ class DistributedDiskCache(DiskCache):
         if is_source_process():
             super().__delitem__(key)
         else:
-            offloaded = self.offloaded_values[key]
-            del self.index[offloaded]
+            if not self.onloading_disabled:
+                offloaded = self.offloaded_values[key]
+                del self.index[offloaded]
             super(DiskCache, self).__delitem__(key)
