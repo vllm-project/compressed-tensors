@@ -158,3 +158,33 @@ def test_map_to_checkpoint_names(model_id, hf_ignores, checkpoint_ignores):
     result = _map_to_checkpoint_names(model, hf_ignores)
 
     assert result == checkpoint_ignores
+
+
+def test_imatrix_mse_weight_observer_requires_calibration_data():
+    from compressed_tensors.quantization import QuantizationArgs
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_1": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(observer="imatrix_mse"),
+            )
+        }
+    )
+
+    assert config.requires_calibration_data()
+
+
+def test_default_weight_observer_does_not_require_calibration_data():
+    from compressed_tensors.quantization import QuantizationArgs
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_1": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(),
+            )
+        }
+    )
+
+    assert not config.requires_calibration_data()
