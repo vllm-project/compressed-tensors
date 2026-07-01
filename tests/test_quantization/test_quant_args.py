@@ -55,6 +55,10 @@ def test_block():
     assert block.block_structure == [2, 4]
     assert block.block_structure != kwargs["block_structure"]  # "2x4" != [2, 4]
 
+    tensor_block = QuantizationArgs(strategy="tensor_block", block_structure=[16, 16])
+    assert tensor_block.strategy == QuantizationStrategy.TENSOR_BLOCK
+    assert tensor_block.block_structure == [16, 16]
+
 
 def test_block_structure_string_length_validation():
     # string and list forms must enforce the same [rows, cols] contract

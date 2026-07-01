@@ -156,6 +156,20 @@ NVFP4A16 = dict(
 )
 
 
+NVFP4A16_BLOCK = dict(
+    weights=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_BLOCK,
+        symmetric=True,
+        dynamic=False,
+        block_structure=[16, 16],
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=FP8_E4M3_DATA.dtype,
+    )
+)
+
+
 NVFP4 = dict(
     weights=QuantizationArgs(
         num_bits=4,
@@ -422,6 +436,7 @@ PRESET_SCHEMES = {
     "FP8_DYNAMIC": FP8_DYNAMIC,
     "FP8_BLOCK": FP8_BLOCK,
     "NVFP4A16": NVFP4A16,
+    "NVFP4A16_BLOCK": NVFP4A16_BLOCK,
     "NVFP4": NVFP4,
     "MXFP4A16": MXFP4A16,
     "MXFP4": MXFP4,
