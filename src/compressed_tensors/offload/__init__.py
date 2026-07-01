@@ -55,6 +55,7 @@ __all__ = [
     "disable_offloading",
     # manipulate parameters
     "update_offload_parameter",
+    "tie_offload_parameter",
     "get_execution_device",
     "get_offloaded_device",
     "register_offload_module",
@@ -147,6 +148,54 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
     else:
         with torch.no_grad():
             getattr(module, name).copy_(data)
+
+
+def tie_offload_parameter(
+    dst_module: torch.nn.Module,
+    dst_name: str,
+    src_module: torch.nn.Module,
+    src_name: str | None = None,
+):
+    """
+    Tie a parameter/buffer of ``dst_module`` to one of ``src_module`` so the two
+    share a single underlying tensor, even when the modules are offloaded.
+
+    A plain assignment to an offloaded module copies into that module's own cache,
+    leaving two independent tensors. This aliases the destination to the source's
+    (offloaded) storage instead, so that ``state_dict`` resolves both to the same
+    tensor and save-time de-duplication keeps a single copy.
+
+    Both names must already exist on their respective modules.
+
+    :param dst_module: module whose parameter/buffer should reference the source
+    :param dst_name: name of the destination parameter/buffer
+    :param src_module: module holding the parameter/buffer to tie to
+    :param src_name: name of the source parameter/buffer (defaults to ``dst_name``)
+    """
+    src_name = src_name or dst_name
+
+    def _cache(module: torch.nn.Module, name: str):
+        if name in module._parameters:
+            return module._parameters, "parameter"
+        if name in module._buffers:
+            return module._buffers, "buffer"
+        raise AttributeError(f"{type(module)} has no attribute {name}")
+
+    src_cache, src_kind = _cache(src_module, src_name)
+    dst_cache, dst_kind = _cache(dst_module, dst_name)
+    if src_kind != dst_kind:
+        raise TypeError(
+            f"Cannot tie destination {dst_kind} {dst_name!r} "
+            f"to source {src_kind} {src_name!r}"
+        )
+
+    if isinstance(src_cache, OffloadCache) or isinstance(dst_cache, OffloadCache):
+        # Read/store the source tensor by reference (no copy/onload) so the alias
+        # holds even when only one side is offloaded.
+        with OffloadCache.disable_onloading():
+            dst_cache[dst_name] = src_cache[src_name]
+    else:
+        dst_cache[dst_name] = src_cache[src_name]
 
 
 def get_execution_device(
