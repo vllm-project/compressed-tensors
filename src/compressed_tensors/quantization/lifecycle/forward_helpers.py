@@ -6,6 +6,7 @@ from math import ceil
 import torch
 from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
+    QuantizationType,
     round_to_quantized_type_args,
 )
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
@@ -187,6 +188,15 @@ def _quantize_dequantize(
     - Double scale/global_scale division
     - Intermediate quantized dtype allocation
     """
+    if (
+        getattr(args, "four_over_six", False)
+        and args.num_bits == 4
+        and args.type == QuantizationType.FLOAT
+    ):
+        return _four_over_six_quantize_dequantize(
+            x, scale, zero_point, q_min, q_max, args, global_scale
+        )
+
     # compute effective scale once
     if global_scale is not None:
         scale = scale / global_scale
@@ -208,6 +218,56 @@ def _quantize_dequantize(
         dequant = dequant - zero_point.to(scale.dtype)
 
     return dequant * scale
+
+
+@torch.no_grad()
+def _four_over_six_quantize_dequantize(
+    x: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    q_min: torch.Tensor,
+    q_max: torch.Tensor,
+    args: QuantizationArgs,
+    global_scale: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """
+    Four Over Six adaptive block scaling: for each group, try quantizing
+    with the standard scale (maps max to 6) and an alternative scale
+    (maps max to 4, i.e. scale * 1.5). Pick whichever yields lower MSE.
+    """
+    if global_scale is not None:
+        eff_scale = scale / global_scale
+    else:
+        eff_scale = scale
+
+    # --- Path A: standard (scale to 6) ---
+    scaled_a = x / eff_scale
+    if zero_point is not None:
+        scaled_a = scaled_a + zero_point.to(x.dtype)
+    q_a = round_to_quantized_type_args(tensor=scaled_a, args=args, min=q_min, max=q_max)
+    dq_a = q_a.to(eff_scale.dtype)
+    if zero_point is not None:
+        dq_a = dq_a - zero_point.to(eff_scale.dtype)
+    dq_a = dq_a * eff_scale
+
+    # --- Path B: scale to 4 (scale * 1.5) ---
+    eff_scale_b = eff_scale * 1.5
+    scaled_b = x / eff_scale_b
+    if zero_point is not None:
+        scaled_b = scaled_b + zero_point.to(x.dtype)
+    q_b = round_to_quantized_type_args(tensor=scaled_b, args=args, min=q_min, max=q_max)
+    dq_b = q_b.to(eff_scale_b.dtype)
+    if zero_point is not None:
+        dq_b = dq_b - zero_point.to(eff_scale_b.dtype)
+    dq_b = dq_b * eff_scale_b
+
+    # --- Per-group MSE comparison ---
+    group_dims = tuple(range(scale.ndim, x.ndim))
+    mse_a = ((x - dq_a) ** 2).mean(dim=group_dims, keepdim=True)
+    mse_b = ((x - dq_b) ** 2).mean(dim=group_dims, keepdim=True)
+
+    use_b = mse_b < mse_a
+    return torch.where(use_b, dq_b, dq_a)
 
 
 @torch.no_grad()

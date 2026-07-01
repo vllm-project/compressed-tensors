@@ -180,6 +180,47 @@ NVFP4 = dict(
     ),
 )
 
+NVFP4A16_46 = dict(
+    weights=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=16,
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=FP8_E4M3_DATA.dtype,
+        four_over_six=True,
+    )
+)
+
+
+NVFP4_46 = dict(
+    weights=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=16,
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=FP8_E4M3_DATA.dtype,
+        four_over_six=True,
+    ),
+    input_activations=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        symmetric=True,
+        dynamic=DynamicType.LOCAL,
+        group_size=16,
+        observer="static_minmax",
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=FP8_E4M3_DATA.dtype,
+        four_over_six=True,
+    ),
+)
+
 MXFP4A16 = dict(
     weights=QuantizationArgs(
         num_bits=4,
@@ -422,7 +463,9 @@ PRESET_SCHEMES = {
     "FP8_DYNAMIC": FP8_DYNAMIC,
     "FP8_BLOCK": FP8_BLOCK,
     "NVFP4A16": NVFP4A16,
+    "NVFP4A16_46": NVFP4A16_46,
     "NVFP4": NVFP4,
+    "NVFP4_46": NVFP4_46,
     "MXFP4A16": MXFP4A16,
     "MXFP4": MXFP4,
     "MXFP8A16": MXFP8A16,
