@@ -476,6 +476,75 @@ update_offload_parameter(layer, "weight", quantized_weight)
 
 ---
 
+#### `update_onload_parameter(module, name, data)`
+
+Updates only the onloaded (in-memory, on-device) copy of a parameter or buffer. For offloaded modules, this only has an effect when offloading is disabled (i.e., within a `disable_offloading` context), since onloaded values are otherwise transient. For non-offloaded modules, updates the parameter directly.
+
+```python
+with disable_offloading():
+    update_onload_parameter(layer, "weight", modified_weight)
+```
+
+**Use when:** temporarily modifying weights during inference (e.g., applying runtime transformations) without persisting changes to the offloaded copy.
+
+---
+
+#### `update_parameter(module, name, data, update_onload=True, update_offload=True)`
+
+Synchronously updates one or both copies of a parameter with distributed-aware coordination.
+
+When `update_offload=True`:
+- Only the source rank writes to the offloaded copy (shared CPU memory, disk files, etc.)
+- A barrier ensures all ranks wait for the write to complete
+
+When `update_onload=True`:
+- Data is broadcast from the source rank to all other ranks
+- All ranks then update their local onloaded copies
+
+```python
+# Update both offloaded and onloaded copies (default)
+# In distributed: source rank writes offload, broadcasts data, all ranks update onload
+update_parameter(layer, "weight", new_weight)
+
+# Update only the offloaded copy
+# In distributed: source rank writes offload, barrier to synchronize
+update_parameter(layer, "weight", new_weight, update_onload=False)
+
+# Update only the onloaded copy
+# In distributed: data is broadcast, all ranks update local onloads
+update_parameter(layer, "weight", new_weight, update_offload=False)
+```
+
+> **Note:** This function uses barriers and broadcasts to ensure consistent state across ranks. For asynchronous updates without synchronization, use `update_parameter_async`.
+
+**Use when:** you need to update parameters in a distributed context and require synchronization across ranks.
+
+---
+
+#### `update_parameter_async(module, name, data, update_onload=True, update_offload=True)`
+
+Asynchronously updates one or both copies of a parameter without distributed synchronization.
+
+This is a convenience wrapper around `update_offload_parameter` and `update_onload_parameter` that updates the requested copies without any barriers or broadcasts.
+
+```python
+# Update both offloaded and onloaded copies asynchronously
+update_parameter_async(layer, "weight", new_weight)
+
+# Update only the offloaded copy
+update_parameter_async(layer, "weight", new_weight, update_onload=False)
+
+# Update only the onloaded copy (within disable_offloading context)
+with disable_offloading():
+    update_parameter_async(layer, "weight", new_weight, update_offload=False)
+```
+
+> **Caution:** In distributed contexts, this function does not synchronize across ranks. The caller is responsible for ensuring consistent state if needed.
+
+**Use when:** you need maximum performance and can manage synchronization manually, or when working in non-distributed contexts.
+
+---
+
 #### `get_execution_device(module, default=None) → torch.device | "disk"`
 
 Returns the device that input tensors should be moved to before running the module's forward pass.
