@@ -167,3 +167,21 @@ def accel_device():
         if "TORCHELASTIC_RUN_ID" in os.environ
         else torch.device(accel_type, 0)
     )
+
+
+@pytest.fixture
+def offload_folder(tmp_path) -> str:
+    """Create an offload folder on rank 0 and broadcast to all ranks."""
+    offload_path = tmp_path / "offload_folder"
+
+    # Create directory on rank 0
+    if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+        os.makedirs(offload_path, exist_ok=True)
+
+    # If distributed, broadcast the path from rank 0 to all ranks
+    if torch.distributed.is_initialized():
+        broadcast_object = [str(offload_path)]
+        torch.distributed.broadcast_object_list(broadcast_object, src=0)
+        offload_path = broadcast_object[0]
+
+    return offload_path
