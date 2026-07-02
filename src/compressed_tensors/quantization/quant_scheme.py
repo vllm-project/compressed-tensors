@@ -283,10 +283,70 @@ W8A16 = dict(
     ),
 )
 
+# 7 bit integer weights only quantization
+W7A16 = dict(
+    weights=QuantizationArgs(
+        num_bits=7,
+        type=QuantizationType.INT,
+        strategy=QuantizationStrategy.GROUP,
+        group_size=128,
+        symmetric=True,
+        dynamic=False,
+    ),
+)
+
+# 6 bit integer weights only quantization
+W6A16 = dict(
+    weights=QuantizationArgs(
+        num_bits=6,
+        type=QuantizationType.INT,
+        strategy=QuantizationStrategy.GROUP,
+        group_size=128,
+        symmetric=True,
+        dynamic=False,
+    ),
+)
+
+# 5 bit integer weights only quantization
+W5A16 = dict(
+    weights=QuantizationArgs(
+        num_bits=5,
+        type=QuantizationType.INT,
+        strategy=QuantizationStrategy.GROUP,
+        group_size=128,
+        symmetric=True,
+        dynamic=False,
+    ),
+)
+
 # 4 bit integer weights only quantization
 W4A16 = dict(
     weights=QuantizationArgs(
         num_bits=4,
+        type=QuantizationType.INT,
+        strategy=QuantizationStrategy.GROUP,
+        group_size=128,
+        symmetric=True,
+        dynamic=False,
+    ),
+)
+
+# 3 bit integer weights only quantization
+W3A16 = dict(
+    weights=QuantizationArgs(
+        num_bits=3,
+        type=QuantizationType.INT,
+        strategy=QuantizationStrategy.GROUP,
+        group_size=128,
+        symmetric=True,
+        dynamic=False,
+    ),
+)
+
+# 2 bit integer weights only quantization
+W2A16 = dict(
+    weights=QuantizationArgs(
+        num_bits=2,
         type=QuantizationType.INT,
         strategy=QuantizationStrategy.GROUP,
         group_size=128,
@@ -409,8 +469,13 @@ PRESET_SCHEMES = {
     # Unquantized (no-op)
     "UNQUANTIZED": UNQUANTIZED,
     # Integer weight only schemes
-    "W8A16": W8A16,
+    "W2A16": W2A16,
+    "W3A16": W3A16,
     "W4A16": W4A16,
+    "W5A16": W5A16,
+    "W6A16": W6A16,
+    "W7A16": W7A16,
+    "W8A16": W8A16,
     "W4A16_ASYM": W4A16_ASYM,
     # Integer weight and activation schemes
     "W8A8": INT8_W8A8,
