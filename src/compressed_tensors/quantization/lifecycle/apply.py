@@ -153,7 +153,7 @@ def apply_quantization_config(
             module.quantization_status = config.quantization_status
 
         # linear quantization
-        elif isinstance(module, torch.nn.Linear):
+        elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
             module.quantization_scheme = scheme
             initialize_module_for_quantization(
                 module, force_zero_point=force_zero_point
