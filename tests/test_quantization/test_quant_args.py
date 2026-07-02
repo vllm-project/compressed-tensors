@@ -56,6 +56,19 @@ def test_block():
     assert block.block_structure != kwargs["block_structure"]  # "2x4" != [2, 4]
 
 
+def test_block_structure_string_length_validation():
+    # string and list forms must enforce the same [rows, cols] contract
+    with pytest.raises(ValidationError):
+        QuantizationArgs(strategy="block", block_structure="2x4x8")
+    with pytest.raises(ValidationError):
+        QuantizationArgs(strategy="block", block_structure=[2, 4, 8])
+
+
+def test_block_structure_string_non_int():
+    with pytest.raises(ValidationError):
+        QuantizationArgs(strategy="block", block_structure="2xfoo")
+
+
 def test_infer_strategy():
     args = QuantizationArgs(group_size=128)
     assert args.strategy == QuantizationStrategy.GROUP

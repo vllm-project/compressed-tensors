@@ -119,10 +119,11 @@ class DiskCache(OffloadCache):
         :param key: name of tensor to invalidate
         """
         offloaded = self.offloaded_values[key]
-        file_path = self.index[offloaded]["safetensors_file"]
-        if self._is_ct_file_path(file_path):
-            os.remove(file_path)
-        del self.index[offloaded]
+        if not self.onloading_disabled:
+            file_path = self.index[offloaded]["safetensors_file"]
+            if self._is_ct_file_path(file_path):
+                os.remove(file_path)
+            del self.index[offloaded]
         super().__delitem__(key)
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
