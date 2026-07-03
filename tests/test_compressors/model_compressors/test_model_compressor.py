@@ -5,7 +5,9 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from compressed_tensors import ModelCompressor
 from compressed_tensors.config import CompressionFormat
@@ -16,6 +18,8 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
 )
 from compressed_tensors.transform import TransformConfig
+from tests.test_offload.conftest import torchrun
+from tests.testing_utils import requires_gpu
 
 
 class DummyLinear(nn.Module):
@@ -383,3 +387,82 @@ class TestModelCompressorEdgeCases:
         # Should skip all modules
         assert model.layer1.weight.dtype == original_dtype
         assert model.layer2.weight.dtype == original_dtype
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
+def test_compress_model_distributed():
+    """Test that model compression works in a distributed environment."""
+    # Create model on each rank
+    model = DummyLinear()
+    scheme = create_quantization_scheme(bits=4, type="int", strategy="channel")
+    model.linear.quantization_scheme = scheme
+    model.linear.quantization_status = QuantizationStatus.FROZEN
+    model.linear.weight_scale = nn.Parameter(
+        torch.ones(model.linear.weight.shape[0], 1) * 0.01
+    )
+    model.linear.weight_zero_point = nn.Parameter(
+        torch.zeros(model.linear.weight.shape[0], 1, dtype=torch.int32),
+        requires_grad=False,
+    )
+
+    # Move model to GPU
+    rank = dist.get_rank()
+    device = torch.device(f"cuda:{rank}")
+    model = model.to(device)
+
+    # Compress on each rank
+    q_config = create_quantization_config(bits=4, format="pack-quantized")
+    compressor = ModelCompressor(quantization_config=q_config)
+    compressor.compress_model(model)
+
+    # Verify compression happened on each rank
+    assert hasattr(model.linear, "weight_packed")
+    assert model.linear.weight_packed.dtype == torch.int32
+    assert hasattr(model, "ct_decompress_hook")
+
+    # Ensure all ranks complete
+    dist.barrier()
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
+def test_decompress_hook_distributed():
+    """Test that decompression hook works in distributed forward passes."""
+    model = DummyLinear()
+    scheme = create_quantization_scheme(bits=4, type="int", strategy="channel")
+    model.linear.quantization_scheme = scheme
+    model.linear.quantization_status = QuantizationStatus.FROZEN
+    model.linear.weight_scale = nn.Parameter(
+        torch.ones(model.linear.weight.shape[0], 1) * 0.01
+    )
+    model.linear.weight_zero_point = nn.Parameter(
+        torch.zeros(model.linear.weight.shape[0], 1, dtype=torch.int32),
+        requires_grad=False,
+    )
+
+    # Move model to GPU
+    rank = dist.get_rank()
+    device = torch.device(f"cuda:{rank}")
+    model = model.to(device)
+
+    q_config = create_quantization_config(bits=4, format="pack-quantized")
+    compressor = ModelCompressor(quantization_config=q_config)
+
+    compressor.compress_model(model)
+    assert hasattr(model.linear, "weight_packed")
+
+    if dist.get_rank() == 0:
+        # Forward pass should trigger decompression
+        x = torch.randn(2, 10, device="cuda:0")
+        output = model(x)
+
+        # Verify output shape and decompression
+        assert output.shape == (2, 10)
+        assert model.linear.weight.dtype == torch.float32
+        assert not hasattr(model.linear, "weight_packed")
+
+    # Ensure all ranks complete
+    dist.barrier()
