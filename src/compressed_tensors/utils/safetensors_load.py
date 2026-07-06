@@ -555,12 +555,17 @@ def _fetch_and_save_prefix_tensors(
     :return: dict mapping tensor key to tensor
 
     """
-    source_dir = get_safetensors_folder(source_model)
-    weight_mappings = get_weight_mappings(source_dir)
+    model_files = get_checkpoint_files(source_model)
+    weight_map = get_weight_map(model_files)
 
     tensors = {}
-    for key, filepath in weight_mappings.items():
+    for key, weight_shard_name in weight_map.items():
         if key.startswith(prefix):
+            if weight_shard_name not in model_files:
+                raise ValueError(
+                    f"Could not find shard {weight_shard_name} for tensor {key}"
+                )
+            filepath = model_files[weight_shard_name]
             with safe_open(filepath, framework="pt", device="cpu") as f:
                 tensors[key] = f.get_tensor(key)
 
