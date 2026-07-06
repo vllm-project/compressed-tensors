@@ -98,17 +98,27 @@ def test_update_offload_parameter(linear: torch.nn.Linear, cache, offload):
 @pytest.mark.unit
 @requires_gpu
 def test_update_offload_parameter_only(offloaded_linear: torch.nn.Linear):
-    offloaded_linear.weight = torch.nn.Parameter(torch.tensor(0.0))
+    # Use tensors matching the weight shape and explicitly on the offload device
+    offloaded_linear.weight = torch.nn.Parameter(
+        torch.zeros(5, 5, device=OFFLOAD_DEVICE), requires_grad=False
+    )
 
     with disable_offloading():
+        # Access weight to onload it and cache it
         _ = offloaded_linear.weight
-        update_offload_parameter(offloaded_linear, "weight", torch.tensor(1))
+        # Update only the offloaded value, not the onloaded cache
+        update_offload_parameter(
+            offloaded_linear, "weight", torch.ones(5, 5, device=OFFLOAD_DEVICE)
+        )
 
-        # updating offload does not update onload
+        # Verify offloaded value was updated to ones
         with disable_onloading():
             offload = offloaded_linear.weight
-        assert offload == 1
-        assert offloaded_linear.weight != offload
+        assert torch.all(offload == 1).item()
+
+        # Verify onloaded cached value is still zeros (not updated)
+        onload = offloaded_linear.weight
+        assert torch.all(onload == 0).item()
 
 
 @pytest.mark.unit
