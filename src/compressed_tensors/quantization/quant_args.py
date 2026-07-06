@@ -292,7 +292,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         if isinstance(value, str):
             actorder = ActivationOrdering(value.lower())
             # Check if it's GROUP or DYNAMIC (which is an alias for GROUP)
-            if actorder == ActivationOrdering.GROUP or value.lower() == "dynamic":
+            if actorder == ActivationOrdering.GROUP:
                 logger.bind(log_once=True).warning(
                     "actorder='group' (and its alias 'dynamic') will be removed in a "
                     "future release. Please use actorder='weight' instead for "
