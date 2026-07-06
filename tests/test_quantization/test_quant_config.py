@@ -10,7 +10,10 @@ from compressed_tensors.quantization import (
     QuantizationScheme,
     QuantizationStatus,
 )
-from compressed_tensors.quantization.quant_config import _map_to_checkpoint_names
+from compressed_tensors.quantization.quant_config import (
+    _map_to_checkpoint_names,
+    get_vllm_module_type,
+)
 from pydantic import ValidationError
 from transformers import AutoModelForImageTextToText
 
@@ -158,3 +161,15 @@ def test_map_to_checkpoint_names(model_id, hf_ignores, checkpoint_ignores):
     result = _map_to_checkpoint_names(model, hf_ignores)
 
     assert result == checkpoint_ignores
+
+
+def test_get_vllm_module_type():
+    assert get_vllm_module_type("ExpertMLP") == "ExpertMLP"
+    assert get_vllm_module_type("ExpertMLPWithGate") == "ExpertMLPWithGate"
+    assert get_vllm_module_type("ExpertMLPWithoutGate") == "ExpertMLPWithoutGate"
+    assert get_vllm_module_type("Linear") == "Linear"
+    assert get_vllm_module_type("DeepseekV4TopKRouter") == "Linear"
+    assert get_vllm_module_type("DeepseekV4HashRouter") == "Linear"
+    assert get_vllm_module_type("JetMoeTopKGating") == "Linear"
+    assert get_vllm_module_type("Qwen3NextGatedDeltaNet") == "Linear"
+    assert get_vllm_module_type("JetMoeTopKGating") == "Linear"

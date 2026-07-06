@@ -5,7 +5,6 @@ from collections import defaultdict
 from enum import Enum
 from typing import Annotated, Any
 
-import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
 from compressed_tensors.quantization.quant_scheme import (
@@ -215,7 +214,7 @@ class QuantizationConfig(BaseModel):
         kv_cache_scheme: QuantizationArgs | None = None
 
         for name, submodule in model.named_modules():
-            layer_type: str = get_vllm_module_type(submodule)
+            layer_type: str = get_vllm_module_type(type(submodule).__name__)
 
             # add config group if quantized non-attention or attention quant
             has_config_group = is_module_quantized(submodule) and (
@@ -305,16 +304,16 @@ class QuantizationConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-def get_vllm_module_type(module: torch.nn.Module) -> str:
+def get_vllm_module_type(module_type: str) -> str:
     """
     Returns a string representing the module type used when loading in vLLM.
     This is typically going to be the same as the `torch.nn.Module` type,
     however specific cases like MoE gate layers need to be treated like "Linear"
     layers for the purposes of config matching.
     """
-
-    module_type = type(module).__name__
-    if "Router" in module_type or "Gate" in module_type or "Gating" in module_type:
+    if "ExpertMLP" not in module_type and (
+        "Router" in module_type or "Gate" in module_type or "Gating" in module_type
+    ):
         module_type = "Linear"
 
     return module_type

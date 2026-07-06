@@ -3,6 +3,7 @@
 
 import torch
 from compressed_tensors import TRANSFORM_CONFIG_NAME
+from compressed_tensors.offload import OffloadCache
 from compressed_tensors.transform import TransformConfig, TransformFactory
 from compressed_tensors.transform.factory.base import TransformBase
 
@@ -34,29 +35,36 @@ def _register_tied_transform_weights(model: torch.nn.Module):
     Scan for transform submodules that share parameters and register them as tied
     weights via ``_tied_weights_keys``. This allows ``save_pretrained`` in
     transformers v5+ to handle shared tensors without raising an error.
+
+    Sharing is detected via the ``id`` of each parameter. For offloaded modules this
+    must be done within :meth:`OffloadCache.disable_onloading`, otherwise each access
+    onloads a *fresh* copy whose ``id`` differs across modules that share the same
+    offloaded weight, and the sharing would go undetected.
     """
     # Map parameter id -> first full parameter name that owns it
     first_seen: dict[int, str] = {}
 
-    for module_name, module in model.named_modules():
-        if not isinstance(module, TransformBase):
-            continue
-
-        tied_keys: dict[str, str] = {}
-        for key in getattr(module, "_dynamic_tied_weights_keys", []):
-            param = getattr(module, key, None)
-            if param is None:
+    # inspect offloaded tensors directly so shared weights keep a stable identity
+    with OffloadCache.disable_onloading():
+        for module_name, module in model.named_modules():
+            if not isinstance(module, TransformBase):
                 continue
 
-            param_id = id(param)
-            full_key = f"{module_name}.{key}" if module_name else key
+            tied_keys: dict[str, str] = {}
+            for key in getattr(module, "_dynamic_tied_weights_keys", []):
+                param = getattr(module, key, None)
+                if param is None:
+                    continue
 
-            if param_id not in first_seen:
-                first_seen[param_id] = full_key
-            else:
-                # This parameter was already registered under a different module;
-                # mark it as tied so save_pretrained knows to deduplicate
-                tied_keys[key] = first_seen[param_id]
+                param_id = id(param)
+                full_key = f"{module_name}.{key}" if module_name else key
 
-        if tied_keys:
-            module._tied_weights_keys = tied_keys
+                if param_id not in first_seen:
+                    first_seen[param_id] = full_key
+                else:
+                    # This parameter was already registered under a different module;
+                    # mark it as tied so save_pretrained knows to deduplicate
+                    tied_keys[key] = first_seen[param_id]
+
+            if tied_keys:
+                module._tied_weights_keys = tied_keys

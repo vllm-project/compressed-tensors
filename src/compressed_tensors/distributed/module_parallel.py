@@ -72,14 +72,19 @@ def replace_module_parallel(
 
     # Step 4: Recouple - broadcast source offload across ranks
     for module in modules:
-        with disable_onloading():
-            state_dict = get_direct_state_dict(module)
+        if isinstance(module._parameters, OffloadCache):
+            assert isinstance(module._buffers, OffloadCache)
+            with set_source_process(assigned_rank[module]):
+                module._parameters.offloaded_values = {
+                    name: module._parameters.offload(value)
+                    for name, value in module._parameters.offloaded_values.items()
+                }
+                module._buffers.offloaded_values = {
+                    name: module._buffers.offload(value)
+                    for name, value in module._buffers.offloaded_values.items()
+                }
 
-        # If module is not offloaded, manually broadcast tensors via object list
-        if not isinstance(module._parameters, OffloadCache):
-            broadcast_obj = [state_dict]
+        else:
+            broadcast_obj = [get_direct_state_dict(module)]
             dist.broadcast_object_list(broadcast_obj, src=assigned_rank[module])
-            state_dict = broadcast_obj[0]
-
-        with set_source_process(assigned_rank[module]):
-            replace_direct_state_dict(module, state_dict)  # 4. broadcast
+            replace_direct_state_dict(module, broadcast_obj[0])
