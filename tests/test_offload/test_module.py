@@ -205,16 +205,15 @@ def test_forward_signature(linear: torch.nn.Linear, cache):
 
 @pytest.mark.unit
 def test_set_item(offloaded_linear: torch.nn.Linear):
-    # update with same size - should alias when already on offload device
+    # update
     update = torch.nn.Parameter(
         torch.rand(5, 5, device=OFFLOAD_DEVICE), requires_grad=False
     )
     offloaded_linear.weight = update
     with disable_onloading():
-        # When value is already on offload device, __setitem__ can alias it
-        assert offloaded_linear.weight is update
+        assert offloaded_linear.weight is not update
 
-    # overwrite with different size - should also alias
+    # overwrite with different size
     overwrite = torch.nn.Parameter(
         torch.rand(6, 6, device=OFFLOAD_DEVICE), requires_grad=False
     )
