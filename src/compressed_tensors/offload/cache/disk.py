@@ -133,6 +133,13 @@ class DiskCache(OffloadCache):
         :param offloaded: meta tensors representating parameter to update
         :param data: new data
         """
+        # Skip update if data is on meta device - this happens during distributed
+        # module parallel "compress on meta" phase where non-processing ranks
+        # update meta tensors that aren't in the index. Real updates happen later
+        # on the processing rank with actual device tensors.
+        if data is not None and data.device.type == "meta":
+            return
+
         # get weight info from index
         assert offloaded in self.index, "Cannot find offload to update"
         weight_info = self.index[offloaded]
