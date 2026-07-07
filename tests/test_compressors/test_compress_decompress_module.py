@@ -23,7 +23,7 @@ from compressed_tensors.utils import get_direct_state_dict
 def _run_compress_decompress(
     scheme_name, expected_format, actorder, device, module=None, targets=("Linear",)
 ):
-    if device == "cuda" and not torch.cuda.is_available():
+    if device == "cuda" and not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
 
     # 1. Initialize module for quantization using a preset scheme.
