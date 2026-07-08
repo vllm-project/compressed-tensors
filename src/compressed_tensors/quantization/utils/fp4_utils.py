@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
+import torch.compiler
 import triton
 import triton.language as tl
 
@@ -49,6 +50,7 @@ def _cast_to_fp4_kernel(
     tl.store(output_ptr + offsets, result, mask=mask)
 
 
+@torch.compile(dynamic=True)
 def _cast_to_fp4_cpu(x):
     """
     CPU implementation for FP4 E2M1 quantization
@@ -97,7 +99,7 @@ def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
             block_size = 1024
 
             # Use tile_size as BLOCK_SIZE for Triton kernel
-            grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)
+            grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)  # noqa: E731
             _cast_to_fp4_kernel[grid](x, output, n, BLOCK_SIZE=block_size)
 
             return output.reshape(shape)

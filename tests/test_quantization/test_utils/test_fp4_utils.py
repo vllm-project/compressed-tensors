@@ -3,7 +3,6 @@
 
 import pytest
 import torch
-from compressed_tensors.quantization.quant_args import FP4_E2M1_DATA
 from compressed_tensors.quantization.utils.fp4_utils import cast_to_fp4
 from tests.testing_utils import requires_gpu
 
@@ -12,7 +11,6 @@ from tests.testing_utils import requires_gpu
 @pytest.mark.parametrize("size", [1, 10, 100, 1000])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
 def test_cast_to_fp4_cpu_gpu_match(size, dtype):
-    """Test that CPU and GPU implementations produce identical results for small tensors."""
     # Create random tensor
     x_cpu = torch.randn(size, dtype=dtype)
     x_gpu = x_cpu.cuda()
@@ -97,7 +95,7 @@ def test_cast_to_fp4_boundary_values():
             -3.0,
             -4.0,
             -6.0,
-            # Values at boundaries (based on >= vs > conditions in implementation)
+            # Values at boundaries
             0.0,
             1.0,
             1.0,
