@@ -139,8 +139,6 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         if offloaded is None:
             raise ValueError(f"Cannot update offload value `None` for param {name}")
         cache.update_offload(offloaded, data)
-        if offloaded in cache.keep_onloaded_values:
-            del cache.keep_onloaded_values[offloaded]
 
     else:
         getattr(module, name).copy_(data)
