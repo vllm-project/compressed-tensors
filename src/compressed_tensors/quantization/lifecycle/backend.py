@@ -37,6 +37,11 @@ __all__ = [
 _DEFAULT_BACKEND = "eager"
 _ACTIVE_BACKEND = os.environ.get("COMPRESSED_TENSORS_QUANT_BACKEND", _DEFAULT_BACKEND)
 
+# the resolved class for _ACTIVE_BACKEND, cached so the hot path costs one
+# global read instead of a registry lookup per call (resolved lazily on first
+# use so env-configured names are validated after all backends register)
+_ACTIVE_BACKEND_CLS = None
+
 
 class QuantizationBackend(RegistryMixin):
     """Base class for quantization lifecycle backends.
@@ -49,9 +54,10 @@ class QuantizationBackend(RegistryMixin):
     registry_requires_subclass = True
 
     @staticmethod
-    def is_available(x: torch.Tensor, args: QuantizationArgs) -> bool:
-        """Whether this backend can handle the given tensor/args. Backends that
-        return False for a given input are skipped in favor of eager."""
+    def is_available(x: torch.Tensor, args: QuantizationArgs | None = None) -> bool:
+        """Whether this backend can handle the given tensor/args. ``args`` may
+        be None (e.g. dequantize does not carry QuantizationArgs). Backends
+        that return False for a given input are skipped in favor of eager."""
         return True
 
     @staticmethod
@@ -163,8 +169,8 @@ def set_quantization_backend(name: str) -> None:
 
     :param name: registered backend name (e.g. ``"eager"``). Raises if unknown.
     """
-    QuantizationBackend.get_value_from_registry(name)  # validate existence
-    global _ACTIVE_BACKEND
+    global _ACTIVE_BACKEND, _ACTIVE_BACKEND_CLS
+    _ACTIVE_BACKEND_CLS = QuantizationBackend.get_value_from_registry(name)
     _ACTIVE_BACKEND = name
 
 
@@ -172,9 +178,17 @@ def get_quantization_backend(
     x: torch.Tensor | None = None, args: QuantizationArgs | None = None
 ) -> type[QuantizationBackend]:
     """Return the active backend, falling back to eager when the active backend
-    is not available for the given tensor/args."""
-    backend = QuantizationBackend.get_value_from_registry(_ACTIVE_BACKEND)
-    if _ACTIVE_BACKEND != _DEFAULT_BACKEND and x is not None:
+    is not available for the given tensor/args.
+
+    Backend resolution is cached: the common (eager) path costs one global
+    read, and the registry is only consulted when the active backend changes.
+    """
+    global _ACTIVE_BACKEND_CLS
+    backend = _ACTIVE_BACKEND_CLS
+    if backend is None:
+        backend = QuantizationBackend.get_value_from_registry(_ACTIVE_BACKEND)
+        _ACTIVE_BACKEND_CLS = backend
+    if backend is not EagerQuantizationBackend and x is not None:
         if not backend.is_available(x, args):
-            return QuantizationBackend.get_value_from_registry(_DEFAULT_BACKEND)
+            return EagerQuantizationBackend
     return backend

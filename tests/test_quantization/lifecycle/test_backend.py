@@ -77,7 +77,7 @@ def test_quantize_then_dequantize_roundtrip():
 
 
 def test_set_unknown_backend_raises():
-    with pytest.raises(Exception):
+    with pytest.raises(KeyError):
         set_quantization_backend("does-not-exist")
 
 
