@@ -1,0 +1,31 @@
+Command: run python /home/HDCharles/repos/compressed-tensors/benchmark_pack_fp4.py
+Reserved 1 GPU(s): [0] for command execution
+Benchmarking pack_fp4_to_uint8 implementations (0.84B elements)
+
+================================================================================
+NOTE: This benchmark uses full-scale 8.44B elements and will take time.
+
+Running original implementation...
+Memory before original: 0.000 GB
+Original:
+  Time: 0.118s
+  Peak: 38.8 GB
+Memory after original: 0.000 GB
+
+Running current implementation...
+Memory before current: 0.000 GB
+Current:
+  Time: 0.064s
+  Peak: 4.2 GB
+Memory after current: 0.000 GB
+
+================================================================================
+SUMMARY
+================================================================================
+Implementation       Time (s)        Peak (GB)       vs Original    
+--------------------------------------------------------------------------------
+Original                  0.118 s         38.8 GB   baseline
+Current                   0.064 s          4.2 GB   -34.6 GB
+
+Speedup: 1.85x
+Memory savings: 34.6 GB

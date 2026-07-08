@@ -40,6 +40,10 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     to index 7) which is then represented using 4 bits. Consecutive
     pairs of 4 bits are then packed into an uint8.
 
+    IMPORTANT: This assumes x contains ONLY valid FP4 values. If called with
+    non-quantized data, results will be incorrect. This function should only be
+    called after _cast_to_fp4() or equivalent quantization.
+
     :param x: tensor to pack
     :returns: a packed tensor in uint8
     """
@@ -51,25 +55,34 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
             "tensor must have an even number of columns for nvfp4 compression"
         )
 
-    # Create lookup table for FP4 values to indices
-    kE2M1 = torch.tensor(FLOAT_TO_E2M1, device=device, dtype=x.dtype)
+    # NOTE: _cast_to_fp4 uses torch.sign() which returns 0 for zero, so it never
+    # produces -0.0. All zeros are positive, so we don't need special -0.0 handling.
 
-    # Find closest valid FP4 value index for each element
-    abs_x = torch.abs(x)
-    abs_diff_x = torch.abs(abs_x.unsqueeze(-1) - kE2M1)  # [m, n, 8]
-    abs_indices = torch.argmin(abs_diff_x, dim=-1)  # [m, n]
+    # Convert to int8 to save memory (bf16 -> int8 is a 2x reduction)
+    x.mul_(2)
+    x = x.to(torch.int8)
 
-    # Apply sign bit (bit 3) to get final 4-bit representation
-    indices = abs_indices + (torch.signbit(x).to(torch.long) << 3)
+    indices = torch.zeros_like(x, dtype=torch.uint8)
 
-    # Reshape to prepare for packing pairs of values
-    indices = indices.reshape(-1)
+    indices[x == 1] = 1
+    indices[x == 2] = 2
+    indices[x == 3] = 3
+    indices[x == 4] = 4
+    indices[x == 6] = 5
+    indices[x == 8] = 6
+    indices[x >= 12] = 7
 
-    # Reshape to pair consecutive elements
+    indices[x == -1] = 9
+    indices[x == -2] = 10
+    indices[x == -3] = 11
+    indices[x == -4] = 12
+    indices[x == -6] = 13
+    indices[x == -8] = 14
+    indices[x <= -12] = 15
+
     indices = indices.reshape(-1, 2)
 
-    # Pack pairs of 4-bit values into 8-bit values
-    packed = (indices[:, 0] | (indices[:, 1] << 4)).to(torch.uint8)
+    packed = indices[:, 0] | (indices[:, 1] << 4)
 
     return packed.reshape(m, n // 2)
 
