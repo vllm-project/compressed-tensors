@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """
 Unit tests for FP4 pack_fp4_to_uint8 optimization.
 
@@ -5,8 +8,8 @@ Tests that the optimized implementation produces identical results
 to the original reference implementation.
 """
 
-import torch
 import pytest
+import torch
 
 
 FLOAT_TO_E2M1 = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
@@ -21,9 +24,9 @@ def reference_pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
 
     kE2M1 = torch.tensor(FLOAT_TO_E2M1, device=device, dtype=x.dtype)
     abs_x = torch.abs(x)
-    abs_indices = torch.argmin(
-        torch.abs(abs_x.unsqueeze(-1) - kE2M1), dim=-1
-    ).to(torch.int8)
+    abs_indices = torch.argmin(torch.abs(abs_x.unsqueeze(-1) - kE2M1), dim=-1).to(
+        torch.int8
+    )
     indices = abs_indices + (torch.signbit(x).to(torch.int8) << 3)
     indices = indices.reshape(-1, 2)
     packed = indices[:, 0].to(torch.uint8) | (indices[:, 1].to(torch.uint8) << 4)

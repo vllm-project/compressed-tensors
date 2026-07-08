@@ -48,7 +48,6 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     :returns: a packed tensor in uint8
     """
     m, n = x.shape
-    device = x.device
 
     if n % 2 != 0:
         raise ValueError(
