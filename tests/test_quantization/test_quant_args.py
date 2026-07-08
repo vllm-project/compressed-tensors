@@ -2,17 +2,13 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import pytest
-import torch
-import torch._dynamo
 from compressed_tensors.quantization import (
     ActivationOrdering,
     QuantizationArgs,
     QuantizationStrategy,
     QuantizationType,
 )
-from compressed_tensors.quantization.quant_args import FP4_E2M1_DATA
 from pydantic import ValidationError
-from torch._dynamo.utils import counters
 
 
 def test_defaults():

@@ -56,12 +56,14 @@ def _cast_to_fp4_cpu(x):
     Maps float values to the nearest E2M1 representable value:
     0.0, ±0.5, ±1.0, ±1.5, ±2.0, ±3.0, ±4.0, ±6.0
     """
-    sign = torch.where(x < 0.0, -1.0, 1.0)
+    sign = torch.empty_like(x)
+    torch.sign(x, out=sign)
     abs_x = torch.abs(x)
 
     # Map absolute values to FP4 representable values
     # Using sequential torch.where for readability while maintaining memory efficiency
-    result = torch.zeros_like(abs_x)
+    result = torch.empty_like(x)
+    result = torch.where(abs_x <= 0.25, 0.0, result)
     result = torch.where(abs_x > 0.25, 0.5, result)
     result = torch.where(abs_x >= 0.75, 1.0, result)
     result = torch.where(abs_x > 1.25, 1.5, result)
@@ -70,10 +72,10 @@ def _cast_to_fp4_cpu(x):
     result = torch.where(abs_x >= 3.5, 4.0, result)
     result = torch.where(abs_x > 5.0, 6.0, result)
 
-    return result * sign
+    return result * sign.to(result)
 
 
-def cast_to_fp4(x: torch.Tensor):
+def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
     """Round float values to the nearest E2M1 representable value.
 
     Uses Triton for GPU tensors and torch.compile for CPU tensors.
@@ -88,7 +90,7 @@ def cast_to_fp4(x: torch.Tensor):
     match x.device.type:
         case "cpu" | "meta":
             return _cast_to_fp4_cpu(x).reshape(shape)
-        
+
         case _:
             output = torch.empty_like(x)
             n = x.numel()
@@ -96,12 +98,6 @@ def cast_to_fp4(x: torch.Tensor):
 
             # Use tile_size as BLOCK_SIZE for Triton kernel
             grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)
-
-            _cast_to_fp4_kernel[grid](
-                x,
-                output,
-                n,
-                BLOCK_SIZE=block_size,
-            )
+            _cast_to_fp4_kernel[grid](x, output, n, BLOCK_SIZE=block_size)
 
             return output.reshape(shape)
