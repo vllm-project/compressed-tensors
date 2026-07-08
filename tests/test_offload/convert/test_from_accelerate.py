@@ -13,6 +13,7 @@ from compressed_tensors.offload import (
     disable_onloading,
     from_accelerate,
     load_offloaded_model,
+    update_offload_parameter,
 )
 from compressed_tensors.offload.cache import CPUCache, DeviceCache, DiskCache
 from compressed_tensors.offload.convert.from_accelerate import (
@@ -169,10 +170,11 @@ def test_dist_disk_safetensors_update(tmp_path):
         rank_1_module = model.model.layers[-1].self_attn.k_proj
         rank = dist.get_rank()
         if rank == 0:
-            rank_0_module.weight *= 0
+            new_weight = rank_0_module.weight * 0
+            update_offload_parameter(rank_0_module, "weight", new_weight)
         elif rank == 1:
-            rank_1_module.weight *= 0
-            rank_1_module.weight += 1
+            new_weight = rank_1_module.weight * 0 + 1
+            update_offload_parameter(rank_1_module, "weight", new_weight)
         dist.barrier()
 
         # Check that onloaded values are updated across ranks
