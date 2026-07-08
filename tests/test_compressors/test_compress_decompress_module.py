@@ -18,21 +18,20 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.utils import is_module_quantized
 from compressed_tensors.utils import get_direct_state_dict
+from tests.testing_utils import requires_gpu
 
 
+@requires_gpu
 def _run_compress_decompress(
     scheme_name, expected_format, actorder, device, module=None, targets=("Linear",)
 ):
-    if device == "cuda" and not torch.accelerator.is_available():
-        pytest.skip("CUDA not available")
-
     # 1. Initialize module for quantization using a preset scheme.
     # Use 256x256 to avoid degenerate scale shapes (e.g. (N,1) for FP8_BLOCK)
     # that trip up block-vs-channel strategy inference in dequantize.
     # Start in bfloat16 so NVFP4 decompression (which returns bfloat16) preserves dtype.
     if module is None:
         module = nn.Linear(256, 256, bias=False)
-    module = module.to(dtype=torch.bfloat16, device=device)
+    module = module.to(dtype=torch.bfloat16, device="cuda")
     scheme = preset_name_to_scheme(scheme_name, list(targets))
     if actorder is not None:
         scheme.weights.actorder = actorder
