@@ -3,7 +3,7 @@
 
 import warnings
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from compressed_tensors.utils import Aliasable
