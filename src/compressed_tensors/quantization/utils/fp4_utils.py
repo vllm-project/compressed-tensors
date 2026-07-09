@@ -7,7 +7,7 @@ import triton
 import triton.language as tl
 
 
-__all__ = ["cast_to_fp4"]
+__all__ = ["cast_to_fp4_triton", "cast_to_fp4_torch"]
 
 
 @triton.jit
@@ -17,12 +17,6 @@ def _cast_to_fp4_kernel(
     n,
     BLOCK_SIZE: tl.constexpr,
 ):
-    """
-    Triton kernel for FP4 E2M1 quantization.
-
-    Maps float values to the nearest E2M1 representable value:
-    0.0, ±0.5, ±1.0, ±1.5, ±2.0, ±3.0, ±4.0, ±6.0
-    """
     pid = tl.program_id(axis=0)
     block_start = pid * BLOCK_SIZE
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
@@ -50,8 +44,28 @@ def _cast_to_fp4_kernel(
     tl.store(output_ptr + offsets, result, mask=mask)
 
 
+def cast_to_fp4_triton(x: torch.Tensor) -> torch.Tensor:
+    """
+    Triton implementation for FP4 E2M1 quantization
+
+    Maps float values to the nearest E2M1 representable value:
+    0.0, ±0.5, ±1.0, ±1.5, ±2.0, ±3.0, ±4.0, ±6.0
+    """
+    shape = x.shape
+    x = x.flatten()
+    output = torch.empty_like(x)
+    n = x.numel()
+    block_size = 1024
+
+    # Use tile_size as BLOCK_SIZE for Triton kernel
+    grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)  # noqa: E731
+    _cast_to_fp4_kernel[grid](x, output, n, BLOCK_SIZE=block_size)
+
+    return output.reshape(shape)
+
+
 @torch.compile(dynamic=True)
-def _cast_to_fp4_cpu(x):
+def cast_to_fp4_torch(x):
     """
     CPU implementation for FP4 E2M1 quantization
 
@@ -75,31 +89,3 @@ def _cast_to_fp4_cpu(x):
     result = torch.where(abs_x > 5.0, 6.0, result)
 
     return result * sign.to(result)
-
-
-def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
-    """Round float values to the nearest E2M1 representable value.
-
-    Uses Triton for GPU tensors and torch.compile for CPU tensors.
-
-    :param x: input tensor to quantize
-    :param tile_size: block size for Triton kernel (default 128K)
-    :return: FP4-quantized tensor with same shape as input
-    """
-    shape = x.shape
-    x = x.flatten()
-
-    match x.device.type:
-        case "cpu" | "meta":
-            return _cast_to_fp4_cpu(x).reshape(shape)
-
-        case _:
-            output = torch.empty_like(x)
-            n = x.numel()
-            block_size = 1024
-
-            # Use tile_size as BLOCK_SIZE for Triton kernel
-            grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)  # noqa: E731
-            _cast_to_fp4_kernel[grid](x, output, n, BLOCK_SIZE=block_size)
-
-            return output.reshape(shape)
