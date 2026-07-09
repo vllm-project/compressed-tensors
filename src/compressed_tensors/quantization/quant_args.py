@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import warnings
 from enum import Enum
 from typing import Any
 
@@ -307,8 +306,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         block_structure = model.block_structure
         actorder = model.actorder
         dynamic = model.dynamic
-        observer = model.observer
-        dynamic = model.dynamic
         zp_dtype = model.zp_dtype
 
         # infer strategy
@@ -364,42 +361,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 "order to apply group activation ordering"
             )
 
-        # infer observer w.r.t. dynamic
-        if dynamic:
-            supported_strategies = (
-                QuantizationStrategy.TOKEN,
-                QuantizationStrategy.TENSOR,
-                QuantizationStrategy.TENSOR_GROUP,
-                QuantizationStrategy.GROUP,
-            )
-            if strategy not in supported_strategies:
-                raise ValueError(
-                    f"One of {supported_strategies} must be used for dynamic quant."
-                )
-
-            if (
-                dynamic == DynamicType.LOCAL
-                and strategy != QuantizationStrategy.TENSOR_GROUP
-            ):
-                raise ValueError("local is only supported for strategy tensor_group")
-
-            if observer is not None:
-                if dynamic is True:  # checking if dynamic is True, not "local"
-                    if (
-                        observer != "memoryless"
-                    ):  # avoid annoying users with old configs
-                        warnings.warn(
-                            "No observer is used for dynamic quant., setting to None"
-                        )
-                    observer = None
-            else:
-                if dynamic == DynamicType.LOCAL:
-                    observer = "minmax"
-
-        elif observer is None:
-            # default to minmax for non-dynamic cases
-            observer = "memoryless_minmax"
-
         if zp_dtype is None:
             if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
                 zp_dtype = FP8_E4M3_DATA.dtype
@@ -408,7 +369,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
 
         # write back modified values
         model.strategy = strategy
-        model.observer = observer
         model.zp_dtype = zp_dtype
         return model
 
