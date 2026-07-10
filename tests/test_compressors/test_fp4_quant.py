@@ -24,7 +24,7 @@ def test_pack_unpack():
     dense_dtype = torch.bfloat16
     x = x.to(dense_dtype)
     m, n = x.shape
-    packed = pack_fp4_to_uint8(x)
+    packed = pack_fp4_to_uint8(x.clone())
     assert packed.dtype == torch.uint8
     unpacked = unpack_fp4_from_uint8(packed, m, n, dtype=dense_dtype)
     assert unpacked.dtype == dense_dtype

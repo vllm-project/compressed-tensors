@@ -11,6 +11,13 @@ packing of two FP4 values into a single uint8 for storage.
 
 import torch
 
+try:
+    import triton
+    import triton.language as tl
+    HAS_TRITON = True
+except ImportError:
+    HAS_TRITON = False
+
 
 __all__ = ["pack_fp4_to_uint8", "unpack_fp4_from_uint8"]
 
@@ -29,6 +36,62 @@ FLOAT_TO_E2M1 = [
 kE2M1ToFloat = torch.tensor(
     [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], dtype=torch.float32
 )
+
+
+if HAS_TRITON:
+    @triton.jit
+    def _pack_fp4_kernel(
+        x_ptr,
+        packed_ptr,
+        n_pairs,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        """
+        Triton kernel for packing FP4 values using sign-based direct computation.
+
+        This kernel extracts the sign bit, converts to absolute values scaled by 2,
+        then uses threshold counting to directly compute indices without cascading
+        conditionals. The sign bit is applied via bitwise OR.
+        """
+        pid = tl.program_id(0)
+        block_start = pid * BLOCK_SIZE
+        offsets = block_start + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < n_pairs
+
+        # Load pairs of values
+        low_idx = offsets * 2
+        high_idx = offsets * 2 + 1
+
+        x_low = tl.load(x_ptr + low_idx, mask=mask, other=0.0)
+        x_high = tl.load(x_ptr + high_idx, mask=mask, other=0.0)
+
+        # Extract sign
+        sign_low = (x_low < 0).to(tl.uint8)
+        sign_high = (x_high < 0).to(tl.uint8)
+
+        # Scale and absolute
+        x_low_abs = tl.abs(x_low * 2.0).to(tl.int8)
+        x_high_abs = tl.abs(x_high * 2.0).to(tl.int8)
+
+        # Direct index computation via threshold counting
+        # Count how many thresholds each value meets or exceeds
+        # Thresholds: 1, 2, 3, 4, 6, 8, 12 (scaled FP4 values)
+        idx_low = (x_low_abs >= 1).to(tl.uint8) + (x_low_abs >= 2).to(tl.uint8) + \
+                  (x_low_abs >= 3).to(tl.uint8) + (x_low_abs >= 4).to(tl.uint8) + \
+                  (x_low_abs >= 6).to(tl.uint8) + (x_low_abs >= 8).to(tl.uint8) + \
+                  (x_low_abs >= 12).to(tl.uint8)
+        idx_low = idx_low | (sign_low << 3)
+
+        idx_high = (x_high_abs >= 1).to(tl.uint8) + (x_high_abs >= 2).to(tl.uint8) + \
+                   (x_high_abs >= 3).to(tl.uint8) + (x_high_abs >= 4).to(tl.uint8) + \
+                   (x_high_abs >= 6).to(tl.uint8) + (x_high_abs >= 8).to(tl.uint8) + \
+                   (x_high_abs >= 12).to(tl.uint8)
+        idx_high = idx_high | (sign_high << 3)
+
+        # Pack nibbles
+        packed = idx_low | (idx_high << 4)
+
+        tl.store(packed_ptr + offsets, packed, mask=mask)
 
 
 def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
@@ -54,15 +117,30 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
             "tensor must have an even number of columns for nvfp4 compression"
         )
 
-    # NOTE: _cast_to_fp4 uses torch.sign() which returns 0 for zero, so it never
-    # produces -0.0. All zeros are positive, so we don't need special -0.0 handling.
+    # Use Triton kernel on CUDA if available
+    if HAS_TRITON and x.is_cuda:
+        x_flat = x.flatten()
+        n_pairs = x_flat.numel() // 2
 
-    # Convert to int8 to save memory (bf16 -> int8 is a 2x reduction)
+        packed = torch.empty(n_pairs, dtype=torch.uint8, device=x.device)
+
+        BLOCK_SIZE = 1024
+        grid = (triton.cdiv(n_pairs, BLOCK_SIZE),)
+        _pack_fp4_kernel[grid](x_flat, packed, n_pairs, BLOCK_SIZE)
+
+        return packed.reshape(m, n // 2)
+
+    # Fallback to PyTorch implementation
+    # Extract sign before conversion
+    sign = torch.signbit(x).to(torch.uint8)
+
+    # Scale by 2 and convert to int8
     x.mul_(2)
-    x = x.to(torch.int8)
+    x = x.to(torch.int8).abs_()
 
     indices = torch.zeros_like(x, dtype=torch.uint8)
 
+    # 8-way assignment (only positive values)
     indices[x == 1] = 1
     indices[x == 2] = 2
     indices[x == 3] = 3
@@ -71,16 +149,10 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     indices[x == 8] = 6
     indices[x >= 12] = 7
 
-    indices[x == -1] = 9
-    indices[x == -2] = 10
-    indices[x == -3] = 11
-    indices[x == -4] = 12
-    indices[x == -6] = 13
-    indices[x == -8] = 14
-    indices[x <= -12] = 15
+    # Apply sign bit (bit 3)
+    indices = indices | (sign << 3)
 
     indices = indices.reshape(-1, 2)
-
     packed = indices[:, 0] | (indices[:, 1] << 4)
 
     return packed.reshape(m, n // 2)
