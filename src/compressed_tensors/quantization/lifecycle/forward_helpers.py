@@ -164,7 +164,7 @@ if not g_idx is not None:
 
     output = output.flatten(start_dim=-2).to(output_dtype)
 
-    if not is_column_order:
+    if g_idx is not None:
         inv_perm = torch.argsort(perm)
         output = output.index_select(-1, inv_perm)
 
