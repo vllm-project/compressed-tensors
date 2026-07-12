@@ -10,13 +10,8 @@ packing of two FP4 values into a single uint8 for storage.
 """
 
 import torch
-
-try:
-    import triton
-    import triton.language as tl
-    HAS_TRITON = True
-except ImportError:
-    HAS_TRITON = False
+import triton
+import triton.language as tl
 
 
 __all__ = ["pack_fp4_to_uint8", "unpack_fp4_from_uint8"]
@@ -38,9 +33,8 @@ kE2M1ToFloat = torch.tensor(
 )
 
 
-if HAS_TRITON:
-    @triton.jit
-    def _pack_fp4_kernel(
+@triton.jit
+def _pack_fp4_kernel(
         x_ptr,
         packed_ptr,
         n_pairs,
@@ -76,16 +70,26 @@ if HAS_TRITON:
         # Direct index computation via threshold counting
         # Count how many thresholds each value meets or exceeds
         # Thresholds: 1, 2, 3, 4, 6, 8, 12 (scaled FP4 values)
-        idx_low = (x_low_abs >= 1).to(tl.uint8) + (x_low_abs >= 2).to(tl.uint8) + \
-                  (x_low_abs >= 3).to(tl.uint8) + (x_low_abs >= 4).to(tl.uint8) + \
-                  (x_low_abs >= 6).to(tl.uint8) + (x_low_abs >= 8).to(tl.uint8) + \
-                  (x_low_abs >= 12).to(tl.uint8)
+        idx_low = (
+            (x_low_abs >= 1).to(tl.uint8)
+            + (x_low_abs >= 2).to(tl.uint8)
+            + (x_low_abs >= 3).to(tl.uint8)
+            + (x_low_abs >= 4).to(tl.uint8)
+            + (x_low_abs >= 6).to(tl.uint8)
+            + (x_low_abs >= 8).to(tl.uint8)
+            + (x_low_abs >= 12).to(tl.uint8)
+        )
         idx_low = idx_low | (sign_low << 3)
 
-        idx_high = (x_high_abs >= 1).to(tl.uint8) + (x_high_abs >= 2).to(tl.uint8) + \
-                   (x_high_abs >= 3).to(tl.uint8) + (x_high_abs >= 4).to(tl.uint8) + \
-                   (x_high_abs >= 6).to(tl.uint8) + (x_high_abs >= 8).to(tl.uint8) + \
-                   (x_high_abs >= 12).to(tl.uint8)
+        idx_high = (
+            (x_high_abs >= 1).to(tl.uint8)
+            + (x_high_abs >= 2).to(tl.uint8)
+            + (x_high_abs >= 3).to(tl.uint8)
+            + (x_high_abs >= 4).to(tl.uint8)
+            + (x_high_abs >= 6).to(tl.uint8)
+            + (x_high_abs >= 8).to(tl.uint8)
+            + (x_high_abs >= 12).to(tl.uint8)
+        )
         idx_high = idx_high | (sign_high << 3)
 
         # Pack nibbles
@@ -117,8 +121,8 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
             "tensor must have an even number of columns for nvfp4 compression"
         )
 
-    # Use Triton kernel on CUDA if available
-    if HAS_TRITON and x.is_cuda:
+    # Use Triton kernel on CUDA
+    if x.is_cuda:
         x_flat = x.flatten()
         n_pairs = x_flat.numel() // 2
 
@@ -130,7 +134,7 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
 
         return packed.reshape(m, n // 2)
 
-    # Fallback to PyTorch implementation
+    # CPU fallback
     # Extract sign before conversion
     sign = torch.signbit(x).to(torch.uint8)
 
