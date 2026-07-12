@@ -35,67 +35,67 @@ kE2M1ToFloat = torch.tensor(
 
 @triton.jit
 def _pack_fp4_kernel(
-        x_ptr,
-        packed_ptr,
-        n_pairs,
-        BLOCK_SIZE: tl.constexpr,
-    ):
-        """
-        Triton kernel for packing FP4 values using sign-based direct computation.
+    x_ptr,
+    packed_ptr,
+    n_pairs,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """
+    Triton kernel for packing FP4 values using sign-based direct computation.
 
-        This kernel extracts the sign bit, converts to absolute values scaled by 2,
-        then uses threshold counting to directly compute indices without cascading
-        conditionals. The sign bit is applied via bitwise OR.
-        """
-        pid = tl.program_id(0)
-        block_start = pid * BLOCK_SIZE
-        offsets = block_start + tl.arange(0, BLOCK_SIZE)
-        mask = offsets < n_pairs
+    This kernel extracts the sign bit, converts to absolute values scaled by 2,
+    then uses threshold counting to directly compute indices without cascading
+    conditionals. The sign bit is applied via bitwise OR.
+    """
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_pairs
 
-        # Load pairs of values
-        low_idx = offsets * 2
-        high_idx = offsets * 2 + 1
+    # Load pairs of values
+    low_idx = offsets * 2
+    high_idx = offsets * 2 + 1
 
-        x_low = tl.load(x_ptr + low_idx, mask=mask, other=0.0)
-        x_high = tl.load(x_ptr + high_idx, mask=mask, other=0.0)
+    x_low = tl.load(x_ptr + low_idx, mask=mask, other=0.0)
+    x_high = tl.load(x_ptr + high_idx, mask=mask, other=0.0)
 
-        # Extract sign
-        sign_low = (x_low < 0).to(tl.uint8)
-        sign_high = (x_high < 0).to(tl.uint8)
+    # Extract sign
+    sign_low = (x_low < 0).to(tl.uint8)
+    sign_high = (x_high < 0).to(tl.uint8)
 
-        # Scale and absolute
-        x_low_abs = tl.abs(x_low * 2.0).to(tl.int8)
-        x_high_abs = tl.abs(x_high * 2.0).to(tl.int8)
+    # Scale and absolute
+    x_low_abs = tl.abs(x_low * 2.0).to(tl.int8)
+    x_high_abs = tl.abs(x_high * 2.0).to(tl.int8)
 
-        # Direct index computation via threshold counting
-        # Count how many thresholds each value meets or exceeds
-        # Thresholds: 1, 2, 3, 4, 6, 8, 12 (scaled FP4 values)
-        idx_low = (
-            (x_low_abs >= 1).to(tl.uint8)
-            + (x_low_abs >= 2).to(tl.uint8)
-            + (x_low_abs >= 3).to(tl.uint8)
-            + (x_low_abs >= 4).to(tl.uint8)
-            + (x_low_abs >= 6).to(tl.uint8)
-            + (x_low_abs >= 8).to(tl.uint8)
-            + (x_low_abs >= 12).to(tl.uint8)
-        )
-        idx_low = idx_low | (sign_low << 3)
+    # Direct index computation via threshold counting
+    # Count how many thresholds each value meets or exceeds
+    # Thresholds: 1, 2, 3, 4, 6, 8, 12 (scaled FP4 values)
+    idx_low = (
+        (x_low_abs >= 1).to(tl.uint8)
+        + (x_low_abs >= 2).to(tl.uint8)
+        + (x_low_abs >= 3).to(tl.uint8)
+        + (x_low_abs >= 4).to(tl.uint8)
+        + (x_low_abs >= 6).to(tl.uint8)
+        + (x_low_abs >= 8).to(tl.uint8)
+        + (x_low_abs >= 12).to(tl.uint8)
+    )
+    idx_low = idx_low | (sign_low << 3)
 
-        idx_high = (
-            (x_high_abs >= 1).to(tl.uint8)
-            + (x_high_abs >= 2).to(tl.uint8)
-            + (x_high_abs >= 3).to(tl.uint8)
-            + (x_high_abs >= 4).to(tl.uint8)
-            + (x_high_abs >= 6).to(tl.uint8)
-            + (x_high_abs >= 8).to(tl.uint8)
-            + (x_high_abs >= 12).to(tl.uint8)
-        )
-        idx_high = idx_high | (sign_high << 3)
+    idx_high = (
+        (x_high_abs >= 1).to(tl.uint8)
+        + (x_high_abs >= 2).to(tl.uint8)
+        + (x_high_abs >= 3).to(tl.uint8)
+        + (x_high_abs >= 4).to(tl.uint8)
+        + (x_high_abs >= 6).to(tl.uint8)
+        + (x_high_abs >= 8).to(tl.uint8)
+        + (x_high_abs >= 12).to(tl.uint8)
+    )
+    idx_high = idx_high | (sign_high << 3)
 
-        # Pack nibbles
-        packed = idx_low | (idx_high << 4)
+    # Pack nibbles
+    packed = idx_low | (idx_high << 4)
 
-        tl.store(packed_ptr + offsets, packed, mask=mask)
+    tl.store(packed_ptr + offsets, packed, mask=mask)
 
 
 def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
