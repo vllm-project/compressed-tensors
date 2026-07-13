@@ -41,6 +41,7 @@ __all__ = [
     "get_num_kv_heads",
     "get_head_dim",
     "is_accelerator_type",
+    "find_unique_name",
 ]
 
 FSDP_WRAPPER_NAME = "_fsdp_wrapped_module"
@@ -500,3 +501,24 @@ def is_accelerator_type(device_type: str) -> bool:
     if not torch.accelerator.is_available():
         return False
     return device_type == torch.accelerator.current_accelerator().type
+
+
+def find_unique_name(name, existing_names):
+    """
+    Returns a unique name. If the input name exists in existing_names,
+    appends an incrementing suffix (e.g., name_1, name_2).
+    """
+    # Convert to a set for O(1) fast lookups
+    used_set = set(existing_names)
+
+    if name not in used_set:
+        return name
+
+    counter = 1
+    new_name = f"{name}_{counter}"
+
+    while new_name in used_set:
+        counter += 1
+        new_name = f"{name}_{counter}"
+
+    return new_name

@@ -12,6 +12,7 @@ from compressed_tensors.quantization.quant_scheme import (
     preset_name_to_scheme,
 )
 from compressed_tensors.quantization.utils import is_module_quantized
+from compressed_tensors.utils import find_unique_name
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
@@ -307,7 +308,7 @@ class QuantizationConfig(BaseModel):
         If a new quant format is added, the global format will be set to
         "mixed-precision".
         """
-        scheme_name = f"config_group_{len(self.config_groups)}"
+        scheme_name = find_unique_name("config_group", self.config_groups.keys())
 
         self.config_groups[scheme_name] = scheme
         unique_formats = set(scheme.format for scheme in self.config_groups.values())

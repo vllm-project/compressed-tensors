@@ -24,11 +24,12 @@ from compressed_tensors.offload import is_distributed
 from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
-from compressed_tensors.utils import get_nested_value
+from compressed_tensors.utils import find_unique_name, get_nested_value
 from loguru import logger
 from tqdm import tqdm
 from transformers import CompressedTensorsConfig
 from transformers.file_utils import CONFIG_NAME
+
 
 __all__ = ["ModelCompressor"]
 
@@ -243,7 +244,7 @@ class ModelCompressor:
             # Merge
             if self.transform_config is not None:
                 for key, transform in self.transform_config.items():
-                    unique_key = _find_unique_name(key, self.transform_config.keys())
+                    unique_key = find_unique_name(key, self.transform_config.keys())
                     tconfig_data[unique_key] = transform
 
         config_data[QUANTIZATION_CONFIG_NAME] = {
@@ -284,24 +285,3 @@ class ModelCompressor:
         if hasattr(model, "ct_decompress_hook"):
             model.ct_decompress_hook.remove()
             delattr(model, "ct_decompress_hook")
-
-
-def _find_unique_name(name, existing_names):
-    """
-    Returns a unique name. If the input name exists in existing_names,
-    appends an incrementing suffix (e.g., name_1, name_2).
-    """
-    # Convert to a set for O(1) fast lookups
-    used_set = set(existing_names)
-
-    if name not in used_set:
-        return name
-
-    counter = 1
-    new_name = f"{name}_{counter}"
-
-    while new_name in used_set:
-        counter += 1
-        new_name = f"{name}_{counter}"
-
-    return new_name
