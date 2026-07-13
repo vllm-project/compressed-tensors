@@ -121,8 +121,8 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
             "tensor must have an even number of columns for nvfp4 compression"
         )
 
-    # Use Triton kernel on CUDA
-    if x.is_cuda:
+    # Use Triton kernel on GPU (CUDA, ROCm, XPU)
+    if not x.is_cpu:
         x_flat = x.flatten()
         n_pairs = x_flat.numel() // 2
 
