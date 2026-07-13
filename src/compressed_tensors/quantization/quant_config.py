@@ -15,7 +15,6 @@ from compressed_tensors.quantization.utils import is_module_quantized
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
-
 __all__ = [
     "QuantizationStatus",
     "QuantizationConfig",
@@ -299,6 +298,23 @@ class QuantizationConfig(BaseModel):
                     return True
 
         return False
+
+    def add_scheme(self, scheme: QuantizationScheme) -> None:
+        """
+        Add new scheme to quantization config
+
+        If a new quant format is added, the global format will be set to
+        "mixed-precision".
+        """
+        scheme_name = f"config_group_{len(self.config_groups)}"
+
+        self.config_groups[scheme_name] = scheme
+        unique_formats = set(scheme.format for scheme in self.config_groups.values())
+        self.format = (
+            next(iter(unique_formats))
+            if len(unique_formats) == 1
+            else CompressionFormat.mixed_precision.value
+        )
 
     # TODO set `extra="forbid"` when upstream transformers is compatible
     model_config = ConfigDict(extra="ignore")

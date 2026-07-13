@@ -4,14 +4,13 @@
 import contextlib
 import warnings
 from collections.abc import Callable, Iterable, Mapping
-from functools import wraps
+from functools import wraps, reduce
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy
 import torch
 from transformers import AutoConfig, PretrainedConfig
-
 
 T = TypeVar("T", bound="Callable")  # used by `deprecated`
 
@@ -26,6 +25,7 @@ __all__ = [
     "tensor_follows_mask_structure",
     "replace_module",
     "is_compressed_tensors_config",
+    "get_nested_value",
     "getattr_chain",
     "deprecated",
     "Aliasable",
@@ -132,6 +132,16 @@ def is_compressed_tensors_config(compression_config: Any) -> bool:
         return isinstance(compression_config, CompressedTensorsConfig)
     except ImportError:
         return False
+
+
+def get_nested_value(data_dict, path, default=None):
+    """
+    Retrieves a deeply nested value using a dotted string path.
+    """
+    try:
+        return reduce(lambda d, key: d[key], path.split("."), data_dict)
+    except (KeyError, TypeError):
+        return default
 
 
 def getattr_chain(obj: Any, chain_str: str, *args, **kwargs) -> Any:

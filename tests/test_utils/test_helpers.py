@@ -1,9 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import pytest
 from types import SimpleNamespace
 
-from compressed_tensors import ParameterizedDefaultDict, patch_attr, patch_attrs
+from compressed_tensors import (
+    ParameterizedDefaultDict,
+    patch_attr,
+    patch_attrs,
+    get_nested_value,
+)
 
 
 def test_patch_attr():
@@ -54,3 +60,18 @@ def test_parameterized_default_dict():
     sum_dict = ParameterizedDefaultDict(sum_vals)
     assert sum_dict[0, 1] == 1
     assert sum_dict[5, 7] == 12
+
+
+@pytest.mark.parametrize(
+    "key,default,expected_value",
+    [
+        ("c.d", -4, 4),
+        ("c.e", -4, -4),
+        ("b", -4, 1),
+        ("d", -4, -4),
+    ],
+)
+def test_get_nested_value(key, default, expected_value):
+    a = {"b": 1, "c": {"d": 4}}
+
+    assert get_nested_value(a, key, default) == expected_value
