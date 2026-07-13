@@ -30,6 +30,7 @@ from tqdm import tqdm
 from transformers import CompressedTensorsConfig
 from transformers.file_utils import CONFIG_NAME
 
+
 __all__ = ["ModelCompressor"]
 
 
