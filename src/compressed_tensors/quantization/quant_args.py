@@ -469,7 +469,7 @@ def round_to_quantized_type_args(
 ) -> torch.Tensor:
     """
     Rounds an input tensor to the nearest quantized representation given
-    qunatization args. The original dtype is kept post-rounding.
+    quantization args. The original dtype is kept post-rounding.
 
     :param tensor: tensor to round
     :param args: quantization args to use for rounding
