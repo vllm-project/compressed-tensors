@@ -30,7 +30,6 @@ from tqdm import tqdm
 from transformers import CompressedTensorsConfig
 from transformers.file_utils import CONFIG_NAME
 
-
 __all__ = ["ModelCompressor"]
 
 
@@ -232,7 +231,7 @@ class ModelCompressor:
                     qconfig.add_scheme(config_group)
             qconfig_data = qconfig.model_dump(exclude=["quant_method"])
 
-        tconfig_data = get_nested_value(qconfig_data, "transform_config", None)
+        tconfig_data = get_nested_value(orig_qconfig_data, "transform_config", None)
         if tconfig_data is None:
             # Create
             tconfig_data = (
