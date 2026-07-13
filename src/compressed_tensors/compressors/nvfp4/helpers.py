@@ -52,9 +52,10 @@ def _pack_fp4_kernel(
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_pairs
 
-    # Load pairs of values
-    low_idx = offsets * 2
-    high_idx = offsets * 2 + 1
+    # Clamp indices to valid range to avoid faults on masked-out lanes
+    safe_offsets = tl.where(mask, offsets, 0)
+    low_idx = safe_offsets * 2
+    high_idx = safe_offsets * 2 + 1
 
     x_low = tl.load(x_ptr + low_idx, mask=mask, other=0.0)
     x_high = tl.load(x_ptr + high_idx, mask=mask, other=0.0)
