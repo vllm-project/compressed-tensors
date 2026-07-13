@@ -30,7 +30,6 @@ from tqdm import tqdm
 from transformers import CompressedTensorsConfig
 from transformers.file_utils import CONFIG_NAME
 
-
 __all__ = ["ModelCompressor"]
 
 
@@ -246,9 +245,9 @@ class ModelCompressor:
         else:
             # Merge
             if self.transform_config is not None:
-                for key, transform in self.transform_config.items():
-                    unique_key = find_unique_name(key, self.transform_config.keys())
-                    tconfig_data[unique_key] = transform
+                for key, transform in self.transform_config.config_groups.items():
+                    unique_key = find_unique_name(key, tconfig_data.keys())
+                    tconfig_data[unique_key] = transform.model_dump()
 
         config_data[QUANTIZATION_CONFIG_NAME] = {
             COMPRESSION_VERSION_NAME: compressed_tensors.__version__,
