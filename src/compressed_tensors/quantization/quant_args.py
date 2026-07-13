@@ -138,7 +138,8 @@ class DynamicType(str, Enum):
     2. If dynamic is False, all quantization parameters generated are static.
     3. If "local" is provided, only local quantization parameters are dynamic.
 
-    Note: "local" is only currently supported for NVFP4.
+    Note: "local" requires the TENSOR_GROUP strategy, which currently only
+    applies to NVFP4.
 
     """
 
@@ -182,7 +183,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     activations
 
     :param num_bits: quantization bit depth
-    :param type: dtype to quantized to, either int or float
+    :param type: dtype to quantize to, either int or float
     :param symmetric: whether or not quantization scale is symmetric about zero-point
     :param strategy: string id determining the scope of scale/zero-point to apply
     :param group_size: group length to use for the group strategy
