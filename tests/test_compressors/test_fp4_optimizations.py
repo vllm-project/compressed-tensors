@@ -8,6 +8,10 @@ Tests that the optimized implementation produces identical results
 to the original reference implementation.
 """
 
+import os
+
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+
 import pytest
 import torch
 
@@ -56,4 +60,23 @@ def test_pack_fp4_to_uint8(device, test_input):
     result_current = pack_fp4_to_uint8(x.clone())
     result_reference = reference_pack_fp4_to_uint8(x.clone())
 
-    assert torch.equal(result_current, result_reference)
+    if not torch.equal(result_current, result_reference):
+        # Decode packed bytes into nibble pairs for debugging
+        cur = result_current.flatten().cpu().tolist()
+        ref = result_reference.flatten().cpu().tolist()
+        diffs = []
+        for i, (c, r) in enumerate(zip(cur, ref)):
+            if c != r:
+                c_lo, c_hi = c & 0xF, (c >> 4) & 0xF
+                r_lo, r_hi = r & 0xF, (r >> 4) & 0xF
+                diffs.append(
+                    f"  byte {i}: got {c} (lo={c_lo}, hi={c_hi}) "
+                    f"expected {r} (lo={r_lo}, hi={r_hi})"
+                )
+        diff_str = "\n".join(diffs[:20])
+        pytest.fail(
+            f"Mismatch on {device} with input {test_input.tolist()}\n"
+            f"Current:   {cur}\n"
+            f"Reference: {ref}\n"
+            f"Diffs:\n{diff_str}"
+        )
