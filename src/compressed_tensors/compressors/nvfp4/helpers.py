@@ -153,7 +153,7 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     indices[x == 8] = 6
     indices[x >= 12] = 7
 
-    # Apply sign bit (bit 3)
+    # Apply sign bit
     indices = indices | (sign << 3)
 
     indices = indices.reshape(-1, 2)
