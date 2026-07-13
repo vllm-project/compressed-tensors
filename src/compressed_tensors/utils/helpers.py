@@ -4,13 +4,14 @@
 import contextlib
 import warnings
 from collections.abc import Callable, Iterable, Mapping
-from functools import wraps, reduce
+from functools import reduce, wraps
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy
 import torch
 from transformers import AutoConfig, PretrainedConfig
+
 
 T = TypeVar("T", bound="Callable")  # used by `deprecated`
 

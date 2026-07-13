@@ -15,6 +15,7 @@ from compressed_tensors.quantization.utils import is_module_quantized
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
+
 __all__ = [
     "QuantizationStatus",
     "QuantizationConfig",

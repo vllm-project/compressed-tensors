@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import pytest
 from types import SimpleNamespace
 
+import pytest
 from compressed_tensors import (
     ParameterizedDefaultDict,
+    get_nested_value,
     patch_attr,
     patch_attrs,
-    get_nested_value,
 )
 
 
