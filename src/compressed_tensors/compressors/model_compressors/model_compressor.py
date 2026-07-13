@@ -242,7 +242,7 @@ class ModelCompressor:
         else:
             # Merge
             if self.transform_config is not None:
-                for key, transform in self.transform_config:
+                for key, transform in self.transform_config.items():
                     unique_key = _find_unique_name(key, self.transform_config.keys())
                     tconfig_data[unique_key] = transform
 
