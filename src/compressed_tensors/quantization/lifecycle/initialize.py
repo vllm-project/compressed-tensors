@@ -276,7 +276,7 @@ def initialize_attn_qparams(
 
     if hasattr(config, "get_text_config"):
         config = config.get_text_config(decoder=True)
-    elif hasattr(config, "text_config"):
+    elif getattr(config, "text_config", None) is not None:
         config = config.text_config
 
     num_attn_heads = get_num_attn_heads(config)
