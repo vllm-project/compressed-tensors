@@ -150,6 +150,9 @@ def apply_quantization_config(
         if is_attention_module(module) and is_narrow_match(model, scheme.targets, name):
             module.quantization_scheme = scheme
             initialize_hooked_attention(model, module)
+            initialize_module_for_quantization(
+                module, force_zero_point=force_zero_point
+            )
             module.quantization_status = config.quantization_status
 
         # linear quantization
