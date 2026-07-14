@@ -139,8 +139,7 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     sign = torch.signbit(x).to(torch.uint8)
 
     # Scale by 2 and convert to int8
-    x.mul_(2)
-    x = x.to(torch.int8).abs_()
+    x = (x * 2).to(torch.int8).abs_()
 
     indices = torch.zeros_like(x, dtype=torch.uint8)
 

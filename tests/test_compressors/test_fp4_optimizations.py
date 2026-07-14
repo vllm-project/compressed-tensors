@@ -53,8 +53,8 @@ def test_pack_fp4_to_uint8(device, test_input):
     from compressed_tensors.compressors.nvfp4.helpers import pack_fp4_to_uint8
 
     x = test_input.to(dtype=torch.bfloat16, device=device)
-    result_current = pack_fp4_to_uint8(x.clone())
-    result_reference = reference_pack_fp4_to_uint8(x.clone())
+    result_current = pack_fp4_to_uint8(x)
+    result_reference = reference_pack_fp4_to_uint8(x)
 
     if not torch.equal(result_current, result_reference):
         # Decode packed bytes into nibble pairs for debugging
