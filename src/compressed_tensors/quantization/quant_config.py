@@ -291,6 +291,9 @@ class QuantizationConfig(BaseModel):
             return True
 
         for _, scheme in self.config_groups.items():
+            if scheme.weights is not None:
+                if scheme.weights.observer == "imatrix_mse":
+                    return True
             if scheme.input_activations is not None:
                 if scheme.input_activations.dynamic in (False, DynamicType.LOCAL):
                     return True
