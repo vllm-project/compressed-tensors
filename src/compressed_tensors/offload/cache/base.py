@@ -215,11 +215,18 @@ class OffloadCache(MutableMapping, ABC):
             self.offloaded_values[key] = value
             return
 
-        if key in self:
-            del self[key]
+        # if the key already exists, update with the new value
+        offloaded = self.offloaded_values.get(key, None)
+        if offloaded is not None and torch.is_same_size(offloaded, value):
+            self.update_offload(offloaded, value)
 
-        # synchronously offload value
-        self.offloaded_values[key] = self.offload(value)
+            onloaded = self.keep_onloaded_values.get(offloaded, None)
+            if onloaded is not None and onloaded is not offloaded:
+                onloaded.copy_(value)
+
+        # if the key does not exist (or the value is None), offload the new value
+        else:
+            self.offloaded_values[key] = self.offload(value)
 
     def __delitem__(self, key: Hashable):
         """
