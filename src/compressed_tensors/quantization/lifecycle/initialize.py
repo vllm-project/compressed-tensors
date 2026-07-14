@@ -273,6 +273,12 @@ def initialize_attn_qparams(
 
     # extract shapes from config
     config = kv_cache.config
+
+    if hasattr(config, "get_text_config"):
+        config = config.get_text_config(decoder=True)
+    elif hasattr(config, "text_config"):
+        config = config.text_config
+
     num_attn_heads = get_num_attn_heads(config)
     num_kv_heads = get_num_kv_heads(config)
     head_dim = get_head_dim(config)
