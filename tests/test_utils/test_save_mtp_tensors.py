@@ -139,6 +139,37 @@ class TestSaveMtpTensorsToCheckpoint:
             assert torch.equal(saved[key], expected[key])
         assert all(k.startswith("mtp") for k in saved)
 
+    def test_mtp_tensors_saved_from_checkpoint_with_existing_mtp_shard(
+        self, dest_dir_with_index, tmp_path
+    ):
+        """
+        Verify that a checkpoint produced by save_mtp_tensors_to_checkpoint can
+        itself be used as a source for copying MTP tensors into another checkpoint.
+        """
+        src = tmp_path / "src_with_mtp_shard"
+        src.mkdir()
+
+        model_tensors = {"model.layer0.weight": torch.randn(4, 4)}
+        mtp_tensors = {"mtp.layer0.weight": torch.randn(3, 3)}
+        _make_safetensors(str(src / SAFE_WEIGHTS_NAME), model_tensors)
+        _make_safetensors(str(src / "model_mtp.safetensors"), mtp_tensors)
+
+        index = {
+            "metadata": {},
+            "weight_map": {
+                "model.layer0.weight": SAFE_WEIGHTS_NAME,
+                "mtp.layer0.weight": "model_mtp.safetensors",
+            },
+        }
+        with open(src / SAFE_WEIGHTS_INDEX_NAME, "w") as f:
+            json.dump(index, f)
+
+        save_mtp_tensors_to_checkpoint(str(src), str(dest_dir_with_index))
+
+        saved = _read_safetensors(str(dest_dir_with_index / "model_mtp.safetensors"))
+        assert set(saved.keys()) == {"mtp.layer0.weight"}
+        assert torch.equal(saved["mtp.layer0.weight"], mtp_tensors["mtp.layer0.weight"])
+
     def test_index_updated(self, source_dir, dest_dir_with_index):
         """
         Verify that after the call the destination index file contains MTP keys
