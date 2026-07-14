@@ -52,10 +52,9 @@ def _pack_fp4_kernel(
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n_pairs
 
-    # Clamp indices to valid range to avoid faults on masked-out lanes
-    safe_offsets = tl.where(mask, offsets, 0)
-    low_idx = safe_offsets * 2
-    high_idx = safe_offsets * 2 + 1
+    # Load pairs of values
+    low_idx = offsets * 2
+    high_idx = offsets * 2 + 1
 
     x_low = tl.load(x_ptr + low_idx, mask=mask, other=0.0)
     x_high = tl.load(x_ptr + high_idx, mask=mask, other=0.0)
@@ -123,7 +122,7 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
         )
 
     # Use Triton kernel on GPU (CUDA, ROCm, XPU)
-    if not x.is_cpu:
+    if x.is_cuda or x.is_xpu:
         x_flat = x.flatten()
         n_pairs = x_flat.numel() // 2
 
