@@ -10,10 +10,11 @@ to the original reference implementation.
 
 import os
 
+
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
-import pytest
-import torch
+import pytest  # noqa: E402
+import torch  # noqa: E402
 
 
 FLOAT_TO_E2M1 = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
