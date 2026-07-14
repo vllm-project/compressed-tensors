@@ -123,7 +123,7 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
 
     # Use Triton kernel on GPU (CUDA, ROCm, XPU)
     if x.is_cuda or x.is_xpu:
-        x_flat = x.flatten()
+        x_flat = x.contiguous().flatten()
         n_pairs = x_flat.numel() // 2
 
         packed = torch.empty(n_pairs, dtype=torch.uint8, device=x.device)

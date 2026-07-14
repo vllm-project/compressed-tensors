@@ -56,23 +56,35 @@ def test_pack_fp4_to_uint8(device, test_input):
     result_current = pack_fp4_to_uint8(x)
     result_reference = reference_pack_fp4_to_uint8(x)
 
-    if not torch.equal(result_current, result_reference):
-        # Decode packed bytes into nibble pairs for debugging
-        cur = result_current.flatten().cpu().tolist()
-        ref = result_reference.flatten().cpu().tolist()
-        diffs = []
-        for i, (c, r) in enumerate(zip(cur, ref)):
-            if c != r:
-                c_lo, c_hi = c & 0xF, (c >> 4) & 0xF
-                r_lo, r_hi = r & 0xF, (r >> 4) & 0xF
-                diffs.append(
-                    f"  byte {i}: got {c} (lo={c_lo}, hi={c_hi}) "
-                    f"expected {r} (lo={r_lo}, hi={r_hi})"
-                )
-        diff_str = "\n".join(diffs[:20])
-        pytest.fail(
-            f"Mismatch on {device} with input {test_input.tolist()}\n"
-            f"Current:   {cur}\n"
-            f"Reference: {ref}\n"
-            f"Diffs:\n{diff_str}"
-        )
+    assert torch.equal(result_current, result_reference)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_pack_fp4_non_contiguous(device):
+    """Test pack_fp4_to_uint8 works correctly with non-contiguous input tensors."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    from compressed_tensors.compressors.nvfp4.helpers import pack_fp4_to_uint8
+
+    # Create a non-contiguous tensor via transpose
+    base = torch.tensor(
+        [
+            [0.0, -0.5, 1.0, -1.5],
+            [2.0, -3.0, 4.0, -6.0],
+            [0.5, -1.0, 1.5, -2.0],
+            [3.0, -4.0, 6.0, 0.0],
+        ],
+        dtype=torch.bfloat16,
+        device=device,
+    )
+    x = base[:, ::2]
+    assert not x.is_contiguous()
+
+    x_contig = x.contiguous()
+    result = pack_fp4_to_uint8(x)
+    result_contig = pack_fp4_to_uint8(x_contig)
+    expected = reference_pack_fp4_to_uint8(x_contig)
+
+    assert torch.equal(result, result_contig)
+    assert torch.equal(result, expected)
