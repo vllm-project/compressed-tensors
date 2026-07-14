@@ -40,7 +40,7 @@ def reference_pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
         # All positive
         torch.tensor([[0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]]),
         # All negative
-        torch.tensor([[-0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0, 0.0]]),
+        torch.tensor([[-0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0, -0.0]]),
         # Mixed
         torch.tensor([[0.0, -0.5, 1.0, -1.5, 2.0, -3.0, 4.0, -6.0]]),
     ],
@@ -73,7 +73,7 @@ def test_pack_fp4_non_contiguous(device):
             [0.0, -0.5, 1.0, -1.5],
             [2.0, -3.0, 4.0, -6.0],
             [0.5, -1.0, 1.5, -2.0],
-            [3.0, -4.0, 6.0, 0.0],
+            [3.0, -4.0, 6.0, -0.0],
         ],
         dtype=torch.bfloat16,
         device=device,

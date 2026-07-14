@@ -59,9 +59,9 @@ def _pack_fp4_kernel(
     x_low = tl.load(x_ptr + low_idx, mask=mask, other=0.0)
     x_high = tl.load(x_ptr + high_idx, mask=mask, other=0.0)
 
-    # Extract sign
-    sign_low = (x_low < 0).to(tl.uint8)
-    sign_high = (x_high < 0).to(tl.uint8)
+    # Extract sign bit directly into bit 3 via bitcast (handles -0.0 correctly)
+    sign_low = (x_low.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
+    sign_high = (x_high.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
 
     # Scale and absolute
     x_low_abs = tl.abs(x_low * 2.0).to(tl.int8)
@@ -79,7 +79,7 @@ def _pack_fp4_kernel(
         + (x_low_abs >= 8).to(tl.uint8)
         + (x_low_abs >= 12).to(tl.uint8)
     )
-    idx_low = idx_low | (sign_low << 3)
+    idx_low = idx_low | sign_low
 
     idx_high = (
         (x_high_abs >= 1).to(tl.uint8)
@@ -90,7 +90,7 @@ def _pack_fp4_kernel(
         + (x_high_abs >= 8).to(tl.uint8)
         + (x_high_abs >= 12).to(tl.uint8)
     )
-    idx_high = idx_high | (sign_high << 3)
+    idx_high = idx_high | sign_high
 
     # Pack nibbles
     packed = idx_low | (idx_high << 4)
