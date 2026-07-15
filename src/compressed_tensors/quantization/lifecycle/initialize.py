@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import inspect
 import logging
 import math
 
@@ -35,6 +36,7 @@ from torch.nn import Module, Parameter
 __all__ = [
     "initialize_module_for_quantization",
     "is_attention_module",
+    "is_kv_cache_attention_module",
     "initialize_qparams",
     "initialize_attn_qparams",
 ]
@@ -127,6 +129,18 @@ def is_attention_module(module: Module):
         or hasattr(module, "qkv_proj")
         or hasattr(module, "kv_b_proj")
     )
+
+
+def is_kv_cache_attention_module(module: Module) -> bool:
+    if not is_attention_module(module):
+        return False
+
+    try:
+        parameters = inspect.signature(module.forward).parameters
+    except (TypeError, ValueError):
+        return False
+
+    return "past_key_value" in parameters or "past_key_values" in parameters
 
 
 def initialize_qparams(

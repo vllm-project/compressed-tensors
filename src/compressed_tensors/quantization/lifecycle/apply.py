@@ -13,6 +13,7 @@ from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
     is_attention_module,
+    is_kv_cache_attention_module,
 )
 from compressed_tensors.quantization.quant_args import QuantizationArgs
 from compressed_tensors.quantization.quant_config import (
@@ -180,7 +181,7 @@ def _apply_kv_cache_scheme(
         input_activations=kv_cache_scheme,
     )
     for submodule in model.modules():
-        if is_attention_module(submodule):
+        if is_kv_cache_attention_module(submodule):
             submodule.quantization_scheme = scheme
             initialize_hooked_kv_cache(model, submodule)
             initialize_module_for_quantization(submodule, force_zero_point=False)
