@@ -12,9 +12,14 @@ packing of two FP4 values into a single uint8 for storage.
 import torch
 import triton
 import triton.language as tl
+from compressed_tensors.quantization.lifecycle.forward_helpers import QuantBufferPool
 
 
-__all__ = ["pack_fp4_to_uint8", "unpack_fp4_from_uint8"]
+__all__ = [
+    "pack_fp4_to_uint8",
+    "unpack_fp4_from_uint8",
+    "QuantBufferPool",
+]
 
 
 FLOAT_TO_E2M1 = [
@@ -98,7 +103,10 @@ def _pack_fp4_kernel(
     tl.store(packed_ptr + offsets, packed, mask=mask)
 
 
-def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
+def pack_fp4_to_uint8(
+    x: torch.Tensor,
+    use_buffer_pool: bool = True,
+) -> torch.Tensor:
     """
     Packs a tensor with values in the fp4 range into uint8.
     As there are 16 valid fp4 values, two fp4 values can be
@@ -112,6 +120,7 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     called after _cast_to_fp4() or equivalent quantization.
 
     :param x: tensor to pack
+    :param use_buffer_pool: if True, reuse buffers to avoid cudaMalloc overhead
     :returns: a packed tensor in uint8
     """
     m, n = x.shape
@@ -126,7 +135,11 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
         x_flat = x.contiguous().flatten()
         n_pairs = x_flat.numel() // 2
 
-        packed = torch.empty(n_pairs, dtype=torch.uint8, device=x.device)
+        # Use buffer pool to avoid repeated cudaMalloc calls
+        if use_buffer_pool:
+            packed = QuantBufferPool.get_buffer((n_pairs,), torch.uint8, x.device)
+        else:
+            packed = torch.empty(n_pairs, dtype=torch.uint8, device=x.device)
 
         BLOCK_SIZE = 1024
         grid = (triton.cdiv(n_pairs, BLOCK_SIZE),)
