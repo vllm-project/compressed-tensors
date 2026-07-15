@@ -628,7 +628,7 @@ def test_quantize_dequantize_matches_sequential(
         pytest.skip("CUDA not available")
     if device == "cpu" and type == "float" and num_bits == 4:
         pytest.skip("FP4 on CPU is slow, only test on CUDA")
-    
+
     args = QuantizationArgs(
         num_bits=num_bits,
         type=type,
@@ -671,14 +671,13 @@ def test_quantize_dequantize_matches_sequential(
         global_scale=global_scale,
     )
 
-    # Tolerance depends on quantization type:
-    # - INT: small differences due to rounding mode (round-half-away-from-zero vs round-half-to-even)
-    # - FLOAT: small tolerance for numerical precision
+    # Tolerance depends on quantization type
     if type == "int":
-        atol = 0.01  # Rounding mode differences
+        atol = 0.01
     else:
-        atol = 1e-5  # FLOAT types should match closely
-    
-    assert torch.allclose(
-        sequential_out, fused_out, atol=atol
-    ), f"Mismatch: max diff = {(sequential_out - fused_out).abs().max().item()}, atol={atol}"
+        atol = 1e-5
+
+    assert torch.allclose(sequential_out, fused_out, atol=atol), (
+        f"Mismatch: max diff = "
+        f"{(sequential_out - fused_out).abs().max().item()}, atol={atol}"
+    )
