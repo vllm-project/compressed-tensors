@@ -59,6 +59,25 @@ def test_pack_fp4_to_uint8(device, test_input):
     assert torch.equal(result_current, result_reference)
 
 
+@pytest.mark.parametrize("device", ["cuda"])
+def test_pack_fp4_to_uint8_float32_input(device):
+    """Test pack_fp4_to_uint8 accepts float32 inputs in the valid FP4 set."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    from compressed_tensors.compressors.nvfp4.helpers import pack_fp4_to_uint8
+
+    x = torch.tensor(
+        [[0.0, -0.5, 1.0, -1.5, 2.0, -3.0, 4.0, -6.0]],
+        dtype=torch.float32,
+        device=device,
+    )
+    result_current = pack_fp4_to_uint8(x)
+    result_reference = reference_pack_fp4_to_uint8(x)
+
+    assert torch.equal(result_current, result_reference)
+
+
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_pack_fp4_non_contiguous(device):
     """Test pack_fp4_to_uint8 works correctly with non-contiguous input tensors."""
