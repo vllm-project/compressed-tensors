@@ -123,6 +123,10 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
 
     # Use Triton kernel on GPU (CUDA, ROCm, XPU)
     if x.is_cuda or x.is_xpu:
+        # Valid FP4 values are exactly representable in bf16, so this lossless
+        # cast keeps Triton's 16-bit bitcast path working for float32 inputs.
+        if x.dtype not in (torch.bfloat16, torch.float16):
+            x = x.to(torch.bfloat16)
         x_flat = x.contiguous().flatten()
         n_pairs = x_flat.numel() // 2
 
