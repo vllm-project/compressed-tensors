@@ -209,3 +209,33 @@ def test_quantization_config_merge():
     assert set(config.ignore) == set(["lm_head", "re:.*mtp.*"])
 
     assert config.quantization_status == QuantizationStatus.COMPRESSED
+
+
+def test_imatrix_mse_weight_observer_requires_calibration_data():
+    from compressed_tensors.quantization import QuantizationArgs
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_1": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(observer="imatrix_mse"),
+            )
+        }
+    )
+
+    assert config.requires_calibration_data()
+
+
+def test_default_weight_observer_does_not_require_calibration_data():
+    from compressed_tensors.quantization import QuantizationArgs
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_1": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(),
+            )
+        }
+    )
+
+    assert not config.requires_calibration_data()
