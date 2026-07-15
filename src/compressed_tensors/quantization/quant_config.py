@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import warnings
 from collections import defaultdict
 from enum import Enum
 from typing import Annotated, Any
-import warnings
 
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
@@ -17,6 +17,7 @@ from compressed_tensors.utils import find_unique_name
 from compressed_tensors.utils.match import match_name
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
+
 
 __all__ = [
     "QuantizationStatus",

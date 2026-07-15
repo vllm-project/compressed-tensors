@@ -6,10 +6,10 @@ import torch
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_FORMAT,
     DEFAULT_QUANTIZATION_METHOD,
+    QuantizationArgs,
     QuantizationConfig,
     QuantizationScheme,
     QuantizationStatus,
-    QuantizationArgs,
 )
 from compressed_tensors.quantization.quant_config import (
     _map_to_checkpoint_names,

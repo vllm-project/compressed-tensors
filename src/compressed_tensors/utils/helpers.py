@@ -12,6 +12,7 @@ import numpy
 import torch
 from transformers import AutoConfig, PretrainedConfig
 
+
 T = TypeVar("T", bound="Callable")  # used by `deprecated`
 
 
