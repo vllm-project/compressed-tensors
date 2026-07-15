@@ -3,7 +3,10 @@
 
 import pytest
 import torch
-from compressed_tensors.quantization.utils.fp4_utils import cast_to_fp4
+from compressed_tensors.quantization.utils.fp4_utils import (
+    cast_to_fp4_torch,
+    cast_to_fp4_triton,
+)
 from tests.testing_utils import requires_gpu
 
 
@@ -16,13 +19,14 @@ def test_cast_to_fp4_cpu_gpu_match(size, dtype):
     x_gpu = x_cpu.cuda()
 
     # Quantize on CPU and GPU
-    result_cpu = cast_to_fp4(x_cpu)
-    result_gpu = cast_to_fp4(x_gpu)
+    result_cpu = cast_to_fp4_torch(x_cpu)
+    result_gpu = cast_to_fp4_triton(x_gpu)
 
     # Compare outputs (convert to same dtype for comparison)
     assert torch.allclose(result_cpu.cuda(), result_gpu, atol=1e-6)
 
 
+@requires_gpu
 def test_cast_to_fp4_boundary_values():
     input_values = torch.tensor(
         [
@@ -74,7 +78,8 @@ def test_cast_to_fp4_boundary_values():
             -2.7,
             -4.5,
             -7.0,
-        ]
+        ],
+        device="cuda",
     )
 
     expected_output = torch.tensor(
@@ -127,10 +132,11 @@ def test_cast_to_fp4_boundary_values():
             -3.0,
             -4.0,
             -6.0,
-        ]
+        ],
+        device="cuda",
     )
 
-    result = cast_to_fp4(input_values)
+    result = cast_to_fp4_triton(input_values)
     assert torch.allclose(result, expected_output, atol=1e-6)
 
 
@@ -153,7 +159,7 @@ def test_cast_to_fp4_memory_usage(size):
     baseline_memory = torch.cuda.memory_allocated()
 
     # Perform quantization
-    result = cast_to_fp4(x)
+    result = cast_to_fp4_triton(x)
     output_memory = result.element_size() * result.numel()
 
     # Check peak memory usage
