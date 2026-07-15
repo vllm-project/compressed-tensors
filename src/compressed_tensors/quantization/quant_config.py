@@ -4,6 +4,7 @@
 from collections import defaultdict
 from enum import Enum
 from typing import Annotated, Any
+import warnings
 
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
@@ -13,9 +14,9 @@ from compressed_tensors.quantization.quant_scheme import (
 )
 from compressed_tensors.quantization.utils import is_module_quantized
 from compressed_tensors.utils import find_unique_name
+from compressed_tensors.utils.match import match_name
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
-
 
 __all__ = [
     "QuantizationStatus",
@@ -301,22 +302,60 @@ class QuantizationConfig(BaseModel):
 
         return False
 
-    def add_scheme(self, scheme: QuantizationScheme) -> None:
+    def merge(self, config: "QuantizationConfig") -> None:
         """
-        Add new scheme to quantization config
+        Merge another QuantizationConfig into self, modifying in-place. The current
+        quant config (self) will take precedence over the second quant config,
+        i.e. the config groups will be appended rather than inserted before. Python's
+        json stdlib and pydantic both respect order when serializing/deserializing.
+
+        Because QuantizationConfig has a global ignore list while targets are scoped to
+        a given scheme, merging is not a straightforward task. A warning will be raised
+        when this function is called to indicate that invalid quantization configs are
+        possible when using this method, particularly when complex ignore lists are
+        used. For best results, use complex targets lists over complex ignore lists.
 
         If a new quant format is added, the global format will be set to
         "mixed-precision".
-        """
-        scheme_name = find_unique_name("config_group", self.config_groups.keys())
 
-        self.config_groups[scheme_name] = scheme
+        The QuantizationStatus will be set to whichever is largest.
+
+        Excluding regexes, any names in the ignore list that are targeted in the new
+        quant config will be pruned.
+
+        :param config: QuantizationConfig to merge into self.
+        """
+        warnings.warn(
+            "Attempting to merge quantization configs. This is not a straightforward "
+            "task and can lead to quantization configs that fail to load. For best "
+            "results, use complex targets lists instead of complex ingore lists"
+        )
+
+        pruned_ignore_list = []
+        for ign in self.ignore:
+            if ign.startswith("re:") or any(
+                match_name(ign, target)
+                for scheme in config.config_groups.values()
+                for target in scheme.targets
+            ):
+                continue
+            pruned_ignore_list.append(ign)
+        self.ignore = pruned_ignore_list
+
+        for scheme_name, scheme in config.config_groups.items():
+            new_scheme_name = find_unique_name(scheme_name, self.config_groups.keys())
+
+            self.config_groups[new_scheme_name] = scheme
+
         unique_formats = set(scheme.format for scheme in self.config_groups.values())
         self.format = (
             next(iter(unique_formats))
             if len(unique_formats) == 1
             else CompressionFormat.mixed_precision.value
         )
+
+        if config.quantization_status > self.quantization_status:
+            self.quantization_status = config.quantization_status
 
     # TODO set `extra="forbid"` when upstream transformers is compatible
     model_config = ConfigDict(extra="ignore")

@@ -30,7 +30,6 @@ from tqdm import tqdm
 from transformers import CompressedTensorsConfig
 from transformers.file_utils import CONFIG_NAME
 
-
 __all__ = ["ModelCompressor"]
 
 
@@ -228,11 +227,8 @@ class ModelCompressor:
             # Merge
             qconfig = QuantizationConfig.model_validate(orig_qconfig_data)
             if self.quantization_config is not None:
-                for scheme in self.quantization_config.config_groups.values():
-                    qconfig.add_scheme(scheme)
-                qconfig.quantization_status = (
-                    self.quantization_config.quantization_status
-                )
+                qconfig.merge(self.quantization_config)
+
             qconfig_data = qconfig.model_dump(exclude=["quant_method"])
 
         tconfig_data = get_nested_value(orig_qconfig_data, "transform_config", None)
