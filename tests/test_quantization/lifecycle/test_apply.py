@@ -494,7 +494,10 @@ def test_apply_attention():
 
 
 linear_scheme = QuantizationScheme(targets=["Linear"])
-attention_scheme = QuantizationScheme(targets=["LlamaAttention"])
+attention_scheme = QuantizationScheme(
+    targets=["LlamaAttention"],
+    input_activations=QuantizationArgs(num_bits=8, type="float", strategy="tensor"),
+)
 attention_linears = QuantizationScheme(targets=[r"re:.*self_attn\..*"])
 mlp_linears = QuantizationScheme(targets=[r"re:.*mlp\..*"])
 down_proj_scheme = QuantizationScheme(targets=["re:.*down_proj"])
