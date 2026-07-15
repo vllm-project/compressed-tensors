@@ -7,6 +7,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.utils.parametrize as P
 import tqdm
+from compressed_tensors.distributed import is_distributed
 from compressed_tensors.modeling.attention import (
     initialize_hooked_attention,
     register_query_hook,
@@ -22,7 +23,6 @@ from compressed_tensors.transform import (
     TransformLocation,
     TransformScheme,
 )
-from compressed_tensors.distributed import is_distributed
 from compressed_tensors.utils import (
     align_module_device,
     match_named_modules,

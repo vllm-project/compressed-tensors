@@ -3,15 +3,15 @@
 
 from collections import OrderedDict
 from copy import deepcopy
-import torch.distributed as dist
 
 import torch
+import torch.distributed as dist
+from compressed_tensors.distributed import is_distributed
 from compressed_tensors.modeling import (
     initialize_hooked_attention,
     initialize_hooked_kv_cache,
 )
 from compressed_tensors.offload import update_offload_parameter
-from compressed_tensors.distributed import is_distributed
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
     is_attention_module,
