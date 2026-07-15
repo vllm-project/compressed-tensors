@@ -101,6 +101,36 @@ Pre-Set Quantization Scheme Args
 """
 
 
+def _int_wnam(weight_bits: int, act_bits: int = 16) -> dict:
+    if weight_bits < 2 or weight_bits > 8:
+        raise ValueError(f"weight_bits must be 2-8, got {weight_bits}")
+    if act_bits not in (4, 8, 16):
+        raise ValueError(f"act_bits must be 4, 8, or 16, got {act_bits}")
+    if weight_bits > act_bits:
+        raise ValueError(
+            f"weight_bits ({weight_bits}) must be <= act_bits ({act_bits})"
+        )
+    scheme = dict(
+        weights=QuantizationArgs(
+            num_bits=weight_bits,
+            type=QuantizationType.INT,
+            strategy=QuantizationStrategy.GROUP,
+            group_size=128,
+            symmetric=True,
+            dynamic=False,
+        ),
+    )
+    if act_bits < 16:
+        scheme["input_activations"] = QuantizationArgs(
+            num_bits=act_bits,
+            type=QuantizationType.INT,
+            strategy=QuantizationStrategy.TOKEN,
+            symmetric=True,
+            dynamic=True,
+        )
+    return scheme
+
+
 def preset_name_to_scheme(name: str, targets: list[str]) -> QuantizationScheme:
     """
     :param name: preset quantization settings name. must exist in upper case in
@@ -244,7 +274,25 @@ MXFP8 = dict(
 )
 
 
-# 8 bit integer weights and 8 bit activations quantization
+# Integer WxAy schemes (weight_bits <= act_bits)
+W2A4 = _int_wnam(2, 4)
+W2A8 = _int_wnam(2, 8)
+W2A16 = _int_wnam(2)
+W3A4 = _int_wnam(3, 4)
+W3A8 = _int_wnam(3, 8)
+W3A16 = _int_wnam(3)
+W4A4 = _int_wnam(4, 4)
+W4A8 = _int_wnam(4, 8)
+W4A16 = _int_wnam(4)
+W5A8 = _int_wnam(5, 8)
+W5A16 = _int_wnam(5)
+W6A8 = _int_wnam(6, 8)
+W6A16 = _int_wnam(6)
+W7A8 = _int_wnam(7, 8)
+W7A16 = _int_wnam(7)
+W8A16 = _int_wnam(8)
+
+# W8A8 uses CHANNEL strategy for weights (distinct from the generic WxAy template)
 INT8_W8A8 = dict(
     weights=QuantizationArgs(
         num_bits=8,
@@ -262,90 +310,6 @@ INT8_W8A8 = dict(
     ),
 )
 
-# 8 bit integer weights only quantization
-W8A16 = dict(
-    weights=QuantizationArgs(
-        num_bits=8,
-        type=QuantizationType.INT,
-        strategy=QuantizationStrategy.GROUP,
-        group_size=128,
-        symmetric=True,
-        dynamic=False,
-    ),
-)
-
-# 7 bit integer weights only quantization
-W7A16 = dict(
-    weights=QuantizationArgs(
-        num_bits=7,
-        type=QuantizationType.INT,
-        strategy=QuantizationStrategy.GROUP,
-        group_size=128,
-        symmetric=True,
-        dynamic=False,
-    ),
-)
-
-# 6 bit integer weights only quantization
-W6A16 = dict(
-    weights=QuantizationArgs(
-        num_bits=6,
-        type=QuantizationType.INT,
-        strategy=QuantizationStrategy.GROUP,
-        group_size=128,
-        symmetric=True,
-        dynamic=False,
-    ),
-)
-
-# 5 bit integer weights only quantization
-W5A16 = dict(
-    weights=QuantizationArgs(
-        num_bits=5,
-        type=QuantizationType.INT,
-        strategy=QuantizationStrategy.GROUP,
-        group_size=128,
-        symmetric=True,
-        dynamic=False,
-    ),
-)
-
-# 4 bit integer weights only quantization
-W4A16 = dict(
-    weights=QuantizationArgs(
-        num_bits=4,
-        type=QuantizationType.INT,
-        strategy=QuantizationStrategy.GROUP,
-        group_size=128,
-        symmetric=True,
-        dynamic=False,
-    ),
-)
-
-# 3 bit integer weights only quantization
-W3A16 = dict(
-    weights=QuantizationArgs(
-        num_bits=3,
-        type=QuantizationType.INT,
-        strategy=QuantizationStrategy.GROUP,
-        group_size=128,
-        symmetric=True,
-        dynamic=False,
-    ),
-)
-
-# 2 bit integer weights only quantization
-W2A16 = dict(
-    weights=QuantizationArgs(
-        num_bits=2,
-        type=QuantizationType.INT,
-        strategy=QuantizationStrategy.GROUP,
-        group_size=128,
-        symmetric=True,
-        dynamic=False,
-    ),
-)
-
 # 4 bit integer weights only asymmetric quantization
 W4A16_ASYM = dict(
     weights=QuantizationArgs(
@@ -355,25 +319,6 @@ W4A16_ASYM = dict(
         group_size=128,
         symmetric=False,
         dynamic=False,
-    ),
-)
-
-# 4 bit integer weights and 8 bit activations quantization
-INT8_W4A8 = dict(
-    weights=QuantizationArgs(
-        num_bits=4,
-        type=QuantizationType.INT,
-        group_size=128,
-        strategy=QuantizationStrategy.GROUP,
-        symmetric=True,
-        dynamic=False,
-    ),
-    input_activations=QuantizationArgs(
-        num_bits=8,
-        type=QuantizationType.INT,
-        strategy=QuantizationStrategy.TOKEN,
-        symmetric=True,
-        dynamic=True,
     ),
 )
 
@@ -456,22 +401,13 @@ FP8_BLOCK = dict(
     ),
 )
 
-PRESET_SCHEMES = {
+PRESET_SCHEMES: dict[str, dict] = {
     # Unquantized (no-op)
     "UNQUANTIZED": UNQUANTIZED,
-    # Integer weight only schemes
-    "W2A16": W2A16,
-    "W3A16": W3A16,
-    "W4A16": W4A16,
-    "W5A16": W5A16,
-    "W6A16": W6A16,
-    "W7A16": W7A16,
-    "W8A16": W8A16,
+    # Special-cased integer schemes
     "W4A16_ASYM": W4A16_ASYM,
-    # Integer weight and activation schemes
     "W8A8": INT8_W8A8,
     "INT8": INT8_W8A8,  # alias for W8A8
-    "W4A8": INT8_W4A8,
     "W4AFP8": W4AFP8,
     # Float weight and activation schemes
     "FP8": FP8,
@@ -483,4 +419,21 @@ PRESET_SCHEMES = {
     "MXFP4": MXFP4,
     "MXFP8A16": MXFP8A16,
     "MXFP8": MXFP8,
+    # Integer WxAy schemes (weight_bits x act_bits, weight_bits <= act_bits)
+    "W2A4": W2A4,
+    "W2A8": W2A8,
+    "W2A16": W2A16,
+    "W3A4": W3A4,
+    "W3A8": W3A8,
+    "W3A16": W3A16,
+    "W4A4": W4A4,
+    "W4A8": W4A8,
+    "W4A16": W4A16,
+    "W5A8": W5A8,
+    "W5A16": W5A16,
+    "W6A8": W6A8,
+    "W6A16": W6A16,
+    "W7A8": W7A8,
+    "W7A16": W7A16,
+    "W8A16": W8A16,
 }
