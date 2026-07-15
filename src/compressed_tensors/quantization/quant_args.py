@@ -14,6 +14,7 @@ from pydantic import (
     Field,
     field_serializer,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -231,6 +232,26 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             return None
         return str(dtype)
 
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        data = handler(self)
+
+        # Omit fields that are None when not explicitly user-specified
+        for field in ("actorder", "block_structure", "scale_dtype"):
+            if data.get(field) is None:
+                data.pop(field, None)
+
+        # Omit empty observer_kwargs
+        if not data.get("observer_kwargs"):
+            data.pop("observer_kwargs", None)
+
+        # Omit observer and zp_dtype when not explicitly user-specified or when None
+        for field in ("observer", "zp_dtype"):
+            if field not in self.model_fields_set or data.get(field) is None:
+                data.pop(field, None)
+
+        return data
+
     @field_validator("type", mode="before")
     def validate_type(cls, value) -> QuantizationType:
         if isinstance(value, str):
@@ -301,6 +322,10 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
 
     @model_validator(mode="after")
     def validate_model_after(model: "QuantizationArgs") -> "QuantizationArgs":
+        # Capture which fields the user explicitly provided before this validator
+        # modifies any fields via __setattr__ (which would otherwise expand model_fields_set)
+        _user_provided = set(model.model_fields_set)
+
         # extract user-passed values from dictionary
         strategy = model.strategy
         group_size = model.group_size
@@ -410,6 +435,13 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         model.strategy = strategy
         model.observer = observer
         model.zp_dtype = zp_dtype
+
+        # Restore model_fields_set to only the fields explicitly provided by the user,
+        # undoing any additions made by the __setattr__ calls above. This ensures
+        # that inferred fields (observer, zp_dtype, strategy) are not mistakenly
+        # treated as user-specified during serialization.
+        object.__setattr__(model, "__pydantic_fields_set__", _user_provided)
+
         return model
 
     def pytorch_dtype(self) -> torch.dtype:
