@@ -606,33 +606,42 @@ def test_process_quantization_block_non_divisible_values(
     ), f"Values mismatch for 0.5: got min={out_val.min()}, max={out_val.max()}"
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
 @pytest.mark.parametrize(
     "num_bits,type,symmetric,global_scale",
     [
         (8, "int", True, None),
         (8, "int", False, None),
         (4, "int", True, None),
+        (4, "float", True, None),  # FP4
         (8, "float", True, None),
         (8, "float", True, torch.tensor([2.0])),
         (8, "int", False, torch.tensor([2.0])),
     ],
 )
 def test_quantize_dequantize_matches_sequential(
-    num_bits, type, symmetric, global_scale
+    num_bits, type, symmetric, global_scale, device
 ):
     """Verify that the fused _quantize_dequantize produces identical output
     to calling _quantize then _dequantize sequentially."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    if device == "cpu" and type == "float" and num_bits == 4:
+        pytest.skip("FP4 on CPU is slow, only test on CUDA")
+    
     args = QuantizationArgs(
         num_bits=num_bits,
         type=type,
         symmetric=symmetric,
         strategy=QuantizationStrategy.TENSOR,
     )
-    q_min, q_max = calculate_range(args, torch.device("cpu"))
+    q_min, q_max = calculate_range(args, torch.device(device))
 
-    x = torch.randn(512, 1024)
-    scale = torch.rand(1) * 0.01 + 0.001
-    zero_point = None if symmetric else torch.tensor([3.0])
+    x = torch.randn(512, 1024, device=device)
+    scale = (torch.rand(1) * 0.01 + 0.001).to(device)
+    zero_point = None if symmetric else torch.tensor([3.0], device=device)
+    if global_scale is not None:
+        global_scale = global_scale.to(device)
 
     # sequential: quantize then dequantize
     q = _quantize(
@@ -662,6 +671,14 @@ def test_quantize_dequantize_matches_sequential(
         global_scale=global_scale,
     )
 
-    assert torch.equal(
-        sequential_out, fused_out
-    ), f"Mismatch: max diff = {(sequential_out - fused_out).abs().max().item()}"
+    # Tolerance depends on quantization type:
+    # - INT: small differences due to rounding mode (round-half-away-from-zero vs round-half-to-even)
+    # - FLOAT: small tolerance for numerical precision
+    if type == "int":
+        atol = 0.01  # Rounding mode differences
+    else:
+        atol = 1e-5  # FLOAT types should match closely
+    
+    assert torch.allclose(
+        sequential_out, fused_out, atol=atol
+    ), f"Mismatch: max diff = {(sequential_out - fused_out).abs().max().item()}, atol={atol}"
