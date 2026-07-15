@@ -3,6 +3,7 @@
 
 from collections import OrderedDict
 from copy import deepcopy
+import torch.distributed as dist
 
 import torch
 from compressed_tensors.modeling import (
@@ -10,6 +11,7 @@ from compressed_tensors.modeling import (
     initialize_hooked_kv_cache,
 )
 from compressed_tensors.offload import update_offload_parameter
+from compressed_tensors.distributed import is_distributed
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
     is_attention_module,
@@ -140,7 +142,8 @@ def apply_quantization_config(
     for name, submodule in tqdm(
         matched_modules,
         desc="Applying quantization config",
-        disable=not show_progress,
+        disable=(not show_progress),
+        position=(dist.get_rank() if is_distributed() else 0),
     ):
         # mark modules to be quantized by adding
         # quant scheme to the matching layers

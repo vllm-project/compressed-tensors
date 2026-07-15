@@ -18,6 +18,7 @@ from compressed_tensors.offload.utils import (
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
 from compressed_tensors.utils.helpers import deprecated
+from compressed_tensors.distributed import is_distributed
 from loguru import logger
 from tqdm import tqdm
 from transformers import PreTrainedModel
@@ -90,7 +91,10 @@ def dispatch_with_map(
     :param show_progress: show tqdm progress
     """
     for name, (onload_device, offload_device) in tqdm(
-        list(device_map.items()), desc="Dispatching model", disable=(not show_progress)
+        list(device_map.items()),
+        desc="Dispatching model",
+        disable=(not show_progress),
+        position=(dist.get_rank() if is_distributed() else 0),
     ):
         try:
             module = model.get_submodule(name)
