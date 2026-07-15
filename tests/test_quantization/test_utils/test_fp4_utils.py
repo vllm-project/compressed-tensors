@@ -148,22 +148,22 @@ def test_cast_to_fp4_memory_usage(size):
     The implementation should not create excessive intermediate tensors.
     Expected memory usage should be roughly: input + output + small overhead.
     """
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
+    torch.accelerator.empty_cache()
+    torch.accelerator.reset_peak_memory_stats()
 
     # Create input tensor
     x = torch.randn(size, dtype=torch.float32, device="cuda")
     input_memory = x.element_size() * x.numel()
 
     # Record baseline memory after input creation
-    baseline_memory = torch.cuda.memory_allocated()
+    baseline_memory = torch.accelerator.memory_allocated()
 
     # Perform quantization
     result = cast_to_fp4_triton(x)
     output_memory = result.element_size() * result.numel()
 
     # Check peak memory usage
-    peak_memory = torch.cuda.max_memory_allocated()
+    peak_memory = torch.accelerator.max_memory_allocated()
     actual_overhead = peak_memory - baseline_memory - output_memory
 
     # Expected overhead: allow up to 20% extra for intermediate computations
@@ -180,4 +180,4 @@ def test_cast_to_fp4_memory_usage(size):
 
     # Clean up
     del x, result
-    torch.cuda.empty_cache()
+    torch.accelerator.empty_cache()
