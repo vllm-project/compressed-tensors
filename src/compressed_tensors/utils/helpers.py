@@ -504,11 +504,14 @@ def is_accelerator_type(device_type: str) -> bool:
 
 def find_unique_name(name, existing_names):
     """
-    Returns a unique name suffixed with an integer that does not exist in
-    existing_names, appends an incrementing suffix (e.g., name_0, name_1).
+    Returns a unique name. If the input name exists in existing_names,
+    appends an incrementing suffix (e.g., f"{name}_0", f"{name}_1").
     """
     # Convert to a set for O(1) fast lookups
     used_set = set(existing_names)
+
+    if name not in used_set:
+        return name
 
     counter = 0
     new_name = f"{name}_{counter}"

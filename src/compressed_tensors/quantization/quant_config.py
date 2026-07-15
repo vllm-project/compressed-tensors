@@ -333,7 +333,10 @@ class QuantizationConfig(BaseModel):
 
         pruned_ignore_list = []
         for ign in self.ignore:
-            if ign.startswith("re:") or any(
+            if ign.startswith("re:"):
+                pruned_ignore_list.append(ign)
+                continue
+            if any(
                 match_name(ign, target)
                 for scheme in config.config_groups.values()
                 for target in scheme.targets

@@ -183,7 +183,7 @@ def test_quantization_config_merge():
                 weights=QuantizationArgs(num_bits=4, symmetric=True, group_size=128),
             )
         },
-        ignore=["lm_head", "model.layers.0.mlp.gate_proj"],
+        ignore=["lm_head", "model.layers.0.mlp.gate_proj", "re:.*mtp.*"],
         quantization_status=QuantizationStatus.INITIALIZED,
     )
 
@@ -205,6 +205,7 @@ def test_quantization_config_merge():
     assert ordered_schemes[0].targets[0] == "re:.*self_attn.*"
     assert ordered_schemes[1].targets[0] == "re:.*mlp.*"
 
-    assert set(config.ignore) == set(["lm_head"])
+    # should strip out "model.layers.0.mlp.gate_proj" from ignore
+    assert set(config.ignore) == set(["lm_head", "re:.*mtp.*"])
 
     assert config.quantization_status == QuantizationStatus.COMPRESSED
