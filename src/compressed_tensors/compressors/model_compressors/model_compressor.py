@@ -24,7 +24,7 @@ from compressed_tensors.offload import is_distributed
 from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
-from compressed_tensors.utils import find_unique_name, get_nested_value
+
 from loguru import logger
 from tqdm import tqdm
 from transformers import CompressedTensorsConfig
@@ -209,43 +209,36 @@ class ModelCompressor:
         else:
             config_data = {}
 
-        orig_qconfig_data = (
-            get_nested_value(config_data, QUANTIZATION_CONFIG_NAME, None)
-            or get_nested_value(config_data, f"config.{QUANTIZATION_CONFIG_NAME}", None)
-            or get_nested_value(
-                config_data, f"text_config.{QUANTIZATION_CONFIG_NAME}", None
-            )
-        )
+        orig_qconfig_data = config_data.get(QUANTIZATION_CONFIG_NAME, None)
 
         if orig_qconfig_data is None:
-            # Create
-            qconfig_data = (
-                self.quantization_config.model_dump(exclude=["quant_method"])
-                if self.quantization_config is not None
-                else {}
-            )
-        else:
-            # Merge
+            qconfig = self.quantization_config
+        elif self.quantization_config is not None:
             qconfig = QuantizationConfig.model_validate(orig_qconfig_data)
-            if self.quantization_config is not None:
-                qconfig.merge(self.quantization_config)
-
-            qconfig_data = qconfig.model_dump(exclude=["quant_method"])
-
-        tconfig_data = get_nested_value(orig_qconfig_data, "transform_config", None)
-        if tconfig_data is None:
-            # Create
-            tconfig_data = (
-                self.transform_config.model_dump()
-                if self.transform_config is not None
-                else {}
-            )
+            qconfig.merge(self.quantization_config)
         else:
-            # Merge
-            if self.transform_config is not None:
-                for key, transform in self.transform_config.config_groups.items():
-                    unique_key = find_unique_name(key, tconfig_data.keys())
-                    tconfig_data[unique_key] = transform.model_dump()
+            qconfig = QuantizationConfig.model_validate(orig_qconfig_data)
+
+        qconfig_data = (
+            qconfig.model_dump(exclude=["quant_method"])
+            if qconfig is not None
+            else {}
+        )
+
+        orig_tconfig_data = (
+            orig_qconfig_data.get("transform_config", None)
+            if orig_qconfig_data is not None
+            else None
+        )
+        if orig_tconfig_data is None:
+            tconfig = self.transform_config
+        elif self.transform_config is not None:
+            tconfig = TransformConfig.model_validate(orig_tconfig_data)
+            tconfig.merge(self.transform_config)
+        else:
+            tconfig = TransformConfig.model_validate(orig_tconfig_data)
+
+        tconfig_data = tconfig.model_dump() if tconfig is not None else {}
 
         config_data[QUANTIZATION_CONFIG_NAME] = {
             COMPRESSION_VERSION_NAME: compressed_tensors.__version__,
