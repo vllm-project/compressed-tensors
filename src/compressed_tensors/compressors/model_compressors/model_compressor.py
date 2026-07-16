@@ -24,7 +24,6 @@ from compressed_tensors.offload import is_distributed
 from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
-
 from loguru import logger
 from tqdm import tqdm
 from transformers import CompressedTensorsConfig
@@ -220,9 +219,7 @@ class ModelCompressor:
             qconfig = QuantizationConfig.model_validate(orig_qconfig_data)
 
         qconfig_data = (
-            qconfig.model_dump(exclude=["quant_method"])
-            if qconfig is not None
-            else {}
+            qconfig.model_dump(exclude=["quant_method"]) if qconfig is not None else {}
         )
 
         orig_tconfig_data = (
