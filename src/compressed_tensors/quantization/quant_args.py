@@ -67,7 +67,7 @@ class FP4_E2M1_DATA(FloatArgs):
             cast_to_fp4_triton,
         )
 
-        if backend == "torch" or x.device.type in ("cpu", "meta"):
+        if backend == "torch" or x.device.type in ("cpu", "meta", "mps"):
             return cast_to_fp4_torch(x)
 
         elif backend == "triton":
