@@ -39,6 +39,7 @@ def test_cast_to_fp4_boundary_values():
             3.0,
             4.0,
             6.0,
+            -0.0,
             -0.5,
             -1.0,
             -1.5,
@@ -93,6 +94,7 @@ def test_cast_to_fp4_boundary_values():
             3.0,
             4.0,
             6.0,
+            -0.0,
             -0.5,
             -1.0,
             -1.5,
@@ -137,7 +139,8 @@ def test_cast_to_fp4_boundary_values():
     )
 
     result = cast_to_fp4_triton(input_values)
-    assert torch.allclose(result, expected_output, atol=1e-6)
+    assert torch.equal(result, expected_output)
+    assert torch.signbit(result[8]).item(), "cast_to_fp4 should preserve -0.0 sign bit"
 
 
 @requires_gpu
