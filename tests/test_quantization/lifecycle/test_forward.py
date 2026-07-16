@@ -624,7 +624,7 @@ def test_quantize_dequantize_matches_sequential(
 ):
     """Verify that the fused _quantize_dequantize produces identical output
     to calling _quantize then _dequantize sequentially."""
-    if device == "cuda" and not torch.cuda.is_available():
+    if device == "cuda" and not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
     if device == "cpu" and type == "float" and num_bits == 4:
         pytest.skip("FP4 on CPU is slow, only test on CUDA")

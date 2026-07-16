@@ -62,7 +62,7 @@ def test_pack_fp4_to_uint8(device, test_input):
 @pytest.mark.parametrize("device", ["cuda"])
 def test_pack_fp4_to_uint8_float32_input(device):
     """Test pack_fp4_to_uint8 accepts float32 inputs in the valid FP4 set."""
-    if device == "cuda" and not torch.cuda.is_available():
+    if device == "cuda" and not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
 
     from compressed_tensors.compressors.nvfp4.helpers import pack_fp4_to_uint8
