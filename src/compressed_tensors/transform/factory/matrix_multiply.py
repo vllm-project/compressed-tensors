@@ -117,7 +117,7 @@ def high_precision_invert(weight: Tensor) -> Tensor:
     if compute_device.type == "cpu":
         if _cpu_lapack_available is None:
             _cpu_lapack_available = _has_cpu_lapack()
-        if not _cpu_lapack_available and torch.cuda.is_available():
+        if not _cpu_lapack_available and torch.accelerator.is_available():
             compute_device = torch.device("cuda")
 
     result = torch.linalg.inv(weight.to(device=compute_device, dtype=torch.float64))
