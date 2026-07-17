@@ -671,13 +671,81 @@ def test_quantize_dequantize_matches_sequential(
         global_scale=global_scale,
     )
 
-    # Tolerance depends on quantization type
-    if type == "int":
-        atol = 0.01
-    else:
-        atol = 1e-5
+    atol = 1e-5
 
     assert torch.allclose(sequential_out, fused_out, atol=atol), (
         f"Mismatch: max diff = "
         f"{(sequential_out - fused_out).abs().max().item()}, atol={atol}"
+    )
+
+
+@pytest.mark.parametrize(
+    "num_bits,type,symmetric,global_scale",
+    [
+        (8, "int", True, None),
+        (8, "int", False, None),
+        (4, "int", True, None),
+        (4, "float", True, None),  # FP4
+        (8, "float", True, None),
+        (8, "float", True, torch.tensor([2.0])),
+        (8, "int", False, torch.tensor([2.0])),
+    ],
+)
+def test_quantize_triton_matches_cpu(num_bits, type, symmetric, global_scale):
+    """Verify that the Triton kernel (CUDA) produces identical output
+    to the non-Triton (CPU) codepath for _quantize."""
+    if not torch.accelerator.is_available():
+        pytest.skip("CUDA not available")
+
+    args = QuantizationArgs(
+        num_bits=num_bits,
+        type=type,
+        symmetric=symmetric,
+        strategy=QuantizationStrategy.TENSOR,
+    )
+
+    # Create input on CPU first
+    x_cpu = torch.randn(512, 1024)
+    scale_cpu = torch.rand(1) * 0.01 + 0.001
+    zero_point_cpu = None if symmetric else torch.tensor([3.0])
+    global_scale_cpu = global_scale.clone() if global_scale is not None else None
+
+    q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
+
+    # Run CPU (non-Triton) path
+    cpu_out = _quantize(
+        x=x_cpu,
+        scale=scale_cpu,
+        zero_point=zero_point_cpu,
+        q_min=q_min_cpu,
+        q_max=q_max_cpu,
+        args=args,
+        global_scale=global_scale_cpu,
+    )
+
+    # Copy to CUDA and run Triton path
+    x_cuda = x_cpu.cuda()
+    scale_cuda = scale_cpu.cuda()
+    zero_point_cuda = zero_point_cpu.cuda() if zero_point_cpu is not None else None
+    global_scale_cuda = (
+        global_scale_cpu.cuda() if global_scale_cpu is not None else None
+    )
+    q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
+
+    cuda_out = _quantize(
+        x=x_cuda,
+        scale=scale_cuda,
+        zero_point=zero_point_cuda,
+        q_min=q_min_cuda,
+        q_max=q_max_cuda,
+        args=args,
+        global_scale=global_scale_cuda,
+    )
+
+    # Compare results (bring CUDA output back to CPU)
+    cuda_out_cpu = cuda_out.cpu()
+
+    assert torch.allclose(cpu_out, cuda_out_cpu, atol=1e-5), (
+        f"Mismatch between CPU and Triton paths: max diff = "
+        f"{(cpu_out - cuda_out_cpu).abs().max().item()}"
     )

@@ -307,8 +307,8 @@ def _quantize_kernel(
     q_max = tl.load(q_max_ptr)
 
     if quant_type == QUANT_TYPE_INT:
-        output = tl.where(output >= 0, output + 0.5, output - 0.5)
         output = tl.clamp(output, q_min, q_max)
+        output = tl.extra.cuda.libdevice.rint(output)
     elif quant_type == QUANT_TYPE_FLOAT:
         output = tl.clamp(output, q_min, q_max)
         if num_bits == 4:
