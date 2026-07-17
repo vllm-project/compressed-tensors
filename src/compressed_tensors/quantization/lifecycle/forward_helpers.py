@@ -353,7 +353,14 @@ def _quantize(
 
     original_shape = x.shape
 
-    if x.ndim == 3:
+    if x.ndim == 4:
+        n_rb, n_cb, bh, bw = x.shape
+        group_size = bh * bw  # Each block is one "group"
+        x = x.reshape(n_rb * n_cb, bh * bw)
+        scale = scale.reshape(n_rb * n_cb, 1)
+        if zero_point is not None:
+            zero_point = zero_point.reshape(n_rb * n_cb, 1)
+    elif x.ndim == 3:
         group_size = x.shape[2]
         x = x.reshape(x.shape[0], -1)
         scale = scale.reshape(scale.shape[0], -1)
@@ -376,7 +383,7 @@ def _quantize(
             elif zero_point.shape[0] == 1:
                 zero_point = zero_point.expand(num_rows, -1).contiguous()
     else:
-        raise ValueError(f"Expected 2D or 3D tensor, got {x.ndim}D")
+        raise ValueError(f"Expected 2D, 3D, or 4D tensor, got {x.ndim}D")
 
     block_size_r: int = 32
     block_size_c: int = 32
