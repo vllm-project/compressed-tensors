@@ -312,7 +312,6 @@ def generate_gparam(
     scale_data: FloatArgs | None = FP8_E4M3_DATA,
     quant_data: FloatArgs | None = FP4_E2M1_DATA,
     dtype: torch.dtype | None = torch.float32,
-    four_over_six: bool = False,
 ):
     """
     Generate a global scale for an entire tensor (input_tensor).
@@ -322,19 +321,13 @@ def generate_gparam(
     E.g. for NVFP4, group (local) scales are in dtype FP8. The global_scale
     attempts to use the entire FP8 dtype range while mapping a per-group max
     to the FP4 max.
-
-    When four_over_six=True, uses 256 instead of 448 for the FP8 scale max.
-    This allows blocks containing the tensor's largest values to have their
-    FP8 scale multiplied by 1.5 (for scale-to-4) without overflowing
-    (256 * 1.5 = 384 < 448).
     """
     min_vals = torch.min(updated_min_val, torch.zeros_like(updated_min_val))
     max_vals = torch.max(updated_max_val, torch.zeros_like(updated_max_val))
     max_val_pos = torch.max(torch.abs(min_vals), torch.abs(max_vals))
     max_val_pos = torch.clamp(max_val_pos, min=torch.finfo(max_val_pos.dtype).tiny)
 
-    scale_max = 256.0 if four_over_six else scale_data.max
-    global_scale = scale_max * quant_data.max / max_val_pos
+    global_scale = scale_data.max * quant_data.max / max_val_pos
 
     # Replace any NaN or Inf with 1.0. NaN arises when max_val_pos was NaN
     # (clamp does not propagate NaN, so it passes through to the division).

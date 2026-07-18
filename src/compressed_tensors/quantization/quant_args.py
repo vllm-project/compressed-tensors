@@ -224,17 +224,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             "Observers constructor excluding quantization range or symmetry"
         ),
     )
-    four_over_six: bool = Field(
-        default=False,
-        exclude=True,
-        description=(
-            "Enable Four Over Six (4/6) adaptive block scaling for NVFP4 "
-            "quantization. For each group of values, tries scaling to both 4 "
-            "and 6, selecting the scale with lower MSE. Reduces quantization "
-            "error for near-maximal values in FP4. Only applies to FP4 "
-            "quantization (num_bits=4, type=float)."
-        ),
-    )
 
     @field_serializer("zp_dtype")
     def serialize_dtype(self, dtype: torch.dtype):

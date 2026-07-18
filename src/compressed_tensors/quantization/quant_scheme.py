@@ -190,7 +190,7 @@ NVFP4A16_46 = dict(
         group_size=16,
         scale_dtype=FP8_E4M3_DATA.dtype,
         zp_dtype=FP8_E4M3_DATA.dtype,
-        four_over_six=True,
+        observer="fouroversix",
     )
 )
 
@@ -205,7 +205,7 @@ NVFP4_46 = dict(
         group_size=16,
         scale_dtype=FP8_E4M3_DATA.dtype,
         zp_dtype=FP8_E4M3_DATA.dtype,
-        four_over_six=True,
+        observer="fouroversix",
     ),
     input_activations=QuantizationArgs(
         num_bits=4,
@@ -217,7 +217,6 @@ NVFP4_46 = dict(
         observer="static_minmax",
         scale_dtype=FP8_E4M3_DATA.dtype,
         zp_dtype=FP8_E4M3_DATA.dtype,
-        four_over_six=True,
     ),
 )
 
