@@ -73,7 +73,7 @@ class DiskCache(OffloadCache):
         with safe_open(
             weight_info["safetensors_file"], framework="pt", device=device
         ) as file:
-            onloaded = file.get_tensor(weight_info["weight_name"])
+            onloaded = file.get_slice(weight_info["weight_name"])  # lazily materialize
             onloaded = to_tensor(onloaded, offloaded)
             onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
             return onloaded
