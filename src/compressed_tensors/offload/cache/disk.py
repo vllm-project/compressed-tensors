@@ -57,10 +57,11 @@ class DiskCache(OffloadCache):
         # Resolve relative paths to absolute paths for symlink creation
         self.offload_dir = Path(offload_dir).resolve()
 
-    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
+    def onload(self, key: str, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Onload a tensor from disk/meta to device
 
+        :param key: parameter name (used to retrieve slicing information)
         :param offloaded: meta tensor to onload
         :return: device tensor, read from disk
         """
@@ -73,7 +74,10 @@ class DiskCache(OffloadCache):
         with safe_open(
             weight_info["safetensors_file"], framework="pt", device=device
         ) as file:
-            onloaded = file.get_slice(weight_info["weight_name"])  # lazily materialize
+            onloaded = file.get_slice(weight_info["weight_name"])
+            if key in self.slices:
+                onloaded = onloaded.as_strided(*self.slices[key])
+            onloaded = onloaded[...]  # this materializes the tensor from `get_slice`
             onloaded = to_tensor(onloaded, offloaded)
             onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
             return onloaded

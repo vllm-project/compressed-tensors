@@ -143,10 +143,11 @@ class OffloadCache(MutableMapping, ABC):
             assert str(offload_device) == str(self.offload_device)
 
     @abstractmethod
-    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
+    def onload(self, key: str, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Given an offloaded tensor, returns that tensor after onloading
 
+        :param key: parameter name (used to retrieve slicing information)
         :param offloaded: offloaded tensor
         :return: onloaded tensor
         """
@@ -196,11 +197,7 @@ class OffloadCache(MutableMapping, ABC):
             return self.keep_onloaded_values[offloaded]
 
         # onload value
-        onloaded = self.onload(offloaded)
-
-        # apply slice data
-        if key in self.slices:
-            onloaded = onloaded.as_strided(*self.slices[key])
+        onloaded = self.onload(key, offloaded)
 
         # when offloading is disabled, populate cache
         if self.offloading_disabled:
