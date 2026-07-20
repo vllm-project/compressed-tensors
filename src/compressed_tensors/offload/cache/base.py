@@ -45,6 +45,9 @@ class OffloadCache(MutableMapping, ABC):
     # offloaded tensors -> onloaded tensors (only when offloading is disabled)
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
 
+    # slice information
+    slices: dict[str, tuple[torch.Size, tuple[int, ...], int | torch.SymInt]]
+
     @classmethod
     def cls_from_device(
         cls,
@@ -131,6 +134,7 @@ class OffloadCache(MutableMapping, ABC):
         super().__init__()
         self.onload_device = onload_device
         self.offloaded_values = dict()
+        self.slices = dict()
 
         # Validate offload_device for subclasses with a fixed offload_device
         # (CPUCache, DiskCache). DeviceCache sets offload_device after super().__init__
@@ -194,6 +198,10 @@ class OffloadCache(MutableMapping, ABC):
         # onload value
         onloaded = self.onload(offloaded)
 
+        # apply slice data
+        if key in self.slices:
+            onloaded = onloaded.as_strided(*self.slices[key])
+
         # when offloading is disabled, populate cache
         if self.offloading_disabled:
             self.keep_onloaded_values[offloaded] = onloaded
@@ -210,6 +218,17 @@ class OffloadCache(MutableMapping, ABC):
         :param key: name of tensor
         :param value: tensor value to offload
         """
+        # capture slice data
+        if value._base is not None:
+            self.slices[key] = (
+                value.size(),
+                value.stride(),
+                value.storage_offset(),
+            )
+            value = value._base
+        elif key in self.slices:
+            del self.slices[key]
+
         # when onloading is disabled, parameters can be access and assigned directly
         if self.onloading_disabled:
             self.offloaded_values[key] = value
