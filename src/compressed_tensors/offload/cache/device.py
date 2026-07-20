@@ -37,8 +37,9 @@ class DeviceCache(OffloadCache):
         :param key: device tensor to onload
         :return: device tensor
         """
-        slice = self.view_index.get(key, ...)
-        offloaded = offloaded[slice]
+        if key in self.view_index:
+            assert offloaded is not None, "attempted to create a view of `None`"
+            offloaded = offloaded[self.view_index[key]]
 
         # move because onload_device might be modified after init
         return send_tensors(offloaded, device=self.onload_device, copy=False)
