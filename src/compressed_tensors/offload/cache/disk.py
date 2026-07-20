@@ -75,9 +75,8 @@ class DiskCache(OffloadCache):
             weight_info["safetensors_file"], framework="pt", device=device
         ) as file:
             onloaded = file.get_slice(weight_info["weight_name"])
-            if key in self.slices:
-                onloaded = onloaded.as_strided(*self.slices[key])
-            onloaded = onloaded[...]  # this materializes the tensor from `get_slice`
+            slice = self.view_index.get(key, ...)
+            onloaded = onloaded[slice]  # this materializes the tensor from `get_slice`
             onloaded = to_tensor(onloaded, offloaded)
             onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
             return onloaded
@@ -125,9 +124,10 @@ class DiskCache(OffloadCache):
         offloaded = self.offloaded_values[key]
         if not self.onloading_disabled:
             file_path = self.index[offloaded]["safetensors_file"]
-            if self._is_ct_file_path(file_path):
-                os.remove(file_path)
-            del self.index[offloaded]
+            if self.ref_counter[offloaded] <= 1:  # delete after via `super()` call
+                if self._is_ct_file_path(file_path):
+                    os.remove(file_path)
+                del self.index[offloaded]
         super().__delitem__(key)
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
