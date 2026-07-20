@@ -82,7 +82,7 @@ class OffloadCache(MutableMapping, ABC):
 |---|---|
 | `cls_from_device(device)` | Returns the correct `OffloadCache` subclass for the given offload device and distributed state. Automatically selects distributed variants when `dist` is initialized. |
 | `from_mapping(mapping, onload_device, **kwargs)` | Class method. Constructs an `OffloadCache` from an existing dict (e.g., `module._parameters`), offloading all values immediately. This is the canonical way to attach a cache to a module. |
-| `onload(offloaded)` | *(abstract)* Given an offloaded tensor, returns the onloaded version. |
+| `onload(key, offloaded)` | *(abstract)* Given an offloaded tensor, returns the onloaded version (with slicing). |
 | `offload(tensor)` | *(abstract)* Given a tensor, offloads it to the storage device and returns a reference. |
 | `update_offload(offloaded, data)` | *(abstract)* In-place update of an already-offloaded tensor without creating a new storage location. |
 | `__getitem__(key)` | Onloads the tensor. Uses the onloaded cache if `offloading_disabled` is set. |

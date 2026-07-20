@@ -36,7 +36,7 @@ def _test_offload(offload_device, onload_device, offload_cache):
 
 def _test_onload(offload_device, onload_device, offload_cache):
     tensor = torch.ones(10, device=onload_device)
-    onloaded = offload_cache.onload(offload_cache.offload(tensor))
+    onloaded = offload_cache.onload("", offload_cache.offload(tensor))
     assert_device_equal(onloaded.device, onload_device)
     assert_tensor_equal(onloaded, tensor, onload_device)
 
