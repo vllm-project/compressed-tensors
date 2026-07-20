@@ -25,8 +25,8 @@ class CPUCache(OffloadCache):
         :param key: cpu tensor to onload
         :return: device tensor
         """
-        if key in self.slices:
-            offloaded = offloaded.as_strided(*self.slices[key])
+        slice = self.view_index.get(key, ...)
+        offloaded = offloaded[slice]
 
         return send_tensors(offloaded, device=self.onload_device, copy=False)
 
