@@ -214,10 +214,19 @@ def index_from_view(
     tensor: torch.Tensor,
 ) -> tuple[torch.Tensor, tuple[int | slice, ...] | EllipsisType]:
     """
+    Get the slice indexing used to reconstruct the tensor view
 
+    ```python
+    a = torch.rand(10, 10, 10)
+    b = a[0, ::2, :5]
+    base, index = index_from_view(b)
+
+    assert torch.equal(base, a)
+    assert torch.equal(base[index], b)
+    ```
 
     :param tensor: tensor which is a view
-    :return: slice indexing used to get `tensor` from `tensor._base`
+    :return: base tensor and slice indexing used to get `tensor` from base tensor
     """
     base = tensor._base
     if base is None:
