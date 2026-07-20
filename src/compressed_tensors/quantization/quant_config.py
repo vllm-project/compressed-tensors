@@ -297,6 +297,12 @@ class QuantizationConfig(BaseModel):
             if scheme.output_activations is not None:
                 if not scheme.output_activations.dynamic:
                     return True
+            if any(
+                scheme.weights is not None
+                and scheme.weights.observer is not None
+                and scheme.weights.observer.lower() == "imatrix_mse"
+            ):
+                return True
 
         return False
 
