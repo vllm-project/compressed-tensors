@@ -9,7 +9,6 @@ from typing import Annotated, Any
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
 from compressed_tensors.quantization.quant_scheme import (
-    CompressionFormat,
     QuantizationScheme,
     preset_name_to_scheme,
 )
