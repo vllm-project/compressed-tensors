@@ -19,6 +19,7 @@ from compressed_tensors.utils.match import match_name
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
+
 __all__ = [
     "QuantizationStatus",
     "QuantizationConfig",
