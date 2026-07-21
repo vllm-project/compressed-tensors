@@ -9,6 +9,7 @@ from typing import Annotated, Any
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
 from compressed_tensors.quantization.quant_scheme import (
+    CompressionFormat,
     QuantizationScheme,
     preset_name_to_scheme,
 )
@@ -17,7 +18,6 @@ from compressed_tensors.utils import find_unique_name
 from compressed_tensors.utils.match import match_name
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
-
 
 __all__ = [
     "QuantizationStatus",
@@ -177,6 +177,12 @@ class QuantizationConfig(BaseModel):
                 name=group_name,
                 targets=targets_or_scheme,
             )
+
+        # if unset, populate format on each config group
+        if self.format != CompressionFormat.mixed_precision:
+            for scheme in self.config_groups.values():
+                if scheme.format is None:
+                    scheme.format = self.format
 
     def to_dict(self):
         # for compatibility with HFQuantizer
