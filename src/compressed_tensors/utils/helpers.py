@@ -506,19 +506,27 @@ def is_accelerator_type(device_type: str) -> bool:
 def find_unique_name(name, existing_names):
     """
     Returns a unique name. If the input name exists in existing_names,
-    appends an incrementing suffix (e.g., f"{name}_0", f"{name}_1").
+    strips any trailing ``_N`` suffix to find the base and increments the
+    counter until the name is unique (e.g., ``group_0`` -> ``group_1``).
     """
-    # Convert to a set for O(1) fast lookups
+    import re
+
     used_set = set(existing_names)
 
     if name not in used_set:
         return name
 
-    counter = 0
-    new_name = f"{name}_{counter}"
+    m = re.match(r"^(.+?)_(\d+)$", name)
+    if m:
+        base, start = m.group(1), int(m.group(2))
+    else:
+        base, start = name, 0
+
+    counter = start + 1
+    new_name = f"{base}_{counter}"
 
     while new_name in used_set:
         counter += 1
-        new_name = f"{name}_{counter}"
+        new_name = f"{base}_{counter}"
 
     return new_name
