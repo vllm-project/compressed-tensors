@@ -146,7 +146,11 @@ class ModelCompressor:
         modules = [
             module
             for _, module in model.named_modules(remove_duplicate=True)
-            if is_module_quantized(module)
+            if (
+                is_module_quantized(module)
+                and getattr(module, "quantization_status", None)
+                != QuantizationStatus.COMPRESSED
+            )
         ]
 
         # Compress modules using distributed or sequential
@@ -208,34 +212,16 @@ class ModelCompressor:
         else:
             config_data = {}
 
-        orig_qconfig_data = config_data.get(QUANTIZATION_CONFIG_NAME, None)
-
-        if orig_qconfig_data is None:
-            qconfig = self.quantization_config
-        elif self.quantization_config is not None:
-            qconfig = QuantizationConfig.model_validate(orig_qconfig_data)
-            qconfig.merge(self.quantization_config)
-        else:
-            qconfig = QuantizationConfig.model_validate(orig_qconfig_data)
-
         qconfig_data = (
-            qconfig.model_dump(exclude=["quant_method"]) if qconfig is not None else {}
+            self.quantization_config.model_dump(exclude=["quant_method"])
+            if self.quantization_config is not None
+            else {}
         )
-
-        orig_tconfig_data = (
-            orig_qconfig_data.get("transform_config", None)
-            if orig_qconfig_data is not None
-            else None
+        tconfig_data = (
+            self.transform_config.model_dump()
+            if self.transform_config is not None
+            else {}
         )
-        if orig_tconfig_data is None:
-            tconfig = self.transform_config
-        elif self.transform_config is not None:
-            tconfig = TransformConfig.model_validate(orig_tconfig_data)
-            tconfig.merge(self.transform_config)
-        else:
-            tconfig = TransformConfig.model_validate(orig_tconfig_data)
-
-        tconfig_data = tconfig.model_dump() if tconfig is not None else {}
 
         config_data[QUANTIZATION_CONFIG_NAME] = {
             COMPRESSION_VERSION_NAME: compressed_tensors.__version__,
