@@ -135,11 +135,18 @@ class ModelCompressor:
             else None
         )
 
-    def compress_model(self, model: torch.nn.Module) -> None:
+    def compress_model(
+        self, model: torch.nn.Module, skip_compressed: bool = False
+    ) -> None:
         """
         Compress the model's parameters in memory
 
         :param model: model whose parameters should be compressed in place
+        :param skip_compressed: skip any modules that already have quantization status
+            QuantizationStatus.COMPRESSED. This flag is necessary because compress_model
+            is called both during load-up in transformers and during save_pretrained.
+            During load, all modules need to be compressed, whereas during save modules
+            already compressed should be excluded.
         """
         # Collect all quantized modules
         desc = "Compressing model"
@@ -148,8 +155,11 @@ class ModelCompressor:
             for _, module in model.named_modules(remove_duplicate=True)
             if (
                 is_module_quantized(module)
-                and getattr(module, "quantization_status", None)
-                != QuantizationStatus.COMPRESSED
+                and (
+                    not (skip_compressed)
+                    or getattr(module, "quantization_status", None)
+                    != QuantizationStatus.COMPRESSED
+                )
             )
         ]
 
