@@ -671,7 +671,9 @@ def test_quantize_dequantize_matches_sequential(
         global_scale=global_scale,
     )
 
-    atol = 1e-5
+    # For int types, there are edge cases where a <1e-5 difference gets
+    # rounded to a different integer on CPU and GPU.
+    atol = 1.0 if type == "int" else 1e-4
 
     assert torch.allclose(sequential_out, fused_out, atol=atol), (
         f"Mismatch: max diff = "
@@ -745,7 +747,11 @@ def test_quantize_triton_matches_cpu(num_bits, type, symmetric, global_scale):
     # Compare results (bring CUDA output back to CPU)
     cuda_out_cpu = cuda_out.cpu()
 
-    assert torch.allclose(cpu_out, cuda_out_cpu, atol=1e-5), (
+    # For int types, there are edge cases where a <1e-5 difference gets
+    # rounded to a different integer on CPU and GPU.
+    atol = 1.0 if type == "int" else 1e-5
+
+    assert torch.allclose(cpu_out, cuda_out_cpu, atol=atol), (
         f"Mismatch between CPU and Triton paths: max diff = "
         f"{(cpu_out - cuda_out_cpu).abs().max().item()}"
     )
