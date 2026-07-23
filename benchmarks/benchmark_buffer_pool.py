@@ -5,7 +5,6 @@ Tests the Triton kernel with vs without buffer pool across realistic LLM tensor 
 """
 
 import torch
-import time
 import gc
 
 from compressed_tensors.compressors.nvfp4.helpers import (
@@ -31,7 +30,7 @@ device = "cuda:0" if torch.accelerator.is_available() else "cpu"
 
 def create_test_data(size, device):
     """Create test data with exact FP4 values."""
-    x = torch.tensor(FLOAT_TO_E2M1 * (size // 8), dtype=torch.bfloat16, device=device)
+    x = torch.tensor(FLOAT_TO_E2M1 * ((size + 7) // 8), dtype=torch.bfloat16, device=device)
     x = x[:size].reshape(-1, 2)
     x[1::2] = -x[1::2]
     return x
@@ -65,39 +64,45 @@ def benchmark_size(size, name, n_runs=None):
     # Create test data
     test_data = create_test_data(size, device)
     
-    # Warmup both kernels
+    # Warmup both kernels with full-size tensor
+    # Using the actual test size ensures Triton kernel is warmed up for the
+    # correct grid configuration and memory access patterns.
     print("  Warming up kernels...")
-    warmup_data = create_test_data(min(size, 100_000), device)
     for _ in range(5):
-        _ = triton_with_buffer_pool(warmup_data.clone())
-        _ = triton_without_buffer_pool(warmup_data.clone())
-    del warmup_data
-    torch.cuda.empty_cache()
-    gc.collect()
+        _ = triton_with_buffer_pool(test_data)
+        _ = triton_without_buffer_pool(test_data)
     torch.cuda.synchronize()
     
     # Clear buffer pool to start fresh
     QuantBufferPool.clear()
     
-    # Benchmark with buffer pool
+    # Interleaved benchmark using CUDA events for accurate GPU timing.
+    # Alternating between pool and no-pool eliminates ordering bias from
+    # GPU warmup, thermal throttling, and memory state differences.
+    # Note: We don't call torch.cuda.empty_cache() because we want to measure
+    # the realistic comparison: QuantBufferPool vs PyTorch's native caching
+    # allocator. Clearing the cache would force expensive cudaMalloc calls.
     times_pool = []
-    for _ in range(n_runs):
-        torch.cuda.synchronize()
-        start = time.time()
-        result = triton_with_buffer_pool(test_data.clone())
-        torch.cuda.synchronize()
-        times_pool.append(time.time() - start)
-        del result
-    
-    # Benchmark without buffer pool
     times_no_pool = []
     for _ in range(n_runs):
-        torch.cuda.empty_cache()  # Force fresh allocation each time
+        # Run with buffer pool
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
+        result = triton_with_buffer_pool(test_data)
+        end_event.record()
         torch.cuda.synchronize()
-        start = time.time()
-        result = triton_without_buffer_pool(test_data.clone())
+        times_pool.append(start_event.elapsed_time(end_event) / 1000.0)  # ms to seconds
+        del result
+        
+        # Run without buffer pool
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
+        result = triton_without_buffer_pool(test_data)
+        end_event.record()
         torch.cuda.synchronize()
-        times_no_pool.append(time.time() - start)
+        times_no_pool.append(start_event.elapsed_time(end_event) / 1000.0)  # ms to seconds
         del result
     
     del test_data
