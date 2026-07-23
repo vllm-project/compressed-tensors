@@ -75,12 +75,15 @@ def init_dist():
     else:
         backend = "gloo"
 
+    import datetime
+
     dist.init_process_group(
         backend=backend,
         init_method="env://",
         rank=rank,
         world_size=world_size,
         device_id=device,
+        timeout=datetime.timedelta(hours=3),
     )
     dist.barrier()
 
