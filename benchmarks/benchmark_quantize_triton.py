@@ -62,17 +62,13 @@ def benchmark_cuda(func, x, scale, zero_point, q_min, q_max, args, name, warmup=
         torch.cuda.empty_cache()
         gc.collect()
         torch.cuda.synchronize()
-        print(f"  Warmup complete, starting benchmark...")
+        print("  Warmup complete, starting benchmark...")
 
     times = []
-    peaks = []
 
     for _ in range(N_RUNS):
         torch.cuda.empty_cache()
         gc.collect()
-        torch.cuda.reset_peak_memory_stats()
-
-        baseline_mem = torch.cuda.memory_allocated(0)
 
         torch.cuda.synchronize()
         start = time.time()
@@ -80,19 +76,15 @@ def benchmark_cuda(func, x, scale, zero_point, q_min, q_max, args, name, warmup=
         torch.cuda.synchronize()
         elapsed = time.time() - start
 
-        peak = (torch.cuda.max_memory_allocated(0) - baseline_mem) / 1e9
-
         times.append(elapsed)
-        peaks.append(peak)
 
         del result
         torch.cuda.empty_cache()
         gc.collect()
 
     avg_time = sum(times) / N_RUNS
-    avg_peak = sum(peaks) / N_RUNS
 
-    return avg_time, avg_peak
+    return avg_time
 
 
 def run_config(quant_type, num_bits, rows, cols):
@@ -111,21 +103,19 @@ def run_config(quant_type, num_bits, rows, cols):
 
     # PyTorch reference on CUDA (no Triton kernel, just PyTorch ops)
     print("\nRunning PyTorch reference (CUDA, no Triton)...")
-    time_pytorch, peak_pytorch = benchmark_cuda(
+    time_pytorch = benchmark_cuda(
         pytorch_quantize_cuda, x_cuda, scale_cuda, zp_cuda, q_min_cuda, q_max_cuda, args, "pytorch_cuda", warmup=True
     )
-    print(f"PyTorch (CUDA):")
+    print("PyTorch (CUDA):")
     print(f"  Time: {time_pytorch*1000:.2f}ms")
-    print(f"  Peak: {peak_pytorch:.3f} GB")
 
     # Triton kernel (CUDA path in _quantize)
     print("\nRunning Triton kernel (CUDA)...")
-    time_triton, peak_triton = benchmark_cuda(
+    time_triton = benchmark_cuda(
         _quantize, x_cuda, scale_cuda, zp_cuda, q_min_cuda, q_max_cuda, args, "triton", warmup=True
     )
-    print(f"Triton (CUDA):")
+    print("Triton (CUDA):")
     print(f"  Time: {time_triton*1000:.2f}ms")
-    print(f"  Peak: {peak_triton:.3f} GB")
 
     # Verify correctness - compare Triton kernel vs PyTorch ops on same CUDA data
     x_test = torch.randn(512, 1024, dtype=torch.float32, device=device)
@@ -185,7 +175,6 @@ def run_config(quant_type, num_bits, rows, cols):
         "cols": cols,
         "pytorch_ms": time_pytorch * 1000,
         "triton_ms": time_triton * 1000,
-        "triton_peak": peak_triton,
         "speedup": time_pytorch / time_triton if time_triton > 0 else 0,
         "correct": correct,
     }
@@ -196,7 +185,7 @@ def main():
         print("CUDA not available, Triton requires GPU")
         return
 
-    print(f"Benchmarking _quantize from forward_helpers.py")
+    print("Benchmarking _quantize from forward_helpers.py")
     print(f"Device: {torch.cuda.get_device_name(device)}")
     print(f"N_RUNS: {N_RUNS}")
 
