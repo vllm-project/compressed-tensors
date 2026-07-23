@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from compressed_tensors.transform import TransformScheme
+from compressed_tensors.utils import find_unique_name
 from pydantic import BaseModel, ConfigDict
 
 
@@ -20,3 +21,12 @@ class TransformConfig(BaseModel):
     config_groups: dict[str, TransformScheme]
 
     model_config = ConfigDict(extra="forbid")
+
+    def merge(self, other: "TransformConfig") -> None:
+        """
+        Merge another TransformConfig into self in-place. Config groups from
+        ``other`` are appended with unique keys to avoid collisions.
+        """
+        for key, transform in other.config_groups.items():
+            unique_key = find_unique_name(key, self.config_groups.keys())
+            self.config_groups[unique_key] = transform
