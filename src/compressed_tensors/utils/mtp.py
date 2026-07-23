@@ -84,4 +84,4 @@ def save_mtp_tensors_to_checkpoint(
                 with open(config_path, "w") as f:
                     json.dump(config, f, indent=2)
 
-    logger.warning(f"Copied MTP weights from {source_model} to {dest_dir}")
+    logger.info(f"Copied MTP weights from {source_model} to {dest_dir}")
