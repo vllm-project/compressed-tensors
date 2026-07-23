@@ -4,7 +4,7 @@
 import contextlib
 import warnings
 from collections.abc import Callable, Iterable, Mapping
-from functools import wraps
+from functools import reduce, wraps
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -26,6 +26,7 @@ __all__ = [
     "tensor_follows_mask_structure",
     "replace_module",
     "is_compressed_tensors_config",
+    "get_nested_value",
     "getattr_chain",
     "deprecated",
     "Aliasable",
@@ -40,6 +41,7 @@ __all__ = [
     "get_num_kv_heads",
     "get_head_dim",
     "is_accelerator_type",
+    "find_unique_name",
 ]
 
 FSDP_WRAPPER_NAME = "_fsdp_wrapped_module"
@@ -132,6 +134,16 @@ def is_compressed_tensors_config(compression_config: Any) -> bool:
         return isinstance(compression_config, CompressedTensorsConfig)
     except ImportError:
         return False
+
+
+def get_nested_value(data_dict, path, default=None):
+    """
+    Retrieves a deeply nested value using a dotted string path.
+    """
+    try:
+        return reduce(lambda d, key: d[key], path.split("."), data_dict)
+    except (KeyError, TypeError):
+        return default
 
 
 def getattr_chain(obj: Any, chain_str: str, *args, **kwargs) -> Any:
@@ -489,3 +501,32 @@ def is_accelerator_type(device_type: str) -> bool:
     if not torch.accelerator.is_available():
         return False
     return device_type == torch.accelerator.current_accelerator().type
+
+
+def find_unique_name(name, existing_names):
+    """
+    Returns a unique name. If the input name exists in existing_names,
+    strips any trailing ``_N`` suffix to find the base and increments the
+    counter until the name is unique (e.g., ``group_0`` -> ``group_1``).
+    """
+    import re
+
+    used_set = set(existing_names)
+
+    if name not in used_set:
+        return name
+
+    m = re.match(r"^(.+?)_(\d+)$", name)
+    if m:
+        base, start = m.group(1), int(m.group(2))
+    else:
+        base, start = name, 0
+
+    counter = start + 1
+    new_name = f"{base}_{counter}"
+
+    while new_name in used_set:
+        counter += 1
+        new_name = f"{base}_{counter}"
+
+    return new_name

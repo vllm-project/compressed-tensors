@@ -139,26 +139,32 @@ def apply_quantization_config(
         match_named_modules(model, target_to_scheme, config.ignore, warn_on_fail=True)
     )
 
-    for name, submodule in tqdm(
+    for name, module in tqdm(
         matched_modules,
         desc="Applying quantization config",
         disable=(not show_progress),
         position=(dist.get_rank() if is_distributed() else 0),
     ):
-        # mark modules to be quantized by adding
-        # quant scheme to the matching layers
-        matched_targets = match_targets(name, submodule, target_to_scheme)
+        # a module may match multiple scheme targets
+        matched_targets = match_targets(name, module, target_to_scheme)
         scheme = _scheme_from_targets(target_to_scheme, matched_targets, name)
-        # target matched - add layer and scheme to target list
-        submodule.quantization_scheme = scheme
 
-        if is_attention_module(submodule) and is_narrow_match(
-            model, scheme.targets, name
-        ):
-            initialize_hooked_attention(model, submodule)
+        # attention quantization
+        if is_attention_module(module) and is_narrow_match(model, scheme.targets, name):
+            module.quantization_scheme = scheme
+            initialize_hooked_attention(model, module)
+            initialize_module_for_quantization(
+                module, force_zero_point=force_zero_point
+            )
+            module.quantization_status = config.quantization_status
 
-        initialize_module_for_quantization(submodule, force_zero_point=force_zero_point)
-        submodule.quantization_status = config.quantization_status
+        # linear quantization
+        elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.quantization_scheme = scheme
+            initialize_module_for_quantization(
+                module, force_zero_point=force_zero_point
+            )
+            module.quantization_status = config.quantization_status
 
 
 def _apply_kv_cache_scheme(
