@@ -2,5 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 # flake8: noqa
+from .fp4_utils import *
 from .helpers import *
 from .mxfp_utils import *
