@@ -11,6 +11,7 @@ from compressed_tensors.utils.safetensors_load import (
     get_weight_mappings,
     update_safetensors_index,
 )
+from loguru import logger
 
 
 __all__ = ["save_mtp_tensors_to_checkpoint"]
@@ -49,6 +50,9 @@ def save_mtp_tensors_to_checkpoint(
     mtp_tensors = _fetch_and_save_prefix_tensors(
         source_model, mtp_prefix, dest_dir, shard_name
     )
+    if len(mtp_tensors) <= 0:
+        logger.warning(f"Could not find MTP weights with prefix {mtp_prefix}")
+        return
 
     # Build weight_map from existing index or single-shard file, then add MTP entries.
     # update_safetensors_index will create the index file if it doesn't exist yet.
@@ -79,3 +83,5 @@ def save_mtp_tensors_to_checkpoint(
                 config[QUANTIZATION_CONFIG_NAME] = quant_config
                 with open(config_path, "w") as f:
                     json.dump(config, f, indent=2)
+
+    logger.warning(f"Copied MTP weights from {source_model} to {dest_dir}")
