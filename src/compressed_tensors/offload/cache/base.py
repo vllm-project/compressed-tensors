@@ -3,11 +3,14 @@
 
 import contextlib
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from collections.abc import Hashable, MutableMapping
+from types import EllipsisType
 from typing import ClassVar, Literal
 
 import torch
 import torch.distributed as dist
+from compressed_tensors.offload.utils import index_from_view
 from compressed_tensors.utils import is_accelerator_type
 
 
@@ -44,6 +47,10 @@ class OffloadCache(MutableMapping, ABC):
 
     # offloaded tensors -> onloaded tensors (only when offloading is disabled)
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
+
+    # view information
+    ref_counter: ClassVar[defaultdict[torch.Tensor, int]] = defaultdict(int)
+    view_index: dict[str, tuple[int | slice, ...] | EllipsisType]
 
     @classmethod
     def cls_from_device(
@@ -131,6 +138,7 @@ class OffloadCache(MutableMapping, ABC):
         super().__init__()
         self.onload_device = onload_device
         self.offloaded_values = dict()
+        self.view_index = dict()
 
         # Validate offload_device for subclasses with a fixed offload_device
         # (CPUCache, DiskCache). DeviceCache sets offload_device after super().__init__
@@ -139,10 +147,11 @@ class OffloadCache(MutableMapping, ABC):
             assert str(offload_device) == str(self.offload_device)
 
     @abstractmethod
-    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
+    def onload(self, key: str, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Given an offloaded tensor, returns that tensor after onloading
 
+        :param key: parameter name (used to retrieve slicing information)
         :param offloaded: offloaded tensor
         :return: onloaded tensor
         """
@@ -192,7 +201,7 @@ class OffloadCache(MutableMapping, ABC):
             return self.keep_onloaded_values[offloaded]
 
         # onload value
-        onloaded = self.onload(offloaded)
+        onloaded = self.onload(key, offloaded)
 
         # when offloading is disabled, populate cache
         if self.offloading_disabled:
@@ -210,6 +219,16 @@ class OffloadCache(MutableMapping, ABC):
         :param key: name of tensor
         :param value: tensor value to offload
         """
+        # capture slice data
+        if value._base is not None:
+            base, view_index = index_from_view(value)
+            self.view_index[key] = view_index
+            value = base
+        elif key in self.view_index:
+            del self.view_index[key]
+
+        self.ref_counter[value] += 1
+
         # when onloading is disabled, parameters can be access and assigned directly
         if self.onloading_disabled:
             self.offloaded_values[key] = value
@@ -238,9 +257,12 @@ class OffloadCache(MutableMapping, ABC):
         offloaded = self.offloaded_values[key]
         del self.offloaded_values[key]
 
-        # remove strong ref
         if offloaded in self.keep_onloaded_values:
             del self.keep_onloaded_values[offloaded]
+
+        self.ref_counter[offloaded] -= 1
+        if self.ref_counter[offloaded] <= 0:
+            del self.ref_counter[offloaded]
 
     def __contains__(self, key) -> bool:
         return key in self.offloaded_values

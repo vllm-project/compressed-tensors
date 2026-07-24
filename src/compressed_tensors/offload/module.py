@@ -74,11 +74,11 @@ def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False)
 
         if onload_tensors:
             module._parameters = {
-                name: module._parameters.onload(param)
+                name: module._parameters.onload(name, param)
                 for name, param in module._parameters.offloaded_values.items()
             }
             module._buffers = {
-                name: module._buffers.onload(param)
+                name: module._buffers.onload(name, param)
                 for name, param in module._buffers.offloaded_values.items()
             }
         else:

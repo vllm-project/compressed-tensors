@@ -17,13 +17,18 @@ class CPUCache(OffloadCache):
     def __init__(self, onload_device: torch.device | str, offload_device=None):
         super().__init__(onload_device, offload_device=offload_device)
 
-    def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
+    def onload(self, key: str, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Onload a tensor from cpu to device
 
+        :param key: parameter name (used to retrieve slicing information)
         :param key: cpu tensor to onload
         :return: device tensor
         """
+        if key in self.view_index:
+            assert offloaded is not None, "attempted to create a view of `None`"
+            offloaded = offloaded[self.view_index[key]]
+
         return send_tensors(offloaded, device=self.onload_device, copy=False)
 
     @catch_cpu_mem_error
