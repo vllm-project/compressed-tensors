@@ -95,10 +95,20 @@ def initialize_module_for_quantization(
     # Capture weight shape/dtype before clearing qparams: on a compressed module the
     # metadata lives in ``weight_shape``, which ``clear_all_qparams`` would remove.
     is_linear = isinstance(module, (torch.nn.Linear, torch.nn.Embedding))
+    saved_weight_shape = None
     if is_linear:
         observed_shape, observed_dtype = _observed_weight_meta(module)
+        if not hasattr(module, "weight"):
+            # still compressed: weight_shape is needed to decompress later
+            saved_weight_shape = getattr(module, "weight_shape", None)
 
     QuantizationMetadata.clear_all_qparams(module)
+
+    if saved_weight_shape is not None:
+        if isinstance(saved_weight_shape, torch.nn.Parameter):
+            module.register_parameter("weight_shape", saved_weight_shape)
+        else:
+            module.weight_shape = saved_weight_shape
 
     if is_attention_module(module):
         initialize_attn_qparams(module, scheme, force_zero_point)
