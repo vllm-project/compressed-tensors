@@ -242,3 +242,30 @@ def test_initialize_quantization_parameters(weights, input_activations):
             assert getattr(layer, f"{q_param_name}_g_idx").shape == (
                 layer.weight.shape[1],
             )
+
+
+def test_initialize_tolerates_compressed_module():
+    from compressed_tensors.compressors import compress_module
+    from compressed_tensors.quantization import (
+        QuantizationArgs,
+        QuantizationScheme,
+        QuantizationStatus,
+    )
+
+    lin = torch.nn.Linear(128, 256, bias=False).to(torch.bfloat16)
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(num_bits=4, group_size=64, symmetric=True),
+    )
+    lin.quantization_scheme = scheme
+    initialize_module_for_quantization(lin, scheme)
+    lin.quantization_status = QuantizationStatus.FROZEN
+    compress_module(lin)
+    assert not hasattr(lin, "weight")
+
+    out_features = int(lin.weight_shape[0].item())  # captured before re-init clears it
+
+    # must not raise, and must create a correctly-shaped weight_scale
+    initialize_module_for_quantization(lin, scheme)
+    assert hasattr(lin, "weight_scale")
+    assert lin.weight_scale.shape[0] == out_features

@@ -43,6 +43,30 @@ __all__ = [
 _LOGGER = logging.getLogger(__name__)
 
 
+def _observed_weight_meta(module: Module) -> tuple[torch.Size, torch.dtype]:
+    """Return the module weight's (shape, dtype) without materializing it.
+
+    Falls back to the compressed ``weight_shape``/``weight_scale`` metadata when the
+    module has no dense ``weight`` (e.g. loaded with ``run_compressed=True``), so
+    quantization params can be initialized on a still-compressed module.
+    """
+    if hasattr(module, "weight"):
+        with disable_onloading():
+            weight = module.weight
+        return weight.shape, weight.dtype
+
+    weight_shape = getattr(module, "weight_shape", None)
+    if weight_shape is None:
+        raise AttributeError(
+            f"{type(module).__name__} has neither 'weight' nor 'weight_shape'; "
+            "cannot initialize quantization params"
+        )
+    shape = torch.Size(int(dim) for dim in weight_shape.tolist())
+    weight_scale = getattr(module, "weight_scale", None)
+    dtype = weight_scale.dtype if weight_scale is not None else torch.bfloat16
+    return shape, dtype
+
+
 def initialize_module_for_quantization(
     module: Module,
     scheme: QuantizationScheme | None = None,
@@ -68,22 +92,25 @@ def initialize_module_for_quantization(
     if scheme is None:
         return
 
+    # Capture weight shape/dtype before clearing qparams: on a compressed module the
+    # metadata lives in ``weight_shape``, which ``clear_all_qparams`` would remove.
+    is_linear = isinstance(module, (torch.nn.Linear, torch.nn.Embedding))
+    if is_linear:
+        observed_shape, observed_dtype = _observed_weight_meta(module)
+
     QuantizationMetadata.clear_all_qparams(module)
 
     if is_attention_module(module):
         initialize_attn_qparams(module, scheme, force_zero_point)
 
-    elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
-        with disable_onloading():
-            weight = module.weight
-
+    elif is_linear:
         if scheme.input_activations is not None:
             initialize_qparams(
                 module,
                 "input",
                 scheme.input_activations,
-                observed_shape=weight.shape[-1:],
-                observed_dtype=weight.dtype,
+                observed_shape=observed_shape[-1:],
+                observed_dtype=observed_dtype,
                 force_zero_point=force_zero_point,
             )
 
@@ -92,8 +119,8 @@ def initialize_module_for_quantization(
                 module,
                 "weight",
                 scheme.weights,
-                observed_shape=weight.shape,
-                observed_dtype=weight.dtype,
+                observed_shape=observed_shape,
+                observed_dtype=observed_dtype,
                 force_zero_point=force_zero_point,
             )
 
@@ -102,8 +129,8 @@ def initialize_module_for_quantization(
                 module,
                 "output",
                 scheme.output_activations,
-                observed_shape=weight.shape[:-1],
-                observed_dtype=weight.dtype,
+                observed_shape=observed_shape[:-1],
+                observed_dtype=observed_dtype,
                 force_zero_point=force_zero_point,
             )
 
