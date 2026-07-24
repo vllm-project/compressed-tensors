@@ -3,11 +3,11 @@ language: "en"
 early_access: false
 reviews:
   request_changes_workflow: false
-  high_level_summary: true
-  high_level_summary_in_walkthrough: true
+  high_level_summary: false
+  high_level_summary_in_walkthrough: false
   poem: false
   review_status: true
-  collapse_walkthrough: false
+  collapse_walkthrough: true
   auto_apply_labels: true
   path_filters:
     - "!**/*.pyc"
@@ -37,7 +37,7 @@ reviews:
     - path: "**/README.md"
       instructions: "Review for clarity, accuracy, and up-to-date information. Ensure installation instructions and examples are correct."
   auto_review:
-    enabled: true
+    enabled: false
     ignore_title_keywords:
       - "WIP"
       - "DO NOT MERGE"
@@ -51,7 +51,7 @@ knowledge_base:
     - repository: "vllm-project/llm-compressor"
       instructions: "Upstream library that uses compressed-tensors for model compression workflows. Useful for understanding how compression configs, quantization schemes, and compressed checkpoints are consumed by end-to-end compression pipelines."
 chat:
-  auto_reply: true
+  auto_reply: false
 issue_enrichment:
   auto_enrich:
     enabled: true
