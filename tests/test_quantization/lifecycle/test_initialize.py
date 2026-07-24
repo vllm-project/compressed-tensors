@@ -175,6 +175,17 @@ def test_initialize_module_for_quantization_offloaded(
             QuantizationArgs(strategy="block", block_structure=[2, 4]),
             None,
         ),
+        (
+            QuantizationArgs(
+                strategy="tensor_block",
+                block_structure=[2, 4],
+                type="float",
+                num_bits=4,
+                scale_dtype=FP8_E4M3_DATA.dtype,
+                zp_dtype=FP8_E4M3_DATA.dtype,
+            ),
+            None,
+        ),
     ],
 )
 def test_initialize_quantization_parameters(weights, input_activations):
@@ -192,7 +203,10 @@ def test_initialize_quantization_parameters(weights, input_activations):
             continue
         q_param_name = Q_PARAM_NAMES[q_type]
 
-        if args.strategy == QuantizationStrategy.TENSOR_GROUP:
+        if args.strategy in (
+            QuantizationStrategy.TENSOR_GROUP,
+            QuantizationStrategy.TENSOR_BLOCK,
+        ):
             if q_type == "weights":
                 assert hasattr(layer, "weight_global_scale")
                 assert layer.weight_global_scale.dtype == torch.float32
@@ -220,7 +234,10 @@ def test_initialize_quantization_parameters(weights, input_activations):
             num_groups = math.ceil(layer.weight.shape[1] / args.group_size)
             expected_shape = (layer.weight.shape[0], max(num_groups, 1))
 
-        elif args.strategy == QuantizationStrategy.BLOCK:
+        elif args.strategy in (
+            QuantizationStrategy.BLOCK,
+            QuantizationStrategy.TENSOR_BLOCK,
+        ):
             # For block quantization, only weights get block-level scales
             # Activations fall back to tensor-level since shape is unknown at init
             if q_type == "weights" and args.block_structure is not None:

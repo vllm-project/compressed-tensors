@@ -126,6 +126,7 @@ class QuantizationStrategy(str, Enum):
     BLOCK = "block"
     TOKEN = "token"
     TENSOR_GROUP = "tensor_group"
+    TENSOR_BLOCK = "tensor_block"
     ATTN_HEAD = "attn_head"
 
 
@@ -346,7 +347,10 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             raise ValueError("group_size requires strategy to be set to 'group'")
 
         # validate block strategy
-        has_block_strategy = strategy == QuantizationStrategy.BLOCK
+        has_block_strategy = strategy in (
+            QuantizationStrategy.BLOCK,
+            QuantizationStrategy.TENSOR_BLOCK,
+        )
         has_block_structure = block_structure is not None
         if has_block_strategy and not has_block_structure:
             raise ValueError(f"Block strategy requires block structure\n{model}")

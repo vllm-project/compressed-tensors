@@ -11,6 +11,15 @@ from compressed_tensors.quantization.quant_args import (
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
 
 
+def _apply_global_scale(
+    scale: torch.Tensor, global_scale: torch.Tensor | None
+) -> torch.Tensor:
+    """Combine local and global scales; promote FP8 block scales to float32 first."""
+    if global_scale is None:
+        return scale
+    return scale.to(torch.float32) / global_scale
+
+
 def _apply_quantize_op(
     x: torch.Tensor,
     scale: torch.Tensor,
@@ -188,8 +197,7 @@ def _quantize_dequantize(
     - Intermediate quantized dtype allocation
     """
     # compute effective scale once
-    if global_scale is not None:
-        scale = scale / global_scale
+    scale = _apply_global_scale(scale, global_scale)
 
     scaled = x / scale
 
@@ -207,7 +215,7 @@ def _quantize_dequantize(
     if zero_point is not None:
         dequant = dequant - zero_point.to(scale.dtype)
 
-    return dequant * scale
+    return (dequant * scale).to(x.dtype)
 
 
 @torch.no_grad()
@@ -221,10 +229,7 @@ def _quantize(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    # if a global scale is optionally provided, use it
-    # to further scale the local `scale` parameter
-    if global_scale is not None:
-        scale = scale / global_scale
+    scale = _apply_global_scale(scale, global_scale)
 
     scaled = x / scale
 
@@ -250,10 +255,7 @@ def _dequantize(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    # if a global scale is optionally provided, use it
-    # to further scale the local `scale` parameter
-    if global_scale is not None:
-        scale = scale / global_scale
+    scale = _apply_global_scale(scale, global_scale)
 
     dequant_value = x_q.to(scale.dtype)
 
@@ -262,7 +264,5 @@ def _dequantize(
 
     dequant_value = dequant_value * scale
 
-    if dtype is not None:
-        dequant_value = dequant_value.to(dtype)
-
-    return dequant_value
+    out_dtype = dtype if dtype is not None else x_q.dtype
+    return dequant_value.to(out_dtype)
