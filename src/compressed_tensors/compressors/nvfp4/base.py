@@ -23,6 +23,10 @@ from compressed_tensors.utils import TensorStateDict, getattr_chain
 
 __all__ = ["NVFP4PackedCompressor"]
 
+# Minimum output size (in bytes) to use buffer pool for pack_fp4_to_uint8.
+# Below this threshold, PyTorch's caching allocator is faster.
+_BUFFER_POOL_MIN_BYTES = 8_000_000  # ~8MB
+
 
 @BaseCompressor.register(name=CompressionFormat.nvfp4_pack_quantized.value)
 class NVFP4PackedCompressor(BaseCompressor):
@@ -89,7 +93,16 @@ class NVFP4PackedCompressor(BaseCompressor):
             zero_point=zero_point,
             args=weights,
         )
-        state_dict["weight_packed"] = pack_fp4_to_uint8(quantized_weight)
+
+        # Use buffer pool only for large tensors where it provides benefit
+        output_bytes = (
+            quantized_weight.numel() // 2
+        )  # packed output is half the elements
+        use_buffer_pool = output_bytes >= _BUFFER_POOL_MIN_BYTES
+
+        state_dict["weight_packed"] = pack_fp4_to_uint8(
+            quantized_weight, use_buffer_pool=use_buffer_pool
+        )
         state_dict["weight_scale"] = cls._compress_scale(scale, weights)
         state_dict = cls._remove_symmetric_zp(state_dict, scheme)
 
