@@ -105,7 +105,9 @@ class ModelOptNvfp4Converter(Converter):
             "v_scale",
         ]
         untargeted_names = [
-            name for name in tensors.keys() if name not in targeted_names
+            name
+            for name in tensors.keys()
+            if name not in targeted_names and not match_name(name, self.ignore)
         ]
         for name in untargeted_names:
             param_name = name.rpartition(".")[-1]
