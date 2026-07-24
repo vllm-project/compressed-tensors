@@ -4,10 +4,8 @@
 from math import ceil
 
 import torch
-from compressed_tensors.quantization.quant_args import (
-    QuantizationArgs,
-    round_to_quantized_type_args,
-)
+from compressed_tensors.quantization.lifecycle.backend import get_quantization_backend
+from compressed_tensors.quantization.quant_args import QuantizationArgs
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
 
 
@@ -186,28 +184,19 @@ def _quantize_dequantize(
     Fused quantize-then-dequantize in a single pass, avoiding:
     - Double scale/global_scale division
     - Intermediate quantized dtype allocation
+
+    Routes through the active quantization backend (eager by default); see
+    ``compressed_tensors.quantization.lifecycle.backend``.
     """
-    # compute effective scale once
-    if global_scale is not None:
-        scale = scale / global_scale
-
-    scaled = x / scale
-
-    if zero_point is not None:
-        scaled += zero_point.to(x.dtype)
-
-    # clamp and round (stays in float — no int8/fp8 intermediate)
-    quantized = round_to_quantized_type_args(
-        tensor=scaled, args=args, min=q_min, max=q_max
+    return get_quantization_backend(x, args).quantize_dequantize(
+        x=x,
+        scale=scale,
+        zero_point=zero_point,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        global_scale=global_scale,
     )
-
-    # dequantize: subtract zero_point and multiply by scale
-    # cast to scale.dtype to match _dequantize behavior
-    dequant = quantized.to(scale.dtype)
-    if zero_point is not None:
-        dequant = dequant - zero_point.to(scale.dtype)
-
-    return dequant * scale
 
 
 @torch.no_grad()
@@ -221,25 +210,16 @@ def _quantize(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    # if a global scale is optionally provided, use it
-    # to further scale the local `scale` parameter
-    if global_scale is not None:
-        scale = scale / global_scale
-
-    scaled = x / scale
-
-    if zero_point is not None:
-        scaled += zero_point.to(x.dtype)
-
-    # clamp and round
-    quantized_value = round_to_quantized_type_args(
-        tensor=scaled, args=args, min=q_min, max=q_max
+    return get_quantization_backend(x, args).quantize(
+        x=x,
+        scale=scale,
+        zero_point=zero_point,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        dtype=dtype,
+        global_scale=global_scale,
     )
-
-    if dtype is not None:
-        quantized_value = quantized_value.to(dtype)
-
-    return quantized_value
 
 
 @torch.no_grad()
@@ -250,17 +230,12 @@ def _dequantize(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    # if a global scale is optionally provided, use it
-    # to further scale the local `scale` parameter
-    if global_scale is not None:
-        scale = scale / global_scale
-
-    dequant_value = x_q.to(scale.dtype)
-
-    if zero_point is not None:
-        dequant_value = dequant_value - zero_point.to(scale.dtype)
-
-    dequant_value = dequant_value * scale
+    dequant_value = get_quantization_backend(x_q, None).dequantize(
+        x_q=x_q,
+        scale=scale,
+        zero_point=zero_point,
+        global_scale=global_scale,
+    )
 
     if dtype is not None:
         dequant_value = dequant_value.to(dtype)
