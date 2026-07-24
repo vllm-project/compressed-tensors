@@ -8,6 +8,7 @@ from typing import Any
 import torch
 from compressed_tensors.utils import Aliasable
 from compressed_tensors.utils.type import TorchDtype
+from loguru import logger
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -288,7 +289,15 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             return ActivationOrdering.GROUP if value else None
 
         if isinstance(value, str):
-            return ActivationOrdering(value.lower())
+            actorder = ActivationOrdering(value.lower())
+            # Check if it's GROUP or DYNAMIC (which is an alias for GROUP)
+            if actorder == ActivationOrdering.GROUP:
+                logger.bind(log_once=True).warning(
+                    "actorder='group' (and its alias 'dynamic') will be removed in a "
+                    "future release. Please use actorder='weight' instead for "
+                    "activation ordering during calibration."
+                )
+            return actorder
 
         return value
 
