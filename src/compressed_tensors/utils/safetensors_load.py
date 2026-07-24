@@ -389,6 +389,18 @@ def get_weight_mappings(path_to_model_or_tensors: str) -> dict[str, str]:
 
 
 def load_safetensor_index_data(model_stub: str) -> dict:
+    """
+    Load data from a model's `model.safetensors.index.json` file. This function
+    is guaranteed to return a dictionary containing `weight_map`,
+    `metadata.total_parameters`, and `metadata.total_size` fields.
+
+    If a model does not have a `model.safetensors.index.json` file, the data will
+    be generated from the singular `model.safetensors` or a dictionary with empty
+    values will be returned.
+
+    :param model_stub: model stub of model index to load
+    :return: index information for model
+    """
     index_path = cached_file(
         model_stub,
         SAFE_WEIGHTS_INDEX_NAME,
@@ -399,10 +411,14 @@ def load_safetensor_index_data(model_stub: str) -> dict:
         # happy path: `model.safetensors.index` exists
         with open(index_path, "r") as file:
             data: dict = json.load(file)
+            if "weight_map" not in data:
+                data["weight_map"] = {}
             if "metadata" not in data:
                 data["metadata"] = {}
             if "total_parameters" not in data["metadata"]:
-                data["metadata"]
+                data["metadata"]["total_parameters"] = 0
+            if "total_size" not in data["metadata"]:
+                data["metadata"]["total_size"] = 0
             return data
 
     else:
