@@ -4,8 +4,10 @@
 from abc import ABC, abstractmethod
 
 import torch
+import torch.distributed as dist
 import torch.nn.utils.parametrize as P
 import tqdm
+from compressed_tensors.distributed import is_distributed
 from compressed_tensors.modeling.attention import (
     initialize_hooked_attention,
     register_query_hook,
@@ -92,7 +94,12 @@ class TransformFactory(RegistryMixin, ABC):
         ]
 
         desc = f"Applying {self.name} transforms"
-        for module, arg in tqdm.tqdm(modules_args, desc=desc, disable=(not use_tqdm)):
+        for module, arg in tqdm.tqdm(
+            modules_args,
+            desc=desc,
+            disable=(not use_tqdm),
+            position=(dist.get_rank() if is_distributed() else 0),
+        ):
             self._apply_to_module(model, module, arg)
 
     def _apply_to_module(self, model: Module, module: Module, args: TransformArgs):
