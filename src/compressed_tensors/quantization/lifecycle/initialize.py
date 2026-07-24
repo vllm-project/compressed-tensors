@@ -198,7 +198,7 @@ def initialize_qparams(
         # initialize activation ordering if applicable
         if actorder == ActivationOrdering.GROUP:
             init_g_idx = Parameter(
-                torch.full((observed_shape[-1],), -1, device=device, dtype=torch.int),
+                torch.empty((observed_shape[-1],), device=device, dtype=torch.int),
                 requires_grad=False,
             )
             module.register_parameter(f"{base_name}_g_idx", init_g_idx)
