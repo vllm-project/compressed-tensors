@@ -6,10 +6,12 @@ import os
 import re
 import struct
 from collections.abc import Iterable
+from math import prod
 
 import torch
 from compressed_tensors.base import QUANTIZATION_CONFIG_NAME
 from huggingface_hub import list_repo_files
+from loguru import logger
 from safetensors import safe_open
 from safetensors.torch import save_file
 from transformers.file_utils import CONFIG_NAME
@@ -229,6 +231,7 @@ def update_safetensors_index(
     save_directory: str | os.PathLike,
     total_size: int,
     weight_map: dict[str, str],
+    total_parameters: int = 0,
 ):
     """
     Write (or overwrite) the safetensors weight index file in save_directory.
@@ -248,6 +251,7 @@ def update_safetensors_index(
             {
                 "metadata": {
                     "total_size": total_size,
+                    "total_parameters": total_parameters,
                 },
                 "weight_map": weight_map,
             },
@@ -382,6 +386,86 @@ def get_weight_mappings(path_to_model_or_tensors: str) -> dict[str, str]:
             header[key] = os.path.join(path_to_model_or_tensors, value)
 
     return header
+
+
+def load_safetensor_index_data(model_stub: str) -> dict:
+    """
+    Load data from a model's `model.safetensors.index.json` file. This function
+    is guaranteed to return a dictionary containing `weight_map`,
+    `metadata.total_parameters`, and `metadata.total_size` fields.
+
+    If a model does not have a `model.safetensors.index.json` file, the data will
+    be generated from the singular `model.safetensors` or a dictionary with empty
+    values will be returned.
+
+    :param model_stub: model stub of model index to load
+    :return: index information for model
+    """
+    index_path = cached_file(
+        model_stub,
+        SAFE_WEIGHTS_INDEX_NAME,
+        _raise_exceptions_for_missing_entries=False,
+    )
+
+    if index_path is not None:
+        # happy path: `model.safetensors.index` exists
+        with open(index_path, "r") as file:
+            data: dict = json.load(file)
+            if "weight_map" not in data:
+                data["weight_map"] = {}
+            if "metadata" not in data:
+                data["metadata"] = {}
+            if "total_parameters" not in data["metadata"]:
+                data["metadata"]["total_parameters"] = 0
+            if "total_size" not in data["metadata"]:
+                data["metadata"]["total_size"] = 0
+            return data
+
+    else:
+        model_file_path = cached_file(
+            model_stub,
+            SAFE_WEIGHTS_NAME,
+            _raise_exceptions_for_missing_entries=False,
+        )
+
+        if model_file_path is not None:
+            # less happy path: `model.safetensors` exists, construct index from it
+            with safe_open(model_file_path, framework="pt", device="cpu") as file:
+                key_names = list()
+                total_parameters = 0
+                total_size = 0
+                for key in file.keys():
+                    tensor = file.get_slice(key)  # does not load data
+                    shape: tuple[int] = tensor.get_shape()
+                    dtype: str = tensor.get_dtype()
+                    numel = prod(shape)
+
+                    key_names.append(key)
+                    total_parameters += numel
+                    total_size += get_torch_bit_depth(str_to_torch_dtype[dtype]) * numel
+
+                return {
+                    "weight_map": {key: SAFE_WEIGHTS_NAME for key in key_names},
+                    "metadata": {
+                        "total_parameters": total_parameters,
+                        "total_size": total_size,
+                    },
+                }
+
+    # unhappy path: neither file exists
+    logger.warning(
+        f"Could not find {SAFE_WEIGHTS_INDEX_NAME} or {SAFE_WEIGHTS_NAME} in "
+        f"{model_stub}, assuming that the model is empty"
+    )
+    return {"weight_map": {}, "metadata": {"total_parameters": 0, "total_size": 0}}
+
+
+def get_torch_bit_depth(dtype: torch.dtype) -> int:
+    """Get the number of bits used to represent a torch dtype"""
+    if torch.is_floating_point(torch.tensor([], dtype=dtype)):
+        return torch.finfo(dtype).bits
+    else:
+        return torch.iinfo(dtype).bits
 
 
 def get_nested_weight_mappings(
@@ -554,19 +638,36 @@ def _fetch_and_save_prefix_tensors(
     :param shard_name: filename for the new shard
     :return: dict mapping tensor key to tensor
     """
-    model_files = get_checkpoint_files(source_model)
-    weight_map = get_weight_map(model_files)
+    index_path = cached_file(
+        source_model,
+        SAFE_WEIGHTS_INDEX_NAME,
+        _raise_exceptions_for_missing_entries=False,
+    )
 
     tensors = {}
-    for key, weight_shard_name in weight_map.items():
-        if key.startswith(prefix):
-            if weight_shard_name not in model_files:
-                raise ValueError(
-                    f"Could not find shard {weight_shard_name} for tensor {key}"
-                )
-            filepath = model_files[weight_shard_name]
+
+    if index_path is not None:
+        with open(index_path, "r") as f:
+            weight_map = json.load(f)["weight_map"]
+
+        prefix_shards = {
+            shard_file
+            for key, shard_file in weight_map.items()
+            if key.startswith(prefix)
+        }
+
+        for prefix_shard in prefix_shards:
+            filepath = cached_file(source_model, prefix_shard)
             with safe_open(filepath, framework="pt", device="cpu") as f:
-                tensors[key] = f.get_tensor(key)
+                for key in f.keys():
+                    if key.startswith(prefix):
+                        tensors[key] = f.get_tensor(key)
+    else:
+        filepath = cached_file(source_model, SAFE_WEIGHTS_NAME)
+        with safe_open(filepath, framework="pt", device="cpu") as f:
+            for key in f.keys():
+                if key.startswith(prefix):
+                    tensors[key] = f.get_tensor(key)
 
     if len(tensors) > 0:
         save_file(tensors, os.path.join(dest_dir, shard_name))
