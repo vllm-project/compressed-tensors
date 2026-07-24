@@ -6,7 +6,13 @@ from collections.abc import Iterable
 from typing import Literal
 
 import torch
-from compressed_tensors.distributed.utils import set_source_process
+import torch.distributed as dist
+from compressed_tensors.distributed.utils import (
+    get_source_rank,
+    is_distributed,
+    is_source_process,
+    set_source_process,
+)
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.dispatch import (  # noqa: F401
@@ -17,12 +23,7 @@ from compressed_tensors.offload.dispatch import (  # noqa: F401
     remove_dispatch,
     set_onload_device,
 )
-from compressed_tensors.offload.dist_utils import (
-    as_broadcastable,
-    init_dist,
-    is_distributed,
-    is_rank0,
-)
+from compressed_tensors.offload.dist_utils import as_broadcastable, init_dist, is_rank0
 from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
 from compressed_tensors.offload.utils import (
@@ -55,6 +56,9 @@ __all__ = [
     "disable_offloading",
     # manipulate parameters
     "update_offload_parameter",
+    "update_onload_parameter",
+    "update_parameter",
+    "update_parameter_async",
     "get_execution_device",
     "get_offloaded_device",
     "register_offload_module",
@@ -110,6 +114,7 @@ def disable_onloading():
         yield
 
 
+@torch.no_grad()
 def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Tensor):
     """
     Update the offload and onload data of an existing parameter/buffer. Supports both
@@ -127,13 +132,6 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
     :param data: tensor to update parameter with
     """
     if isinstance(module._parameters, OffloadCache):
-        # | Component | Update Implementation       |
-        # | --------- | --------------------------- |
-        # | CPU       | Copy into shared cpu memory |
-        # | Disk      | Write file to disk          |
-        # | Device    | Copy into local device      |
-        # | --------- | --------------------------- |
-        # all implementations update onloaded data if applicable
         if name in module._parameters:
             cache = module._parameters
         elif name in module._buffers:
@@ -141,12 +139,100 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         else:
             raise AttributeError(f"{type(module)} has no attribute {name}")
 
-        # triggers update if shapes match
-        cache[name] = data
+        offloaded = cache.offloaded_values[name]
+        if offloaded is None:
+            raise ValueError(f"Cannot update offload value `None` for param {name}")
+        cache.update_offload(offloaded, data)
 
     else:
-        with torch.no_grad():
-            getattr(module, name).copy_(data)
+        getattr(module, name).copy_(data)
+
+
+@torch.no_grad()
+def update_onload_parameter(module: torch.nn.Module, name: str, data: torch.Tensor):
+    """
+    Update only the onloaded (in-memory, on-device) copy of a parameter/buffer.
+    For offloaded modules, this only has an effect when offloading is disabled
+    (i.e., within a `disable_offloading` context), since onloaded values are
+    otherwise transient. For non-offloaded modules, updates the parameter directly.
+
+    :param module: module containing the parameter to update
+    :param name: name of module parameter to update
+    :param data: tensor to update parameter with
+    """
+    if (
+        not isinstance(module._parameters, OffloadCache)
+        or module._parameters.offloading_disabled
+    ):
+        getattr(module, name).copy_(data)
+
+
+def update_parameter(
+    module: torch.nn.Module,
+    name: str,
+    data: torch.Tensor,
+    update_offload: bool = True,
+    update_onload: bool = True,
+):
+    """
+    Synchronously update the onloaded and/or offloaded data of an existing
+    parameter/buffer.
+
+    When updating offloads, only the source rank will write to shared offload
+    When updating onloads, data will be broadcast before writing to local onloads
+
+    :param module: module containing the parameter to update
+    :param name: name of module parameter to update
+    :param data: tensor to update parameter with
+    :param update_offload: if True, update the offloaded value
+    :param update_onload: if True, update the onloaded value
+    """
+    if update_offload:
+        if is_source_process():
+            # only source rank updates offload
+            update_offload_parameter(module, name, data)
+
+        # ensure writes finish before moving on
+        # can optionally hide barrier behind update_onload
+        if not update_onload and is_distributed():
+            dist.barrier()
+
+    if update_onload:
+        if is_distributed():
+            # only source rank has data; synchronize
+            device = get_execution_device(module)
+            data = data.to(device, copy=True)  # not very performant
+            dist.broadcast(data, src=get_source_rank())
+
+        # now all ranks have data: update local onloads
+        update_onload_parameter(module, name, data)
+
+
+def update_parameter_async(
+    module: torch.nn.Module,
+    name: str,
+    data: torch.Tensor,
+    update_offload: bool = True,
+    update_onload: bool = True,
+):
+    """
+    Asynchronously update the onloaded and/or offloaded data of an existing
+    parameter/buffer.
+
+    Convenience wrapper around `update_offload_parameter` and
+    `update_onload_parameter`, both of which are asynchronous.
+
+    :param module: module containing the parameter to update
+    :param name: name of module parameter to update
+    :param data: tensor to update parameter with
+    :param update_offload: if True, update the offloaded value
+    :param update_onload: if True, update the onloaded value
+    """
+    if update_offload:
+        update_offload_parameter(module, name, data)
+
+    if update_onload:
+        update_onload_parameter(module, name, data)
 
 
 def get_execution_device(
