@@ -8,10 +8,10 @@ from compressed_tensors.base import QUANTIZATION_CONFIG_NAME
 from compressed_tensors.utils.safetensors_load import (
     _fetch_and_save_prefix_tensors,
     find_config_path,
-    get_weight_mappings,
-    update_safetensors_index,
+    load_safetensor_index_data,
 )
 from loguru import logger
+from transformers.utils import SAFE_WEIGHTS_INDEX_NAME
 
 
 __all__ = ["save_mtp_tensors_to_checkpoint"]
@@ -54,17 +54,22 @@ def save_mtp_tensors_to_checkpoint(
         logger.warning(f"Could not find MTP weights with prefix {mtp_prefix}")
         return
 
-    # Build weight_map from existing index or single-shard file, then add MTP entries.
-    # update_safetensors_index will create the index file if it doesn't exist yet.
-    weight_map = {
-        k: os.path.basename(v) for k, v in get_weight_mappings(dest_dir).items()
-    }
+    # update/ create safetensors index
+    safetensor_index = load_safetensor_index_data(dest_dir)
+    safetensor_index["weight_map"].update({key: shard_name for key in mtp_tensors})
+    if (metadata := safetensor_index.get("metadata", None)) is not None:
+        if "total_parameters" in safetensor_index["metadata"]:
+            metadata["total_parameters"] += sum(
+                tensor.numel() for tensor in mtp_tensors.values()
+            )
 
-    weight_map.update({key: shard_name for key in mtp_tensors})
-    total_size = sum(
-        os.path.getsize(os.path.join(dest_dir, s)) for s in set(weight_map.values())
-    )
-    update_safetensors_index(dest_dir, total_size, weight_map)
+        if "total_size" in safetensor_index["metadata"]:
+            metadata["total_size"] += sum(
+                tensor.nbytes for tensor in mtp_tensors.values()
+            )
+
+    with open(os.path.join(dest_dir, SAFE_WEIGHTS_INDEX_NAME), "w") as file:
+        json.dump(safetensor_index, file, indent=2, sort_keys=True)
 
     # Update quantization_config.ignore in config.json so inference engines
     # know not to apply quantization to MTP layers
@@ -84,4 +89,4 @@ def save_mtp_tensors_to_checkpoint(
                 with open(config_path, "w") as f:
                     json.dump(config, f, indent=2)
 
-    logger.warning(f"Copied MTP weights from {source_model} to {dest_dir}")
+    logger.info(f"Copied MTP weights from {source_model} to {dest_dir}")
