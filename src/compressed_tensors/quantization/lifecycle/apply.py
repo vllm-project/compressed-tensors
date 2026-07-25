@@ -27,7 +27,6 @@ from compressed_tensors.utils.match import (
     match_targets,
 )
 from compressed_tensors.utils.safetensors_load import get_safetensors_folder
-from loguru import logger
 from safetensors import safe_open
 from torch.nn import Module
 from tqdm import tqdm
@@ -170,7 +169,7 @@ def _apply_kv_cache_scheme(
     status: QuantizationStatus,
 ):
     if not kv_cache_scheme.symmetric:
-        raise logger.warning("vLLM does not support asymmetric kv cache quantization")
+        raise ValueError("vLLM does not support asymmetric kv cache quantization")
 
     # applies and initializes kv cache quantization
     # this step cannot come after attention apply/initialize
