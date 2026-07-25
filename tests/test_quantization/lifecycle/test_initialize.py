@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import math
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -15,7 +16,9 @@ from compressed_tensors.quantization import (
     QuantizationStrategy,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
+    initialize_attn_qparams,
     initialize_module_for_quantization,
+    is_kv_cache_attention_module,
 )
 from tests.testing_utils import requires_gpu
 from torch.nn import Linear
@@ -29,9 +32,130 @@ Q_PARAM_NAMES = {
 }
 
 
+class CacheAwareAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.k_proj = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states, past_key_value=None):
+        return hidden_states
+
+
+class PluralCacheAwareAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.k_proj = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states, past_key_values=None):
+        return hidden_states
+
+
+class EncoderAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.k_proj = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states, **kwargs):
+        return hidden_states
+
+
+class MockKVCache(torch.nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+
+class CompositeConfig:
+    def __init__(self, text_config):
+        self.text_config = text_config
+        self.vision_config = SimpleNamespace(model_type="vision")
+        self.decoder = None
+
+    def get_text_config(self, decoder=False):
+        self.decoder = decoder
+        return self.text_config
+
+
 @pytest.fixture
 def layer():
     return Linear(4, 4)
+
+
+@pytest.mark.parametrize(
+    "attention_cls, expected",
+    [
+        (CacheAwareAttention, True),
+        (PluralCacheAwareAttention, True),
+        (EncoderAttention, False),
+    ],
+)
+def test_is_kv_cache_attention_module(attention_cls, expected):
+    assert is_kv_cache_attention_module(attention_cls()) is expected
+
+
+def test_initialize_attn_qparams_uses_decoder_text_config():
+    text_config = SimpleNamespace(
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=16,
+    )
+    config = CompositeConfig(text_config)
+
+    attention = _initialize_attn_qparams(config)
+
+    assert config.decoder is True
+    assert getattr(attention, "kv_cache").config is config
+    assert config.text_config is text_config
+    assert config.vision_config.model_type == "vision"
+    assert attention.k_scale.shape == (2, 1, 1)
+    assert attention.v_scale.shape == (2, 1, 1)
+
+
+def test_initialize_attn_qparams_falls_back_to_text_config():
+    text_config = SimpleNamespace(
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=16,
+    )
+    config = SimpleNamespace(
+        text_config=text_config,
+        vision_config=SimpleNamespace(model_type="vision"),
+    )
+
+    attention = _initialize_attn_qparams(config)
+
+    assert getattr(attention, "kv_cache").config is config
+    assert config.text_config is text_config
+    assert config.vision_config.model_type == "vision"
+    assert attention.k_scale.shape == (2, 1, 1)
+    assert attention.v_scale.shape == (2, 1, 1)
+
+
+def test_initialize_attn_qparams_ignores_none_text_config():
+    config = SimpleNamespace(
+        text_config=None,
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=16,
+    )
+
+    attention = _initialize_attn_qparams(config)
+
+    assert getattr(attention, "kv_cache").config is config
+    assert attention.k_scale.shape == (2, 1, 1)
+    assert attention.v_scale.shape == (2, 1, 1)
+
+
+def _initialize_attn_qparams(config):
+    attention = CacheAwareAttention()
+    attention.kv_cache = MockKVCache(config)
+    scheme = QuantizationScheme(
+        targets=["CacheAwareAttention"],
+        input_activations=QuantizationArgs(strategy=QuantizationStrategy.ATTN_HEAD),
+    )
+
+    initialize_attn_qparams(attention, scheme, force_zero_point=False)
+    return attention
 
 
 @pytest.mark.parametrize(
