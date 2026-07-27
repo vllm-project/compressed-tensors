@@ -499,7 +499,7 @@ def match_quantizable_tensors(
     for name in list(tensors.keys()):
         module_name, _, param_name = name.rpartition(".")
 
-        if not allow_nonquantizable and module_name.endswith("norm"):
+        if not allow_nonquantizable and (module_name.endswith("norm") or "conv" in module_name):
             continue
 
         is_param_targeted = any(
