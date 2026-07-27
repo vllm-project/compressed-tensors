@@ -127,6 +127,55 @@ def test_compress_decompress_embedding(scheme_name, expected_format, actorder, d
     )
 
 
+@requires_gpu
+@pytest.mark.parametrize(
+    "scheme_name,expected_format",
+    [
+        ("W8A16", CompressionFormat.pack_quantized),
+        ("FP8", CompressionFormat.float_quantized),
+        ("W4A16", CompressionFormat.pack_quantized),
+    ],
+)
+def test_decompress_not_leave_decompressed_then_reapply_config(
+    scheme_name, expected_format
+):
+    module = nn.Linear(256, 256, bias=False).to(dtype=torch.bfloat16, device="cuda")
+    scheme = preset_name_to_scheme(scheme_name, ["Linear"])
+    initialize_module_for_quantization(module, scheme)
+
+    with torch.no_grad():
+        for param in module.parameters():
+            param.fill_(1)
+
+    compress_module(module)
+    assert module.quantization_scheme.format == expected_format
+
+    decompress_module(module, leave_decompressed=False)
+
+    # All qparams must be gone
+    from compressed_tensors.quantization import QuantizationMetadata
+
+    for qparam_name in QuantizationMetadata.all_qparam_names():
+        assert not hasattr(module, qparam_name), f"qparam {qparam_name!r} still present"
+
+    # quantization_status and quantization_scheme must be cleared
+    assert not hasattr(module, "quantization_status")
+    assert not hasattr(module, "quantization_scheme")
+
+    # apply_quantization_config must succeed on the cleaned module
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(num_bits=8, symmetric=True),
+            )
+        }
+    )
+    apply_quantization_config(module, config)
+    assert hasattr(module, "quantization_scheme")
+    assert hasattr(module, "quantization_status")
+
+
 def test_linear_only_config_leaves_embedding_untouched():
     # Embedding compression is opt-in: a module is only compressed if it has a
     # quantization_scheme attached, which apply_quantization_config does only for

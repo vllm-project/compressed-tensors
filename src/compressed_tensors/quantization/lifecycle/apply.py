@@ -100,7 +100,7 @@ def apply_quantization_config(
     config: QuantizationConfig | None,
     run_compressed: bool = False,
     show_progress: bool = True,
-    allowed_modules: list[str] | set[str] | None = None,
+    allowed_modules: list[Module] | None = None,
 ):
     """
     Initializes the model for quantization in-place based on the given config.
@@ -141,16 +141,11 @@ def apply_quantization_config(
             target_to_scheme[target] = scheme
 
     # mark appropriate layers for quantization by setting their quantization schemes
-    matched_modules = list(
-        match_named_modules(model, target_to_scheme, config.ignore, warn_on_fail=True)
-    )
-
-    if allowed_modules is not None:
-        matched_modules = [
-            (name, module)
-            for name, module in matched_modules
-            if name in allowed_modules
-        ]
+    matched_modules = [
+        (name, module)
+        for name, module in match_named_modules(model, target_to_scheme, config.ignore, warn_on_fail=True)
+        if allowed_modules is None or module in allowed_modules
+    ]
 
     for name, module in tqdm(
         matched_modules,
@@ -183,7 +178,7 @@ def _apply_kv_cache_scheme(
     model: torch.nn.Module,
     kv_cache_scheme: QuantizationArgs,
     status: QuantizationStatus,
-    allowed_modules: list[str] | set[str] | None = None,
+    allowed_modules: list[Module] | None = None,
 ):
     if not kv_cache_scheme.symmetric:
         raise logger.warning("vLLM does not support asymmetric kv cache quantization")
@@ -196,7 +191,7 @@ def _apply_kv_cache_scheme(
         input_activations=kv_cache_scheme,
     )
     for name, submodule in model.named_modules():
-        if allowed_modules is not None and name not in allowed_modules:
+        if allowed_modules is not None and submodule not in allowed_modules:
             continue
         if is_attention_module(submodule):
             submodule.quantization_scheme = scheme
