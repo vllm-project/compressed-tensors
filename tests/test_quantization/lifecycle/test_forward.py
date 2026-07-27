@@ -608,19 +608,30 @@ def test_process_quantization_block_non_divisible_values(
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 @pytest.mark.parametrize(
-    "num_bits,type,symmetric,global_scale",
+    "num_bits,type,symmetric,global_scale,group_size",
     [
-        (8, "int", True, None),
-        (8, "int", False, None),
-        (4, "int", True, None),
-        (4, "float", True, None),  # FP4
-        (8, "float", True, None),
-        (8, "float", True, torch.tensor([2.0])),
-        (8, "int", False, torch.tensor([2.0])),
+        # Tensor-level quantization (group_size=None)
+        (8, "int", True, None, None),
+        (8, "int", False, None, None),
+        (4, "int", True, None, None),
+        (4, "float", True, None, None),  # FP4
+        (8, "float", True, None, None),
+        (8, "float", True, torch.tensor([2.0]), None),
+        (8, "int", False, torch.tensor([2.0]), None),
+        # Group quantization
+        (8, "int", True, None, 128),
+        (8, "int", False, None, 128),
+        (4, "int", True, None, 128),
+        (4, "float", True, None, 128),  # FP4
+        (8, "float", True, None, 128),
+        (8, "float", True, torch.tensor([2.0]), 128),
+        (8, "int", False, torch.tensor([2.0]), 128),
+        (8, "int", True, None, 64),
+        (8, "int", False, None, 256),
     ],
 )
 def test_quantize_dequantize_matches_sequential(
-    num_bits, type, symmetric, global_scale, device
+    num_bits, type, symmetric, global_scale, group_size, device
 ):
     """Verify that the fused _quantize_dequantize produces identical output
     to calling _quantize then _dequantize sequentially."""
@@ -629,17 +640,39 @@ def test_quantize_dequantize_matches_sequential(
     if device == "cpu" and type == "float" and num_bits == 4:
         pytest.skip("FP4 on CPU is slow, only test on CUDA")
 
-    args = QuantizationArgs(
-        num_bits=num_bits,
-        type=type,
-        symmetric=symmetric,
-        strategy=QuantizationStrategy.TENSOR,
-    )
-    q_min, q_max = calculate_range(args, torch.device(device))
+    num_rows = 512
+    num_cols = 1024
 
-    x = torch.randn(512, 1024, device=device)
-    scale = (torch.rand(1) * 0.01 + 0.001).to(device)
-    zero_point = None if symmetric else torch.tensor([3.0], device=device)
+    if group_size is None:
+        strategy = QuantizationStrategy.TENSOR
+        args = QuantizationArgs(
+            num_bits=num_bits,
+            type=type,
+            symmetric=symmetric,
+            strategy=strategy,
+        )
+        x = torch.randn(num_rows, num_cols, device=device)
+        scale = (torch.rand(1) * 0.01 + 0.001).to(device)
+        zero_point = None if symmetric else torch.tensor([3.0], device=device)
+    else:
+        strategy = QuantizationStrategy.GROUP
+        num_groups = num_cols // group_size
+        args = QuantizationArgs(
+            num_bits=num_bits,
+            type=type,
+            symmetric=symmetric,
+            strategy=strategy,
+            group_size=group_size,
+        )
+        x = torch.randn(num_rows, num_groups, group_size, device=device)
+        scale = torch.rand(num_rows, num_groups, 1, device=device) * 0.01 + 0.001
+        zero_point = (
+            None
+            if symmetric
+            else torch.zeros(num_rows, num_groups, 1, device=device) + 3.0
+        )
+
+    q_min, q_max = calculate_range(args, torch.device(device))
     if global_scale is not None:
         global_scale = global_scale.to(device)
 
@@ -683,36 +716,67 @@ def test_quantize_dequantize_matches_sequential(
 
 
 @pytest.mark.parametrize(
-    "num_bits,type,symmetric,global_scale",
+    "num_bits,type,symmetric,global_scale,group_size",
     [
-        (8, "int", True, None),
-        (8, "int", False, None),
-        (4, "int", True, None),
-        (4, "float", True, None),  # FP4
-        (8, "float", True, None),
-        (8, "float", True, torch.tensor([2.0])),
-        (8, "int", False, torch.tensor([2.0])),
+        # Tensor-level quantization (group_size=None)
+        (8, "int", True, None, None),
+        (8, "int", False, None, None),
+        (4, "int", True, None, None),
+        (4, "float", True, None, None),  # FP4
+        (8, "float", True, None, None),
+        (8, "float", True, torch.tensor([2.0]), None),
+        (8, "int", False, torch.tensor([2.0]), None),
+        # Group quantization
+        (8, "int", True, None, 128),
+        (8, "int", False, None, 128),
+        (4, "int", True, None, 128),
+        (4, "float", True, None, 128),  # FP4
+        (8, "float", True, None, 128),
+        (8, "float", True, torch.tensor([2.0]), 128),
+        (8, "int", False, torch.tensor([2.0]), 128),
+        (8, "int", True, None, 64),
+        (8, "int", False, None, 256),
     ],
 )
-def test_quantize_triton_matches_cpu(num_bits, type, symmetric, global_scale):
+def test_quantize_triton_matches_cpu(
+    num_bits, type, symmetric, global_scale, group_size
+):
     """Verify that the Triton kernel (CUDA) produces identical output
     to the non-Triton (CPU) codepath for _quantize."""
     if not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
 
-    args = QuantizationArgs(
-        num_bits=num_bits,
-        type=type,
-        symmetric=symmetric,
-        strategy=QuantizationStrategy.TENSOR,
-    )
+    num_rows = 512
+    num_cols = 1024
 
-    # Create input on CPU first
-    x_cpu = torch.randn(512, 1024)
-    scale_cpu = torch.rand(1) * 0.01 + 0.001
-    zero_point_cpu = None if symmetric else torch.tensor([3.0])
+    if group_size is None:
+        strategy = QuantizationStrategy.TENSOR
+        args = QuantizationArgs(
+            num_bits=num_bits,
+            type=type,
+            symmetric=symmetric,
+            strategy=strategy,
+        )
+        x_cpu = torch.randn(num_rows, num_cols)
+        scale_cpu = torch.rand(1) * 0.01 + 0.001
+        zero_point_cpu = None if symmetric else torch.tensor([3.0])
+    else:
+        strategy = QuantizationStrategy.GROUP
+        num_groups = num_cols // group_size
+        args = QuantizationArgs(
+            num_bits=num_bits,
+            type=type,
+            symmetric=symmetric,
+            strategy=strategy,
+            group_size=group_size,
+        )
+        x_cpu = torch.randn(num_rows, num_groups, group_size)
+        scale_cpu = torch.rand(num_rows, num_groups, 1) * 0.01 + 0.001
+        zero_point_cpu = (
+            None if symmetric else torch.zeros(num_rows, num_groups, 1) + 3.0
+        )
+
     global_scale_cpu = global_scale.clone() if global_scale is not None else None
-
     q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
 
     # Run CPU (non-Triton) path
