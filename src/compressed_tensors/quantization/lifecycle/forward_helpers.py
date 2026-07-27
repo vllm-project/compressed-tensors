@@ -9,9 +9,175 @@ import triton.language as tl
 
 from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
+    QuantizationType,
     round_to_quantized_type_args,
 )
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
+
+# Quantization type constants for Triton kernel
+QUANT_TYPE_INT = tl.constexpr(0)
+QUANT_TYPE_FLOAT = tl.constexpr(1)
+
+
+@triton.jit
+def _round_to_fp4(x):
+    """
+    Round float values to the nearest E2M1 representable value.
+    FP4 values: 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 (and their negatives)
+
+    Matches the thresholds in the Python ``cast_to_fp4`` exactly.
+    Based on vllm's nvfp4_emulation_utils.py implementation.
+    """
+    sign = tl.where(x < 0.0, -1.0, 1.0)
+    abs_x = tl.abs(x)
+
+    # Map to FP4 representable values based on thresholds
+    # Start with default 0.0, then overwrite from highest to lowest threshold
+    result = tl.where(abs_x > 5.0, 6.0, 0.0)
+    result = tl.where((abs_x >= 3.5) & (abs_x <= 5.0), 4.0, result)
+    result = tl.where((abs_x > 2.5) & (abs_x < 3.5), 3.0, result)
+    result = tl.where((abs_x >= 1.75) & (abs_x <= 2.5), 2.0, result)
+    result = tl.where((abs_x > 1.25) & (abs_x < 1.75), 1.5, result)
+    result = tl.where((abs_x >= 0.75) & (abs_x <= 1.25), 1.0, result)
+    result = tl.where((abs_x > 0.25) & (abs_x < 0.75), 0.5, result)
+
+    return result * sign
+
+
+@triton.jit
+def _quantize_dequantize_scalar_kernel(
+    output_ptr: tl.tensor,
+    input_ptr: tl.tensor,
+    scale_ptr: tl.tensor,
+    zero_point_ptr: tl.tensor,
+    q_min_ptr: tl.tensor,
+    q_max_ptr: tl.tensor,
+    n_elements,
+    HAS_ZERO_POINT: tl.constexpr,
+    QUANT_TYPE: tl.constexpr,
+    NUM_BITS: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """
+    Fused quantize-dequantize kernel for per-tensor (scalar) scale.
+    Performs: output = ((clamp(round(x / scale + zp)) - zp) * scale
+
+    This is the fast path for TENSOR strategy quantization.
+    """
+    pid = tl.program_id(axis=0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_elements
+
+    # Load input and scale (scale is scalar)
+    x = tl.load(input_ptr + offsets, mask=mask, other=0.0)
+    scale = tl.load(scale_ptr)
+    q_min = tl.load(q_min_ptr)
+    q_max = tl.load(q_max_ptr)
+
+    # Quantize: x / scale + zero_point, then clamp and round
+    scaled = x / scale
+
+    if HAS_ZERO_POINT:
+        zero_point = tl.load(zero_point_ptr)
+        scaled = scaled + zero_point
+
+    # Clamp and round based on quantization type
+    if QUANT_TYPE == QUANT_TYPE_INT:
+        quantized = tl.clamp(scaled, q_min, q_max)
+        quantized = tl.extra.cuda.libdevice.rint(quantized)
+    else:  # QUANT_TYPE_FLOAT
+        quantized = tl.clamp(scaled, q_min, q_max)
+        if NUM_BITS == 4:
+            quantized = _round_to_fp4(quantized)
+        # FP8: no additional rounding needed after clamp
+
+    # Dequantize: (quantized - zero_point) * scale
+    if HAS_ZERO_POINT:
+        dequantized = (quantized - zero_point) * scale
+    else:
+        dequantized = quantized * scale
+
+    tl.store(output_ptr + offsets, dequantized, mask=mask)
+
+
+@triton.jit
+def _quantize_dequantize_grouped_kernel(
+    output_ptr: tl.tensor,
+    input_ptr: tl.tensor,
+    scale_ptr: tl.tensor,
+    zero_point_ptr: tl.tensor,
+    global_scale_ptr: tl.tensor,
+    q_min_ptr: tl.tensor,
+    q_max_ptr: tl.tensor,
+    num_rows,
+    num_cols,
+    group_size,
+    QUANT_TYPE: tl.constexpr,
+    NUM_BITS: tl.constexpr,
+    BLOCK_SIZE_R: tl.constexpr,
+    BLOCK_SIZE_C: tl.constexpr,
+):
+    """
+    Fused quantize-dequantize kernel for per-group/channel scales.
+    Performs: output = ((clamp(round(x / scale + zp)) - zp) * scale
+
+    Handles per-group scale/zero_point with configurable group_size.
+    """
+    pid_r = tl.program_id(axis=0)
+    pid_c = tl.program_id(axis=1)
+    offsets_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
+    offsets_c = pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)
+    offsets = num_cols * offsets_r[:, None] + offsets_c[None, :]
+
+    masks_r = offsets_r < num_rows
+    masks_c = offsets_c < num_cols
+    masks = masks_r[:, None] & masks_c[None, :]
+
+    # Scale indexing: maps input columns to scale columns via group_size
+    scale_offsets_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
+    scale_offsets_c = (pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)) // group_size
+    scale_offsets = (num_cols // group_size) * scale_offsets_r[
+        :, None
+    ] + scale_offsets_c[None, :]
+    scale_masks_r = scale_offsets_r < num_rows
+    scale_masks_c = scale_offsets_c < num_cols // group_size
+    scale_masks = scale_masks_r[:, None] & scale_masks_c[None, :]
+
+    # Load inputs
+    x = tl.load(input_ptr + offsets, masks, 0.0)
+    scale = tl.load(scale_ptr + scale_offsets, scale_masks, 0.0)
+    q_min = tl.load(q_min_ptr)
+    q_max = tl.load(q_max_ptr)
+
+    # Apply global scale if present
+    if global_scale_ptr is not None:
+        global_scale = tl.load(global_scale_ptr)
+        scale = scale / global_scale.to(scale.dtype)
+
+    # Quantize: x / scale + zero_point
+    scaled = x / scale
+
+    if zero_point_ptr is not None:
+        zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
+        scaled = scaled + zero_point
+
+    # Clamp and round based on quantization type
+    if QUANT_TYPE == QUANT_TYPE_INT:
+        quantized = tl.clamp(scaled, q_min, q_max)
+        quantized = tl.extra.cuda.libdevice.rint(quantized)
+    else:  # QUANT_TYPE_FLOAT
+        quantized = tl.clamp(scaled, q_min, q_max)
+        if NUM_BITS == 4:
+            quantized = _round_to_fp4(quantized)
+
+    # Dequantize: (quantized - zero_point) * scale
+    if zero_point_ptr is not None:
+        output = (quantized - zero_point) * scale
+    else:
+        output = quantized * scale
+
+    tl.store(output_ptr + offsets, output, masks)
 
 
 def _apply_quantize_op(
@@ -189,28 +355,177 @@ def _quantize_dequantize(
     Fused quantize-then-dequantize in a single pass, avoiding:
     - Double scale/global_scale division
     - Intermediate quantized dtype allocation
+
+    Dispatches to Triton kernels on CUDA for better performance.
     """
-    # compute effective scale once
-    if global_scale is not None:
-        scale = scale / global_scale
+    # Triton only works with CUDA and XPU tensors
+    do_triton: bool = x.is_cuda or x.is_xpu
 
-    scaled = x / scale
+    # FP8 requires hardware dtype casting that Triton can't replicate,
+    # so fall back to PyTorch ops for FP8 quantization
+    is_fp8 = args.type == QuantizationType.FLOAT.value and args.num_bits == 8
 
-    if zero_point is not None:
-        scaled += zero_point.to(x.dtype)
+    if not do_triton or is_fp8:
+        # CPU fallback: use PyTorch ops
+        effective_scale = scale
+        if global_scale is not None:
+            effective_scale = scale / global_scale
 
-    # clamp and round (stays in float — no int8/fp8 intermediate)
-    quantized = round_to_quantized_type_args(
-        tensor=scaled, args=args, min=q_min, max=q_max
+        scaled = x / effective_scale
+
+        if zero_point is not None:
+            scaled = scaled + zero_point.to(x.dtype)
+
+        # clamp and round (stays in float — no int8/fp8 intermediate)
+        quantized = round_to_quantized_type_args(
+            tensor=scaled, args=args, min=q_min, max=q_max
+        )
+
+        # dequantize: subtract zero_point and multiply by scale
+        dequant = quantized.to(effective_scale.dtype)
+        if zero_point is not None:
+            dequant = dequant - zero_point.to(effective_scale.dtype)
+
+        return dequant * effective_scale
+
+    # Check if we can use the fast scalar path (per-tensor scale)
+    is_scalar_scale = scale.numel() == 1
+    is_scalar_zp = zero_point is None or zero_point.numel() == 1
+
+    if is_scalar_scale and is_scalar_zp and global_scale is None:
+        return _quantize_dequantize_scalar(x, scale, zero_point, q_min, q_max, args)
+
+    # Grouped path for per-group/channel scales
+    return _quantize_dequantize_grouped(
+        x, scale, zero_point, q_min, q_max, args, global_scale
     )
 
-    # dequantize: subtract zero_point and multiply by scale
-    # cast to scale.dtype to match _dequantize behavior
-    dequant = quantized.to(scale.dtype)
-    if zero_point is not None:
-        dequant = dequant - zero_point.to(scale.dtype)
 
-    return dequant * scale
+def _quantize_dequantize_scalar(
+    x: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    q_min: torch.Tensor,
+    q_max: torch.Tensor,
+    args: QuantizationArgs,
+) -> torch.Tensor:
+    """Fast fused quantize-dequantize for per-tensor (scalar) scale."""
+    original_shape = x.shape
+    x_flat = x.flatten()
+
+    n_elements = x_flat.numel()
+    BLOCK_SIZE = 8192
+    grid = (triton.cdiv(n_elements, BLOCK_SIZE),)
+
+    output = torch.empty_like(x_flat)
+
+    # Determine quantization type for kernel
+    quant_type = QUANT_TYPE_INT if args.type == QuantizationType.INT.value else QUANT_TYPE_FLOAT
+    num_bits = args.num_bits
+
+    # Dummy pointer for zero_point if not provided
+    zp_ptr = zero_point if zero_point is not None else scale
+
+    _quantize_dequantize_scalar_kernel[grid](
+        output,
+        x_flat,
+        scale,
+        zp_ptr,
+        q_min,
+        q_max,
+        n_elements,
+        HAS_ZERO_POINT=zero_point is not None,
+        QUANT_TYPE=quant_type,
+        NUM_BITS=num_bits,
+        BLOCK_SIZE=BLOCK_SIZE,
+    )
+
+    return output.reshape(original_shape)
+
+
+def _quantize_dequantize_grouped(
+    x: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    q_min: torch.Tensor,
+    q_max: torch.Tensor,
+    args: QuantizationArgs,
+    global_scale: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Fused quantize-dequantize for per-group/channel scales."""
+    original_shape = x.shape
+
+    # Convert to float for computation
+    x = x.to(scale.dtype)
+
+    # Handle different tensor dimensions (same logic as _dequantize_grouped)
+    if x.ndim == 4:
+        n_rb, n_cb, bh, bw = x.shape
+        group_size = bh * bw
+        x = x.reshape(n_rb * n_cb, bh * bw)
+        scale = scale.reshape(n_rb * n_cb, 1)
+        if zero_point is not None:
+            zero_point = zero_point.reshape(n_rb * n_cb, 1)
+    elif x.ndim == 3:
+        group_size = x.shape[2]
+        x = x.reshape(x.shape[0], -1)
+        scale = scale.reshape(scale.shape[0], -1)
+        if zero_point is not None:
+            zero_point = zero_point.reshape(zero_point.shape[0], -1)
+    elif x.ndim == 2:
+        group_size = x.shape[1]
+        num_rows = x.shape[0]
+        if scale.ndim == 0:
+            scale = scale.expand(num_rows, 1).contiguous()
+        elif scale.ndim == 1:
+            scale = scale.unsqueeze(1).expand(num_rows, 1).contiguous()
+        elif scale.shape[0] == 1:
+            scale = scale.expand(num_rows, -1).contiguous()
+        if zero_point is not None:
+            if zero_point.ndim == 0:
+                zero_point = zero_point.expand(num_rows, 1).contiguous()
+            elif zero_point.ndim == 1:
+                zero_point = zero_point.unsqueeze(1).expand(num_rows, 1).contiguous()
+            elif zero_point.shape[0] == 1:
+                zero_point = zero_point.expand(num_rows, -1).contiguous()
+    else:
+        raise ValueError(f"Expected 2D, 3D, or 4D tensor, got {x.ndim}D")
+
+    block_size_r = 32
+    block_size_c = 32
+    num_rows = x.shape[0]
+    num_cols = x.shape[1]
+
+    def grid(META):
+        return (
+            triton.cdiv(num_rows, META["BLOCK_SIZE_R"]),
+            triton.cdiv(num_cols, META["BLOCK_SIZE_C"]),
+        )
+
+    output = torch.empty_like(x)
+
+    # Determine quantization type for kernel
+    quant_type = QUANT_TYPE_INT if args.type == QuantizationType.INT.value else QUANT_TYPE_FLOAT
+    num_bits = args.num_bits
+
+    _quantize_dequantize_grouped_kernel[grid](
+        output,
+        x,
+        scale,
+        zero_point,
+        global_scale,
+        q_min,
+        q_max,
+        num_rows,
+        num_cols,
+        group_size,
+        QUANT_TYPE=quant_type,
+        NUM_BITS=num_bits,
+        BLOCK_SIZE_R=block_size_r,
+        BLOCK_SIZE_C=block_size_c,
+    )
+
+    return output.reshape(original_shape)
 
 
 @triton.jit
