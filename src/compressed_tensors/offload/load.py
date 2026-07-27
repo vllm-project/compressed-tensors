@@ -194,6 +194,4 @@ def _estimate_tensor_count(
     total_bytes = sum(param.nbytes for param in meta_model.parameters()) + sum(
         buffer.nbytes for buffer in meta_model.buffers()
     )
-    del meta_model
-
     return num_tensors, total_bytes
