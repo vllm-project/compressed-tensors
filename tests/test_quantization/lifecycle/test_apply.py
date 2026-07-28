@@ -493,6 +493,126 @@ def test_apply_attention():
         assert hasattr(layer.self_attn, "v_scale")
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        QuantizationConfig(
+            config_groups={
+                "group_0": QuantizationScheme(
+                    targets=["Linear"],
+                    weights=QuantizationArgs(
+                        num_bits=8, type="int", symmetric=True, strategy="tensor"
+                    ),
+                )
+            },
+            ignore=["lm_head"],
+        ),
+        QuantizationConfig(
+            config_groups={},
+            kv_cache_scheme=QuantizationArgs(
+                num_bits=8,
+                type="float",
+                strategy="tensor",
+                scale_dtype=FP8_E4M3_DATA.dtype,
+                zp_dtype=torch.float,
+            ),
+        ),
+        QuantizationConfig(
+            config_groups={
+                "attention": QuantizationScheme(
+                    targets=["LlamaAttention"],
+                    input_activations=QuantizationArgs(
+                        num_bits=8,
+                        type="float",
+                        strategy="tensor",
+                        scale_dtype=FP8_E4M3_DATA.dtype,
+                        zp_dtype=torch.float,
+                    ),
+                )
+            },
+        ),
+        QuantizationConfig(
+            config_groups={
+                "attention": QuantizationScheme(
+                    targets=["LlamaAttention"],
+                    input_activations=QuantizationArgs(
+                        num_bits=8,
+                        type="float",
+                        strategy="tensor",
+                        scale_dtype=FP8_E4M3_DATA.dtype,
+                        zp_dtype=torch.float,
+                    ),
+                )
+            },
+            kv_cache_scheme=QuantizationArgs(
+                num_bits=8,
+                type="float",
+                strategy="tensor",
+                scale_dtype=FP8_E4M3_DATA.dtype,
+                zp_dtype=torch.float,
+            ),
+        ),
+    ],
+    ids=["w8_linear", "fp8_kv_cache", "fp8_attention", "fp8_attention_and_kv_cache"],
+)
+def test_allowed_modules_per_layer_equivalence(config):
+    """
+    Apply a quantization config to each transformer layer of a small Llama model
+    individually (using allowed_modules) and verify the result is identical to a
+    single full apply_quantization_config call.
+    """
+    model_id = "inference-optimization/Llama-3.2-0.5B-Instruct"
+
+    # Reference: apply all at once
+    model_full = AutoModelForCausalLM.from_pretrained(model_id)
+    apply_quantization_config(model_full, config, show_progress=False)
+
+    # Per-layer: apply one transformer layer at a time using absolute module names
+    model_layerwise = AutoModelForCausalLM.from_pretrained(model_id)
+    num_layers = len(model_layerwise.model.layers)
+    for i in range(num_layers):
+        layer_prefix = f"model.layers.{i}"
+        layer = model_layerwise.get_submodule(layer_prefix)
+        allowed = {
+            f"{layer_prefix}.{name}" if name else layer_prefix
+            for name, _ in layer.named_modules()
+        }
+        apply_quantization_config(
+            model_layerwise, config, allowed_modules=allowed, show_progress=False
+        )
+    # Apply everything outside the transformer layers (e.g. embed_tokens, lm_head)
+    top_level = {
+        name
+        for name, _ in model_layerwise.named_modules()
+        if not name.startswith("model.layers")
+    }
+    apply_quantization_config(
+        model_layerwise, config, allowed_modules=top_level, show_progress=False
+    )
+
+    # State dicts must have the same keys and tensor shapes.
+    # Scale/zero_point buffers are initialized with torch.empty so their values
+    # are uninitialized; we compare values only for original model weights.
+    sd_full = model_full.state_dict()
+    sd_layerwise = model_layerwise.state_dict()
+    assert sd_full.keys() == sd_layerwise.keys(), "State dict keys differ"
+    qparam_suffixes = ("_scale", "_zero_point", "_g_idx")
+    for key in sd_full:
+        a, b = sd_full[key], sd_layerwise[key]
+        assert a.shape == b.shape and a.dtype == b.dtype, f"Shape/dtype mismatch: {key}"
+        if not key.endswith(qparam_suffixes):
+            assert torch.equal(a, b), f"Value mismatch in model weight: {key}"
+
+    # Serialized configs must be identical
+    config_full = QuantizationConfig.from_pretrained(model_full)
+    config_layerwise = QuantizationConfig.from_pretrained(model_layerwise)
+    assert list(config_full.config_groups.values()) == list(
+        config_layerwise.config_groups.values()
+    )
+    assert config_full.kv_cache_scheme == config_layerwise.kv_cache_scheme
+    assert config_full.ignore == config_layerwise.ignore
+
+
 linear_scheme = QuantizationScheme(targets=["Linear"])
 attention_scheme = QuantizationScheme(
     targets=["LlamaAttention"],
