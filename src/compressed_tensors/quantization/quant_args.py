@@ -53,19 +53,28 @@ class FP4_E2M1_DATA(FloatArgs):
     min = -6.0
 
     @staticmethod
-    @torch.compile
-    def cast_to_fp4(x):
-        sign = torch.sign(x)
-        x = torch.abs(x)
-        x[(x >= 0.0) & (x <= 0.25)] = 0.0
-        x[(x > 0.25) & (x < 0.75)] = 0.5
-        x[(x >= 0.75) & (x <= 1.25)] = 1.0
-        x[(x > 1.25) & (x < 1.75)] = 1.5
-        x[(x >= 1.75) & (x <= 2.5)] = 2.0
-        x[(x > 2.5) & (x < 3.5)] = 3.0
-        x[(x >= 3.5) & (x <= 5.0)] = 4.0
-        x[x > 5.0] = 6.0
-        return x * sign
+    def cast_to_fp4(x: torch.Tensor, backend: str = "triton"):
+        """Round float values to the nearest E2M1 representable value.
+
+        Uses Triton for GPU tensors and torch.compile for CPU tensors.
+
+        :param x: input tensor to quantize
+        :param backend: "eager" or "triton". CPU/ Meta tensors will always use "eager"
+        :return: input tensor after rounding to fp4 (maintains same dtype)
+        """
+        from compressed_tensors.quantization.utils.fp4_utils import (
+            cast_to_fp4_torch,
+            cast_to_fp4_triton,
+        )
+
+        if backend == "torch" or x.device.type in ("cpu", "meta", "mps"):
+            return cast_to_fp4_torch(x)
+
+        elif backend == "triton":
+            return cast_to_fp4_triton(x)
+
+        else:
+            raise ValueError(f"Unknown backend {backend}")
 
 
 class FP8_E4M3_DATA(FloatArgs):
@@ -245,25 +254,26 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     def validate_block_structure(cls, value) -> list[int] | None:
         if value is None:
             return value
+
+        error = ValueError(
+            f"Invalid block_structure '{value}'. Must be a list of positive ints "
+            "[rows, cols]."
+        )
         # For backward compatibility, allow string format "2x4", "8x16", etc.
         if isinstance(value, str):
             try:
-                return [int(x) for x in value.split("x")]
+                value = [int(x) for x in value.split("x")]
             except Exception:
-                raise ValueError(
-                    f"Invalid block_structure '{value}'. Must be a list of ints "
-                    "[rows, cols]."
-                )
+                raise error
         if isinstance(value, (list, tuple)):
-            if len(value) != 2 or not all(isinstance(v, int) for v in value):
-                raise ValueError(
-                    f"Invalid block_structure '{value}'. Must be a list of ints "
-                    "[rows, cols]."
-                )
+            if (
+                len(value) != 2
+                or not all(isinstance(v, int) for v in value)
+                or not all(v > 0 for v in value)
+            ):
+                raise error
             return list(value)
-        raise ValueError(
-            f"Invalid block_structure '{value}'. Must be a list of ints [rows, cols]."
-        )
+        raise error
 
     @field_validator("strategy", mode="before")
     def validate_strategy(cls, value) -> QuantizationStrategy | None:

@@ -52,6 +52,12 @@ def write_checkpoint_quantization_config(
             # if no new quant config, make sure checkpoint quant config is empty
             if QUANTIZATION_CONFIG_NAME in config_data:
                 del config_data[QUANTIZATION_CONFIG_NAME]
+            # some checkpoints have quant config nested inside text_config
+            elif (
+                "text_config" in config_data
+                and QUANTIZATION_CONFIG_NAME in config_data["text_config"]
+            ):
+                del config_data["text_config"][QUANTIZATION_CONFIG_NAME]
         else:
             # if new quant config, overwrite checkpoint quant config
             config_data[QUANTIZATION_CONFIG_NAME] = quant_config_data
@@ -107,7 +113,7 @@ def convert_file(
     """
     tensors = load_tensors_from_inverse_weight_map(inverse_weight_map)
 
-    converter.process(tensors)
+    tensors = converter.process(tensors)
 
     save_file(tensors, save_path)
     total_size = sum(tensor.nbytes for tensor in tensors.values())

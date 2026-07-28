@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from collections import defaultdict
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from compressed_tensors.offload.cache import DiskCache, OffloadCache
@@ -14,6 +14,10 @@ from compressed_tensors.offload.convert.helpers import (
 from compressed_tensors.offload.module import remove_module_offload
 from compressed_tensors.utils import patch_attr
 from loguru import logger
+
+
+if TYPE_CHECKING:
+    from accelerate.utils import OffloadedWeightsLoader
 
 
 __all__ = ["to_accelerate", "to_accelerate_module"]
@@ -29,10 +33,10 @@ def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
     :return: accelerate-style device map
     """
     hf_device_map = {}
-    hf_disk_index = _to_accelerate_disk_index(model, DiskCache.index)
+    hf_weights_loader = _to_accelerate_weights_loader(model, DiskCache.index)
 
     for name, module in model.named_modules():
-        offload_device_str = to_accelerate_module(module, name, hf_disk_index)
+        offload_device_str = to_accelerate_module(module, name, hf_weights_loader)
         hf_device_map[name] = offload_device_str
 
     setattr(model, "hf_device_map", hf_device_map)
@@ -42,20 +46,22 @@ def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
 def to_accelerate_module(
     module: torch.nn.Module,
     name: Optional[str] = None,
-    hf_disk_index: Optional[dict[str, dict[str, str]]] = None,
+    hf_weights_loader: Optional["OffloadedWeightsLoader"] = None,
 ) -> str:
     """
     Convert a module from `compressed_tensors` offloading to `accelerate` offloading
 
     :param module: module to convert to accelerate offloading
     :param name: name of module in model
-    :param hf_disk_index: accelerate-style disk index to attach to weight loaders
-    :return: str of offloaded device. Defaults to cpu if module does not have parameters
+    :param hf_weights_loader: accelerate OffloadedWeightsLoader instance to
+        use for disk-offloaded modules
+    :return: str of offloaded device. Defaults to cpu if module does not have
+        parameters
     """
     has_accelerate = True
     try:
         from accelerate.hooks import AlignDevicesHook, add_hook_to_module
-        from accelerate.utils import OffloadedWeightsLoader, PrefixedDataset
+        from accelerate.utils import PrefixedDataset
     except ImportError:
         logger.warning(
             "Cannot convert module without `accelerate` installed. This may result "
@@ -72,18 +78,15 @@ def to_accelerate_module(
 
         # create weights map
         if isinstance(cache, DiskCache):
-            if name is None or hf_disk_index is None:
+            if name is None or hf_weights_loader is None:
                 raise ValueError(
-                    "Must provide `name` and `hf_disk_index` "
+                    "Must provide `name` and `hf_weights_loader` "
                     "to convert disk offloaded module"
                 )
 
             weights_map = PrefixedDataset(
                 prefix=f"{name}.",
-                dataset=OffloadedWeightsLoader(
-                    index=hf_disk_index,
-                    save_folder=cache.offload_dir,
-                ),
+                dataset=hf_weights_loader,
             )
         else:
             weights_map = dict(get_tensors(module, recurse=False))
@@ -111,19 +114,50 @@ def to_accelerate_module(
     return str(offload_device)
 
 
-def _to_accelerate_disk_index(
+def _to_accelerate_weights_loader(
     model: torch.nn.Module, index: dict[torch.Tensor, dict[str, str]]
-) -> dict[str, dict[str, str]]:
+) -> Optional["OffloadedWeightsLoader"]:
+    """
+    Create an OffloadedWeightsLoader instance for accelerate offloading.
+
+    :param model: model with compressed_tensors offloading
+    :param index: disk cache index mapping tensors to weight info
+    :return: OffloadedWeightsLoader instance if accelerate is available and
+        disk cache exists, None otherwise
+    """
+    try:
+        from accelerate.utils import OffloadedWeightsLoader
+    except ImportError:
+        return None
+
+    if not index:
+        return None
+
     from compressed_tensors.offload import disable_onloading  # circular dependency
 
     with disable_onloading():
         offloaded_to_key = _invert_dict(model.state_dict(keep_vars=True))
 
-    return {
+    hf_disk_index = {
         key: weight_info
         for offloaded, weight_info in index.items()
         for key in offloaded_to_key[offloaded]
     }
+
+    # Get the save folder from the first cache found
+    save_folder = None
+    for module in model.modules():
+        if isinstance(module._parameters, DiskCache):
+            save_folder = module._parameters.offload_dir
+            break
+
+    if save_folder is None:
+        return None
+
+    return OffloadedWeightsLoader(
+        index=hf_disk_index,
+        save_folder=save_folder,
+    )
 
 
 def _invert_dict(d: dict) -> dict:

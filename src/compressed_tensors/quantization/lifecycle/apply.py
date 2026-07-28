@@ -30,6 +30,7 @@ from compressed_tensors.utils.safetensors_load import get_safetensors_folder
 from loguru import logger
 from safetensors import safe_open
 from torch.nn import Module
+from tqdm import tqdm
 
 
 __all__ = [
@@ -95,7 +96,10 @@ def load_pretrained_quantization_parameters(
 
 
 def apply_quantization_config(
-    model: Module, config: QuantizationConfig | None, run_compressed: bool = False
+    model: Module,
+    config: QuantizationConfig | None,
+    run_compressed: bool = False,
+    show_progress: bool = True,
 ):
     """
     Initializes the model for quantization in-place based on the given config.
@@ -105,6 +109,7 @@ def apply_quantization_config(
     :param config: quantization config
     :param run_compressed: Whether the model will be run in compressed mode or
         decompressed fully on load
+    :param show_progress: Whether to show progress bar during quantization
     """
     config = deepcopy(config)
     if config is None:  # see PR #180
@@ -128,23 +133,35 @@ def apply_quantization_config(
             target_to_scheme[target] = scheme
 
     # mark appropriate layers for quantization by setting their quantization schemes
-    for name, submodule in match_named_modules(
-        model, target_to_scheme, config.ignore, warn_on_fail=True
+    matched_modules = list(
+        match_named_modules(model, target_to_scheme, config.ignore, warn_on_fail=True)
+    )
+
+    for name, module in tqdm(
+        matched_modules,
+        desc="Applying quantization config",
+        disable=not show_progress,
     ):
-        # mark modules to be quantized by adding
-        # quant scheme to the matching layers
-        matched_targets = match_targets(name, submodule, target_to_scheme)
+        # a module may match multiple scheme targets
+        matched_targets = match_targets(name, module, target_to_scheme)
         scheme = _scheme_from_targets(target_to_scheme, matched_targets, name)
-        # target matched - add layer and scheme to target list
-        submodule.quantization_scheme = scheme
 
-        if is_attention_module(submodule) and is_narrow_match(
-            model, scheme.targets, name
-        ):
-            initialize_hooked_attention(model, submodule)
+        # attention quantization
+        if is_attention_module(module) and is_narrow_match(model, scheme.targets, name):
+            module.quantization_scheme = scheme
+            initialize_hooked_attention(model, module)
+            initialize_module_for_quantization(
+                module, force_zero_point=force_zero_point
+            )
+            module.quantization_status = config.quantization_status
 
-        initialize_module_for_quantization(submodule, force_zero_point=force_zero_point)
-        submodule.quantization_status = config.quantization_status
+        # linear quantization
+        elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.quantization_scheme = scheme
+            initialize_module_for_quantization(
+                module, force_zero_point=force_zero_point
+            )
+            module.quantization_status = config.quantization_status
 
 
 def _apply_kv_cache_scheme(

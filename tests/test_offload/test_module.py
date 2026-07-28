@@ -14,7 +14,7 @@ from tests.test_offload.conftest import assert_device_equal
 from tests.testing_utils import requires_gpu
 
 
-ONLOAD_DEVICE = torch.device("cuda")
+ONLOAD_DEVICE = torch.accelerator.current_accelerator()
 OFFLOAD_DEVICE = torch.device("cpu")
 
 

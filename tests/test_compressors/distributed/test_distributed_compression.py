@@ -83,7 +83,7 @@ def setup_quantized_model(model: nn.Module, bits: int = 4) -> nn.Module:
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_model_compression():
     """Test end-to-end distributed model compression."""
     model = TwoLayerModel()
@@ -110,7 +110,7 @@ def test_distributed_model_compression():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_consistency():
     """Test that all ranks have consistent state after distributed compression."""
     model = TwoLayerModel()
@@ -151,7 +151,7 @@ def test_distributed_compression_consistency():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_with_offload():
     """Test distributed compression with offloaded modules."""
     model = TwoLayerModel()
@@ -174,7 +174,7 @@ def test_distributed_compression_with_offload():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_decompress_roundtrip():
     """Test that distributed compression + decompression preserves values."""
     model = TwoLayerModel()
@@ -206,7 +206,7 @@ def test_distributed_compression_decompress_roundtrip():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_many_layers():
     """Test distributed compression with many layers to ensure load balancing."""
 
@@ -240,7 +240,7 @@ def test_distributed_compression_many_layers():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_skips_non_quantized():
     """Test that non-quantized layers are skipped in distributed compression."""
 
@@ -296,7 +296,7 @@ def test_distributed_compression_skips_non_quantized():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_empty_model():
     """Test distributed compression with an empty model."""
     model = nn.Sequential()
@@ -311,7 +311,7 @@ def test_distributed_compression_empty_model():
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_single_layer():
     """Test distributed compression with a single layer."""
 

@@ -336,9 +336,9 @@ Returns a mapping of all available CUDA devices to their total memory (in bytes)
 
 ### `load.py` — Loading with Offloading
 
-#### `load_offloaded_model(extra_cpu_mem=5e9)` *(context manager)*
+#### `load_offloaded_model(model_class=None, extra_cpu_mem=5e9)` *(context manager)*
 
-A context manager that patches `from_pretrained` on any `transformers` model class or `PreTrainedModel` subclass visible in the caller's global scope. Within the context, calling `from_pretrained` will:
+A context manager that patches `from_pretrained` on transformers model classes. Within the context, calling `from_pretrained` will:
 
 1. On rank 0: load the model using `accelerate`'s device offloading.
 2. On other ranks: load the model on the meta device (no actual weights).
@@ -359,6 +359,7 @@ with load_offloaded_model():
 In addition to standard `device_map` options (`"auto"`, `"cpu"`, etc.), `load_offloaded_model` supports `device_map="auto_offload"`. This restricts accelerate's auto-mapping to only use CPU and disk (no GPU VRAM), which is useful when you want the GPU to be fully available for activations during inference.
 
 **Parameters:**
+- `model_class`: explicit class to patch (e.g., `AutoModelForCausalLM`). If `None`, patches all `transformers` model classes or `PreTrainedModel` subclasses visible in the caller's global scope. Providing an explicit class is more efficient and recommended when the target class is known.
 - `extra_cpu_mem`: bytes to reserve in CPU RAM for non-weight operations (default 5 GB). Memory estimates are automatically computed for both distributed and non-distributed setups.
 
 **When to use:** the recommended entry point for loading offloaded models from pretrained checkpoints. Handles distributed loading correctly, sharing weights across ranks with minimal memory overhead.
@@ -596,13 +597,22 @@ Copies the subclass, `__dict__`, and `requires_grad` from `src` into `dst`. Used
 from transformers import AutoModelForCausalLM
 from compressed_tensors.offload import load_offloaded_model
 
-with load_offloaded_model():
+# Recommended: explicit class patching
+with load_offloaded_model(model_class=AutoModelForCausalLM):
     model = AutoModelForCausalLM.from_pretrained(
         "meta-llama/Llama-3.1-70B",
         device_map="auto",      # or "auto_offload" to restrict to cpu/disk only
         torch_dtype="bfloat16",
     )
 # model is now using compressed-tensors offloading
+
+# Alternative: automatic patching (patches all model classes in scope)
+with load_offloaded_model():
+    model = AutoModelForCausalLM.from_pretrained(
+        "meta-llama/Llama-3.1-70B",
+        device_map="auto",
+        torch_dtype="bfloat16",
+    )
 ```
 
 ### 2. Multi-GPU Dispatch
@@ -623,7 +633,7 @@ from compressed_tensors.offload import init_dist, load_offloaded_model
 
 init_dist()  # initialize NCCL
 
-with load_offloaded_model():
+with load_offloaded_model(model_class=AutoModelForCausalLM):
     model = AutoModelForCausalLM.from_pretrained(
         "meta-llama/Llama-3.1-70B",
         device_map="auto",

@@ -13,6 +13,7 @@ __all__ = ["QuantizationMetadata", "KVCacheScaleType"]
 class KVCacheScaleType(Enum):
     KEY = "k_scale"
     VALUE = "v_scale"
+    QUERY = "q_scale"
 
 
 class QuantizationMetadata:
@@ -32,6 +33,7 @@ class QuantizationMetadata:
             for suffix in (
                 "global_scale",
                 "scale",
+                "shape",
                 "zero_point",
                 "g_idx",
             )

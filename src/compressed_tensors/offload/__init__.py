@@ -31,7 +31,7 @@ from compressed_tensors.offload.utils import (
     move_module_tensor,
     to_meta,
 )
-from compressed_tensors.utils.helpers import patch_attr
+from compressed_tensors.utils.helpers import deprecated, patch_attr
 
 
 __all__ = [
@@ -42,6 +42,10 @@ __all__ = [
     "remove_dispatch",
     "dispatch_with_map",
     "get_device_map",
+    # dispatch modules
+    "offload_module",
+    "get_cache_kwargs",  # deprecated, use get_cache_init_kwargs
+    "get_cache_init_kwargs",
     # accelerate conversion
     "load_offloaded_model",
     "from_accelerate",
@@ -67,6 +71,7 @@ __all__ = [
     "as_single_threaded",
     "set_source_process",
     "to_meta",
+    "get_cache_init_kwargs",
 ]
 
 
@@ -174,11 +179,13 @@ def get_offloaded_device(
         return get_module_device(module, default)
 
 
+@deprecated("compressed_tensors.offload::get_cache_init_kwargs")
 def get_cache_kwargs(module: torch.nn.Module, default: dict | None = None) -> dict:
     """
     Get any ancillary kwargs needed for the module OffloadCache
 
     :param module: module to check
+    :param default: dictionary of kwargs to update with additional arguments
     :return: dict of cache kwargs
     """
     kwargs = default.copy() if default is not None else {}
@@ -209,8 +216,8 @@ def get_cache_init_kwargs(
     kwargs["offload_device"] = get_offloaded_device(
         module, kwargs.get("offload_device")
     )
-    cache_kwargs = get_cache_kwargs(module)
-    kwargs.update(cache_kwargs)
+    if hasattr(module._parameters, "offload_dir"):
+        kwargs["offload_dir"] = module._parameters.offload_dir
     return kwargs
 
 

@@ -78,6 +78,6 @@ def test_conversion_lifecycle(accel_device, tmp_path):
 
 @pytest.mark.unit
 @requires_gpu(2)
-@torchrun(world_size=2)
+@torchrun(world_size=2, init_dist=True)
 def test_conversion_lifecycle_dist(accel_device, tmp_path):
     test_conversion_lifecycle(accel_device, tmp_path)

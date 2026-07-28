@@ -775,12 +775,13 @@ def sample_tensors():
 
 
 @pytest.mark.parametrize(
-    "ignore,targets,allow_nonquantizable,expected_names",
+    "ignore,targets,param_targets,allow_nonquantizable,expected_names",
     [
         # Test case: basic matching without ignore or targets
         (
             [],
             [],
+            ("weight",),
             False,
             {
                 "model.layers.0.self_attn.q_proj.weight",
@@ -797,6 +798,7 @@ def sample_tensors():
         (
             ["re:.*self_attn.*"],
             [],
+            ("weight",),
             False,
             {
                 "model.layers.0.mlp.gate_proj.weight",
@@ -810,6 +812,7 @@ def sample_tensors():
         (
             ["re:.*self_attn.*", "re:.*mlp.*"],
             [],
+            ("weight",),
             False,
             {
                 "model.embed_tokens.weight",
@@ -820,6 +823,7 @@ def sample_tensors():
         (
             [],
             ["re:.*mlp.*gate_proj", "re:.*mlp.*up_proj"],
+            ("weight",),
             False,
             {
                 "model.layers.0.mlp.gate_proj.weight",
@@ -830,6 +834,7 @@ def sample_tensors():
         (
             [],
             [],
+            ("weight",),
             False,
             {
                 "model.layers.0.self_attn.q_proj.weight",
@@ -846,6 +851,7 @@ def sample_tensors():
         (
             [],
             ["Linear"],
+            ("weight",),
             False,
             {
                 "model.layers.0.self_attn.q_proj.weight",
@@ -862,6 +868,7 @@ def sample_tensors():
         (
             [],
             [],
+            ("weight", "bias"),
             True,
             {
                 "model.layers.0.self_attn.q_proj.weight",
@@ -881,6 +888,7 @@ def sample_tensors():
         (
             ["re:.*self_attn.*"],
             ["re:.*self_attn.*q_proj"],
+            ("weight",),
             False,
             set(),
         ),
@@ -888,6 +896,7 @@ def sample_tensors():
         (
             [],
             ["re:.*proj$"],
+            ("weight",),
             False,
             {
                 "model.layers.0.self_attn.q_proj.weight",
@@ -912,7 +921,7 @@ def sample_tensors():
     ],
 )
 def test_match_quantizable_tensors(
-    sample_tensors, ignore, targets, allow_nonquantizable, expected_names
+    sample_tensors, ignore, targets, param_targets, allow_nonquantizable, expected_names
 ):
     """
     Parameterized test for match_quantizable_tensors function.
@@ -925,6 +934,7 @@ def test_match_quantizable_tensors(
             sample_tensors,
             ignore=ignore,
             targets=targets,
+            param_targets=param_targets,
             allow_nonquantizable=allow_nonquantizable,
         )
     )

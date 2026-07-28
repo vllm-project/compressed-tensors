@@ -133,6 +133,40 @@ def test_fp8_block_converter_process():
     ), "Non-targeted tensor should not be modified"
 
 
+@pytest.mark.unit
+def test_fp8_block_converter_validate_with_meta_tensors():
+    """
+    Test that the converter's validate method works correctly with meta tensors.
+    """
+    converter = FP8BlockDequantizer(
+        targets=[r"re:.*layer\d+\.mlp\..*proj$"], weight_block_size=(128, 128)
+    )
+
+    # Create mock tensors dict with FP8 weights and scale_inv tensors on meta device
+    num_row_blocks = 2
+    num_col_blocks = 2
+
+    with torch.device("meta"):
+        tensors = {
+            "model.layer0.mlp.up_proj.weight": torch.empty(
+                256, 256, dtype=torch.float8_e4m3fn
+            ),
+            "model.layer0.mlp.up_proj.weight_scale_inv": torch.empty(
+                num_row_blocks, num_col_blocks, dtype=torch.float32
+            ),
+            "model.layer1.mlp.down_proj.weight": torch.empty(
+                256, 256, dtype=torch.float8_e4m3fn
+            ),
+            "model.layer1.mlp.down_proj.weight_scale_inv": torch.empty(
+                num_row_blocks, num_col_blocks, dtype=torch.float32
+            ),
+            "model.embed_tokens.weight": torch.empty(128, 128, dtype=torch.bfloat16),
+        }
+
+    # Should not raise any errors
+    converter.validate(tensors)
+
+
 def _verify_block_conversion(
     result: torch.Tensor,
     weight_fp8: torch.Tensor,

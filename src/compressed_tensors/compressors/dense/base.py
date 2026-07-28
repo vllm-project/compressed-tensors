@@ -18,6 +18,13 @@ class DenseCompressor(BaseCompressor):
     """
 
     @classmethod
+    def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        """
+        DenseCompressor adds no new qparams
+        """
+        return ("weight",)
+
+    @classmethod
     def compress(
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:

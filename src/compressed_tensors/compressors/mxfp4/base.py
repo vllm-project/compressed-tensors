@@ -2,7 +2,10 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
-from compressed_tensors.compressors.base import BaseCompressor
+from compressed_tensors.compressors.base import (
+    COMPRESSIBLE_MODULE_TYPES,
+    BaseCompressor,
+)
 from compressed_tensors.compressors.mx_utils import (
     compress_mx_scale,
     decompress_mx_scale,
@@ -42,7 +45,7 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """MXFP4 matches FP4 with group_size=32."""
         return (
-            module_type == torch.nn.Linear
+            module_type in COMPRESSIBLE_MODULE_TYPES
             and scheme.weights is not None
             and scheme.weights.num_bits == 4
             and scheme.weights.type == QuantizationType.FLOAT.value
