@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from math import ceil
+import threading
+from math import ceil, prod
 
 import torch
 from compressed_tensors.quantization.quant_args import (
@@ -9,6 +10,90 @@ from compressed_tensors.quantization.quant_args import (
     round_to_quantized_type_args,
 )
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
+
+
+class QuantBufferPool:
+    """
+    Thread-local buffer pool for quantization output tensors.
+
+    Allocates a single large buffer per device and returns views into it,
+    avoiding repeated cudaMalloc calls. The buffer grows dynamically to
+    accommodate the largest tensor seen, then stays at that size.
+
+    Based on vLLM's WorkspaceManager pattern (vllm/v1/worker/workspace.py).
+    """
+
+    _local = threading.local()
+
+    @classmethod
+    def _get_pool(cls, device: torch.device) -> dict:
+        """Get or create the buffer pool for this thread."""
+        if not hasattr(cls._local, "pools"):
+            cls._local.pools = {}
+
+        device_key = str(device)
+        if device_key not in cls._local.pools:
+            cls._local.pools[device_key] = {
+                "buffer": None,
+                "size": 0,
+            }
+        return cls._local.pools[device_key]
+
+    @classmethod
+    def get_buffer(
+        cls,
+        shape: tuple[int, ...],
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """
+        Get a buffer of the requested shape and dtype.
+
+        Returns a view into a pre-allocated buffer. If the buffer is too small,
+        it grows to accommodate the request. The buffer is stored as uint8 and
+        views are created with the requested dtype.
+
+        Args:
+            shape: The shape of the tensor to return
+            dtype: The dtype of the tensor to return
+            device: The device to allocate on
+
+        Returns:
+            A tensor view of the requested shape and dtype
+        """
+        pool = cls._get_pool(device)
+
+        num_bytes = prod(shape) * dtype.itemsize
+
+        # Grow buffer if needed
+        if pool["size"] < num_bytes:
+            # Free old buffer
+            pool["buffer"] = None
+            # Allocate new larger buffer
+            pool["buffer"] = torch.empty(num_bytes, dtype=torch.uint8, device=device)
+            pool["size"] = num_bytes
+
+        # Return a view of the appropriate size and dtype
+        return pool["buffer"][:num_bytes].view(dtype).reshape(shape)
+
+    @classmethod
+    def clear(cls, device: torch.device | None = None):
+        """
+        Clear cached buffers to free memory.
+
+        Args:
+            device: If specified, only clear the buffer for this device.
+                   If None, clear all buffers.
+        """
+        if not hasattr(cls._local, "pools"):
+            return
+
+        if device is not None:
+            device_key = str(device)
+            if device_key in cls._local.pools:
+                cls._local.pools[device_key] = {"buffer": None, "size": 0}
+        else:
+            cls._local.pools.clear()
 
 
 def _apply_quantize_op(
