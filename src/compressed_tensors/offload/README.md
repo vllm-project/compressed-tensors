@@ -565,7 +565,7 @@ Used by the forward wrapper to move input tensors to the execution device.
 
 #### `get_module_device(module, default=None) → torch.device`
 
-Returns the device of the first parameter or buffer of a module. Falls back to `default` if the module has no tensors.
+Returns the device of the first parameter or buffer of a module. Falls back to `default` if the module has no direct tensors.
 
 #### `move_module_tensor(module, name, device)`
 

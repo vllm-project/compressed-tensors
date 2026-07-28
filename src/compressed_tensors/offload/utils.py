@@ -76,7 +76,7 @@ def get_module_device(
     :param default: default device if module does not have tensors or buffers
     :return: device of module
     """
-    tensor = next(module.parameters(), next(module.buffers(), None))
+    tensor = next(module.parameters(recurse=False), next(module.buffers(recurse=False), None))
     if tensor is not None:
         return tensor.device
     elif default is not None:

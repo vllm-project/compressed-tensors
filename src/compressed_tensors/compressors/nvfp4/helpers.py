@@ -148,6 +148,8 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     indices = torch.zeros_like(x, dtype=torch.uint8)
 
     # 8-way assignment (only positive values)
+    print(indices.device)
+    print(x.device)
     indices[x == 1] = 1
     indices[x == 2] = 2
     indices[x == 3] = 3
