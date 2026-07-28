@@ -3,7 +3,9 @@
 
 import math
 from types import SimpleNamespace
+from unittest.mock import Mock
 
+import compressed_tensors.quantization.lifecycle.initialize as initialize_lifecycle
 import pytest
 import torch
 from compressed_tensors.offload import set_onload_device
@@ -18,7 +20,8 @@ from compressed_tensors.quantization import (
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_attn_qparams,
     initialize_module_for_quantization,
-    is_kv_cache_attention_module,
+    is_attention_module,
+    is_cached_attention_module,
 )
 from tests.testing_utils import requires_gpu
 from torch.nn import Linear
@@ -59,23 +62,6 @@ class EncoderAttention(torch.nn.Module):
         return hidden_states
 
 
-class MockKVCache(torch.nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-
-
-class CompositeConfig:
-    def __init__(self, text_config):
-        self.text_config = text_config
-        self.vision_config = SimpleNamespace(model_type="vision")
-        self.decoder = None
-
-    def get_text_config(self, decoder=False):
-        self.decoder = decoder
-        return self.text_config
-
-
 @pytest.fixture
 def layer():
     return Linear(4, 4)
@@ -89,51 +75,39 @@ def layer():
         (EncoderAttention, False),
     ],
 )
-def test_is_kv_cache_attention_module(attention_cls, expected):
-    assert is_kv_cache_attention_module(attention_cls()) is expected
+def test_is_cached_attention_module(attention_cls, expected):
+    assert is_cached_attention_module(attention_cls()) is expected
 
 
-def test_initialize_attn_qparams_uses_decoder_text_config():
-    text_config = SimpleNamespace(
-        num_attention_heads=8,
-        num_key_value_heads=2,
-        head_dim=16,
+def test_is_attention_module_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="is_cached_attention_module"):
+        assert is_attention_module(CacheAwareAttention()) is True
+
+
+def test_is_cached_attention_module_warns_once(monkeypatch):
+    warning = Mock()
+    monkeypatch.setattr(
+        initialize_lifecycle.inspect,
+        "signature",
+        Mock(side_effect=ValueError("signature unavailable")),
     )
-    config = CompositeConfig(text_config)
+    monkeypatch.setattr(initialize_lifecycle._LOGGER, "warning", warning)
+    monkeypatch.setattr(initialize_lifecycle, "_signature_warning_emitted", False)
 
-    attention = _initialize_attn_qparams(config)
+    assert is_cached_attention_module(CacheAwareAttention()) is False
+    assert is_cached_attention_module(CacheAwareAttention()) is False
 
-    assert config.decoder is True
-    assert getattr(attention, "kv_cache").config is config
-    assert config.text_config is text_config
-    assert config.vision_config.model_type == "vision"
-    assert attention.k_scale.shape == (2, 1, 1)
-    assert attention.v_scale.shape == (2, 1, 1)
+    warning.assert_called_once()
 
 
-def test_initialize_attn_qparams_falls_back_to_text_config():
-    text_config = SimpleNamespace(
-        num_attention_heads=8,
-        num_key_value_heads=2,
-        head_dim=16,
-    )
+class MockKVCache(torch.nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+
+def test_initialize_attn_qparams_uses_kv_cache_config():
     config = SimpleNamespace(
-        text_config=text_config,
-        vision_config=SimpleNamespace(model_type="vision"),
-    )
-
-    attention = _initialize_attn_qparams(config)
-
-    assert getattr(attention, "kv_cache").config is config
-    assert config.text_config is text_config
-    assert config.vision_config.model_type == "vision"
-    assert attention.k_scale.shape == (2, 1, 1)
-    assert attention.v_scale.shape == (2, 1, 1)
-
-
-def test_initialize_attn_qparams_ignores_none_text_config():
-    config = SimpleNamespace(
-        text_config=None,
         num_attention_heads=8,
         num_key_value_heads=2,
         head_dim=16,

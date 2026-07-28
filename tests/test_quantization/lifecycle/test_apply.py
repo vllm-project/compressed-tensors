@@ -490,15 +490,23 @@ def test_apply_kv_cache_skips_non_cache_attention():
     class CompositeModel(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.config = SimpleNamespace(
-                text_config=SimpleNamespace(
-                    num_attention_heads=2,
-                    num_key_value_heads=1,
-                    head_dim=2,
-                )
-            )
+            self.config = CompositeConfig()
             self.text_attention = TextAttention()
             self.vision_attention = VisionAttention()
+
+    class CompositeConfig:
+        def __init__(self):
+            self.text_config = SimpleNamespace(
+                num_attention_heads=2,
+                num_key_value_heads=1,
+                head_dim=2,
+            )
+            self.vision_config = SimpleNamespace(model_type="vision")
+            self.decoder = None
+
+        def get_text_config(self, decoder=False):
+            self.decoder = decoder
+            return self.text_config
 
     model = CompositeModel()
     args = QuantizationArgs(
@@ -512,7 +520,10 @@ def test_apply_kv_cache_skips_non_cache_attention():
 
     apply_quantization_config(model, config)
 
+    assert model.config.decoder is True
+    assert model.config.vision_config.model_type == "vision"
     assert hasattr(model.text_attention, "kv_cache")
+    assert model.text_attention.kv_cache.config is model.config.text_config
     assert hasattr(model.text_attention, "k_scale")
     assert hasattr(model.text_attention, "v_scale")
     assert not hasattr(model.vision_attention, "quantization_scheme")

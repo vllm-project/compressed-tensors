@@ -119,7 +119,8 @@ def initialize_hooked_kv_cache(model: PreTrainedModel, module: Module):
     :param module: attention module to initialize with
     """
     if not hasattr(module, KV_CACHE_ATTR):
-        module.register_module(KV_CACHE_ATTR, QuantizedKVCache(model.config, module))
+        config = model.config.get_text_config(decoder=True)
+        module.register_module(KV_CACHE_ATTR, QuantizedKVCache(config, module))
         module.register_forward_pre_hook(_kv_cache_attention_hook, with_kwargs=True)
 
 
