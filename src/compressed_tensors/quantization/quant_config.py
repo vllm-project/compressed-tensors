@@ -18,7 +18,6 @@ from compressed_tensors.utils.match import match_name
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
-
 __all__ = [
     "QuantizationStatus",
     "QuantizationConfig",
@@ -177,16 +176,6 @@ class QuantizationConfig(BaseModel):
                 name=group_name,
                 targets=targets_or_scheme,
             )
-
-        # if unset, populate format on each config group
-        if self.format not in (
-            DEFAULT_QUANTIZATION_FORMAT,
-            CompressionFormat.mixed_precision,
-            CompressionFormat.dense,
-        ):
-            for scheme in self.config_groups.values():
-                if scheme.format is None:
-                    scheme.format = self.format
 
     def to_dict(self):
         # for compatibility with HFQuantizer
