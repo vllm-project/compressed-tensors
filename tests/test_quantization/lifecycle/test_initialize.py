@@ -95,7 +95,7 @@ def test_is_cached_attention_module_warns_once(monkeypatch):
     monkeypatch.setattr(initialize_lifecycle, "_signature_warning_emitted", False)
 
     assert is_cached_attention_module(CacheAwareAttention()) is False
-    assert is_cached_attention_module(CacheAwareAttention()) is False
+    assert is_cached_attention_module(PluralCacheAwareAttention()) is False
 
     warning.assert_called_once()
 
