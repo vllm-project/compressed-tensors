@@ -113,6 +113,7 @@ class QuantizationType(str, Enum):
 
     INT = "int"
     FLOAT = "float"
+    CODEBOOK = "codebook"
 
 
 class QuantizationStrategy(str, Enum):
@@ -181,7 +182,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     activations
 
     :param num_bits: quantization bit depth
-    :param type: dtype to quantized to, either int or float
+    :param type: representation to quantize to: int, float, or codebook
     :param symmetric: whether or not quantization scale is symmetric about zero-point
     :param strategy: string id determining the scope of scale/zero-point to apply
     :param group_size: group length to use for the group strategy
@@ -212,15 +213,16 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     observer: str | None = Field(
         default=None,
         description=(
-            "Determines the method of computing quantization parameters (scales and "
-            "zero-points). Defaults to min-max when not using dynamic quantization"
+            "Determines the method of computing quantization parameters, such as "
+            "scales, zero-points, or codebooks. Defaults to min-max when not using "
+            "dynamic quantization"
         ),
     )
     observer_kwargs: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "optional dict of kwargs to be passed directly to torch quantization "
-            "Observers constructor excluding quantization range or symmetry"
+            "Optional kwargs passed directly to the observer constructor, excluding "
+            "quantization range or symmetry"
         ),
     )
 
@@ -395,11 +397,15 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 if dynamic == DynamicType.LOCAL:
                     observer = "minmax"
 
-        elif observer is None:
+        elif observer is None and model.type != QuantizationType.CODEBOOK:
             # default to minmax for non-dynamic cases
             observer = "memoryless_minmax"
 
-        if zp_dtype is None:
+        if model.type == QuantizationType.CODEBOOK:
+            if not model.symmetric:
+                raise ValueError("Codebook quantization must be symmetric")
+            zp_dtype = None
+        elif zp_dtype is None:
             if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
                 zp_dtype = FP8_E4M3_DATA.dtype
             else:
@@ -424,6 +430,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 return torch.int16
             else:
                 return torch.int32
+        elif self.type == QuantizationType.CODEBOOK:
+            return torch.uint8
         else:
             raise ValueError(f"Invalid quantization type {self.type}")
 

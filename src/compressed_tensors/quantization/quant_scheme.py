@@ -49,6 +49,28 @@ class QuantizationScheme(BaseModel, use_enum_values=True):
         weights = model.weights
         format = model.format
 
+        if inputs is not None and inputs.type == QuantizationType.CODEBOOK:
+            raise ValueError("Codebook quantization is only supported for weights")
+
+        if outputs is not None and outputs.type == QuantizationType.CODEBOOK:
+            raise ValueError("Codebook quantization is only supported for weights")
+
+        if weights is not None and weights.type == QuantizationType.CODEBOOK:
+            is_lut_b = (
+                weights.num_bits == 3
+                and weights.strategy == QuantizationStrategy.BLOCK
+                and weights.block_structure == [8, 64]
+            )
+            if not is_lut_b:
+                raise ValueError(
+                    "Codebook weights currently require the LUT-B contract: "
+                    "num_bits=3, strategy='block', block_structure=[8, 64]"
+                )
+            if format not in (None, CompressionFormat.lut_b):
+                raise ValueError(
+                    "Codebook weights must use the lut-b compression format"
+                )
+
         if inputs is not None:
             if inputs.strategy not in (
                 QuantizationStrategy.TOKEN,
@@ -162,6 +184,17 @@ def is_preset_scheme(name: str) -> bool:
 
 
 UNQUANTIZED = dict()
+
+LUTB = dict(
+    weights=QuantizationArgs(
+        num_bits=3,
+        type=QuantizationType.CODEBOOK,
+        strategy=QuantizationStrategy.BLOCK,
+        block_structure=[8, 64],
+        symmetric=True,
+        dynamic=False,
+    )
+)
 
 NVFP4A16 = dict(
     weights=QuantizationArgs(
@@ -404,6 +437,7 @@ FP8_BLOCK = dict(
 PRESET_SCHEMES: dict[str, dict] = {
     # Unquantized (no-op)
     "UNQUANTIZED": UNQUANTIZED,
+    "LUTB": LUTB,
     # Special-cased integer schemes
     "W4A16_ASYM": W4A16_ASYM,
     "W8A8": INT8_W8A8,
