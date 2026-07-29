@@ -169,7 +169,7 @@ def _apply_kv_cache_scheme(
     status: QuantizationStatus,
 ):
     if not kv_cache_scheme.symmetric:
-        raise ValueError("vLLM does not support asymmetric kv cache quantization")
+        logger.warning("vLLM does not support asymmetric kv cache quantization")
 
     # applies and initializes kv cache quantization
     # this step cannot come after attention apply/initialize
