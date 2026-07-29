@@ -5,4 +5,5 @@
 from .fp4_utils import *
 from .fp6_utils import *
 from .helpers import *
+from .lut_b import *
 from .mxfp_utils import *
