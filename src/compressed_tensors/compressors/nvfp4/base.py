@@ -123,6 +123,7 @@ class NVFP4PackedCompressor(BaseCompressor):
             x_q=unpacked,
             scale=scale_float,
             global_scale=global_scale,
+            args=scheme.weights,
             dtype=unpacked.dtype,
         )
         state_dict["weight_scale"] = torch.nn.Parameter(
@@ -133,11 +134,17 @@ class NVFP4PackedCompressor(BaseCompressor):
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
-        """NVFP4 matches FP4 with group_size != 32 (or None)."""
-        return (
-            module_type in COMPRESSIBLE_MODULE_TYPES
-            and scheme.weights is not None
-            and scheme.weights.num_bits == 4
-            and scheme.weights.type == QuantizationType.FLOAT.value
-            and scheme.weights.group_size == 16
-        )
+        """NVFP4 matches FP4 with a group_size of 16 (tensor-group) or a
+        16x16 block_structure (tensor-block)."""
+        if (
+            module_type not in COMPRESSIBLE_MODULE_TYPES
+            or scheme.weights is None
+            or scheme.weights.num_bits != 4
+            or scheme.weights.type != QuantizationType.FLOAT.value
+        ):
+            return False
+
+        if scheme.weights.strategy == QuantizationStrategy.TENSOR_BLOCK:
+            return scheme.weights.block_structure == [16, 16]
+
+        return scheme.weights.group_size == 16

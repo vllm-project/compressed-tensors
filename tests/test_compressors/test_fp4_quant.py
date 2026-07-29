@@ -8,7 +8,13 @@ from compressed_tensors.compressors.nvfp4.helpers import (
     pack_fp4_to_uint8,
     unpack_fp4_from_uint8,
 )
-from compressed_tensors.quantization import QuantizationArgs, QuantizationType
+from compressed_tensors.quantization import (
+    QuantizationArgs,
+    QuantizationScheme,
+    QuantizationType,
+    preset_name_to_scheme,
+)
+from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 
 
 def test_pack_unpack():
@@ -71,3 +77,55 @@ def test_compress_scale_without_scale_dtype():
 
     # Verify the output dtype is float8_e4m3fn
     assert compressed_scale.dtype == torch.float8_e4m3fn
+
+
+def test_nvfp4_can_compress_tensor_block_scheme():
+    scheme = preset_name_to_scheme("NVFP4A16_BLOCK", targets=["Linear"])
+
+    assert NVFP4PackedCompressor.can_compress(torch.nn.Linear, scheme)
+
+
+def test_nvfp4_rejects_non_16x16_tensor_block_scheme():
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(
+            strategy="tensor_block",
+            type=QuantizationType.FLOAT,
+            num_bits=4,
+            block_structure=[8, 16],
+        ),
+    )
+
+    assert not NVFP4PackedCompressor.can_compress(torch.nn.Linear, scheme)
+
+
+def test_nvfp4_tensor_block_decompress_uses_configured_block_shape():
+    scheme = preset_name_to_scheme("NVFP4A16_BLOCK", targets=["Linear"])
+    weight = torch.randn(16, 24, dtype=torch.bfloat16)
+    scale = torch.ones(1, 2, dtype=torch.bfloat16)
+    global_scale = torch.ones(1, dtype=torch.float32)
+    state_dict = {
+        "weight": weight,
+        "weight_scale": scale,
+        "weight_global_scale": global_scale,
+    }
+
+    compressed = NVFP4PackedCompressor.compress(state_dict, scheme)
+    decompressed = NVFP4PackedCompressor.decompress(compressed, scheme)
+
+    quantized_weight = quantize(
+        x=weight,
+        scale=scale,
+        global_scale=global_scale,
+        zero_point=None,
+        args=scheme.weights,
+    )
+    expected = dequantize(
+        x_q=quantized_weight,
+        scale=scale,
+        global_scale=global_scale,
+        args=scheme.weights,
+        dtype=quantized_weight.dtype,
+    )
+
+    assert torch.equal(decompressed["weight"], expected)
