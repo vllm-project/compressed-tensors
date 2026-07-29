@@ -606,7 +606,7 @@ def test_process_quantization_block_non_divisible_values(
     ), f"Values mismatch for 0.5: got min={out_val.min()}, max={out_val.max()}"
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("device", ["cpu", "cuda", "meta"])
 @pytest.mark.parametrize(
     "num_bits,type,symmetric,global_scale,group_size",
     [
@@ -706,6 +706,9 @@ def test_quantize_dequantize_matches_sequential(
         args=args,
         global_scale=global_scale,
     )
+
+    if device == "meta":
+        return  # Meta tensors have no data; can only verify code doesn't crash
 
     if type == "int":
         atol, rtol = 1.0, 0  # allow +/-1 due to rounding corner cases
