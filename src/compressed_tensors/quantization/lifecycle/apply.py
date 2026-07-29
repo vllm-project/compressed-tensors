@@ -12,7 +12,7 @@ from compressed_tensors.modeling import (
 from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
-    is_attention_module,
+    is_cached_attention_module,
 )
 from compressed_tensors.quantization.quant_args import QuantizationArgs
 from compressed_tensors.quantization.quant_config import (
@@ -157,7 +157,9 @@ def apply_quantization_config(
         scheme = _scheme_from_targets(target_to_scheme, matched_targets, name)
 
         # attention quantization
-        if is_attention_module(module) and is_narrow_match(model, scheme.targets, name):
+        if is_cached_attention_module(module) and is_narrow_match(
+            model, scheme.targets, name
+        ):
             module.quantization_scheme = scheme
             initialize_hooked_attention(model, module)
             initialize_module_for_quantization(
@@ -181,7 +183,7 @@ def _apply_kv_cache_scheme(
     allowed_modules: list[Module] | None = None,
 ):
     if not kv_cache_scheme.symmetric:
-        raise logger.warning("vLLM does not support asymmetric kv cache quantization")
+        logger.warning("vLLM does not support asymmetric kv cache quantization")
 
     # applies and initializes kv cache quantization
     # this step cannot come after attention apply/initialize
@@ -193,7 +195,7 @@ def _apply_kv_cache_scheme(
     for name, submodule in model.named_modules():
         if allowed_modules is not None and submodule not in allowed_modules:
             continue
-        if is_attention_module(submodule):
+        if is_cached_attention_module(submodule):
             submodule.quantization_scheme = scheme
             initialize_hooked_kv_cache(model, submodule)
             initialize_module_for_quantization(submodule, force_zero_point=False)

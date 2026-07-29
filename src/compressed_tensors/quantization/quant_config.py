@@ -178,16 +178,6 @@ class QuantizationConfig(BaseModel):
                 targets=targets_or_scheme,
             )
 
-        # if unset, populate format on each config group
-        if self.format not in (
-            DEFAULT_QUANTIZATION_FORMAT,
-            CompressionFormat.mixed_precision,
-            CompressionFormat.dense,
-        ):
-            for scheme in self.config_groups.values():
-                if scheme.format is None:
-                    scheme.format = self.format
-
     def to_dict(self):
         # for compatibility with HFQuantizer
         return self.model_dump()
@@ -205,7 +195,7 @@ class QuantizationConfig(BaseModel):
         """
         from compressed_tensors.modeling import IMPL_ATTR
         from compressed_tensors.quantization.lifecycle.initialize import (
-            is_attention_module,
+            is_cached_attention_module,
         )
 
         # set of all quantization schemes
@@ -228,15 +218,14 @@ class QuantizationConfig(BaseModel):
 
         for name, submodule in model.named_modules():
             layer_type: str = get_vllm_module_type(type(submodule).__name__)
+            is_cached_attention = is_cached_attention_module(submodule)
 
             # add config group if quantized non-attention or attention quant
             has_config_group = is_module_quantized(submodule) and (
-                not is_attention_module(submodule) or hasattr(submodule, IMPL_ATTR)
+                not is_cached_attention or hasattr(submodule, IMPL_ATTR)
             )
             # only add kvcache if quant attention (which always implies kvcache)
-            has_kv_cache = is_module_quantized(submodule) and is_attention_module(
-                submodule
-            )
+            has_kv_cache = is_module_quantized(submodule) and is_cached_attention
 
             if has_config_group:
                 # add to running set of schemes/layer_type_names
