@@ -145,13 +145,11 @@ def is_cached_attention_module(module: Module) -> bool:
     try:
         parameters = inspect.signature(module.forward).parameters
     except (TypeError, ValueError):
-        global _signature_warning_emitted
-        if not _signature_warning_emitted:
-            _LOGGER.warning(
-                "Unable to inspect an attention module's forward signature; "
-                "skipping KV cache quantization for uninspectable modules"
-            )
-            _signature_warning_emitted = True
+        logger.warning(
+            "Unable to inspect an attention module's forward signature; "
+            "skipping KV cache quantization for uninspectable modules",
+            log_once
+        )
         return False
 
     return "past_key_value" in parameters or "past_key_values" in parameters
