@@ -10,6 +10,7 @@ import psutil
 import torch
 from compressed_tensors.distributed import is_distributed, is_source_process
 from compressed_tensors.offload.convert import from_accelerate
+from compressed_tensors.offload.utils import as_single_threaded
 from compressed_tensors.utils import patch_attr
 from loguru import logger
 from transformers import AutoModelForCausalLM, PreTrainedModel
@@ -183,7 +184,10 @@ def _estimate_tensor_count(
     }
     meta_kwargs.setdefault("tie_word_embeddings", False)
     try:
-        meta_model = original_from_pretrained(*args, device_map="meta", **meta_kwargs)
+        with as_single_threaded():
+            meta_model = original_from_pretrained(
+                *args, device_map="meta", **meta_kwargs
+            )
     except Exception:
         logger.warning("Meta device preload failed, skipping capacity estimate.")
         return 0, 0
