@@ -27,6 +27,7 @@ from compressed_tensors.utils.match import (
     match_targets,
 )
 from compressed_tensors.utils.safetensors_load import get_safetensors_folder
+from loguru import logger
 from safetensors import safe_open
 from torch.nn import Module
 from tqdm import tqdm
