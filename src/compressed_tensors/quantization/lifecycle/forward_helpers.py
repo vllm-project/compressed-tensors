@@ -344,6 +344,11 @@ def _is_fp8_supported(device: torch.device) -> bool:
 def adapt_scale_and_zp_for_triton(
     scale: torch.Tensor, zero_point: torch.Tensor | None, num_rows: int
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """
+    Adapt scale and zero point for Triton kernel.
+    Thid is required when we use group strategies, so that Triton
+    can read the correct scale and zero point for each group.
+    """
     if scale.ndim == 0:
         scale = scale.expand(num_rows, 1).contiguous()
     elif scale.ndim == 1:
