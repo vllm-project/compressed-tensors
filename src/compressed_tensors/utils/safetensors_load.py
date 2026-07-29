@@ -540,7 +540,7 @@ def is_quantization_param(name: str) -> bool:
 
 def _fetch_and_save_prefix_tensors(
     source_model: str, prefix: str, dest_dir: str, shard_name: str
-) -> dict:
+) -> dict[str, torch.Tensor]:
     """
     Extracts all tensors whose keys start with `prefix` from `source_model`
     and saves them as a new shard in `dest_dir`. This is useful when saving
@@ -553,7 +553,6 @@ def _fetch_and_save_prefix_tensors(
     :param dest_dir: destination directory to write the shard into
     :param shard_name: filename for the new shard
     :return: dict mapping tensor key to tensor
-
     """
     model_files = get_checkpoint_files(source_model)
     weight_map = get_weight_map(model_files)
@@ -569,8 +568,6 @@ def _fetch_and_save_prefix_tensors(
             with safe_open(filepath, framework="pt", device="cpu") as f:
                 tensors[key] = f.get_tensor(key)
 
-    if len(tensors) <= 0:
-        raise ValueError(f"No tensors with prefix '{prefix}' found in {source_model}")
-
-    save_file(tensors, os.path.join(dest_dir, shard_name))
+    if len(tensors) > 0:
+        save_file(tensors, os.path.join(dest_dir, shard_name))
     return tensors
