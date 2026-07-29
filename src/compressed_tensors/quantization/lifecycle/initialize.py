@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import inspect
-import logging
 import math
 
 import torch
@@ -31,6 +30,7 @@ from compressed_tensors.utils import (
     get_num_kv_heads,
 )
 from compressed_tensors.utils.helpers import deprecated
+from loguru import logger
 from torch.nn import Module, Parameter
 
 
@@ -41,10 +41,6 @@ __all__ = [
     "initialize_qparams",
     "initialize_attn_qparams",
 ]
-
-
-_LOGGER = logging.getLogger(__name__)
-_signature_warning_emitted = False
 
 
 def initialize_module_for_quantization(
@@ -148,7 +144,7 @@ def is_cached_attention_module(module: Module) -> bool:
         logger.warning(
             "Unable to inspect an attention module's forward signature; "
             "skipping KV cache quantization for uninspectable modules",
-            log_once
+            log_once=True,
         )
         return False
 

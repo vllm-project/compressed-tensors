@@ -84,20 +84,25 @@ def test_is_attention_module_is_deprecated():
         assert is_attention_module(CacheAwareAttention()) is True
 
 
-def test_is_cached_attention_module_warns_once(monkeypatch):
+@pytest.mark.parametrize("error_type", [TypeError, ValueError])
+def test_is_cached_attention_module_warns_and_returns_false_when_uninspectable(
+    monkeypatch, error_type
+):
     warning = Mock()
     monkeypatch.setattr(
         initialize_lifecycle.inspect,
         "signature",
-        Mock(side_effect=ValueError("signature unavailable")),
+        Mock(side_effect=error_type("signature unavailable")),
     )
-    monkeypatch.setattr(initialize_lifecycle._LOGGER, "warning", warning)
-    monkeypatch.setattr(initialize_lifecycle, "_signature_warning_emitted", False)
+    monkeypatch.setattr(initialize_lifecycle.logger, "warning", warning)
 
     assert is_cached_attention_module(CacheAwareAttention()) is False
-    assert is_cached_attention_module(PluralCacheAwareAttention()) is False
 
-    warning.assert_called_once()
+    warning.assert_called_once_with(
+        "Unable to inspect an attention module's forward signature; "
+        "skipping KV cache quantization for uninspectable modules",
+        log_once=True,
+    )
 
 
 class MockKVCache(torch.nn.Module):
