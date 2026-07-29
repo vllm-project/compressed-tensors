@@ -233,15 +233,10 @@ def as_single_threaded():
         DistributedDiskCache,
     )
 
-    prev_state = utils._force_single_threaded
-    utils._force_single_threaded = True
-
-    try:
-        with (
-            patch_attr(DistributedDeviceCache, "offload", DeviceCache.offload),
-            patch_attr(DistributedCPUCache, "offload", CPUCache.offload),
-            patch_attr(DistributedDiskCache, "offload", DiskCache.offload),
-        ):
-            yield
-    finally:
-        utils._force_single_threaded = prev_state
+    with (
+        patch_attr(utils, "_force_single_threaded", True),
+        patch_attr(DistributedDeviceCache, "offload", DeviceCache.offload),
+        patch_attr(DistributedCPUCache, "offload", CPUCache.offload),
+        patch_attr(DistributedDiskCache, "offload", DiskCache.offload),
+    ):
+        yield
