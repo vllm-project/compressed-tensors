@@ -3,6 +3,7 @@
 
 import re
 import shutil
+from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import MagicMock
 
@@ -467,6 +468,68 @@ def test_apply_kv_cache():
         assert getattr(layer.self_attn, "quantization_scheme").input_activations == args
         assert hasattr(layer.self_attn, "k_scale")
         assert hasattr(layer.self_attn, "v_scale")
+
+
+def test_apply_kv_cache_skips_non_cache_attention():
+    class TextAttention(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.k_proj = torch.nn.Linear(4, 4)
+
+        def forward(self, hidden_states, past_key_value=None):
+            return hidden_states
+
+    class VisionAttention(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.k_proj = torch.nn.Linear(4, 4)
+
+        def forward(self, hidden_states, **kwargs):
+            return hidden_states
+
+    class CompositeModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.config = CompositeConfig()
+            self.text_attention = TextAttention()
+            self.vision_attention = VisionAttention()
+
+    class CompositeConfig:
+        def __init__(self):
+            self.text_config = SimpleNamespace(
+                num_attention_heads=2,
+                num_key_value_heads=1,
+                head_dim=2,
+            )
+            self.vision_config = SimpleNamespace(model_type="vision")
+            self.decoder = None
+
+        def get_text_config(self, decoder=False):
+            self.decoder = decoder
+            return self.text_config
+
+    model = CompositeModel()
+    args = QuantizationArgs(
+        num_bits=8,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR,
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=torch.float,
+    )
+    config = QuantizationConfig(config_groups={}, kv_cache_scheme=args)
+
+    apply_quantization_config(model, config)
+
+    assert model.config.decoder is True
+    assert model.config.vision_config.model_type == "vision"
+    assert hasattr(model.text_attention, "kv_cache")
+    assert model.text_attention.kv_cache.config is model.config.text_config
+    assert hasattr(model.text_attention, "k_scale")
+    assert hasattr(model.text_attention, "v_scale")
+    assert not hasattr(model.vision_attention, "quantization_scheme")
+    assert not hasattr(model.vision_attention, "kv_cache")
+    assert not hasattr(model.vision_attention, "k_scale")
+    assert not hasattr(model.vision_attention, "v_scale")
 
 
 def test_apply_attention():
