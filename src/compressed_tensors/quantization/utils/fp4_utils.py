@@ -19,20 +19,14 @@ __all__ = ["cast_to_fp4_triton", "cast_to_fp4_torch"]
 if _triton_available:
 
     @triton.jit
-    def _cast_to_fp4_kernel(
-        input_ptr,
-        output_ptr,
-        n,
-        BLOCK_SIZE: tl.constexpr,
-    ):
-        pid = tl.program_id(axis=0)
-        block_start = pid * BLOCK_SIZE
-        offsets = block_start + tl.arange(0, BLOCK_SIZE)
-        mask = offsets < n
+    def _round_to_fp4(x):
+        """
+        Round float values to the nearest E2M1 representable value.
+        FP4 values: 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 (and their negatives)
 
-        x = tl.load(input_ptr + offsets, mask=mask, other=0.0)
-        x = x.to(tl.bfloat16)
-
+        Matches the thresholds in the Python ``cast_to_fp4`` exactly.
+        Based on vllm's nvfp4_emulation_utils.py implementation.
+        """
         sign_bit = x.to(tl.int16, bitcast=True) & (-32768)
         abs_x = tl.abs(x)
 
@@ -48,6 +42,24 @@ if _triton_available:
         result = (result.to(tl.int16, bitcast=True) | sign_bit).to(
             tl.bfloat16, bitcast=True
         )
+        return result
+
+    @triton.jit
+    def _cast_to_fp4_kernel(
+        input_ptr,
+        output_ptr,
+        n,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        pid = tl.program_id(axis=0)
+        block_start = pid * BLOCK_SIZE
+        offsets = block_start + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < n
+
+        x = tl.load(input_ptr + offsets, mask=mask, other=0.0)
+        x = x.to(tl.bfloat16)
+
+        result = _round_to_fp4(x)
         tl.store(output_ptr + offsets, result, mask=mask)
 
 

@@ -676,10 +676,13 @@ def test_quantize_dequantize_matches_sequential(
     if global_scale is not None:
         global_scale = global_scale.to(device)
 
+    scale_ground_quant = scale.clone()
+    scale_ground_dequant = scale.clone()
+
     # sequential: quantize then dequantize
     q = _quantize(
         x=x,
-        scale=scale,
+        scale=scale_ground_quant,
         zero_point=zero_point,
         q_min=q_min,
         q_max=q_max,
@@ -688,7 +691,7 @@ def test_quantize_dequantize_matches_sequential(
     )
     sequential_out = _dequantize(
         x_q=q,
-        scale=scale,
+        scale=scale_ground_dequant,
         zero_point=zero_point,
         global_scale=global_scale,
     )
@@ -779,6 +782,15 @@ def test_quantize_triton_matches_cpu(
     global_scale_cpu = global_scale.clone() if global_scale is not None else None
     q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
 
+    # Copy to CUDA and run Triton path
+    x_cuda = x_cpu.cuda()
+    scale_cuda = scale_cpu.cuda()
+    zero_point_cuda = zero_point_cpu.cuda() if zero_point_cpu is not None else None
+    global_scale_cuda = (
+        global_scale_cpu.cuda() if global_scale_cpu is not None else None
+    )
+    q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
+
     # Run CPU (non-Triton) path
     cpu_out = _quantize(
         x=x_cpu,
@@ -789,15 +801,6 @@ def test_quantize_triton_matches_cpu(
         args=args,
         global_scale=global_scale_cpu,
     )
-
-    # Copy to CUDA and run Triton path
-    x_cuda = x_cpu.cuda()
-    scale_cuda = scale_cpu.cuda()
-    zero_point_cuda = zero_point_cpu.cuda() if zero_point_cpu is not None else None
-    global_scale_cuda = (
-        global_scale_cpu.cuda() if global_scale_cpu is not None else None
-    )
-    q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
 
     cuda_out = _quantize(
         x=x_cuda,

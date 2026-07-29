@@ -4,15 +4,24 @@
 from math import ceil
 
 import torch
-import triton
-import triton.language as tl
+
+
+try:
+    import triton
+    import triton.language as tl
+
+    _triton_available = True
+except ImportError:
+    _triton_available = False
+
 from compressed_tensors.quantization.quant_args import (
-    FP8_E4M3_DATA,
     QuantizationArgs,
+    QuantizationStrategy,
     QuantizationType,
     round_to_quantized_type_args,
 )
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
+from compressed_tensors.quantization.utils.fp4_utils import _round_to_fp4
 
 
 def _apply_quantize_op(
@@ -220,31 +229,6 @@ QUANT_TYPE_FLOAT = tl.constexpr(1)
 
 
 @triton.jit
-def _round_to_fp4(x):
-    """
-    Round float values to the nearest E2M1 representable value.
-    FP4 values: 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 (and their negatives)
-
-    Matches the thresholds in the Python ``cast_to_fp4`` exactly.
-    Based on vllm's nvfp4_emulation_utils.py implementation.
-    """
-    sign = tl.where(x < 0.0, -1.0, 1.0)
-    abs_x = tl.abs(x)
-
-    # Map to FP4 representable values based on thresholds
-    # Start with default 0.0, then overwrite from highest to lowest threshold
-    result = tl.where(abs_x > 5.0, 6.0, 0.0)
-    result = tl.where((abs_x >= 3.5) & (abs_x <= 5.0), 4.0, result)
-    result = tl.where((abs_x > 2.5) & (abs_x < 3.5), 3.0, result)
-    result = tl.where((abs_x >= 1.75) & (abs_x <= 2.5), 2.0, result)
-    result = tl.where((abs_x > 1.25) & (abs_x < 1.75), 1.5, result)
-    result = tl.where((abs_x >= 0.75) & (abs_x <= 1.25), 1.0, result)
-    result = tl.where((abs_x > 0.25) & (abs_x < 0.75), 0.5, result)
-
-    return result * sign
-
-
-@triton.jit
 def _quantize_kernel(
     output_ptr: tl.tensor,
     input_ptr: tl.tensor,
@@ -312,10 +296,51 @@ def _quantize_kernel(
     elif quant_type == QUANT_TYPE_FLOAT:
         output = tl.clamp(output, q_min, q_max)
         if num_bits == 4:
-            output = _round_to_fp4(output)
-        # Note: FP8 would require hardware support or casting, not implemented here
+            # Convert to bfloat16 for FP4 rounding (matches CPU path)
+            orig_dtype = output.dtype
+            output = _round_to_fp4(output.to(tl.bfloat16)).to(orig_dtype)
+        elif num_bits == 8:
+            output = output.to(tl.float8e4nv).to(output.dtype)
 
     tl.store(output_ptr + result_offsets, output, result_masks)
+
+
+def _needs_fp8(*tensors, args: QuantizationArgs) -> bool:
+    """Check if operation involves FP8 (dtype or quantization type)."""
+    fp8_dtypes = (torch.float8_e4m3fn, torch.float8_e5m2)
+    has_fp8_tensor = any(t is not None and t.dtype in fp8_dtypes for t in tensors)
+    is_fp8_quant = args.type == QuantizationType.FLOAT and args.num_bits == 8
+    return has_fp8_tensor or is_fp8_quant
+
+
+def _is_fp8_supported(device: torch.device) -> bool:
+    """Check if device supports FP8 natively."""
+    if device.type == "cuda":
+        major, _ = torch.get_device_module().get_device_capability(device)
+        return major >= 9  # SM90+ (Hopper/Ada)
+    elif device.type == "xpu":
+        # Intel XPU: conservatively disable FP8 in Triton
+        return False
+    return False
+
+
+def adapt_scale_and_zp_for_triton(
+    scale: torch.Tensor, zero_point: torch.Tensor | None, num_rows: int
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    if scale.ndim == 0:
+        scale = scale.expand(num_rows, 1).contiguous()
+    elif scale.ndim == 1:
+        scale = scale.unsqueeze(1).expand(num_rows, 1).contiguous()
+    elif scale.shape[0] == 1:
+        scale = scale.expand(num_rows, -1).contiguous()
+    if zero_point is not None:
+        if zero_point.ndim == 0:
+            zero_point = zero_point.expand(num_rows, 1).contiguous()
+        elif zero_point.ndim == 1:
+            zero_point = zero_point.unsqueeze(1).expand(num_rows, 1).contiguous()
+        elif zero_point.shape[0] == 1:
+            zero_point = zero_point.expand(num_rows, -1).contiguous()
+    return scale, zero_point
 
 
 @torch.no_grad()
@@ -331,16 +356,18 @@ def _quantize(
 ) -> torch.Tensor:
 
     # Triton only works with CUDA and XPU tensors
-    do_triton: bool = x.is_cuda or x.is_xpu
+    is_gpu = x.is_cuda or x.is_xpu
+    is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
+    fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
+    do_triton: bool = is_gpu and (not is_fp8 or fp8_hw_ok)
 
     if not do_triton:
         # if a global scale is optionally provided, use it
         # to further scale the local `scale` parameter
-        scale_ground = scale.clone()
         if global_scale is not None:
-            scale_ground = scale / global_scale
+            scale /= global_scale
 
-        scaled = x / scale_ground
+        scaled = x / scale
         if zero_point is not None:
             scaled += zero_point.to(x.dtype)
         quantized_ground = round_to_quantized_type_args(
@@ -353,42 +380,31 @@ def _quantize(
 
     original_shape = x.shape
 
-    if x.ndim == 4:
+    if args.strategy == QuantizationStrategy.BLOCK:
+        # Block quantization - 4D input
         n_rb, n_cb, bh, bw = x.shape
-        group_size = bh * bw  # Each block is one "group"
-        x = x.reshape(n_rb * n_cb, bh * bw)
-        scale = scale.reshape(n_rb * n_cb, 1)
-        if zero_point is not None:
-            zero_point = zero_point.reshape(n_rb * n_cb, 1)
-    elif x.ndim == 3:
+        group_size = bh * bw
+        num_rows = n_rb * n_cb
+        num_cols = bh * bw
+    elif args.strategy in (
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        # Group quantization - 3D input (batch, num_groups, group_size)
         group_size = x.shape[2]
-        x = x.reshape(x.shape[0], -1)
-        scale = scale.reshape(scale.shape[0], -1)
-        if zero_point is not None:
-            zero_point = zero_point.reshape(zero_point.shape[0], -1)
-    elif x.ndim == 2:
-        group_size = x.shape[1]  # Entire row is one "group"
         num_rows = x.shape[0]
-        if scale.ndim == 0:
-            scale = scale.expand(num_rows, 1).contiguous()
-        elif scale.ndim == 1:
-            scale = scale.unsqueeze(1).expand(num_rows, 1).contiguous()
-        elif scale.shape[0] == 1:
-            scale = scale.expand(num_rows, -1).contiguous()
-        if zero_point is not None:
-            if zero_point.ndim == 0:
-                zero_point = zero_point.expand(num_rows, 1).contiguous()
-            elif zero_point.ndim == 1:
-                zero_point = zero_point.unsqueeze(1).expand(num_rows, 1).contiguous()
-            elif zero_point.shape[0] == 1:
-                zero_point = zero_point.expand(num_rows, -1).contiguous()
+        num_cols = x.shape[1] * x.shape[2]
+    elif args.strategy in (QuantizationStrategy.TENSOR, QuantizationStrategy.CHANNEL):
+        # Tensor/Channel quantization - 2D input
+        group_size = x.shape[1]
+        num_rows = x.shape[0]
+        num_cols = x.shape[1]
+        scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
     else:
-        raise ValueError(f"Expected 2D, 3D, or 4D tensor, got {x.ndim}D")
+        raise ValueError(f"Unsupported quantization strategy: {args.strategy}")
 
     block_size_r: int = 32
     block_size_c: int = 32
-    num_rows = x.shape[0]
-    num_cols = x.shape[1]
 
     def grid(META):
         return (
@@ -422,12 +438,6 @@ def _quantize(
     )
 
     quantized_value = quantized_value.reshape(original_shape)
-
-    # Rounding is done inside _quantize_kernel for INT and FP4 types.
-    # For FP8, apply rounding via dtype cast (not supported in Triton kernel).
-    if args.type == QuantizationType.FLOAT and args.num_bits == 8:
-        original_dtype = quantized_value.dtype
-        quantized_value = quantized_value.to(FP8_E4M3_DATA.dtype).to(original_dtype)
 
     if dtype is not None:
         quantized_value = quantized_value.to(dtype)
