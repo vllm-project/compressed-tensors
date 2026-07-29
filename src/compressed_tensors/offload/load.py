@@ -89,7 +89,8 @@ def load_offloaded_model(
             logger.warning("Loading with `offload_buffers=False` is not supported")
         kwargs["offload_buffers"] = True
 
-        model = original_from_pretrained(*args, **kwargs)
+        with as_single_threaded():
+            model = original_from_pretrained(*args, **kwargs)
         from_accelerate(model)  # rank 0 shares weights with ranks via offload/broadcast
 
         return model
