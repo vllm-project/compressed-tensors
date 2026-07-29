@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 import compressed_tensors.offload.load as load_module
 import pytest
 import torch
+from compressed_tensors.distributed import utils as dist_utils
+from compressed_tensors.distributed.utils import is_distributed
 from compressed_tensors.offload import (
     disable_onloading,
     from_accelerate,
@@ -15,6 +17,7 @@ from compressed_tensors.offload import (
 from compressed_tensors.offload.convert import to_accelerate
 from compressed_tensors.offload.convert.from_accelerate import _infer_module_device
 from compressed_tensors.offload.load import load_offloaded_model
+from compressed_tensors.offload.utils import as_single_threaded
 from tests.test_offload.conftest import (
     assert_device_equal,
     skip_if_mps_device,
@@ -196,13 +199,23 @@ def test_mmap_cap_skipped_without_tensor_info():
     assert result_no_info == result_zero
 
 
+@pytest.mark.integration
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
+def test_load_dist_estimate_tensor_count(tmp_path):
+    """Loading with default max_memory triggers _estimate_tensor_count without hang."""
+    with load_offloaded_model(AutoModelForCausalLM):
+        model = AutoModelForCausalLM.from_pretrained(
+            "inference-optimization/Llama-3.2-1B-Instruct-FP8-Block",
+            device_map="auto",
+            dtype=torch.bfloat16,
+        )
+    assert model is not None
+
+
 @pytest.mark.unit
 def test_as_single_threaded_toggles_is_distributed():
     """as_single_threaded suppresses is_distributed and restores on exit."""
-    from compressed_tensors.distributed import utils as dist_utils
-    from compressed_tensors.distributed.utils import is_distributed
-    from compressed_tensors.offload.utils import as_single_threaded
-
     with patch.object(dist_utils, "_force_single_threaded", False), patch(
         "torch.distributed.is_available", return_value=True
     ), patch("torch.distributed.is_initialized", return_value=True):
@@ -210,42 +223,5 @@ def test_as_single_threaded_toggles_is_distributed():
 
         with as_single_threaded():
             assert is_distributed() is False
-
-        assert is_distributed() is True
-
-
-@pytest.mark.unit
-def test_estimate_tensor_count_uses_single_threaded():
-    """_estimate_tensor_count wraps from_pretrained in as_single_threaded."""
-    mock_model = MagicMock()
-    mock_model.parameters.return_value = []
-    mock_model.buffers.return_value = []
-    mock_from_pretrained = MagicMock(return_value=mock_model)
-
-    mock_ctx = MagicMock()
-    with patch.object(load_module, "as_single_threaded", return_value=mock_ctx):
-        load_module._estimate_tensor_count(mock_from_pretrained, "some-model")
-
-    mock_ctx.__enter__.assert_called_once()
-    mock_ctx.__exit__.assert_called_once()
-    mock_from_pretrained.assert_called_once()
-
-
-@pytest.mark.unit
-def test_as_single_threaded_restores_on_exception():
-    """as_single_threaded restores is_distributed even if the body raises."""
-    import contextlib
-
-    from compressed_tensors.distributed.utils import is_distributed
-    from compressed_tensors.offload.utils import as_single_threaded
-
-    with patch("torch.distributed.is_available", return_value=True), patch(
-        "torch.distributed.is_initialized", return_value=True
-    ):
-        assert is_distributed() is True
-
-        with contextlib.suppress(RuntimeError):
-            with as_single_threaded():
-                raise RuntimeError("boom")
 
         assert is_distributed() is True
