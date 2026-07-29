@@ -48,8 +48,12 @@ def set_source_process(src_rank: int):
     finally:
         SRC_RANK = restore_rank
 
+_force_single_threaded = False
+
 
 def is_distributed() -> bool:
+    if _force_single_threaded:
+        return False
     return dist.is_available() and dist.is_initialized()
 
 

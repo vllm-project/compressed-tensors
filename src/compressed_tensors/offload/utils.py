@@ -223,6 +223,8 @@ def as_single_threaded():
         ...     # Operations here use single-threaded offload
         ...     cache.offload(data)
     """
+    from compressed_tensors.distributed import utils
+
     from compressed_tensors.offload.cache import (
         CPUCache,
         DeviceCache,
@@ -232,9 +234,15 @@ def as_single_threaded():
         DistributedDiskCache,
     )
 
-    with (
-        patch_attr(DistributedDeviceCache, "offload", DeviceCache.offload),
-        patch_attr(DistributedCPUCache, "offload", CPUCache.offload),
-        patch_attr(DistributedDiskCache, "offload", DiskCache.offload),
-    ):
-        yield
+    prev_state = utils._force_single_threaded
+    utils._force_single_threaded = True
+
+    try:
+        with (
+            patch_attr(DistributedDeviceCache, "offload", DeviceCache.offload),
+            patch_attr(DistributedCPUCache, "offload", CPUCache.offload),
+            patch_attr(DistributedDiskCache, "offload", DiskCache.offload),
+        ):
+            yield
+    finally:
+        utils._force_single_threaded = prev_state
