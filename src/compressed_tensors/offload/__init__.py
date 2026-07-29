@@ -110,7 +110,6 @@ def disable_onloading():
         yield
 
 
-@torch.no_grad()
 def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Tensor):
     """
     Update the offload and onload data of an existing parameter/buffer. Supports both
@@ -128,6 +127,13 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
     :param data: tensor to update parameter with
     """
     if isinstance(module._parameters, OffloadCache):
+        # | Component | Update Implementation       |
+        # | --------- | --------------------------- |
+        # | CPU       | Copy into shared cpu memory |
+        # | Disk      | Write file to disk          |
+        # | Device    | Copy into local device      |
+        # | --------- | --------------------------- |
+        # all implementations update onloaded data if applicable
         if name in module._parameters:
             cache = module._parameters
         elif name in module._buffers:
@@ -135,13 +141,12 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         else:
             raise AttributeError(f"{type(module)} has no attribute {name}")
 
-        offloaded = cache.offloaded_values[name]
-        if offloaded is None:
-            raise ValueError(f"Cannot update offload value `None` for param {name}")
-        cache.update_offload(offloaded, data)
+        # triggers update if shapes match
+        cache[name] = data
 
     else:
-        getattr(module, name).copy_(data)
+        with torch.no_grad():
+            getattr(module, name).copy_(data)
 
 
 def get_execution_device(

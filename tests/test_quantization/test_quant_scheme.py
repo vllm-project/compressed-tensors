@@ -2,7 +2,11 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import pytest
-from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
+from compressed_tensors.quantization import (
+    QuantizationArgs,
+    QuantizationScheme,
+    QuantizationStrategy,
+)
 from pydantic import ValidationError
 
 
@@ -36,6 +40,36 @@ def test_full_scheme():
     assert scheme.input_activations == input_activations
     assert scheme.output_activations == output_activations
     assert scheme.format == "float-quantized"
+
+
+def test_group_dynamic_input_activations_supported():
+    # GROUP strategy dynamic input activations are handled by
+    # compute_dynamic_scales_and_zp, so scheme validation must accept them
+    # rather than rejecting with a "not supported" error (#758).
+    input_activations = QuantizationArgs(
+        num_bits=8,
+        strategy=QuantizationStrategy.GROUP,
+        group_size=128,
+        dynamic=True,
+    )
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(num_bits=4, group_size=128),
+        input_activations=input_activations,
+    )
+    assert scheme.input_activations.strategy == QuantizationStrategy.GROUP
+    assert scheme.input_activations.dynamic is True
+
+
+def test_unsupported_activation_strategy_still_rejected():
+    # activation strategies outside the supported set remain rejected
+    with pytest.raises(NotImplementedError):
+        QuantizationScheme(
+            targets=["Linear"],
+            input_activations=QuantizationArgs(
+                num_bits=8, strategy=QuantizationStrategy.CHANNEL
+            ),
+        )
 
 
 def test_needs_targets():
