@@ -178,16 +178,6 @@ class QuantizationConfig(BaseModel):
                 targets=targets_or_scheme,
             )
 
-        # if unset, populate format on each config group
-        if self.format not in (
-            DEFAULT_QUANTIZATION_FORMAT,
-            CompressionFormat.mixed_precision,
-            CompressionFormat.dense,
-        ):
-            for scheme in self.config_groups.values():
-                if scheme.format is None:
-                    scheme.format = self.format
-
     def to_dict(self):
         # for compatibility with HFQuantizer
         return self.model_dump()
