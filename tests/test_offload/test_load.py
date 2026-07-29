@@ -194,3 +194,58 @@ def test_mmap_cap_skipped_without_tensor_info():
     result_no_info = load_module._get_shared_memory()
     result_zero = load_module._get_shared_memory(num_tensors=0, total_model_bytes=0)
     assert result_no_info == result_zero
+
+
+@pytest.mark.unit
+def test_as_single_threaded_toggles_is_distributed():
+    """as_single_threaded suppresses is_distributed and restores on exit."""
+    from compressed_tensors.distributed import utils as dist_utils
+    from compressed_tensors.distributed.utils import is_distributed
+    from compressed_tensors.offload.utils import as_single_threaded
+
+    with patch.object(dist_utils, "_force_single_threaded", False), patch(
+        "torch.distributed.is_available", return_value=True
+    ), patch("torch.distributed.is_initialized", return_value=True):
+        assert is_distributed() is True
+
+        with as_single_threaded():
+            assert is_distributed() is False
+
+        assert is_distributed() is True
+
+
+@pytest.mark.unit
+def test_estimate_tensor_count_uses_single_threaded():
+    """_estimate_tensor_count wraps from_pretrained in as_single_threaded."""
+    mock_model = MagicMock()
+    mock_model.parameters.return_value = []
+    mock_model.buffers.return_value = []
+    mock_from_pretrained = MagicMock(return_value=mock_model)
+
+    mock_ctx = MagicMock()
+    with patch.object(load_module, "as_single_threaded", return_value=mock_ctx):
+        load_module._estimate_tensor_count(mock_from_pretrained, "some-model")
+
+    mock_ctx.__enter__.assert_called_once()
+    mock_ctx.__exit__.assert_called_once()
+    mock_from_pretrained.assert_called_once()
+
+
+@pytest.mark.unit
+def test_as_single_threaded_restores_on_exception():
+    """as_single_threaded restores is_distributed even if the body raises."""
+    import contextlib
+
+    from compressed_tensors.distributed.utils import is_distributed
+    from compressed_tensors.offload.utils import as_single_threaded
+
+    with patch("torch.distributed.is_available", return_value=True), patch(
+        "torch.distributed.is_initialized", return_value=True
+    ):
+        assert is_distributed() is True
+
+        with contextlib.suppress(RuntimeError):
+            with as_single_threaded():
+                raise RuntimeError("boom")
+
+        assert is_distributed() is True
