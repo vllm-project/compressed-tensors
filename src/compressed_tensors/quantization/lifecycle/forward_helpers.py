@@ -48,6 +48,22 @@ def _apply_quantize_op(
             global_scale=global_scale,
         )
     elif do_quantize:
+        # Determine if Triton should be used
+        is_gpu = x.is_cuda or x.is_xpu
+        is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
+        fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
+        do_triton: bool = is_gpu and (not is_fp8 or fp8_hw_ok)
+
+        # Adapt scale/zp for Triton if needed
+        if do_triton and args.strategy in (
+            QuantizationStrategy.TENSOR,
+            QuantizationStrategy.CHANNEL,
+        ):
+            num_rows = x.shape[0]
+            scale, zero_point = adapt_scale_and_zp_for_triton(
+                scale, zero_point, num_rows
+            )
+
         return _quantize(
             x=x,
             scale=scale,
@@ -57,6 +73,7 @@ def _apply_quantize_op(
             args=args,
             dtype=dtype,
             global_scale=global_scale,
+            do_triton=do_triton,
         )
     else:
         return _dequantize(
@@ -353,13 +370,8 @@ def _quantize(
     args: QuantizationArgs,
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
+    do_triton: bool = False,
 ) -> torch.Tensor:
-
-    # Triton only works with CUDA and XPU tensors
-    is_gpu = x.is_cuda or x.is_xpu
-    is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
-    fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
-    do_triton: bool = is_gpu and (not is_fp8 or fp8_hw_ok)
 
     if not do_triton:
         # if a global scale is optionally provided, use it
@@ -399,7 +411,6 @@ def _quantize(
         group_size = x.shape[1]
         num_rows = x.shape[0]
         num_cols = x.shape[1]
-        scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
     else:
         raise ValueError(f"Unsupported quantization strategy: {args.strategy}")
 

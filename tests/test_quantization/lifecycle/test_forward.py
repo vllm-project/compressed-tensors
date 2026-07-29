@@ -13,8 +13,11 @@ from compressed_tensors.quantization.lifecycle.forward import (
 )
 from compressed_tensors.quantization.lifecycle.forward_helpers import (
     _dequantize,
+    _is_fp8_supported,
+    _needs_fp8,
     _quantize,
     _quantize_dequantize,
+    adapt_scale_and_zp_for_triton,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
@@ -676,23 +679,40 @@ def test_quantize_dequantize_matches_sequential(
     if global_scale is not None:
         global_scale = global_scale.to(device)
 
-    scale_ground_quant = scale.clone()
+    # Determine if Triton should be used
+    is_gpu = x.is_cuda or x.is_xpu
+    is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
+    fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
+    do_triton = is_gpu and (not is_fp8 or fp8_hw_ok)
+
+    # Keep original scale/zp for dequantize
     scale_ground_dequant = scale.clone()
+    zero_point_dequant = zero_point.clone() if zero_point is not None else None
+
+    # Adapt scale/zp for Triton if needed (for _quantize only)
+    scale_quant = scale.clone()
+    zero_point_quant = zero_point.clone() if zero_point is not None else None
+    if do_triton and group_size is None:  # TENSOR strategy
+        num_rows = x.shape[0]
+        scale_quant, zero_point_quant = adapt_scale_and_zp_for_triton(
+            scale_quant, zero_point_quant, num_rows
+        )
 
     # sequential: quantize then dequantize
     q = _quantize(
         x=x,
-        scale=scale_ground_quant,
-        zero_point=zero_point,
+        scale=scale_quant,
+        zero_point=zero_point_quant,
         q_min=q_min,
         q_max=q_max,
         args=args,
         global_scale=global_scale,
+        do_triton=do_triton,
     )
     sequential_out = _dequantize(
         x_q=q,
         scale=scale_ground_dequant,
-        zero_point=zero_point,
+        zero_point=zero_point_dequant,
         global_scale=global_scale,
     )
 
@@ -794,6 +814,13 @@ def test_quantize_triton_matches_cpu(
     )
     q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
 
+    # Adapt scale/zp for Triton if TENSOR strategy
+    if group_size is None:  # TENSOR strategy
+        num_rows = x_cuda.shape[0]
+        scale_cuda, zero_point_cuda = adapt_scale_and_zp_for_triton(
+            scale_cuda, zero_point_cuda, num_rows
+        )
+
     # Run CPU (non-Triton) path
     cpu_out = _quantize(
         x=x_cpu,
@@ -803,6 +830,7 @@ def test_quantize_triton_matches_cpu(
         q_max=q_max_cpu,
         args=args,
         global_scale=global_scale_cpu,
+        do_triton=False,
     )
 
     cuda_out = _quantize(
@@ -813,6 +841,7 @@ def test_quantize_triton_matches_cpu(
         q_max=q_max_cuda,
         args=args,
         global_scale=global_scale_cuda,
+        do_triton=True,
     )
 
     # Compare results (bring CUDA output back to CPU)

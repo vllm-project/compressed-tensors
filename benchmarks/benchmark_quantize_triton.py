@@ -13,7 +13,10 @@ import gc
 import time
 import torch
 
-from compressed_tensors.quantization.lifecycle.forward_helpers import _quantize
+from compressed_tensors.quantization.lifecycle.forward_helpers import (
+    _quantize,
+    adapt_scale_and_zp_for_triton,
+)
 from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
     QuantizationType,
@@ -50,6 +53,21 @@ def pytorch_quantize_cuda(x, scale, zero_point, q_min, q_max, args):
     if zero_point is not None:
         scaled = scaled + zero_point.to(x.dtype)
     return round_to_quantized_type_args(tensor=scaled, args=args, min=q_min, max=q_max)
+
+
+def triton_quantize_cuda(x, scale, zero_point, q_min, q_max, args):
+    """Triton kernel wrapper that adapts scale/zp and enables Triton."""
+    num_rows = x.shape[0]
+    scale_adapted, zp_adapted = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
+    return _quantize(
+        x=x,
+        scale=scale_adapted,
+        zero_point=zp_adapted,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        do_triton=True,
+    )
 
 
 def benchmark_cuda(func, x, scale, zero_point, q_min, q_max, args, name, warmup=False):
@@ -112,7 +130,7 @@ def run_config(quant_type, num_bits, rows, cols):
     # Triton kernel (CUDA path in _quantize)
     print("\nRunning Triton kernel (CUDA)...")
     time_triton = benchmark_cuda(
-        _quantize, x_cuda, scale_cuda, zp_cuda, q_min_cuda, q_max_cuda, args, "triton", warmup=True
+        triton_quantize_cuda, x_cuda, scale_cuda, zp_cuda, q_min_cuda, q_max_cuda, args, "triton", warmup=True
     )
     print("Triton (CUDA):")
     print(f"  Time: {time_triton*1000:.2f}ms")
@@ -132,7 +150,7 @@ def run_config(quant_type, num_bits, rows, cols):
     )
 
     # Triton kernel on CUDA
-    triton_out = _quantize(
+    triton_out = triton_quantize_cuda(
         x=x_test.clone(),
         scale=scale_test.clone(),
         zero_point=None,
