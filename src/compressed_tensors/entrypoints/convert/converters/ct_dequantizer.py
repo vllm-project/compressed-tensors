@@ -98,7 +98,7 @@ class CompressedTensorsDequantizer(Converter):
 
         return dequantized_tensors
 
-    def validate(self, tensors: dict[str, torch.Tensor]):
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Ensure all tensor names of targeted layers are expected and no
         untargeted layers have unexpected tensor names
@@ -134,10 +134,24 @@ class CompressedTensorsDequantizer(Converter):
                 f"{unconsumed_tensor_names}"
             )
 
-        return
+        output = {}
+        for module_name in matched_modules:
+            output[f"{module_name}.weight"] = torch.empty(0, dtype=self.dtype)
 
-    def create_config(self) -> QuantizationConfig | None:
-        return None
+        kv_cache_param_names = [v.value for v in KVCacheScaleType]
+        for name, tensor in tensors.items():
+            if name in consumed_keys:
+                continue
+            if any(name.endswith(param) for param in kv_cache_param_names):
+                continue
+            output[name] = tensor
+
+        return output
+
+    def update_config(
+        self, config: QuantizationConfig | None
+    ) -> QuantizationConfig | None:
+        return None  # dequantizing removes quantization
 
     def get_dependencies(self, weight_name: str) -> set[str]:
         """
