@@ -25,14 +25,13 @@ from compressed_tensors.utils.safetensors_load import (
 )
 from loguru import logger
 
-
 __all__ = ["convert_checkpoint", "exec_jobs"]
 
 
 def convert_checkpoint(
     model_stub: str | os.PathLike,
     save_directory: str | os.PathLike,
-    converter: Converter,
+    converters: Converter | list[Converter],
     max_workers: int = 1,
 ):
     """
@@ -49,9 +48,11 @@ def convert_checkpoint(
     :param save_directory: new checkpoint will be saved in this directory.
     :param max_workers: number of worker threads to process files with
     :param device: gpu device to accelerate quantization with
-    :param converters: converter we wish to apply to the checkpoint,
-        e.g. conversion of some layers from some format to compressed-tensors
+    :param converters: single converter or list of converters to apply
+        in order, e.g. a dequantizer followed by a re-quantizer
     """
+    if not isinstance(converters, list):
+        converters = [converters]
     # get all model_files for checkpoint
     model_files = get_checkpoint_files(model_stub)
 
@@ -62,7 +63,7 @@ def convert_checkpoint(
     inverse_weight_maps = build_inverse_weight_maps(
         weight_map=weight_map,
         model_files=model_files,
-        converters=[converter],
+        converters=converters,
     )
 
     # Build validation/conversion jobs, copy over any other file
@@ -77,10 +78,10 @@ def convert_checkpoint(
                     f"Could not find inverse_weight_map for shard {shard_name}"
                 )
             validate_jobs.append(
-                (validate_file, inverse_weight_maps[shard_name], converter)
+                (validate_file, inverse_weight_maps[shard_name], converters)
             )
             convert_jobs.append(
-                (convert_file, inverse_weight_maps[shard_name], save_path, converter)
+                (convert_file, inverse_weight_maps[shard_name], save_path, converters)
             )
 
         else:
@@ -103,7 +104,7 @@ def convert_checkpoint(
         weight_map.update(_weight_map)
 
     # Update config and safetensors index
-    write_checkpoint_quantization_config(save_directory, converter)
+    write_checkpoint_quantization_config(save_directory, converters)
     update_safetensors_index(save_directory, total_size, weight_map)
 
 
