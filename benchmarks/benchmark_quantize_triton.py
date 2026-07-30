@@ -231,7 +231,7 @@ def main():
 
     # Print summary
     print("\n" + "=" * 100)
-    print("SUMMARY (both on CUDA - apples to apples)")
+    print("SUMMARY")
     print("=" * 100)
     print(f"{'Config':<8} {'Size':<15} {'PyTorch/CUDA (ms)':<18} "
           f"{'Triton/CUDA (ms)':<18} {'Speedup':<10} {'Correct':<8}")
@@ -253,7 +253,7 @@ if __name__ == "__main__":
 Example output:
 
 ====================================================================================================
-SUMMARY (both on CUDA - apples to apples)
+SUMMARY
 ====================================================================================================
 Config   Size            PyTorch/CUDA (ms)  Triton/CUDA (ms)   Speedup    Correct 
 ----------------------------------------------------------------------------------------------------
