@@ -58,7 +58,30 @@ def test_autoawq_converter_processes_gemm_tensors(zero_point):
     if not zero_point:
         del tensors["model.layers.0.mlp.up_proj.qzeros"]
 
-    converter.validate(tensors)
+    # Validate returns meta tensor dict
+    result = converter.validate(tensors)
+
+    assert "model.layers.0.mlp.up_proj.qweight" not in result
+    assert "model.layers.0.mlp.up_proj.qzeros" not in result
+    assert "model.layers.0.mlp.up_proj.scales" not in result
+    assert "model.layers.0.mlp.up_proj.weight_packed" in result
+    assert "model.layers.0.mlp.up_proj.weight_shape" in result
+    assert "model.layers.0.mlp.up_proj.weight_scale" in result
+    assert result["model.layers.0.mlp.up_proj.weight_packed"].dtype == torch.int32
+    assert result["model.layers.0.mlp.up_proj.weight_shape"].dtype == torch.int64
+    assert result["model.layers.0.mlp.up_proj.weight_scale"].dtype == torch.float16
+
+    if zero_point:
+        assert "model.layers.0.mlp.up_proj.weight_zero_point" in result
+        assert (
+            result["model.layers.0.mlp.up_proj.weight_zero_point"].dtype == torch.int32
+        )
+    else:
+        assert "model.layers.0.mlp.up_proj.weight_zero_point" not in result
+
+    assert "model.embed_tokens.weight" in result
+
+    # Process converts actual tensors
     converter.process(tensors)
 
     assert "model.layers.0.mlp.up_proj.qweight" not in tensors
@@ -90,7 +113,7 @@ def test_autoawq_converter_config_from_autoawq_config():
         },
     )
 
-    config = converter.create_config()
+    config = converter.update_config(None)
     scheme = config.config_groups["config_group_0"]
 
     assert config.format == CompressionFormat.pack_quantized.value
@@ -160,3 +183,61 @@ def test_autoawq_converter_validate_requires_dependencies():
         converter.validate(
             {"model.layers.0.mlp.down_proj.qweight": torch.zeros(1, 1, device="meta")}
         )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("zero_point", [True, False])
+def test_autoawq_converter_validate_returns_correct_meta_tensors(zero_point):
+    converter = AutoAWQConverter(
+        group_size=2,
+        targets=[r"re:.*proj$"],
+        zero_point=zero_point,
+    )
+    tensors = {
+        "model.layers.0.mlp.up_proj.qweight": torch.empty(
+            2, 1, dtype=torch.int32, device="meta"
+        ),
+        "model.layers.0.mlp.up_proj.scales": torch.empty(
+            1, 8, dtype=torch.float16, device="meta"
+        ),
+        "model.embed_tokens.weight": torch.empty(
+            4, 4, dtype=torch.bfloat16, device="meta"
+        ),
+    }
+    if zero_point:
+        tensors["model.layers.0.mlp.up_proj.qzeros"] = torch.empty(
+            1, 1, dtype=torch.int32, device="meta"
+        )
+
+    result = converter.validate(tensors)
+
+    assert "model.layers.0.mlp.up_proj.qweight" not in result
+    assert "model.layers.0.mlp.up_proj.qzeros" not in result
+    assert "model.layers.0.mlp.up_proj.scales" not in result
+    assert result["model.layers.0.mlp.up_proj.weight_packed"].dtype == torch.int32
+    assert result["model.layers.0.mlp.up_proj.weight_shape"].dtype == torch.int64
+    assert result["model.layers.0.mlp.up_proj.weight_scale"].dtype == torch.float16
+
+    if zero_point:
+        assert (
+            result["model.layers.0.mlp.up_proj.weight_zero_point"].dtype == torch.int32
+        )
+    else:
+        assert "model.layers.0.mlp.up_proj.weight_zero_point" not in result
+
+    assert "model.embed_tokens.weight" in result
+
+
+@pytest.mark.unit
+def test_autoawq_converter_update_config_merges():
+    converter = AutoAWQConverter(group_size=128, targets=["Linear"])
+
+    config = converter.update_config(None)
+    assert config is not None
+    assert len(config.config_groups) == 1
+    assert "config_group_0" in config.config_groups
+
+    converter2 = AutoAWQConverter(group_size=64, targets=["Linear"])
+    merged = converter2.update_config(config)
+    assert merged is config
+    assert len(merged.config_groups) == 2
