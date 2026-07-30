@@ -11,8 +11,9 @@ from compressed_tensors.distributed import is_source_process
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.utils import send_tensors, to_tensor
 from compressed_tensors.utils import is_accelerator_type
-from safetensors import safe_open
+# from safetensors import safe_open
 from safetensors.torch import save_file
+from instanttensor import safe_open
 
 
 if TYPE_CHECKING:
