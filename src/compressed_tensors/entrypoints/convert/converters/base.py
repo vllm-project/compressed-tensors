@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Protocol
 import torch
 from compressed_tensors.utils.safetensors_load import InverseWeightMap
 
-
 __all__ = ["Converter", "build_inverse_weight_maps"]
 
 if TYPE_CHECKING:
@@ -18,8 +17,10 @@ if TYPE_CHECKING:
 
 class Converter(Protocol):
     """
-    Converter interface, to modify safetensors files based on tensor name and
-    pointer to torch.Tensor, and create the QuantizationConfig
+    Converter interface for modifying safetensors checkpoints.
+
+    Converters can be chained: the pipeline passes each file through a list of
+    converters in order, feeding one converter's output to the next.
     """
 
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -43,22 +44,35 @@ class Converter(Protocol):
         """
         raise NotImplementedError()
 
-    def validate(self, tensors: dict[str, torch.Tensor]):
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Validation layer to quickly log warnings or raise an error if the safetensors
-        file is not compatible with Converter.
+        Validate tensors and return a dict describing this converter's output
+        format (tensor names and dtypes). Uses scalar-shaped meta tensors to
+        avoid allocating real data.
 
-        :param tensors: dictionary of tensor name to tensor, as loaded from
-        safetensors file.
+        When converters are chained, each converter receives the previous
+        converter's validate output, allowing downstream converters to verify
+        compatibility with the upstream output format.
+
+        :param tensors: dictionary of tensor name to tensor
+        :returns: dictionary of output tensor name to meta tensor with the
+            correct dtype
         """
         raise NotImplementedError()
 
-    def create_config(self) -> QuantizationConfig | None:
+    def update_config(
+        self, config: QuantizationConfig | None
+    ) -> QuantizationConfig | None:
         """
-        Create compressed-tensors QuantizationConfig so that it can be set in the
-        new model checkpoint's config.json.
-        If the converter is moving checkpoint to full-precision, have this function
-        return None, and quantization_config will be removed from config.json
+        Build or update the QuantizationConfig for config.json.
+
+        When converters are chained, each receives the previous converter's
+        config output. Re-quantizers merge their config into the existing one;
+        dequantizers return None to strip quantization_config entirely.
+
+        :param config: config from the previous converter, or None if this
+            is the first converter (or if a previous dequantizer cleared it)
+        :returns: updated QuantizationConfig, or None to remove it
         """
         raise NotImplementedError()
 
