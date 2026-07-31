@@ -42,9 +42,9 @@ ACCELERATOR_DEVICE = (
     if torch.accelerator.is_available()
     else None
 )
-TEST_DEVICES = ["cpu"] + ([ACCELERATOR_TYPE] if ACCELERATOR_TYPE is not None else []) + [
-    "meta"
-]
+TEST_DEVICES = (
+    ["cpu"] + ([ACCELERATOR_TYPE] if ACCELERATOR_TYPE is not None else []) + ["meta"]
+)
 
 
 def make_dummy_g_idx(columns: int, group_size: int) -> torch.Tensor:
