@@ -5,6 +5,8 @@ from collections import OrderedDict
 from copy import deepcopy
 
 import torch
+import torch.distributed as dist
+from compressed_tensors.distributed import is_distributed
 from compressed_tensors.modeling import (
     initialize_hooked_attention,
     initialize_hooked_kv_cache,
@@ -12,7 +14,7 @@ from compressed_tensors.modeling import (
 from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
-    is_attention_module,
+    is_cached_attention_module,
 )
 from compressed_tensors.quantization.quant_args import QuantizationArgs
 from compressed_tensors.quantization.quant_config import (
@@ -140,14 +142,17 @@ def apply_quantization_config(
     for name, module in tqdm(
         matched_modules,
         desc="Applying quantization config",
-        disable=not show_progress,
+        disable=(not show_progress),
+        position=(dist.get_rank() if is_distributed() else 0),
     ):
         # a module may match multiple scheme targets
         matched_targets = match_targets(name, module, target_to_scheme)
         scheme = _scheme_from_targets(target_to_scheme, matched_targets, name)
 
         # attention quantization
-        if is_attention_module(module) and is_narrow_match(model, scheme.targets, name):
+        if is_cached_attention_module(module) and is_narrow_match(
+            model, scheme.targets, name
+        ):
             module.quantization_scheme = scheme
             initialize_hooked_attention(model, module)
             initialize_module_for_quantization(
@@ -170,7 +175,7 @@ def _apply_kv_cache_scheme(
     status: QuantizationStatus,
 ):
     if not kv_cache_scheme.symmetric:
-        raise logger.warning("vLLM does not support asymmetric kv cache quantization")
+        logger.warning("vLLM does not support asymmetric kv cache quantization")
 
     # applies and initializes kv cache quantization
     # this step cannot come after attention apply/initialize
@@ -180,7 +185,7 @@ def _apply_kv_cache_scheme(
         input_activations=kv_cache_scheme,
     )
     for submodule in model.modules():
-        if is_attention_module(submodule):
+        if is_cached_attention_module(submodule):
             submodule.quantization_scheme = scheme
             initialize_hooked_kv_cache(model, submodule)
             initialize_module_for_quantization(submodule, force_zero_point=False)

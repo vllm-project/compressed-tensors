@@ -262,9 +262,11 @@ class OffloadCache(MutableMapping, ABC):
         if not OffloadCache.offloading_disabled:
             restore_value = OffloadCache.offloading_disabled
             OffloadCache.offloading_disabled = True
-            yield
-            OffloadCache.offloading_disabled = restore_value
-            OffloadCache.keep_onloaded_values.clear()
+            try:
+                yield
+            finally:
+                OffloadCache.offloading_disabled = restore_value
+                OffloadCache.keep_onloaded_values.clear()
         else:
             yield
 
@@ -279,7 +281,9 @@ class OffloadCache(MutableMapping, ABC):
         if not OffloadCache.onloading_disabled:
             restore_value = OffloadCache.onloading_disabled
             OffloadCache.onloading_disabled = True
-            yield
-            OffloadCache.onloading_disabled = restore_value
+            try:
+                yield
+            finally:
+                OffloadCache.onloading_disabled = restore_value
         else:
             yield

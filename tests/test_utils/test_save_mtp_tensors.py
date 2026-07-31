@@ -219,10 +219,10 @@ class TestSaveMtpTensorsToCheckpoint:
         assert index["weight_map"].get("model.layer0.weight") == SAFE_WEIGHTS_NAME
         assert index["weight_map"].get("mtp.layer0.weight") == "model_mtp.safetensors"
 
-    def test_no_mtp_tensors_raises(self, dest_dir_with_index, tmp_path):
+    def test_no_mtp_tensors_no_op(self, dest_dir_with_index, tmp_path):
         """
-        Verify that a ValueError is raised when the source checkpoint has no
-        tensors matching the MTP prefix, preventing a silent empty-shard write.
+        Verify that when the source checkpoint has no tensors matching the MTP
+        prefix, the function logs a warning and returns without writing any shard.
         """
         src = tmp_path / "src_no_mtp"
         src.mkdir()
@@ -230,8 +230,8 @@ class TestSaveMtpTensorsToCheckpoint:
             str(src / SAFE_WEIGHTS_NAME), {"model.weight": torch.randn(4, 4)}
         )
 
-        with pytest.raises(ValueError, match="No tensors with prefix"):
-            save_mtp_tensors_to_checkpoint(str(src), str(dest_dir_with_index))
+        save_mtp_tensors_to_checkpoint(str(src), str(dest_dir_with_index))
+        assert not os.path.exists(str(dest_dir_with_index / "model_mtp.safetensors"))
 
     def test_missing_dest_files_raises(self, source_dir, tmp_path):
         """
