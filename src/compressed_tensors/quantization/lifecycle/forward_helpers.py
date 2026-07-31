@@ -56,29 +56,11 @@ def _apply_quantize_op(
         # do_triton = False
 
         # Adapt scale/zp for Triton if needed
-        if do_triton and args.strategy in (
-            QuantizationStrategy.TENSOR,
-            QuantizationStrategy.CHANNEL,
-        ):
+        if do_triton:
             num_rows = x.shape[0]
             scale, zero_point = adapt_scale_and_zp_for_triton(
                 scale, zero_point, num_rows
             )
-
-        # print("do quantize with:")
-        # print("   x.shape:", x.shape, "x.stride:", x.stride())
-        # print("   scale.shape:", scale.shape, "scale.stride:", scale.stride())
-        # print("   zero_point.shape:", zero_point.shape if zero_point is not None else None, "zero_point.stride:", zero_point.stride() if zero_point is not None else None)
-        # print("   q_min.shape:", q_min.shape, "q_min.stride:", q_min.stride())
-        # print("   q_max.shape:", q_max.shape, "q_max.stride:", q_max.stride())
-        # print("   args:", args)
-        # print("   dtype:", dtype if dtype is not None else None)
-        # print("   global_scale.shape:", global_scale.shape if global_scale is not None else None, "global_scale.stride:", global_scale.stride() if global_scale is not None else None)
-        # print("   do_triton:", do_triton)
-
-        # x = x.contiguous()
-        # scale = scale.contiguous()
-        # zero_point = zero_point.contiguous() if zero_point is not None else None
 
         return _quantize(
             x=x,
@@ -342,6 +324,8 @@ if _triton_available:
 
         tl.store(output_ptr + result_offsets, output, result_masks)
 
+    # This kernel is a bit more expensive to run than the non-strided one,
+    # therefore it is only used when necessary.
     @triton.jit
     def _quantize_kernel_strided(
         output_ptr: tl.tensor,
@@ -351,32 +335,21 @@ if _triton_available:
         q_min_ptr: tl.tensor,
         q_max_ptr: tl.tensor,
         global_scale_ptr: tl.tensor,
-        # Input tensor strides (4D, pad with 0 for fewer dims)
+        # Note: unused strides for tensors with fewer dimensions are set to 0.
         input_stride_0,
         input_stride_1,
         input_stride_2,
         input_stride_3,
-        # Scale tensor strides for each index dimension
-        # scale_offset = idx_0 * scale_stride_idx0 + idx_1 * scale_stride_idx1 + idx_2 * scale_stride_idx2
-        # Set unused strides to 0
-        scale_stride_idx0,
-        scale_stride_idx1,
-        scale_stride_idx2,
-        # Output tensor strides (4D, pad with 0 for fewer dims)
         output_stride_0,
         output_stride_1,
         output_stride_2,
         output_stride_3,
-        # Tensor dimensions (4D shape, pad with 1 for fewer dims)
-        # dims 0,1 make up "rows", dims 2,3 make up "cols"
         dim_0,
         dim_1,
         dim_2,
         dim_3,
-        # Scale dimensions for masking (corresponding to which idx dims are used)
-        scale_dim_0,
-        scale_dim_1,
-        scale_dim_2,
+        group_size,
+        num_scale_cols,
         quant_type: tl.constexpr,  # QUANT_TYPE_INT or QUANT_TYPE_FLOAT
         num_bits: tl.constexpr,  # 4 or 8
         BLOCK_SIZE_R: tl.constexpr,
@@ -388,27 +361,25 @@ if _triton_available:
         - row indices span dim_0 * dim_1
         - col indices span dim_2 * dim_3
 
-        Scale indexing is flexible via scale_stride_idx{0,1,2} parameters:
-        - BLOCK [n_rb, n_cb, bh, bw]: scale indexed by (idx_0, idx_1)
-        - GROUP [1, batch, num_groups, gs]: scale indexed by (idx_1, idx_2)
-        - TENSOR [1, rows, 1, cols]: scale indexed by (idx_1)
+        Scale is expected to be contiguous and indexed linearly as:
+        scale_offset = (idx_0 * dim_1 + idx_1) * num_scale_cols + tile_c // group_size
         """
         pid_r = tl.program_id(axis=0)
         pid_c = tl.program_id(axis=1)
 
-        # Tile indices in the flattened 2D view
         tile_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
         tile_c = pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)
 
-        # Convert flattened row index to (idx_0, idx_1)
         idx_0 = tile_r // dim_1
         idx_1 = tile_r % dim_1
 
-        # Convert flattened col index to (idx_2, idx_3)
         idx_2 = tile_c // dim_3
         idx_3 = tile_c % dim_3
 
-        # Compute 4D offsets using actual strides
+        # Compute 2D offset matrices via broadcasting:
+        # - [:, None] reshapes [R] -> [R, 1] (column vector for row indices)
+        # - [None, :] reshapes [C] -> [1, C] (row vector for col indices)
+        # Adding them produces [R, C] matrix of all (row, col) offset combinations
         input_offsets = (
             idx_0[:, None] * input_stride_0
             + idx_1[:, None] * input_stride_1
@@ -423,29 +394,23 @@ if _triton_available:
             + idx_3[None, :] * output_stride_3
         )
 
-        # Scale indexed by combination of idx_0, idx_1, idx_2 (configurable via strides)
-        scale_offsets = (
-            idx_0[:, None] * scale_stride_idx0
-            + idx_1[:, None] * scale_stride_idx1
-            + idx_2[None, :] * scale_stride_idx2
-        )
+        scale_row_idx = idx_0 * dim_1 + idx_1
+        scale_col_idx = tile_c // group_size
+        scale_offsets = scale_row_idx[:, None] * num_scale_cols + scale_col_idx[None, :]
 
-        # Masks for valid indices
         masks_0 = idx_0 < dim_0
         masks_1 = idx_1 < dim_1
         masks_2 = idx_2 < dim_2
         masks_3 = idx_3 < dim_3
-        masks = masks_0[:, None] & masks_1[:, None] & masks_2[None, :] & masks_3[None, :]
+        masks = (
+            masks_0[:, None] & masks_1[:, None] & masks_2[None, :] & masks_3[None, :]
+        )
 
-        # Scale masks for whichever dimensions are used
-        scale_masks_0 = idx_0 < scale_dim_0
-        scale_masks_1 = idx_1 < scale_dim_1
-        scale_masks_2 = idx_2 < scale_dim_2
-        scale_masks = scale_masks_0[:, None] & scale_masks_1[:, None] & scale_masks_2[None, :]
+        num_scale_elements = dim_0 * dim_1 * num_scale_cols
+        scale_masks = scale_offsets < num_scale_elements
 
-        # Load input and scale
         input = tl.load(input_ptr + input_offsets, masks, 0.0)
-        scale = tl.load(scale_ptr + scale_offsets, scale_masks, 0.0)
+        scale = tl.load(scale_ptr + scale_offsets, scale_masks, 1.0)
 
         if global_scale_ptr is not None:
             global_scale = tl.load(global_scale_ptr)
@@ -460,7 +425,6 @@ if _triton_available:
         # clamp and round (equivalent to round_to_quantized_type_args)
         q_min = tl.load(q_min_ptr)
         q_max = tl.load(q_max_ptr)
-
         if quant_type == QUANT_TYPE_INT:
             output = tl.clamp(output, q_min, q_max)
             output = tl.extra.cuda.libdevice.rint(output)
@@ -502,23 +466,26 @@ def adapt_scale_and_zp_for_triton(
     This is required when we use group strategies, so that Triton
     can read the correct scale and zero point for each group.
 
-    Note: We keep scale/zp contiguous because:
-    1. They are small tensors (one value per row/group), so contiguous() is cheap
-    2. The strided kernel focuses on handling large non-contiguous input tensors
+    Note: We keep scale/zp contiguous because they are small tensors
+    (one value per row/group), so contiguous() is cheap
     """
     if scale.ndim == 0:
-        scale = scale.expand(num_rows, 1).contiguous()
+        scale = scale.expand(num_rows, 1)
     elif scale.ndim == 1:
-        scale = scale.unsqueeze(1).expand(num_rows, 1).contiguous()
+        scale = scale.unsqueeze(1).expand(num_rows, 1)
     elif scale.shape[0] == 1:
-        scale = scale.expand(num_rows, -1).contiguous()
+        scale = scale.expand(num_rows, -1)
+    if not scale.is_contiguous():
+        scale = scale.contiguous()
     if zero_point is not None:
         if zero_point.ndim == 0:
-            zero_point = zero_point.expand(num_rows, 1).contiguous()
+            zero_point = zero_point.expand(num_rows, 1)
         elif zero_point.ndim == 1:
-            zero_point = zero_point.unsqueeze(1).expand(num_rows, 1).contiguous()
+            zero_point = zero_point.unsqueeze(1).expand(num_rows, 1)
         elif zero_point.shape[0] == 1:
-            zero_point = zero_point.expand(num_rows, -1).contiguous()
+            zero_point = zero_point.expand(num_rows, -1)
+        if not zero_point.is_contiguous():
+            zero_point = zero_point.contiguous()
     return scale, zero_point
 
 
@@ -552,6 +519,16 @@ def _quantize(
             quantized_ground = quantized_ground.to(dtype)
         return quantized_ground
 
+    assert scale.is_contiguous(), (
+        f"Scale must be contiguous for Triton kernel. "
+        f"Got shape {scale.shape}, stride {scale.stride()}"
+    )
+    if zero_point is not None:
+        assert zero_point.is_contiguous(), (
+            f"Zero point must be contiguous for Triton kernel. "
+            f"Got shape {zero_point.shape}, stride {zero_point.stride()}"
+        )
+
     original_shape = x.shape
 
     # Determine quantization type
@@ -564,33 +541,69 @@ def _quantize(
     use_strided_kernel = not x.is_contiguous()
 
     if args.strategy == QuantizationStrategy.BLOCK:
-        # Block quantization - 4D input with potentially non-contiguous strides
-        n_rb, n_cb, bh, bw = x.shape
-        num_rows = n_rb * n_cb
-        num_cols = bh * bw
+        assert (
+            use_strided_kernel
+        ), "BLOCK input should be non-contiguous (from transpose in _process_block)"
+        dim_0, dim_1, dim_2, dim_3 = x.shape
+        group_size = dim_2 * dim_3  # all col elements share same scale
+        num_scale_cols = 1  # one scale per (idx_0, idx_1) pair
+    elif args.strategy in (
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        dim_0 = 1
+        dim_1, dim_2, dim_3 = x.shape
+        group_size = dim_3
+        num_scale_cols = dim_2  # num_groups
+    elif args.strategy in (QuantizationStrategy.TENSOR, QuantizationStrategy.CHANNEL):
+        dim_0 = 1
+        dim_1, dim_3 = x.shape
+        dim_2 = 1
+        group_size = dim_3  # all cols share same scale
+        num_scale_cols = 1  # one scale per row
+    else:
+        raise ValueError(f"Unsupported quantization strategy: {args.strategy}")
 
-        block_size_r: int = 32
-        block_size_c: int = 32
+    num_rows = dim_0 * dim_1
+    num_cols = dim_2 * dim_3
+    block_size_r: int = 32
+    block_size_c: int = 32
 
-        def grid(META):
-            return (
-                triton.cdiv(num_rows, META["BLOCK_SIZE_R"]),
-                triton.cdiv(num_cols, META["BLOCK_SIZE_C"]),
-            )
-
-        quantized_value = torch.empty_like(x)
-
-        # Get actual strides for non-contiguous tensor support
-        input_stride_0, input_stride_1, input_stride_2, input_stride_3 = x.stride()
-        output_stride_0, output_stride_1, output_stride_2, output_stride_3 = (
-            quantized_value.stride()
+    def grid(META):
+        return (
+            triton.cdiv(num_rows, META["BLOCK_SIZE_R"]),
+            triton.cdiv(num_cols, META["BLOCK_SIZE_C"]),
         )
 
-        # BLOCK: scale indexed by (idx_0, idx_1) = (n_rb, n_cb)
-        # scale shape: [n_rb, n_cb, 1, 1]
-        scale_stride_idx0 = scale.stride()[0]
-        scale_stride_idx1 = scale.stride()[1]
-        scale_stride_idx2 = 0  # idx_2 not used for scale
+    quantized_value = torch.empty_like(x)
+
+    if use_strided_kernel:
+        x_strides = x.stride()
+        out_strides = quantized_value.stride()
+
+        if args.strategy == QuantizationStrategy.BLOCK:
+            input_stride_0, input_stride_1, input_stride_2, input_stride_3 = x_strides
+            (
+                output_stride_0,
+                output_stride_1,
+                output_stride_2,
+                output_stride_3,
+            ) = out_strides
+        elif args.strategy in (
+            QuantizationStrategy.GROUP,
+            QuantizationStrategy.TENSOR_GROUP,
+        ):
+            input_stride_0 = 0
+            input_stride_1, input_stride_2, input_stride_3 = x_strides
+            output_stride_0 = 0
+            output_stride_1, output_stride_2, output_stride_3 = out_strides
+        else:
+            input_stride_0 = 0
+            input_stride_1, input_stride_3 = x_strides
+            input_stride_2 = 0
+            output_stride_0 = 0
+            output_stride_1, output_stride_3 = out_strides
+            output_stride_2 = 0
 
         _quantize_kernel_strided[grid](
             quantized_value,
@@ -604,188 +617,40 @@ def _quantize(
             input_stride_1,
             input_stride_2,
             input_stride_3,
-            scale_stride_idx0,
-            scale_stride_idx1,
-            scale_stride_idx2,
             output_stride_0,
             output_stride_1,
             output_stride_2,
             output_stride_3,
-            n_rb,
-            n_cb,
-            bh,
-            bw,
-            scale.shape[0],  # scale_dim_0 for idx_0
-            scale.shape[1],  # scale_dim_1 for idx_1
-            bh,  # scale_dim_2 for idx_2 (always valid since not used)
+            dim_0,
+            dim_1,
+            dim_2,
+            dim_3,
+            group_size,
+            num_scale_cols,
             quant_type=quant_type,
             num_bits=num_bits,
             BLOCK_SIZE_R=block_size_r,
             BLOCK_SIZE_C=block_size_c,
         )
-    elif args.strategy in (
-        QuantizationStrategy.GROUP,
-        QuantizationStrategy.TENSOR_GROUP,
-    ):
-        # Group quantization - 3D input (batch, num_groups, group_size)
-        group_size = x.shape[2]
-        num_rows = x.shape[0]
-        num_cols = x.shape[1] * x.shape[2]
-
-        block_size_r: int = 32
-        block_size_c: int = 32
-
-        def grid(META):
-            return (
-                triton.cdiv(num_rows, META["BLOCK_SIZE_R"]),
-                triton.cdiv(num_cols, META["BLOCK_SIZE_C"]),
-            )
-
-        quantized_value = torch.empty_like(x)
-
-        if use_strided_kernel:
-            # Use strided kernel for non-contiguous tensors
-            # 3D [batch, num_groups, group_size] -> 4D [1, batch, num_groups, group_size]
-            input_stride_0, input_stride_1, input_stride_2 = x.stride()
-            output_stride_0, output_stride_1, output_stride_2 = quantized_value.stride()
-
-            # GROUP: scale indexed by (idx_1, idx_2) = (batch, num_groups)
-            # scale shape: [batch, num_groups, 1]
-            scale_stride_idx0 = 0  # idx_0 not used (always 0)
-            scale_stride_idx1 = scale.stride()[0]  # batch dimension
-            scale_stride_idx2 = scale.stride()[1]  # num_groups dimension
-
-            _quantize_kernel_strided[grid](
-                quantized_value,
-                x,
-                scale,
-                zero_point,
-                q_min,
-                q_max,
-                global_scale,
-                0,  # input_stride_0 (dim 0 is padded with 1)
-                input_stride_0,
-                input_stride_1,
-                input_stride_2,
-                scale_stride_idx0,
-                scale_stride_idx1,
-                scale_stride_idx2,
-                0,  # output_stride_0 (dim 0 is padded with 1)
-                output_stride_0,
-                output_stride_1,
-                output_stride_2,
-                1,  # dim_0 (padded)
-                x.shape[0],  # dim_1 = batch
-                x.shape[1],  # dim_2 = num_groups
-                x.shape[2],  # dim_3 = group_size
-                1,  # scale_dim_0 for idx_0 (always valid since padded)
-                scale.shape[0],  # scale_dim_1 for idx_1
-                scale.shape[1],  # scale_dim_2 for idx_2
-                quant_type=quant_type,
-                num_bits=num_bits,
-                BLOCK_SIZE_R=block_size_r,
-                BLOCK_SIZE_C=block_size_c,
-            )
-        else:
-            _quantize_kernel[grid](
-                quantized_value,
-                x,
-                scale,
-                zero_point,
-                q_min,
-                q_max,
-                global_scale,
-                num_rows,
-                num_cols,
-                group_size,
-                quant_type=quant_type,
-                num_bits=num_bits,
-                BLOCK_SIZE_R=block_size_r,
-                BLOCK_SIZE_C=block_size_c,
-            )
-
-        quantized_value = quantized_value.reshape(original_shape)
-    elif args.strategy in (QuantizationStrategy.TENSOR, QuantizationStrategy.CHANNEL):
-        # Tensor/Channel quantization - 2D input
-        group_size = x.shape[1]
-        num_rows = x.shape[0]
-        num_cols = x.shape[1]
-
-        block_size_r: int = 32
-        block_size_c: int = 32
-
-        def grid(META):
-            return (
-                triton.cdiv(num_rows, META["BLOCK_SIZE_R"]),
-                triton.cdiv(num_cols, META["BLOCK_SIZE_C"]),
-            )
-
-        quantized_value = torch.empty_like(x)
-
-        if use_strided_kernel:
-            # Use strided kernel for non-contiguous tensors
-            # 2D [rows, cols] -> 4D [1, rows, 1, cols]
-            input_stride_0, input_stride_1 = x.stride()
-            output_stride_0, output_stride_1 = quantized_value.stride()
-
-            # TENSOR: scale indexed by idx_1 only (rows)
-            # scale shape: [rows, 1] (after adapt_scale_and_zp_for_triton)
-            scale_stride_idx0 = 0  # idx_0 not used (always 0)
-            scale_stride_idx1 = scale.stride()[0]  # row dimension
-            scale_stride_idx2 = 0  # idx_2 not used (always 0)
-
-            _quantize_kernel_strided[grid](
-                quantized_value,
-                x,
-                scale,
-                zero_point,
-                q_min,
-                q_max,
-                global_scale,
-                0,  # input_stride_0 (dim 0 is padded with 1)
-                input_stride_0,
-                0,  # input_stride_2 (dim 2 is padded with 1)
-                input_stride_1,
-                scale_stride_idx0,
-                scale_stride_idx1,
-                scale_stride_idx2,
-                0,  # output_stride_0 (dim 0 is padded with 1)
-                output_stride_0,
-                0,  # output_stride_2 (dim 2 is padded with 1)
-                output_stride_1,
-                1,  # dim_0 (padded)
-                x.shape[0],  # dim_1 = rows
-                1,  # dim_2 (padded)
-                x.shape[1],  # dim_3 = cols
-                1,  # scale_dim_0 for idx_0 (always valid since padded)
-                scale.shape[0],  # scale_dim_1 for idx_1
-                1,  # scale_dim_2 for idx_2 (always valid since padded)
-                quant_type=quant_type,
-                num_bits=num_bits,
-                BLOCK_SIZE_R=block_size_r,
-                BLOCK_SIZE_C=block_size_c,
-            )
-        else:
-            _quantize_kernel[grid](
-                quantized_value,
-                x,
-                scale,
-                zero_point,
-                q_min,
-                q_max,
-                global_scale,
-                num_rows,
-                num_cols,
-                group_size,
-                quant_type=quant_type,
-                num_bits=num_bits,
-                BLOCK_SIZE_R=block_size_r,
-                BLOCK_SIZE_C=block_size_c,
-            )
-
-        quantized_value = quantized_value.reshape(original_shape)
     else:
-        raise ValueError(f"Unsupported quantization strategy: {args.strategy}")
+        _quantize_kernel[grid](
+            quantized_value,
+            x,
+            scale,
+            zero_point,
+            q_min,
+            q_max,
+            global_scale,
+            num_rows,
+            num_cols,
+            group_size,
+            quant_type=quant_type,
+            num_bits=num_bits,
+            BLOCK_SIZE_R=block_size_r,
+            BLOCK_SIZE_C=block_size_c,
+        )
+
+    quantized_value = quantized_value.reshape(original_shape)
 
     if dtype is not None:
         quantized_value = quantized_value.to(dtype)

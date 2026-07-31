@@ -692,7 +692,7 @@ def test_quantize_dequantize_matches_sequential(
     # Adapt scale/zp for Triton if needed (for _quantize only)
     scale_quant = scale.clone()
     zero_point_quant = zero_point.clone() if zero_point is not None else None
-    if do_triton and group_size is None:  # TENSOR strategy
+    if do_triton:
         num_rows = x.shape[0]
         scale_quant, zero_point_quant = adapt_scale_and_zp_for_triton(
             scale_quant, zero_point_quant, num_rows
@@ -814,12 +814,10 @@ def test_quantize_triton_matches_cpu(
     )
     q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
 
-    # Adapt scale/zp for Triton if TENSOR strategy
-    if group_size is None:  # TENSOR strategy
-        num_rows = x_cuda.shape[0]
-        scale_cuda, zero_point_cuda = adapt_scale_and_zp_for_triton(
-            scale_cuda, zero_point_cuda, num_rows
-        )
+    num_rows = x_cuda.shape[0]
+    scale_cuda, zero_point_cuda = adapt_scale_and_zp_for_triton(
+        scale_cuda, zero_point_cuda, num_rows
+    )
 
     # Run CPU (non-Triton) path
     cpu_out = _quantize(
@@ -949,12 +947,11 @@ def test_quantize_triton_matches_cpu_non_contiguous(
 
     assert not x_cuda.is_contiguous(), "CUDA tensor should be non-contiguous"
 
-    # Adapt scale/zp for Triton if TENSOR strategy
-    if group_size is None:
-        num_rows = x_cuda.shape[0]
-        scale_cuda, zero_point_cuda = adapt_scale_and_zp_for_triton(
-            scale_cuda, zero_point_cuda, num_rows
-        )
+    # Adapt scale/zp for Triton
+    num_rows = x_cuda.shape[0]
+    scale_cuda, zero_point_cuda = adapt_scale_and_zp_for_triton(
+        scale_cuda, zero_point_cuda, num_rows
+    )
 
     cpu_out = _quantize(
         x=x_cpu,
@@ -1005,17 +1002,7 @@ def test_quantize_triton_matches_cpu_block_4d(
 ):
     """Verify that the Triton kernel (CUDA) produces identical output
     to the non-Triton (CPU) codepath for _quantize with 4D block quantization.
-
-    Based on failing_args.txt which showed 4D block quantization with
-    non-contiguous tensors created by reshaping 2D matrices into blocks.
-
-    The production code creates these tensors by:
-    1. Starting with a 2D tensor of shape [rows, cols]
-    2. Viewing to [num_block_rows, block_height, num_block_cols, block_width]
-    3. Permuting to [num_block_rows, num_block_cols, block_height, block_width]
-
-    This produces specific non-contiguous strides like (262144, 128, 2048, 1)
-    for shape [16, 16, 128, 128], which differ from simple 4D permutations."""
+    """
     if not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
 
@@ -1035,41 +1022,30 @@ def test_quantize_triton_matches_cpu_block_4d(
     rows_2d = num_block_rows * bh
     cols_2d = num_block_cols * bw
 
-    # Create tensor exactly as production code does:
-    # 1. Start with 2D contiguous tensor
-    # 2. View to [num_block_rows, block_height, num_block_cols, block_width]
-    # 3. Permute to [num_block_rows, num_block_cols, block_height, block_width]
     x_2d = torch.randn(rows_2d, cols_2d)
     x_cpu = x_2d.view(num_block_rows, bh, num_block_cols, bw).permute(0, 2, 1, 3)
 
-    # Verify we get the expected stride pattern from failing_args.txt
     expected_stride = (bh * cols_2d, bw, cols_2d, 1)
-    assert x_cpu.stride() == expected_stride, (
-        f"Stride mismatch: got {x_cpu.stride()}, expected {expected_stride}"
-    )
+    assert (
+        x_cpu.stride() == expected_stride
+    ), f"Stride mismatch: got {x_cpu.stride()}, expected {expected_stride}"
     assert not x_cpu.is_contiguous(), "Test requires non-contiguous tensor"
 
-    # Scale and zero_point: contiguous [num_block_rows, num_block_cols, 1, 1]
-    # with stride (num_block_cols, 1, 1, 1) as seen in failing_args.txt
     scale_cpu = torch.rand(num_block_rows, num_block_cols, 1, 1) * 0.01 + 0.001
-    zero_point_cpu = torch.zeros(num_block_rows, num_block_cols, 1, 1)
 
     q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
 
-    # Copy to CUDA
     x_cuda = x_cpu.cuda()
     scale_cuda = scale_cpu.cuda()
-    zero_point_cuda = zero_point_cpu.cuda()
     q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
 
     assert not x_cuda.is_contiguous(), "CUDA tensor should be non-contiguous"
     assert x_cuda.stride() == expected_stride, "CUDA tensor stride should match"
 
-    # Run CPU (non-Triton) path
     cpu_out = _quantize(
         x=x_cpu,
         scale=scale_cpu,
-        zero_point=zero_point_cpu,
+        zero_point=None,
         q_min=q_min_cpu,
         q_max=q_max_cpu,
         args=args,
@@ -1077,11 +1053,10 @@ def test_quantize_triton_matches_cpu_block_4d(
         do_triton=False,
     )
 
-    # Run CUDA (Triton) path
     cuda_out = _quantize(
         x=x_cuda,
         scale=scale_cuda,
-        zero_point=zero_point_cuda,
+        zero_point=None,
         q_min=q_min_cuda,
         q_max=q_max_cuda,
         args=args,
@@ -1094,7 +1069,9 @@ def test_quantize_triton_matches_cpu_block_4d(
     # FP8 tolerance
     atol, rtol = 1e-5, 0.15
 
-    assert torch.allclose(cpu_out.float(), cuda_out_cpu.float(), atol=atol, rtol=rtol), (
+    assert torch.allclose(
+        cpu_out.float(), cuda_out_cpu.float(), atol=atol, rtol=rtol
+    ), (
         f"Mismatch between CPU and Triton paths (4D block): max diff = "
         f"{(cpu_out.float() - cuda_out_cpu.float()).abs().max().item()}"
     )
