@@ -35,8 +35,8 @@ def write_checkpoint_quantization_config(
     config.
 
     :param save_directory: directory containing the model config file
-    :param converter: Converter instance whose create_config() produces the
-        updated quantization config
+    :param converters: list of converters applied in order; each
+        converter's update_config() output feeds the next
     """
     config = None
     for converter in converters:
@@ -91,7 +91,7 @@ def validate_file(
     :param converters: list of converters to apply in order. Each
         converter's validate output is fed to the next.
     """
-    tensors = load_tensors_from_inverse_weight_map(inverse_weight_map)
+    tensors = load_tensors_from_inverse_weight_map(inverse_weight_map, device="meta")
     for converter in converters:
         tensors = converter.validate(tensors)
 
