@@ -53,7 +53,6 @@ def _apply_quantize_op(
         is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
         fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
         do_triton: bool = is_gpu and (not is_fp8 or fp8_hw_ok)
-        # do_triton = False
 
         # Adapt scale/zp for Triton if needed
         if do_triton:
