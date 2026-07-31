@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol
 import torch
 from compressed_tensors.utils.safetensors_load import InverseWeightMap
 
+
 __all__ = ["Converter", "build_inverse_weight_maps"]
 
 if TYPE_CHECKING:

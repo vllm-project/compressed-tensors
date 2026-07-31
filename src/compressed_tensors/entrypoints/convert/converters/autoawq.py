@@ -20,6 +20,7 @@ from compressed_tensors.quantization import (
 from compressed_tensors.utils.match import match_name
 from transformers import AutoConfig
 
+
 __all__ = ["AutoAWQConverter"]
 
 
