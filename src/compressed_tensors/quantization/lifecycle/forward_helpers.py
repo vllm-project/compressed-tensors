@@ -48,11 +48,7 @@ def _apply_quantize_op(
             global_scale=global_scale,
         )
     elif do_quantize:
-        # Determine if Triton should be used
-        is_gpu = x.is_cuda or x.is_xpu
-        is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
-        fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
-        do_triton: bool = is_gpu and (not is_fp8 or fp8_hw_ok)
+        do_triton = _should_use_triton(x, scale, zero_point, global_scale, args)
 
         # Adapt scale/zp for Triton if needed
         if do_triton and args.strategy in (
@@ -260,6 +256,7 @@ if _triton_available:
         group_size,
         quant_type: tl.constexpr,  # QUANT_TYPE_INT or QUANT_TYPE_FLOAT
         num_bits: tl.constexpr,  # 4 or 8
+        use_intel_libdevice: tl.constexpr,
         BLOCK_SIZE_R: tl.constexpr,
         BLOCK_SIZE_C: tl.constexpr,
     ):
@@ -314,7 +311,10 @@ if _triton_available:
 
         if quant_type == QUANT_TYPE_INT:
             output = tl.clamp(output, q_min, q_max)
-            output = tl.extra.cuda.libdevice.rint(output)
+            if use_intel_libdevice:
+                output = tl.extra.intel.libdevice.rint(output)
+            else:
+                output = tl.extra.cuda.libdevice.rint(output)
         elif quant_type == QUANT_TYPE_FLOAT:
             output = tl.clamp(output, q_min, q_max)
             if num_bits == 4:
@@ -335,14 +335,30 @@ def _needs_fp8(*tensors, args: QuantizationArgs) -> bool:
     return has_fp8_tensor or is_fp8_quant
 
 
+def _should_use_triton(
+    x: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    global_scale: torch.Tensor | None,
+    args: QuantizationArgs,
+) -> bool:
+    """Return ``True`` when the Triton kernel is expected to work."""
+    if not _triton_available or not (x.is_cuda or x.is_xpu):
+        return False
+
+    is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
+    fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
+    return not is_fp8 or fp8_hw_ok
+
+
 def _is_fp8_supported(device: torch.device) -> bool:
     """Check if device supports FP8 natively."""
     if device.type == "cuda":
         major, _ = torch.get_device_module().get_device_capability(device)
         return major >= 9  # SM90+ (Hopper/Ada)
     elif device.type == "xpu":
-        # Intel XPU: conservatively disable FP8 in Triton
-        return False
+        # Intel XPU: Triton FP8 casting works on the current backend.
+        return True
     return False
 
 
@@ -382,6 +398,9 @@ def _quantize(
     global_scale: torch.Tensor | None = None,
     do_triton: bool = False,
 ) -> torch.Tensor:
+    do_triton = do_triton and _should_use_triton(
+        x, scale, zero_point, global_scale, args
+    )
 
     if not _triton_available or not do_triton:
         # if a global scale is optionally provided, use it
@@ -454,6 +473,7 @@ def _quantize(
         group_size,
         quant_type=quant_type,
         num_bits=num_bits,
+        use_intel_libdevice=x.device.type == "xpu",
         BLOCK_SIZE_R=block_size_r,
         BLOCK_SIZE_C=block_size_c,
     )
