@@ -10,9 +10,15 @@ packing of two FP4 values into a single uint8 for storage.
 """
 
 import torch
-import triton
-import triton.language as tl
 
+
+try:
+    import triton
+    import triton.language as tl
+
+    _triton_available = True
+except ImportError:
+    _triton_available = False
 
 __all__ = [
     "pack_fp4_to_uint8",
@@ -36,170 +42,171 @@ kE2M1ToFloat = torch.tensor(
     [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], dtype=torch.float32
 )
 
+if _triton_available:
 
-@triton.jit
-def _pack_fp4_kernel(
-    x_ptr,
-    packed_ptr,
-    n_pairs,
-    BLOCK_SIZE: tl.constexpr,
-):
-    """
-    Triton kernel for packing FP4 values using sign-based direct computation.
+    @triton.jit
+    def _pack_fp4_kernel(
+        x_ptr,
+        packed_ptr,
+        n_pairs,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        """
+        Triton kernel for packing FP4 values using sign-based direct computation.
 
-    This kernel extracts the sign bit, converts to absolute values scaled by 2,
-    then uses threshold counting to directly compute indices without cascading
-    conditionals. The sign bit is applied via bitwise OR.
-    """
-    pid = tl.program_id(0)
-    block_start = pid * BLOCK_SIZE
-    offsets = block_start + tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_pairs
+        This kernel extracts the sign bit, converts to absolute values scaled by 2,
+        then uses threshold counting to directly compute indices without cascading
+        conditionals. The sign bit is applied via bitwise OR.
+        """
+        pid = tl.program_id(0)
+        block_start = pid * BLOCK_SIZE
+        offsets = block_start + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < n_pairs
 
-    # Load pairs of values
-    low_idx = offsets * 2
-    high_idx = offsets * 2 + 1
+        # Load pairs of values
+        low_idx = offsets * 2
+        high_idx = offsets * 2 + 1
 
-    x_low = tl.load(x_ptr + low_idx, mask=mask, other=0.0)
-    x_high = tl.load(x_ptr + high_idx, mask=mask, other=0.0)
+        x_low = tl.load(x_ptr + low_idx, mask=mask, other=0.0)
+        x_high = tl.load(x_ptr + high_idx, mask=mask, other=0.0)
 
-    # Extract sign
-    sign_low = (x_low < 0).to(tl.uint8)
-    sign_high = (x_high < 0).to(tl.uint8)
+        # Extract sign bit directly into bit 3 via bitcast (handles -0.0 correctly)
+        sign_low = (x_low.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
+        sign_high = (x_high.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
 
-    # Scale and absolute
-    x_low_abs = tl.abs(x_low * 2.0).to(tl.int8)
-    x_high_abs = tl.abs(x_high * 2.0).to(tl.int8)
+        # Scale and absolute
+        x_low_abs = tl.abs(x_low * 2.0).to(tl.int8)
+        x_high_abs = tl.abs(x_high * 2.0).to(tl.int8)
 
-    # Direct index computation via threshold counting
-    # Count how many thresholds each value meets or exceeds
-    # Thresholds: 1, 2, 3, 4, 6, 8, 12 (scaled FP4 values)
-    idx_low = (
-        (x_low_abs >= 1).to(tl.uint8)
-        + (x_low_abs >= 2).to(tl.uint8)
-        + (x_low_abs >= 3).to(tl.uint8)
-        + (x_low_abs >= 4).to(tl.uint8)
-        + (x_low_abs >= 6).to(tl.uint8)
-        + (x_low_abs >= 8).to(tl.uint8)
-        + (x_low_abs >= 12).to(tl.uint8)
-    )
-    idx_low = idx_low | (sign_low << 3)
+        # Direct index computation via threshold counting
+        # Count how many thresholds each value meets or exceeds
+        # Thresholds: 1, 2, 3, 4, 6, 8, 12 (scaled FP4 values)
+        idx_low = (
+            (x_low_abs >= 1).to(tl.uint8)
+            + (x_low_abs >= 2).to(tl.uint8)
+            + (x_low_abs >= 3).to(tl.uint8)
+            + (x_low_abs >= 4).to(tl.uint8)
+            + (x_low_abs >= 6).to(tl.uint8)
+            + (x_low_abs >= 8).to(tl.uint8)
+            + (x_low_abs >= 12).to(tl.uint8)
+        )
+        idx_low = idx_low | sign_low
 
-    idx_high = (
-        (x_high_abs >= 1).to(tl.uint8)
-        + (x_high_abs >= 2).to(tl.uint8)
-        + (x_high_abs >= 3).to(tl.uint8)
-        + (x_high_abs >= 4).to(tl.uint8)
-        + (x_high_abs >= 6).to(tl.uint8)
-        + (x_high_abs >= 8).to(tl.uint8)
-        + (x_high_abs >= 12).to(tl.uint8)
-    )
-    idx_high = idx_high | (sign_high << 3)
+        idx_high = (
+            (x_high_abs >= 1).to(tl.uint8)
+            + (x_high_abs >= 2).to(tl.uint8)
+            + (x_high_abs >= 3).to(tl.uint8)
+            + (x_high_abs >= 4).to(tl.uint8)
+            + (x_high_abs >= 6).to(tl.uint8)
+            + (x_high_abs >= 8).to(tl.uint8)
+            + (x_high_abs >= 12).to(tl.uint8)
+        )
+        idx_high = idx_high | sign_high
 
-    # Pack nibbles
-    packed = idx_low | (idx_high << 4)
+        # Pack nibbles
+        packed = idx_low | (idx_high << 4)
 
-    tl.store(packed_ptr + offsets, packed, mask=mask)
+        tl.store(packed_ptr + offsets, packed, mask=mask)
 
+    @triton.jit
+    def _quantize_and_pack_fp4_kernel(
+        packed_ptr,
+        input_ptr,
+        scale_ptr,
+        zero_point_ptr,
+        global_scale_ptr,
+        num_rows,
+        num_cols,
+        group_size,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        """
+        Fused Triton kernel that quantizes input values to FP4 and packs them into uint8
+        in a single pass, avoiding the intermediate FP4 float buffer.
 
-@triton.jit
-def _quantize_and_pack_fp4_kernel(
-    packed_ptr,
-    input_ptr,
-    scale_ptr,
-    zero_point_ptr,
-    global_scale_ptr,
-    num_rows,
-    num_cols,
-    group_size,
-    BLOCK_SIZE: tl.constexpr,
-):
-    """
-    Fused Triton kernel that quantizes input values to FP4 and packs them into uint8
-    in a single pass, avoiding the intermediate FP4 float buffer.
+        This kernel combines the logic from _quantize_kernel (FP4 path) and
+        _pack_fp4_kernel:
+        1. Scales input by quantization scale (and optionally global_scale)
+        2. Adds zero_point if present
+        3. Clamps to FP4 range [-6.0, 6.0]
+        4. Maps directly to FP4 indices using threshold counting
+        5. Packs two consecutive FP4 indices into one uint8
+        """
+        pid = tl.program_id(0)
+        block_start = pid * BLOCK_SIZE
+        offsets = block_start + tl.arange(0, BLOCK_SIZE)
 
-    This kernel combines the logic from _quantize_kernel (FP4 path) and _pack_fp4_kernel:
-    1. Scales input by quantization scale (and optionally global_scale)
-    2. Adds zero_point if present
-    3. Clamps to FP4 range [-6.0, 6.0]
-    4. Maps directly to FP4 indices using threshold counting
-    5. Packs two consecutive FP4 indices into one uint8
-    """
-    pid = tl.program_id(0)
-    block_start = pid * BLOCK_SIZE
-    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+        # Each output byte packs two consecutive input values
+        n_pairs = (num_rows * num_cols) // 2
+        mask = offsets < n_pairs
 
-    # Each output byte packs two consecutive input values
-    n_pairs = (num_rows * num_cols) // 2
-    mask = offsets < n_pairs
+        low_idx = offsets * 2
+        high_idx = offsets * 2 + 1
 
-    low_idx = offsets * 2
-    high_idx = offsets * 2 + 1
+        low_row = low_idx // num_cols
+        low_col = low_idx % num_cols
+        high_row = high_idx // num_cols
+        high_col = high_idx % num_cols
 
-    low_row = low_idx // num_cols
-    low_col = low_idx % num_cols
-    high_row = high_idx // num_cols
-    high_col = high_idx % num_cols
+        x_low = tl.load(input_ptr + low_idx, mask=mask, other=0.0)
+        x_high = tl.load(input_ptr + high_idx, mask=mask, other=0.0)
 
-    x_low = tl.load(input_ptr + low_idx, mask=mask, other=0.0)
-    x_high = tl.load(input_ptr + high_idx, mask=mask, other=0.0)
+        num_groups = num_cols // group_size
+        scale_low_idx = low_row * num_groups + low_col // group_size
+        scale_high_idx = high_row * num_groups + high_col // group_size
 
-    num_groups = num_cols // group_size
-    scale_low_idx = low_row * num_groups + low_col // group_size
-    scale_high_idx = high_row * num_groups + high_col // group_size
+        scale_low = tl.load(scale_ptr + scale_low_idx, mask=mask, other=1.0)
+        scale_high = tl.load(scale_ptr + scale_high_idx, mask=mask, other=1.0)
 
-    scale_low = tl.load(scale_ptr + scale_low_idx, mask=mask, other=1.0)
-    scale_high = tl.load(scale_ptr + scale_high_idx, mask=mask, other=1.0)
+        if global_scale_ptr is not None:
+            global_scale = tl.load(global_scale_ptr)
+            scale_low = scale_low / global_scale.to(scale_low.dtype)
+            scale_high = scale_high / global_scale.to(scale_high.dtype)
 
-    if global_scale_ptr is not None:
-        global_scale = tl.load(global_scale_ptr)
-        scale_low = scale_low / global_scale.to(scale_low.dtype)
-        scale_high = scale_high / global_scale.to(scale_high.dtype)
+        x_low = x_low / scale_low
+        x_high = x_high / scale_high
 
-    x_low = x_low / scale_low
-    x_high = x_high / scale_high
+        if zero_point_ptr is not None:
+            zp_low = tl.load(zero_point_ptr + scale_low_idx, mask=mask, other=0.0)
+            zp_high = tl.load(zero_point_ptr + scale_high_idx, mask=mask, other=0.0)
+            x_low = x_low + zp_low
+            x_high = x_high + zp_high
 
-    if zero_point_ptr is not None:
-        zp_low = tl.load(zero_point_ptr + scale_low_idx, mask=mask, other=0.0)
-        zp_high = tl.load(zero_point_ptr + scale_high_idx, mask=mask, other=0.0)
-        x_low = x_low + zp_low
-        x_high = x_high + zp_high
+        x_low = tl.clamp(x_low, -6.0, 6.0)
+        x_high = tl.clamp(x_high, -6.0, 6.0)
 
-    x_low = tl.clamp(x_low, -6.0, 6.0)
-    x_high = tl.clamp(x_high, -6.0, 6.0)
+        sign_low = (x_low < 0).to(tl.uint8)
+        sign_high = (x_high < 0).to(tl.uint8)
 
-    sign_low = (x_low < 0).to(tl.uint8)
-    sign_high = (x_high < 0).to(tl.uint8)
+        abs_low = tl.abs(x_low)
+        abs_high = tl.abs(x_high)
 
-    abs_low = tl.abs(x_low)
-    abs_high = tl.abs(x_high)
+        idx_low = (
+            (abs_low > 0.25).to(tl.uint8)
+            + (abs_low >= 0.75).to(tl.uint8)
+            + (abs_low > 1.25).to(tl.uint8)
+            + (abs_low >= 1.75).to(tl.uint8)
+            + (abs_low > 2.5).to(tl.uint8)
+            + (abs_low >= 3.5).to(tl.uint8)
+            + (abs_low > 5.0).to(tl.uint8)
+        )
 
-    idx_low = (
-        (abs_low > 0.25).to(tl.uint8)
-        + (abs_low >= 0.75).to(tl.uint8)
-        + (abs_low > 1.25).to(tl.uint8)
-        + (abs_low >= 1.75).to(tl.uint8)
-        + (abs_low > 2.5).to(tl.uint8)
-        + (abs_low >= 3.5).to(tl.uint8)
-        + (abs_low > 5.0).to(tl.uint8)
-    )
+        idx_high = (
+            (abs_high > 0.25).to(tl.uint8)
+            + (abs_high >= 0.75).to(tl.uint8)
+            + (abs_high > 1.25).to(tl.uint8)
+            + (abs_high >= 1.75).to(tl.uint8)
+            + (abs_high > 2.5).to(tl.uint8)
+            + (abs_high >= 3.5).to(tl.uint8)
+            + (abs_high > 5.0).to(tl.uint8)
+        )
 
-    idx_high = (
-        (abs_high > 0.25).to(tl.uint8)
-        + (abs_high >= 0.75).to(tl.uint8)
-        + (abs_high > 1.25).to(tl.uint8)
-        + (abs_high >= 1.75).to(tl.uint8)
-        + (abs_high > 2.5).to(tl.uint8)
-        + (abs_high >= 3.5).to(tl.uint8)
-        + (abs_high > 5.0).to(tl.uint8)
-    )
+        idx_low = idx_low | (sign_low << 3)
+        idx_high = idx_high | (sign_high << 3)
 
-    idx_low = idx_low | (sign_low << 3)
-    idx_high = idx_high | (sign_high << 3)
+        packed = idx_low | (idx_high << 4)
 
-    packed = idx_low | (idx_high << 4)
-
-    tl.store(packed_ptr + offsets, packed, mask=mask)
+        tl.store(packed_ptr + offsets, packed, mask=mask)
 
 
 def quantize_and_pack_fp4(
@@ -266,8 +273,8 @@ def quantize_and_pack_fp4(
 
     # CPU fallback: use separate quantize + pack
     # Import here to avoid circular dependency
-    from compressed_tensors.quantization.lifecycle.forward import quantize
     from compressed_tensors.quantization import QuantizationArgs, QuantizationType
+    from compressed_tensors.quantization.lifecycle.forward import quantize
 
     args = QuantizationArgs(
         num_bits=4,
@@ -287,9 +294,7 @@ def quantize_and_pack_fp4(
     return pack_fp4_to_uint8(quantized)
 
 
-def pack_fp4_to_uint8(
-    x: torch.Tensor,
-) -> torch.Tensor:
+def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     """
     Packs a tensor with values in the fp4 range into uint8.
     As there are 16 valid fp4 values, two fp4 values can be
@@ -312,11 +317,14 @@ def pack_fp4_to_uint8(
             "tensor must have an even number of columns for nvfp4 compression"
         )
 
-    # Use Triton kernel on CUDA
-    if x.is_cuda:
-        x_flat = x.flatten()
+    # Use Triton kernel on GPU (CUDA, ROCm, XPU)
+    if _triton_available and (x.is_cuda or x.is_xpu):
+        # Valid FP4 values are exactly representable in bf16, so this lossless
+        # cast keeps Triton's 16-bit bitcast path working for float32 inputs.
+        if x.dtype not in (torch.bfloat16, torch.float16):
+            x = x.to(torch.bfloat16)
+        x_flat = x.contiguous().flatten()
         n_pairs = x_flat.numel() // 2
-        output_shape = (m, n // 2)
 
         packed = torch.empty(n_pairs, dtype=torch.uint8, device=x.device)
 
@@ -324,15 +332,14 @@ def pack_fp4_to_uint8(
         grid = (triton.cdiv(n_pairs, BLOCK_SIZE),)
         _pack_fp4_kernel[grid](x_flat, packed, n_pairs, BLOCK_SIZE)
 
-        return packed.reshape(output_shape)
+        return packed.reshape(m, n // 2)
 
     # CPU fallback
     # Extract sign before conversion
     sign = torch.signbit(x).to(torch.uint8)
 
     # Scale by 2 and convert to int8
-    x.mul_(2)
-    x = x.to(torch.int8).abs_()
+    x = (x * 2).to(torch.int8).abs_()
 
     indices = torch.zeros_like(x, dtype=torch.uint8)
 

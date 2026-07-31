@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import warnings
 from collections import defaultdict
 from enum import Enum
 from typing import Annotated, Any
@@ -12,6 +13,8 @@ from compressed_tensors.quantization.quant_scheme import (
     preset_name_to_scheme,
 )
 from compressed_tensors.quantization.utils import is_module_quantized
+from compressed_tensors.utils import find_unique_name
+from compressed_tensors.utils.match import match_name
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
@@ -192,7 +195,7 @@ class QuantizationConfig(BaseModel):
         """
         from compressed_tensors.modeling import IMPL_ATTR
         from compressed_tensors.quantization.lifecycle.initialize import (
-            is_attention_module,
+            is_cached_attention_module,
         )
 
         # set of all quantization schemes
@@ -215,15 +218,14 @@ class QuantizationConfig(BaseModel):
 
         for name, submodule in model.named_modules():
             layer_type: str = get_vllm_module_type(type(submodule).__name__)
+            is_cached_attention = is_cached_attention_module(submodule)
 
             # add config group if quantized non-attention or attention quant
             has_config_group = is_module_quantized(submodule) and (
-                not is_attention_module(submodule) or hasattr(submodule, IMPL_ATTR)
+                not is_cached_attention or hasattr(submodule, IMPL_ATTR)
             )
             # only add kvcache if quant attention (which always implies kvcache)
-            has_kv_cache = is_module_quantized(submodule) and is_attention_module(
-                submodule
-            )
+            has_kv_cache = is_module_quantized(submodule) and is_cached_attention
 
             if has_config_group:
                 # add to running set of schemes/layer_type_names
@@ -291,6 +293,9 @@ class QuantizationConfig(BaseModel):
             return True
 
         for _, scheme in self.config_groups.items():
+            if scheme.weights is not None:
+                if scheme.weights.observer == "imatrix_mse":
+                    return True
             if scheme.input_activations is not None:
                 if scheme.input_activations.dynamic in (False, DynamicType.LOCAL):
                     return True
@@ -299,6 +304,64 @@ class QuantizationConfig(BaseModel):
                     return True
 
         return False
+
+    def merge(self, config: "QuantizationConfig") -> None:
+        """
+        Merge another QuantizationConfig into self, modifying in-place. The current
+        quant config (self) will take precedence over the second quant config,
+        i.e. the config groups will be appended rather than inserted before. Python's
+        json stdlib and pydantic both respect order when serializing/deserializing.
+
+        Because QuantizationConfig has a global ignore list while targets are scoped to
+        a given scheme, merging is not a straightforward task. A warning will be raised
+        when this function is called to indicate that invalid quantization configs are
+        possible when using this method, particularly when complex ignore lists are
+        used. For best results, use complex targets lists over complex ignore lists.
+
+        If a new quant format is added, the global format will be set to
+        "mixed-precision".
+
+        The QuantizationStatus will be set to whichever is largest.
+
+        Excluding regexes, any names in the ignore list that are targeted in the new
+        quant config will be pruned.
+
+        :param config: QuantizationConfig to merge into self.
+        """
+        warnings.warn(
+            "Attempting to merge quantization configs. This is not a straightforward "
+            "task and can lead to quantization configs that fail to load. For best "
+            "results, use complex targets lists instead of complex ingore lists"
+        )
+
+        pruned_ignore_list = []
+        for ign in self.ignore:
+            if ign.startswith("re:"):
+                pruned_ignore_list.append(ign)
+                continue
+            if any(
+                match_name(ign, target)
+                for scheme in config.config_groups.values()
+                for target in scheme.targets
+            ):
+                continue
+            pruned_ignore_list.append(ign)
+        self.ignore = pruned_ignore_list
+
+        for scheme_name, scheme in config.config_groups.items():
+            new_scheme_name = find_unique_name(scheme_name, self.config_groups.keys())
+
+            self.config_groups[new_scheme_name] = scheme
+
+        unique_formats = set(scheme.format for scheme in self.config_groups.values())
+        self.format = (
+            next(iter(unique_formats))
+            if len(unique_formats) == 1
+            else CompressionFormat.mixed_precision.value
+        )
+
+        if config.quantization_status > self.quantization_status:
+            self.quantization_status = config.quantization_status
 
     # TODO set `extra="forbid"` when upstream transformers is compatible
     model_config = ConfigDict(extra="ignore")

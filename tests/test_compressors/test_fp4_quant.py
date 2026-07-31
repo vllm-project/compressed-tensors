@@ -9,15 +9,15 @@ from compressed_tensors.compressors.nvfp4.helpers import (
     quantize_and_pack_fp4,
     unpack_fp4_from_uint8,
 )
-from compressed_tensors.quantization.lifecycle.forward import quantize
 from compressed_tensors.quantization import QuantizationArgs, QuantizationType
+from compressed_tensors.quantization.lifecycle.forward import quantize
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_pack_unpack(device):
-    if device == "cuda" and not torch.cuda.is_available():
+    if device == "cuda" and not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
-        
+
     x = torch.Tensor(
         [
             [-0.5000, -6.0000, -0.5000, -1.5000, -1.0000, 6.0000, 0.0000, -0.0000],
@@ -45,9 +45,9 @@ def test_pack_unpack(device):
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_pack_unpack_odd_dims(device):
-    if device == "cuda" and not torch.cuda.is_available():
+    if device == "cuda" and not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
-        
+
     x = torch.Tensor(
         [
             [-0.5000, -6.0000, -0.5000, -1.5000, -1.0000, 6.0000, 0.0000],
@@ -97,7 +97,7 @@ def test_compress_scale_without_scale_dtype():
 )
 def test_quantize_and_pack_fused(m, n):
     """Test that fused quantize+pack produces identical results to separate ops."""
-    if not torch.cuda.is_available():
+    if not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
 
     device = "cuda"
@@ -134,7 +134,7 @@ def test_quantize_and_pack_fused(m, n):
 
 def test_quantize_and_pack_fused_boundary_values():
     """Test fused kernel handles FP4 boundary values correctly."""
-    if not torch.cuda.is_available():
+    if not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
 
     device = "cuda"
@@ -142,8 +142,26 @@ def test_quantize_and_pack_fused_boundary_values():
 
     # Test exact boundary values for FP4 rounding thresholds
     x = torch.tensor(
-        [[0.25, 0.75, 1.25, 1.75, 2.5, 3.5, 5.0, 6.0,
-          -0.25, -0.75, -1.25, -1.75, -2.5, -3.5, -5.0, -6.0]],
+        [
+            [
+                0.25,
+                0.75,
+                1.25,
+                1.75,
+                2.5,
+                3.5,
+                5.0,
+                6.0,
+                -0.25,
+                -0.75,
+                -1.25,
+                -1.75,
+                -2.5,
+                -3.5,
+                -5.0,
+                -6.0,
+            ]
+        ],
         dtype=torch.bfloat16,
         device=device,
     )
@@ -171,7 +189,7 @@ def test_quantize_and_pack_fused_boundary_values():
 
 def test_quantize_and_pack_fused_with_zero_point():
     """Test fused kernel with asymmetric quantization (zero_point)."""
-    if not torch.cuda.is_available():
+    if not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
 
     device = "cuda"
@@ -180,7 +198,9 @@ def test_quantize_and_pack_fused_with_zero_point():
 
     x = torch.randn(m, n, dtype=torch.bfloat16, device=device)
     scale = torch.rand(m, n // group_size, dtype=torch.bfloat16, device=device) + 0.1
-    zero_point = torch.randn(m, n // group_size, dtype=torch.bfloat16, device=device) * 0.5
+    zero_point = (
+        torch.randn(m, n // group_size, dtype=torch.bfloat16, device=device) * 0.5
+    )
     global_scale = torch.tensor(1.0, device=device)
 
     args = QuantizationArgs(
