@@ -17,6 +17,7 @@ from compressed_tensors.quantization import (
     QuantizationScheme,
     QuantizationType,
 )
+from compressed_tensors.utils import getattr_chain
 
 
 __all__ = ["MXFP4PackedCompressor"]
@@ -29,6 +30,15 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
 
     Overrides scale compression to use log2 encoding (bias-127 exponent).
     """
+
+    @classmethod
+    def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        # MXFP4 uses GROUP strategy (not TENSOR_GROUP), so there is no
+        # weight_global_scale or input_global_scale parameter
+        param_names = ("weight_packed", "weight_scale")
+        if not getattr_chain(scheme, "weights.symmetric", True):
+            param_names += ("weight_zero_point",)
+        return param_names
 
     @classmethod
     def _compress_scale(
