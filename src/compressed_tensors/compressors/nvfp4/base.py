@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import functools
+
 import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
@@ -22,6 +24,36 @@ from compressed_tensors.utils import TensorStateDict, getattr_chain
 
 
 __all__ = ["NVFP4PackedCompressor"]
+
+
+def _skip_meta_device(fn):
+    """
+    Classmethod decorator that bypasses compress computation on the meta device.
+
+    When a weight tensor lives on the meta device (shape/dtype only, no data),
+    running quantize + pack would fail or waste time doing meaningless FLOPs.
+    Instead, this decorator directly constructs meta tensors of the correct
+    shape and dtype for weight_packed and weight_scale and returns early.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(cls, state_dict, scheme):
+        weight = state_dict.get("weight", None)
+        if weight is not None and weight.device.type == "meta":
+            state_dict = state_dict.copy()
+            weight = state_dict.pop("weight")
+            scale = state_dict.pop("weight_scale")
+            m, n = weight.shape
+            scale_dtype = scheme.weights.scale_dtype or torch.float8_e4m3fn
+            state_dict["weight_packed"] = torch.empty(
+                m, n // 2, dtype=torch.uint8, device="meta"
+            )
+            state_dict["weight_scale"] = scale.to(scale_dtype)
+            state_dict = cls._remove_symmetric_zp(state_dict, scheme)
+            return state_dict
+        return fn(cls, state_dict, scheme)
+
+    return wrapper
 
 
 @BaseCompressor.register(name=CompressionFormat.nvfp4_pack_quantized.value)
@@ -61,6 +93,7 @@ class NVFP4PackedCompressor(BaseCompressor):
         return scale.to(dtype)
 
     @classmethod
+    @_skip_meta_device
     def compress(
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
