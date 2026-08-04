@@ -4,9 +4,11 @@
 import pytest
 import torch
 from compressed_tensors.quantization.utils.fp4_utils import (
+    cast_to_fp4,
     cast_to_fp4_torch,
     cast_to_fp4_triton,
 )
+from compressed_tensors.utils.impl_backend import ImplBackend
 from tests.testing_utils import requires_gpu
 
 
@@ -184,3 +186,27 @@ def test_cast_to_fp4_memory_usage(size):
     # Clean up
     del x, result
     torch.accelerator.empty_cache()
+
+
+@requires_gpu
+@pytest.mark.parametrize(
+    "x",
+    [
+        torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]),
+        torch.tensor([-0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0]),
+        # midpoints between FP4 values to exercise rounding
+        torch.tensor([0.3, 0.7, 1.2, 1.8, 2.6, 3.8, 5.5]),
+        # 2-D tensor
+        torch.arange(-6.0, 6.5, 0.5).reshape(5, -1).float(),
+        # larger random tensor
+        torch.randn(128, 128),
+    ],
+)
+def test_cast_to_fp4_backends_match(x):
+    torch_out = cast_to_fp4(x.cpu())  # CPU → torch fallback
+    triton_out = ImplBackend.call("cast_to_fp4_triton", x.cuda()).cpu()
+
+    assert torch_out.shape == triton_out.shape
+    assert torch.allclose(
+        torch_out, triton_out
+    ), f"Max diff: {(torch_out - triton_out).abs().max().item()}"
