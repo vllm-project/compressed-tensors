@@ -13,7 +13,7 @@ from compressed_tensors.quantization.quant_args import (
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
 from compressed_tensors.quantization.utils.fp4_utils import _round_to_fp4
 from compressed_tensors.utils.impl_backend import ImplBackend
-from compressed_tensors.utils.triton import HAS_TRITON, tl, triton
+from compressed_tensors.utils.triton import tl, triton, triton_req
 
 
 def _apply_quantize_op(
@@ -392,7 +392,7 @@ def _quantize_triton_req(
 ) -> bool:
     is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
     fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
-    return HAS_TRITON and (x.is_cuda or x.is_xpu) and (not is_fp8 or fp8_hw_ok)
+    return triton_req(x) and (not is_fp8 or fp8_hw_ok)
 
 
 @torch.no_grad()

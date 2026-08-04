@@ -54,31 +54,18 @@ class FP4_E2M1_DATA(FloatArgs):
     min = -6.0
 
     @staticmethod
-    def cast_to_fp4(x: torch.Tensor, backend: str = "auto"):
+    def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
         """Round float values to the nearest E2M1 representable value.
 
         Uses Triton for CUDA/XPU tensors when available, falls back to
         torch.compile for CPU tensors.
 
         :param x: input tensor to quantize
-        :param backend: "auto" (default), "torch", or "triton". "auto" uses
-            Triton when available for GPU tensors and torch.compile otherwise.
-            "torch" forces the torch.compile implementation. "triton" forces
-            Triton (raises at runtime if unavailable or tensor is not on GPU).
         :return: input tensor after rounding to fp4 (maintains same dtype)
         """
-        from compressed_tensors.quantization.utils.fp4_utils import (
-            cast_to_fp4,
-            cast_to_fp4_torch,
-            cast_to_fp4_triton,
-        )
+        from compressed_tensors.quantization.utils.fp4_utils import cast_to_fp4
 
-        if backend == "torch":
-            return cast_to_fp4_torch(x)
-        elif backend == "triton":
-            return cast_to_fp4_triton(x)
-        else:
-            return cast_to_fp4(x)
+        return cast_to_fp4(x)
 
 
 class FP8_E4M3_DATA(FloatArgs):
