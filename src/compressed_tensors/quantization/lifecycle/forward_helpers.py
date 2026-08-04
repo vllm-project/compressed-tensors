@@ -390,9 +390,10 @@ def _quantize_triton_req(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> bool:
-    is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
-    fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
-    return triton_req(x) and fp8_hw_ok
+    return triton_req(x) and (
+        not _needs_fp8(x, scale, zero_point, global_scale, args=args)
+        or _is_fp8_supported(x.device)
+    )
 
 
 @torch.no_grad()
