@@ -252,88 +252,6 @@ if _triton_available:
         q_min_ptr: tl.tensor,
         q_max_ptr: tl.tensor,
         global_scale_ptr: tl.tensor,
-        num_rows,
-        num_cols,
-        group_size,
-        quant_type: tl.constexpr,  # QUANT_TYPE_INT or QUANT_TYPE_FLOAT
-        num_bits: tl.constexpr,  # 4 or 8
-        BLOCK_SIZE_R: tl.constexpr,
-        BLOCK_SIZE_C: tl.constexpr,
-    ):
-        # Set up the pids.
-        pid_r = tl.program_id(axis=0)
-        pid_c = tl.program_id(axis=1)
-        offsets_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
-        offsets_c = pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)
-        offsets = num_cols * offsets_r[:, None] + offsets_c[None, :]
-
-        masks_r = offsets_r < num_rows
-        masks_c = offsets_c < num_cols
-        masks = masks_r[:, None] & masks_c[None, :]
-
-        scale_offsets_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
-        scale_offsets_c = (
-            pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)
-        ) // group_size
-        scale_offsets = (num_cols // group_size) * scale_offsets_r[
-            :, None
-        ] + scale_offsets_c[None, :]
-        scale_masks_r = scale_offsets_r < num_rows
-        scale_masks_c = scale_offsets_c < num_cols // group_size
-        scale_masks = scale_masks_r[:, None] & scale_masks_c[None, :]
-
-        result_offsets_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
-        result_offsets_c = pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)
-        result_offsets = (
-            num_cols * result_offsets_r[:, None] + result_offsets_c[None, :]
-        )
-
-        result_masks_r = result_offsets_r < num_rows
-        result_masks_c = result_offsets_c < num_cols
-        result_masks = result_masks_r[:, None] & result_masks_c[None, :]
-
-        input = tl.load(input_ptr + offsets, masks, 0.0)
-        scale = tl.load(scale_ptr + scale_offsets, scale_masks, 0.0)
-
-        if global_scale_ptr is not None:
-            global_scale = tl.load(global_scale_ptr)
-            scale = scale / global_scale.to(scale.dtype)
-
-        output = input / scale
-
-        if zero_point_ptr is not None:
-            zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
-            output += zero_point
-
-        # clamp and round (equivalent to round_to_quantized_type_args)
-        q_min = tl.load(q_min_ptr)
-        q_max = tl.load(q_max_ptr)
-
-        if quant_type == QUANT_TYPE_INT:
-            output = tl.clamp(output, q_min, q_max)
-            output = tl.extra.cuda.libdevice.rint(output)
-        elif quant_type == QUANT_TYPE_FLOAT:
-            output = tl.clamp(output, q_min, q_max)
-            if num_bits == 4:
-                # Convert to bfloat16 for FP4 rounding (matches CPU path)
-                orig_dtype = output.dtype
-                output = _round_to_fp4(output.to(tl.bfloat16)).to(orig_dtype)
-            elif num_bits == 8:
-                output = output.to(tl.float8e4nv).to(output.dtype)
-
-        tl.store(output_ptr + result_offsets, output, result_masks)
-
-    # This kernel is a bit more expensive to run than the non-strided one,
-    # therefore it is only used when necessary.
-    @triton.jit
-    def _quantize_kernel_strided(
-        output_ptr: tl.tensor,
-        input_ptr: tl.tensor,
-        scale_ptr: tl.tensor,
-        zero_point_ptr: tl.tensor,
-        q_min_ptr: tl.tensor,
-        q_max_ptr: tl.tensor,
-        global_scale_ptr: tl.tensor,
         # Note: unused strides for tensors with fewer dimensions are set to 0.
         input_stride_0,
         input_stride_1,
@@ -354,7 +272,7 @@ if _triton_available:
         BLOCK_SIZE_R: tl.constexpr,
         BLOCK_SIZE_C: tl.constexpr,
     ):
-        """General quantize kernel for non-contiguous tensors using explicit strides.
+        """General quantize kernel using explicit strides.
 
         Handles tensors up to 4D by treating them as a 2D view:
         - row indices span dim_0 * dim_1
@@ -536,13 +454,7 @@ def _quantize(
     )
     num_bits = args.num_bits
 
-    # Check if we need the strided kernel for non-contiguous input tensors
-    use_strided_kernel = not x.is_contiguous()
-
     if args.strategy == QuantizationStrategy.BLOCK:
-        assert (
-            use_strided_kernel
-        ), "BLOCK input should be non-contiguous (from transpose in _process_block)"
         dim_0, dim_1, dim_2, dim_3 = x.shape
         group_size = dim_2 * dim_3  # all col elements share same scale
         num_scale_cols = 1  # one scale per (idx_0, idx_1) pair
@@ -576,78 +488,60 @@ def _quantize(
 
     quantized_value = torch.empty_like(x)
 
-    if use_strided_kernel:
-        x_strides = x.stride()
-        out_strides = quantized_value.stride()
+    x_strides = x.stride()
+    out_strides = quantized_value.stride()
 
-        if args.strategy == QuantizationStrategy.BLOCK:
-            input_stride_0, input_stride_1, input_stride_2, input_stride_3 = x_strides
-            (
-                output_stride_0,
-                output_stride_1,
-                output_stride_2,
-                output_stride_3,
-            ) = out_strides
-        elif args.strategy in (
-            QuantizationStrategy.GROUP,
-            QuantizationStrategy.TENSOR_GROUP,
-        ):
-            input_stride_0 = 0
-            input_stride_1, input_stride_2, input_stride_3 = x_strides
-            output_stride_0 = 0
-            output_stride_1, output_stride_2, output_stride_3 = out_strides
-        else:
-            input_stride_0 = 0
-            input_stride_1, input_stride_3 = x_strides
-            input_stride_2 = 0
-            output_stride_0 = 0
-            output_stride_1, output_stride_3 = out_strides
-            output_stride_2 = 0
-
-        _quantize_kernel_strided[grid](
-            quantized_value,
-            x,
-            scale,
-            zero_point,
-            q_min,
-            q_max,
-            global_scale,
-            input_stride_0,
-            input_stride_1,
-            input_stride_2,
-            input_stride_3,
+    if args.strategy == QuantizationStrategy.BLOCK:
+        input_stride_0, input_stride_1, input_stride_2, input_stride_3 = x_strides
+        (
             output_stride_0,
             output_stride_1,
             output_stride_2,
             output_stride_3,
-            dim_0,
-            dim_1,
-            dim_2,
-            dim_3,
-            group_size,
-            num_scale_cols,
-            quant_type=quant_type,
-            num_bits=num_bits,
-            BLOCK_SIZE_R=block_size_r,
-            BLOCK_SIZE_C=block_size_c,
-        )
+        ) = out_strides
+    elif args.strategy in (
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        input_stride_0 = 0
+        input_stride_1, input_stride_2, input_stride_3 = x_strides
+        output_stride_0 = 0
+        output_stride_1, output_stride_2, output_stride_3 = out_strides
     else:
-        _quantize_kernel[grid](
-            quantized_value,
-            x,
-            scale,
-            zero_point,
-            q_min,
-            q_max,
-            global_scale,
-            num_rows,
-            num_cols,
-            group_size,
-            quant_type=quant_type,
-            num_bits=num_bits,
-            BLOCK_SIZE_R=block_size_r,
-            BLOCK_SIZE_C=block_size_c,
-        )
+        input_stride_0 = 0
+        input_stride_1, input_stride_3 = x_strides
+        input_stride_2 = 0
+        output_stride_0 = 0
+        output_stride_1, output_stride_3 = out_strides
+        output_stride_2 = 0
+
+    _quantize_kernel[grid](
+        quantized_value,
+        x,
+        scale,
+        zero_point,
+        q_min,
+        q_max,
+        global_scale,
+        input_stride_0,
+        input_stride_1,
+        input_stride_2,
+        input_stride_3,
+        output_stride_0,
+        output_stride_1,
+        output_stride_2,
+        output_stride_3,
+        dim_0,
+        dim_1,
+        dim_2,
+        dim_3,
+        group_size,
+        num_scale_cols,
+        quant_type=quant_type,
+        num_bits=num_bits,
+        BLOCK_SIZE_R=block_size_r,
+        BLOCK_SIZE_C=block_size_c,
+    )
 
     quantized_value = quantized_value.reshape(original_shape)
 
