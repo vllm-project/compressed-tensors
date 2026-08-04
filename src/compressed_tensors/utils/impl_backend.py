@@ -26,7 +26,7 @@ class ImplBackend:
 
     Functions can register multiple implementations (backends) under a shared
     name, each with an availability requirement and a priority. Decorating a
-    function with ``use(name)`` turns it into a dispatch wrapper whose body
+    function with ``entrypoint(name)`` turns it into a dispatch wrapper whose body
     serves as the eager/torch fallback.
 
     Usage::
@@ -34,7 +34,7 @@ class ImplBackend:
         @ImplBackend.register("my_op", req=lambda x: x.is_cuda, priority=0)
         def my_op_cuda(x): ...
 
-        @ImplBackend.use("my_op")
+        @ImplBackend.entrypoint("my_op")
         def my_op(x):
             # torch/eager fallback — runs when no registered backend matches
             ...
@@ -52,25 +52,18 @@ class ImplBackend:
         """
         Decorator that registers a backend implementation.
 
-        The decorated function's ``__name__`` is recorded in a global registry
+        The decorated function's `__name__` is recorded in a global registry
         and must be unique across all registered backends.
 
         :param name: operation name shared across all backends for this function
         :param req: callable returning True when this backend is usable; receives
             the same positional and keyword arguments as the dispatch wrapper, so
-            requirements can inspect actual inputs (e.g. ``lambda x: x.is_cuda``)
+            requirements can inspect actual inputs (e.g. `lambda x: x.is_cuda`)
         :param priority: lower values are tried first (higher priority)
         """
 
         def decorator(backend_fn: Callable) -> Callable:
-            fn_name = backend_fn.__name__
-            if fn_name in cls._fn_registry:
-                raise ValueError(
-                    f"A backend with function name '{fn_name}' is already "
-                    "registered. Backend function names must be unique across "
-                    "all ops."
-                )
-            cls._fn_registry[fn_name] = backend_fn
+            cls._add_to_registery(backend_fn)
 
             if name not in cls._backends:
                 cls._backends[name] = []
@@ -87,7 +80,7 @@ class ImplBackend:
         bypassing availability checks. Useful for testing individual backends
         in isolation.
 
-        :param fn_name: ``__name__`` of the backend function to call
+        :param fn_name: `__name__` of the backend function to call
         """
         if fn_name not in cls._fn_registry:
             available = list(cls._fn_registry.keys())
@@ -97,12 +90,12 @@ class ImplBackend:
         return cls._fn_registry[fn_name](*args, **kwargs)
 
     @classmethod
-    def use(cls, name: str) -> Callable:
+    def entrypoint(cls, name: str) -> Callable:
         """
         Decorator that turns a function into a dispatch wrapper.
 
         The decorated function serves as the eager/torch fallback: it is called
-        only when no registered backend for ``name`` satisfies its requirement.
+        only when no registered backend for `name` satisfies its requirement.
         Registered backends are tried in priority order (lowest value first) and
         each receives the same arguments as the wrapper.
 
@@ -110,6 +103,8 @@ class ImplBackend:
         """
 
         def decorator(fallback_fn: Callable) -> Callable:
+            cls._add_to_registery(fallback_fn)
+
             @functools.wraps(fallback_fn)
             def wrapper(*args, **kwargs):
                 if not ENFORCE_EAGER:
@@ -121,3 +116,14 @@ class ImplBackend:
             return wrapper
 
         return decorator
+
+    @classmethod
+    def _add_to_registery(cls, fn: Callable):
+        fn_name = fn.__name__
+        if fn_name in cls._fn_registry:
+            raise ValueError(
+                f"A backend with function name '{fn_name}' is already "
+                "registered. Backend function names must be unique across "
+                "all ops."
+            )
+        cls._fn_registry[fn_name] = fn

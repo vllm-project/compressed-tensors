@@ -392,11 +392,11 @@ def _quantize_triton_req(
 ) -> bool:
     is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
     fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
-    return triton_req(x) and (not is_fp8 or fp8_hw_ok)
+    return triton_req(x) and fp8_hw_ok
 
 
 @torch.no_grad()
-@ImplBackend.register("_quantize_op", _quantize_triton_req, 0)
+@ImplBackend.register("_quantize", _quantize_triton_req, 0)
 def _quantize_triton(
     x: torch.Tensor,
     scale: torch.Tensor,
@@ -515,7 +515,7 @@ def _quantize_triton(
 
 
 @torch.no_grad()
-@ImplBackend.use("_quantize_op")
+@ImplBackend.entrypoint("_quantize")
 def _quantize(
     x: torch.Tensor,
     scale: torch.Tensor,

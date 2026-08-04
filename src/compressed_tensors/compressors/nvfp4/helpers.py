@@ -105,7 +105,7 @@ def pack_fp4_to_uint8_triton(x: torch.Tensor) -> torch.Tensor:
     return packed.reshape(m, n // 2)
 
 
-@ImplBackend.use("pack_fp4_to_uint8")
+@ImplBackend.entrypoint("pack_fp4_to_uint8")
 def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     """
     Packs a tensor with values in the fp4 range into uint8.

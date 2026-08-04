@@ -3,11 +3,6 @@
 
 import pytest
 import torch
-from compressed_tensors.quantization.utils.fp4_utils import (
-    cast_to_fp4,
-    cast_to_fp4_torch,
-    cast_to_fp4_triton,
-)
 from compressed_tensors.utils.impl_backend import ImplBackend
 from tests.testing_utils import requires_gpu
 
@@ -21,8 +16,8 @@ def test_cast_to_fp4_cpu_gpu_match(size, dtype):
     x_gpu = x_cpu.cuda()
 
     # Quantize on CPU and GPU
-    result_cpu = cast_to_fp4_torch(x_cpu)
-    result_gpu = cast_to_fp4_triton(x_gpu)
+    result_cpu = ImplBackend.call("cast_to_fp4", x_cpu)
+    result_gpu = ImplBackend.call("cast_to_fp4_triton", x_gpu)
 
     # Compare outputs (convert to same dtype for comparison)
     assert torch.allclose(result_cpu.cuda(), result_gpu, atol=1e-6)
@@ -140,7 +135,7 @@ def test_cast_to_fp4_boundary_values():
         device="cuda",
     )
 
-    result = cast_to_fp4_triton(input_values)
+    result = ImplBackend.call("cast_to_fp4_triton", input_values)
     assert torch.equal(result, expected_output)
     assert torch.signbit(result[8]).item(), "cast_to_fp4 should preserve -0.0 sign bit"
 
@@ -164,7 +159,7 @@ def test_cast_to_fp4_memory_usage(size):
     baseline_memory = torch.accelerator.memory_allocated()
 
     # Perform quantization
-    result = cast_to_fp4_triton(x)
+    result = ImplBackend.call("cast_to_fp4_triton", x)
     output_memory = result.element_size() * result.numel()
 
     # Check peak memory usage
@@ -203,8 +198,9 @@ def test_cast_to_fp4_memory_usage(size):
     ],
 )
 def test_cast_to_fp4_backends_match(x):
-    torch_out = cast_to_fp4(x.cpu())  # CPU → torch fallback
-    triton_out = ImplBackend.call("cast_to_fp4_triton", x.cuda()).cpu()
+    x = x.to(torch.accelerator.current_accelerator())
+    torch_out = ImplBackend.call("cast_to_fp4", x)
+    triton_out = ImplBackend.call("cast_to_fp4_triton", x)
 
     assert torch_out.shape == triton_out.shape
     assert torch.allclose(

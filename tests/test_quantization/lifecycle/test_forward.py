@@ -1091,9 +1091,23 @@ def test_quantize_triton_matches_cpu_block_4d(
             torch.tensor([3.0]),
             None,
         ),
+        # int8, block strategy, strided x mirroring _process_block layout
+        # _process_block does reshape(nr, bh, nc, bw).transpose(1,2), producing
+        # non-contiguous x_blocks of shape (nr, nc, bh, bw) with swapped strides
+        (
+            QuantizationArgs(
+                num_bits=8, type="int", strategy="block", block_structure=[32, 64]
+            ),
+            torch.randn(128, 256)
+            .reshape(4, 32, 4, 64)
+            .transpose(1, 2),  # (4,4,32,64), non-contiguous
+            torch.rand(4, 4, 1, 1) * 0.01 + 0.001,
+            None,
+            None,
+        ),
     ],
 )
-def test_quantize_op_backends_match(args, x, scale, zero_point, global_scale):
+def test_quantize_backends_match(args, x, scale, zero_point, global_scale):
     is_fp8 = args.type == QuantizationType.FLOAT and args.num_bits == 8
     if is_fp8 and not _is_fp8_supported(torch.device("cuda")):
         pytest.skip("FP8 Triton kernel requires SM90+ (Hopper)")
@@ -1101,7 +1115,8 @@ def test_quantize_op_backends_match(args, x, scale, zero_point, global_scale):
     q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
     q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
 
-    torch_out = _quantize(
+    torch_out = ImplBackend.call(
+        "_quantize",
         x=x.cpu(),
         scale=scale.cpu(),
         zero_point=zero_point.cpu() if zero_point is not None else None,

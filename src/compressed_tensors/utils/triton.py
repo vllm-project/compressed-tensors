@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# Derived from https://github.com/vllm-project/vllm/blob/main/vllm/triton_utils/importing.py  # noqa: E501
 
 import types
 

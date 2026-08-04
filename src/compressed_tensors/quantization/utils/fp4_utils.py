@@ -6,7 +6,7 @@ from compressed_tensors.utils.impl_backend import ImplBackend
 from compressed_tensors.utils.triton import tl, triton, triton_req
 
 
-__all__ = ["cast_to_fp4_triton", "cast_to_fp4_torch", "cast_to_fp4"]
+__all__ = ["_round_to_fp4", "cast_to_fp4"]
 
 
 @triton.jit
@@ -15,7 +15,6 @@ def _round_to_fp4(x):
     Round float values to the nearest E2M1 representable value.
     FP4 values: 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 (and their negatives)
 
-    Matches the thresholds in the Python ``cast_to_fp4`` exactly.
     Based on vllm's nvfp4_emulation_utils.py implementation.
     """
     sign_bit = x.to(tl.int16, bitcast=True) & (-32768)
@@ -75,35 +74,7 @@ def cast_to_fp4_triton(x: torch.Tensor) -> torch.Tensor:
     return output.reshape(shape)
 
 
-@torch.compile(dynamic=True)
-def _cast_to_fp4_torch_impl(x):
-    sign = torch.sign(x)
-    abs_x = torch.abs(x)
-
-    result = torch.where(abs_x <= 0.25, 0.0, torch.empty_like(x))
-    result = torch.where(abs_x > 0.25, 0.5, result)
-    result = torch.where(abs_x >= 0.75, 1.0, result)
-    result = torch.where(abs_x > 1.25, 1.5, result)
-    result = torch.where(abs_x >= 1.75, 2.0, result)
-    result = torch.where(abs_x > 2.5, 3.0, result)
-    result = torch.where(abs_x >= 3.5, 4.0, result)
-    result = torch.where(abs_x > 5.0, 6.0, result)
-
-    return result * sign
-
-
-def cast_to_fp4_torch(x: torch.Tensor) -> torch.Tensor:
-    """
-    Torch implementation for FP4 E2M1 quantization
-
-    Maps float values to the nearest E2M1 representable value:
-    0.0, ±0.5, ±1.0, ±1.5, ±2.0, ±3.0, ±4.0, ±6.0
-    """
-    orig_dtype = x.dtype
-    return _cast_to_fp4_torch_impl(x.to(torch.bfloat16)).to(orig_dtype)
-
-
-@ImplBackend.use("cast_to_fp4")
+@ImplBackend.entrypoint("cast_to_fp4")
 def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
     """
     Cast float values to the nearest FP4 E2M1 representable value.
@@ -114,4 +85,19 @@ def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
     Maps float values to the nearest E2M1 representable value:
     0.0, ±0.5, ±1.0, ±1.5, ±2.0, ±3.0, ±4.0, ±6.0
     """
-    return cast_to_fp4_torch(x)
+    orig_dtype = x.dtype
+    x = x.to(torch.bfloat16)
+    sign = torch.sign(x)
+    abs_x = torch.abs(x)
+
+    x = torch.where(abs_x <= 0.25, 0.0, torch.empty_like(x))
+    x = torch.where(abs_x > 0.25, 0.5, x)
+    x = torch.where(abs_x >= 0.75, 1.0, x)
+    x = torch.where(abs_x > 1.25, 1.5, x)
+    x = torch.where(abs_x >= 1.75, 2.0, x)
+    x = torch.where(abs_x > 2.5, 3.0, x)
+    x = torch.where(abs_x >= 3.5, 4.0, x)
+    x = torch.where(abs_x > 5.0, 6.0, x)
+
+    x *= sign
+    return x.to(orig_dtype)
