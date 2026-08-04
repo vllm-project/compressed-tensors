@@ -34,10 +34,12 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
     @classmethod
     def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
         # MXFP4 uses GROUP strategy (not TENSOR_GROUP), so there is no
-        # weight_global_scale or input_global_scale parameter
+        # weight_global_scale parameter
         param_names = ("weight_packed", "weight_scale")
         if not getattr_chain(scheme, "weights.symmetric", True):
             param_names += ("weight_zero_point",)
+        if not getattr_chain(scheme, "input_activations.dynamic", True):
+            param_names += ("input_global_scale",)
         return param_names
 
     @classmethod
