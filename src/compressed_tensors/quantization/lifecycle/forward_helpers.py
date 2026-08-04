@@ -392,8 +392,8 @@ def adapt_scale_and_zp_for_triton(
         scale = scale.unsqueeze(1).expand(num_rows, 1)
     elif scale.shape[0] == 1:
         scale = scale.expand(num_rows, -1)
-    if not scale.is_contiguous():
-        scale = scale.contiguous()
+    scale = scale.contiguous()
+
     if zero_point is not None:
         if zero_point.ndim == 0:
             zero_point = zero_point.expand(num_rows, 1)
@@ -401,8 +401,7 @@ def adapt_scale_and_zp_for_triton(
             zero_point = zero_point.unsqueeze(1).expand(num_rows, 1)
         elif zero_point.shape[0] == 1:
             zero_point = zero_point.expand(num_rows, -1)
-        if not zero_point.is_contiguous():
-            zero_point = zero_point.contiguous()
+        zero_point = zero_point.contiguous()
     return scale, zero_point
 
 
