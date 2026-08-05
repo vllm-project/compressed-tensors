@@ -246,6 +246,7 @@ def _quantize_kernel(
     num_scale_cols,
     quant_type: tl.constexpr,  # QUANT_TYPE_INT or QUANT_TYPE_FLOAT
     num_bits: tl.constexpr,  # 4 or 8
+    use_intel_libdevice: tl.constexpr,
     BLOCK_SIZE_R: tl.constexpr,
     BLOCK_SIZE_C: tl.constexpr,
 ):
@@ -319,7 +320,10 @@ def _quantize_kernel(
     q_max = tl.load(q_max_ptr)
     if quant_type == QUANT_TYPE_INT:
         output = tl.clamp(output, q_min, q_max)
-        output = tl.extra.cuda.libdevice.rint(output)
+        if use_intel_libdevice:
+            output = tl.extra.intel.libdevice.rint(output)
+        else:
+            output = tl.extra.cuda.libdevice.rint(output)
     elif quant_type == QUANT_TYPE_FLOAT:
         output = tl.clamp(output, q_min, q_max)
         if num_bits == 4:
@@ -345,8 +349,8 @@ def _is_fp8_supported(device: torch.device) -> bool:
         major, _ = torch.get_device_module().get_device_capability(device)
         return major >= 9  # SM90+ (Hopper/Ada)
     elif device.type == "xpu":
-        # Intel XPU: conservatively disable FP8 in Triton
-        return False
+        # Intel XPU: Triton FP8 casting works on the current backend.
+        return True
     return False
 
 
@@ -503,6 +507,7 @@ def _quantize_triton(
         num_scale_cols,
         quant_type=quant_type,
         num_bits=num_bits,
+        use_intel_libdevice=x.device.type == "xpu",
         BLOCK_SIZE_R=block_size_r,
         BLOCK_SIZE_C=block_size_c,
     )
