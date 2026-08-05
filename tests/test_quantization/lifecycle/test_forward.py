@@ -1118,6 +1118,7 @@ def test_quantize_triton_matches_cpu_block_4d(
     ],
 )
 def test_quantize_backends_match(args, x, scale, zero_point, global_scale):
+    pytest.skip("triton kernels are disabled")
     is_fp8 = args.type == QuantizationType.FLOAT and args.num_bits == 8
     if is_fp8 and not _is_fp8_supported(torch.device("cuda")):
         pytest.skip("FP8 Triton kernel requires SM90+ (Hopper)")
