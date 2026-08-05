@@ -5,6 +5,8 @@ from collections import OrderedDict
 from copy import deepcopy
 
 import torch
+import torch.distributed as dist
+from compressed_tensors.distributed import is_distributed
 from compressed_tensors.modeling import (
     initialize_hooked_attention,
     initialize_hooked_kv_cache,
@@ -12,7 +14,7 @@ from compressed_tensors.modeling import (
 from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
-    is_attention_module,
+    is_cached_attention_module,
 )
 from compressed_tensors.quantization.quant_args import QuantizationArgs
 from compressed_tensors.quantization.quant_config import (
@@ -30,6 +32,7 @@ from compressed_tensors.utils.safetensors_load import get_safetensors_folder
 from loguru import logger
 from safetensors import safe_open
 from torch.nn import Module
+from tqdm import tqdm
 
 
 __all__ = [
@@ -95,7 +98,10 @@ def load_pretrained_quantization_parameters(
 
 
 def apply_quantization_config(
-    model: Module, config: QuantizationConfig | None, run_compressed: bool = False
+    model: Module,
+    config: QuantizationConfig | None,
+    run_compressed: bool = False,
+    show_progress: bool = True,
 ):
     """
     Initializes the model for quantization in-place based on the given config.
@@ -105,6 +111,7 @@ def apply_quantization_config(
     :param config: quantization config
     :param run_compressed: Whether the model will be run in compressed mode or
         decompressed fully on load
+    :param show_progress: Whether to show progress bar during quantization
     """
     config = deepcopy(config)
     if config is None:  # see PR #180
@@ -128,23 +135,38 @@ def apply_quantization_config(
             target_to_scheme[target] = scheme
 
     # mark appropriate layers for quantization by setting their quantization schemes
-    for name, submodule in match_named_modules(
-        model, target_to_scheme, config.ignore, warn_on_fail=True
-    ):
-        # mark modules to be quantized by adding
-        # quant scheme to the matching layers
-        matched_targets = match_targets(name, submodule, target_to_scheme)
-        scheme = _scheme_from_targets(target_to_scheme, matched_targets, name)
-        # target matched - add layer and scheme to target list
-        submodule.quantization_scheme = scheme
+    matched_modules = list(
+        match_named_modules(model, target_to_scheme, config.ignore, warn_on_fail=True)
+    )
 
-        if is_attention_module(submodule) and is_narrow_match(
+    for name, module in tqdm(
+        matched_modules,
+        desc="Applying quantization config",
+        disable=(not show_progress),
+        position=(dist.get_rank() if is_distributed() else 0),
+    ):
+        # a module may match multiple scheme targets
+        matched_targets = match_targets(name, module, target_to_scheme)
+        scheme = _scheme_from_targets(target_to_scheme, matched_targets, name)
+
+        # attention quantization
+        if is_cached_attention_module(module) and is_narrow_match(
             model, scheme.targets, name
         ):
-            initialize_hooked_attention(model, submodule)
+            module.quantization_scheme = scheme
+            initialize_hooked_attention(model, module)
+            initialize_module_for_quantization(
+                module, force_zero_point=force_zero_point
+            )
+            module.quantization_status = config.quantization_status
 
-        initialize_module_for_quantization(submodule, force_zero_point=force_zero_point)
-        submodule.quantization_status = config.quantization_status
+        # linear quantization
+        elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            module.quantization_scheme = scheme
+            initialize_module_for_quantization(
+                module, force_zero_point=force_zero_point
+            )
+            module.quantization_status = config.quantization_status
 
 
 def _apply_kv_cache_scheme(
@@ -153,7 +175,7 @@ def _apply_kv_cache_scheme(
     status: QuantizationStatus,
 ):
     if not kv_cache_scheme.symmetric:
-        raise logger.warning("vLLM does not support asymmetric kv cache quantization")
+        logger.warning("vLLM does not support asymmetric kv cache quantization")
 
     # applies and initializes kv cache quantization
     # this step cannot come after attention apply/initialize
@@ -163,7 +185,7 @@ def _apply_kv_cache_scheme(
         input_activations=kv_cache_scheme,
     )
     for submodule in model.modules():
-        if is_attention_module(submodule):
+        if is_cached_attention_module(submodule):
             submodule.quantization_scheme = scheme
             initialize_hooked_kv_cache(model, submodule)
             initialize_module_for_quantization(submodule, force_zero_point=False)

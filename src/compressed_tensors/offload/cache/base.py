@@ -80,6 +80,14 @@ class OffloadCache(MutableMapping, ABC):
                 return DiskCache
             case ("disk", True):
                 return DistributedDiskCache
+            case ("meta", True):
+                raise ValueError(
+                    f"Attempted to create OffloadCache of type {device_type} and "
+                    f"distributed={distributed}. This may be a downstream result of "
+                    "attempting to offload a model to disk without having at least one "
+                    "module on CPU. Please increase the amount of CPU memory available "
+                    "via `from_pretrained(..., max_memory=...)` and try again."
+                )
             case _:
                 raise NotImplementedError(
                     f"Offload of type {device_type} and "
@@ -254,9 +262,11 @@ class OffloadCache(MutableMapping, ABC):
         if not OffloadCache.offloading_disabled:
             restore_value = OffloadCache.offloading_disabled
             OffloadCache.offloading_disabled = True
-            yield
-            OffloadCache.offloading_disabled = restore_value
-            OffloadCache.keep_onloaded_values.clear()
+            try:
+                yield
+            finally:
+                OffloadCache.offloading_disabled = restore_value
+                OffloadCache.keep_onloaded_values.clear()
         else:
             yield
 
@@ -271,7 +281,9 @@ class OffloadCache(MutableMapping, ABC):
         if not OffloadCache.onloading_disabled:
             restore_value = OffloadCache.onloading_disabled
             OffloadCache.onloading_disabled = True
-            yield
-            OffloadCache.onloading_disabled = restore_value
+            try:
+                yield
+            finally:
+                OffloadCache.onloading_disabled = restore_value
         else:
             yield
