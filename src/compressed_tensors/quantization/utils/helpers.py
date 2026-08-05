@@ -183,8 +183,7 @@ def compute_dynamic_scales_and_zp(
             QuantizationStrategy.GROUP,
         )
         raise ValueError(
-            "Dynamic quantization is only supported for ",
-            f"{supported_strategies}",
+            f"Dynamic quantization is only supported for {supported_strategies}"
         )
 
     if not reduce_dims:

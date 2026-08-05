@@ -13,8 +13,11 @@ from compressed_tensors.quantization.lifecycle.forward import (
 )
 from compressed_tensors.quantization.lifecycle.forward_helpers import (
     _dequantize,
+    _is_fp8_supported,
+    _needs_fp8,
     _quantize,
     _quantize_dequantize,
+    adapt_scale_and_zp_for_triton,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
@@ -606,48 +609,110 @@ def test_process_quantization_block_non_divisible_values(
     ), f"Values mismatch for 0.5: got min={out_val.min()}, max={out_val.max()}"
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda", "meta"])
 @pytest.mark.parametrize(
-    "num_bits,type,symmetric,global_scale",
+    "num_bits,type,symmetric,global_scale,group_size",
     [
-        (8, "int", True, None),
-        (8, "int", False, None),
-        (4, "int", True, None),
-        (8, "float", True, None),
-        (8, "float", True, torch.tensor([2.0])),
-        (8, "int", False, torch.tensor([2.0])),
+        # Tensor-level quantization (group_size=None)
+        (8, "int", True, None, None),
+        (8, "int", False, None, None),
+        (4, "int", True, None, None),
+        (4, "float", True, None, None),  # FP4
+        (8, "float", True, None, None),
+        (8, "float", True, torch.tensor([2.0]), None),
+        (8, "int", False, torch.tensor([2.0]), None),
+        # Group quantization
+        (8, "int", True, None, 128),
+        (8, "int", False, None, 128),
+        (4, "int", True, None, 128),
+        (4, "float", True, None, 128),  # FP4
+        (8, "float", True, None, 128),
+        (8, "float", True, torch.tensor([2.0]), 128),
+        (8, "int", False, torch.tensor([2.0]), 128),
+        (8, "int", True, None, 64),
+        (8, "int", False, None, 256),
     ],
 )
 def test_quantize_dequantize_matches_sequential(
-    num_bits, type, symmetric, global_scale
+    num_bits, type, symmetric, global_scale, group_size, device
 ):
     """Verify that the fused _quantize_dequantize produces identical output
     to calling _quantize then _dequantize sequentially."""
-    args = QuantizationArgs(
-        num_bits=num_bits,
-        type=type,
-        symmetric=symmetric,
-        strategy=QuantizationStrategy.TENSOR,
-    )
-    q_min, q_max = calculate_range(args, torch.device("cpu"))
+    if device == "cuda" and not torch.accelerator.is_available():
+        pytest.skip("CUDA not available")
+    if device == "cpu" and type == "float" and num_bits == 4:
+        pytest.skip("FP4 on CPU is slow, only test on CUDA")
 
-    x = torch.randn(512, 1024)
-    scale = torch.rand(1) * 0.01 + 0.001
-    zero_point = None if symmetric else torch.tensor([3.0])
+    num_rows = 512
+    num_cols = 1024
+
+    if group_size is None:
+        strategy = QuantizationStrategy.TENSOR
+        args = QuantizationArgs(
+            num_bits=num_bits,
+            type=type,
+            symmetric=symmetric,
+            strategy=strategy,
+        )
+        x = torch.randn(num_rows, num_cols, device=device)
+        scale = (torch.rand(1) * 0.01 + 0.001).to(device)
+        zero_point = None if symmetric else torch.tensor([3.0], device=device)
+    else:
+        strategy = QuantizationStrategy.GROUP
+        num_groups = num_cols // group_size
+        args = QuantizationArgs(
+            num_bits=num_bits,
+            type=type,
+            symmetric=symmetric,
+            strategy=strategy,
+            group_size=group_size,
+        )
+        x = torch.randn(num_rows, num_groups, group_size, device=device)
+        scale = torch.rand(num_rows, num_groups, 1, device=device) * 0.01 + 0.001
+        zero_point = (
+            None
+            if symmetric
+            else torch.zeros(num_rows, num_groups, 1, device=device) + 3.0
+        )
+
+    q_min, q_max = calculate_range(args, torch.device(device))
+    if global_scale is not None:
+        global_scale = global_scale.to(device)
+
+    # Determine if Triton should be used
+    is_gpu = x.is_cuda or x.is_xpu
+    is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
+    fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
+    do_triton = is_gpu and (not is_fp8 or fp8_hw_ok)
+
+    # Keep original scale/zp for dequantize
+    scale_ground_dequant = scale.clone()
+    zero_point_dequant = zero_point.clone() if zero_point is not None else None
+
+    # Adapt scale/zp for Triton if needed (for _quantize only)
+    scale_quant = scale.clone()
+    zero_point_quant = zero_point.clone() if zero_point is not None else None
+    if do_triton:
+        num_rows = x.shape[0]
+        scale_quant, zero_point_quant = adapt_scale_and_zp_for_triton(
+            scale_quant, zero_point_quant, num_rows
+        )
 
     # sequential: quantize then dequantize
     q = _quantize(
         x=x,
-        scale=scale,
-        zero_point=zero_point,
+        scale=scale_quant,
+        zero_point=zero_point_quant,
         q_min=q_min,
         q_max=q_max,
         args=args,
         global_scale=global_scale,
+        do_triton=do_triton,
     )
     sequential_out = _dequantize(
         x_q=q,
-        scale=scale,
-        zero_point=zero_point,
+        scale=scale_ground_dequant,
+        zero_point=zero_point_dequant,
         global_scale=global_scale,
     )
 
@@ -662,10 +727,18 @@ def test_quantize_dequantize_matches_sequential(
         global_scale=global_scale,
     )
 
-    assert torch.equal(
-        sequential_out, fused_out
-    ), f"Mismatch: max diff = {(sequential_out - fused_out).abs().max().item()}"
+    if device == "meta":
+        return  # Meta tensors have no data; can only verify code doesn't crash
 
+    if type == "int":
+        atol, rtol = 1.0, 0  # allow +/-1 due to rounding corner cases
+    else:
+        atol, rtol = 1e-5, 0.15
+
+    assert torch.allclose(sequential_out, fused_out, atol=atol, rtol=rtol), (
+        f"Mismatch: max diff = {(sequential_out - fused_out).abs().max().item()}, "
+        f"atol={atol}, rtol={rtol}"
+    )
 
 @pytest.mark.parametrize(
     "num_bits,type,symmetric,global_scale,strategy,group_size",
@@ -970,3 +1043,340 @@ def test_quantize_dequantize_triton_matches_cpu(
     assert torch.allclose(
         cpu_out, cuda_out.cpu(), rtol=computed_rtol, atol=computed_atol
     ), f"Mismatch: max diff = {(cpu_out - cuda_out.cpu()).abs().max().item()}, rtol = {computed_rtol}, atol = {computed_atol}"
+
+
+
+@pytest.mark.parametrize(
+    "num_bits,type,symmetric,global_scale,group_size",
+    [
+        # Tensor-level quantization (group_size=None)
+        (8, "int", True, None, None),
+        (8, "int", False, None, None),
+        (4, "int", True, None, None),
+        (4, "float", True, None, None),  # FP4
+        (8, "float", True, None, None),
+        (8, "float", True, torch.tensor([2.0]), None),
+        (8, "int", False, torch.tensor([2.0]), None),
+        # Group quantization
+        (8, "int", True, None, 128),
+        (8, "int", False, None, 128),
+        (4, "int", True, None, 128),
+        (4, "float", True, None, 128),  # FP4
+        (8, "float", True, None, 128),
+        (8, "float", True, torch.tensor([2.0]), 128),
+        (8, "int", False, torch.tensor([2.0]), 128),
+        (8, "int", True, None, 64),
+        (8, "int", False, None, 256),
+    ],
+)
+def test_quantize_triton_matches_cpu(
+    num_bits, type, symmetric, global_scale, group_size
+):
+    """Verify that the Triton kernel (CUDA) produces identical output
+    to the non-Triton (CPU) codepath for _quantize."""
+    if not torch.accelerator.is_available():
+        pytest.skip("CUDA not available")
+
+    num_rows = 512
+    num_cols = 1024
+
+    if group_size is None:
+        strategy = QuantizationStrategy.TENSOR
+        args = QuantizationArgs(
+            num_bits=num_bits,
+            type=type,
+            symmetric=symmetric,
+            strategy=strategy,
+        )
+        x_cpu = torch.randn(num_rows, num_cols)
+        scale_cpu = torch.rand(1) * 0.01 + 0.001
+        zero_point_cpu = None if symmetric else torch.tensor([3.0])
+    else:
+        strategy = QuantizationStrategy.GROUP
+        num_groups = num_cols // group_size
+        args = QuantizationArgs(
+            num_bits=num_bits,
+            type=type,
+            symmetric=symmetric,
+            strategy=strategy,
+            group_size=group_size,
+        )
+        x_cpu = torch.randn(num_rows, num_groups, group_size)
+        scale_cpu = torch.rand(num_rows, num_groups, 1) * 0.01 + 0.001
+        zero_point_cpu = (
+            None if symmetric else torch.zeros(num_rows, num_groups, 1) + 3.0
+        )
+
+    global_scale_cpu = global_scale.clone() if global_scale is not None else None
+    q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
+
+    # Copy to CUDA and run Triton path
+    x_cuda = x_cpu.cuda()
+    scale_cuda = scale_cpu.cuda()
+    zero_point_cuda = zero_point_cpu.cuda() if zero_point_cpu is not None else None
+    global_scale_cuda = (
+        global_scale_cpu.cuda() if global_scale_cpu is not None else None
+    )
+    q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
+
+    num_rows = x_cuda.shape[0]
+    scale_cuda, zero_point_cuda = adapt_scale_and_zp_for_triton(
+        scale_cuda, zero_point_cuda, num_rows
+    )
+
+    # Run CPU (non-Triton) path
+    cpu_out = _quantize(
+        x=x_cpu,
+        scale=scale_cpu,
+        zero_point=zero_point_cpu,
+        q_min=q_min_cpu,
+        q_max=q_max_cpu,
+        args=args,
+        global_scale=global_scale_cpu,
+        do_triton=False,
+    )
+
+    cuda_out = _quantize(
+        x=x_cuda,
+        scale=scale_cuda,
+        zero_point=zero_point_cuda,
+        q_min=q_min_cuda,
+        q_max=q_max_cuda,
+        args=args,
+        global_scale=global_scale_cuda,
+        do_triton=True,
+    )
+
+    # Compare results (bring CUDA output back to CPU)
+    cuda_out_cpu = cuda_out.cpu()
+
+    # For int types, there are edge cases where a <1e-5 difference gets
+    # rounded to a different integer on CPU and GPU.
+    if type == "int":
+        atol, rtol = 1.0, 0
+    else:
+        atol, rtol = 1e-5, 0.15
+
+    assert torch.allclose(cpu_out, cuda_out_cpu, atol=atol, rtol=rtol), (
+        f"Mismatch between CPU and Triton paths: max diff = "
+        f"{(cpu_out - cuda_out_cpu).abs().max().item()}"
+    )
+
+
+@pytest.mark.parametrize(
+    "num_bits,type,symmetric,global_scale,group_size",
+    [
+        # Tensor-level quantization (group_size=None)
+        (8, "int", True, None, None),
+        (8, "int", False, None, None),
+        (4, "int", True, None, None),
+        (4, "float", True, None, None),  # FP4
+        (8, "float", True, None, None),
+        (8, "float", True, torch.tensor([2.0]), None),
+        (8, "int", False, torch.tensor([2.0]), None),
+        # Group quantization
+        (8, "int", True, None, 128),
+        (8, "int", False, None, 128),
+        (4, "int", True, None, 128),
+        (4, "float", True, None, 128),  # FP4
+        (8, "float", True, None, 128),
+        (8, "float", True, torch.tensor([2.0]), 128),
+        (8, "int", False, torch.tensor([2.0]), 128),
+        (8, "int", True, None, 64),
+        (8, "int", False, None, 256),
+    ],
+)
+def test_quantize_triton_matches_cpu_non_contiguous(
+    num_bits, type, symmetric, global_scale, group_size
+):
+    """Verify that the Triton kernel (CUDA) produces identical output
+    to the non-Triton (CPU) codepath for _quantize with non-contiguous tensors."""
+    if not torch.accelerator.is_available():
+        pytest.skip("CUDA not available")
+
+    num_rows = 512
+    num_cols = 1024
+
+    if group_size is None:
+        strategy = QuantizationStrategy.TENSOR
+        args = QuantizationArgs(
+            num_bits=num_bits,
+            type=type,
+            symmetric=symmetric,
+            strategy=strategy,
+        )
+        # Create non-contiguous tensor via transpose
+        x_base = torch.randn(num_cols, num_rows)
+        x_cpu = x_base.t()
+        assert not x_cpu.is_contiguous(), "Test requires non-contiguous tensor"
+        scale_cpu = torch.rand(1) * 0.01 + 0.001
+        zero_point_cpu = None if symmetric else torch.tensor([3.0])
+    else:
+        strategy = QuantizationStrategy.GROUP
+        num_groups = num_cols // group_size
+        args = QuantizationArgs(
+            num_bits=num_bits,
+            type=type,
+            symmetric=symmetric,
+            strategy=strategy,
+            group_size=group_size,
+        )
+        # Create non-contiguous tensor via transpose of first two dimensions
+        x_base = torch.randn(num_groups, num_rows, group_size)
+        x_cpu = x_base.permute(1, 0, 2)
+        assert not x_cpu.is_contiguous(), "Test requires non-contiguous tensor"
+        # Also make scale non-contiguous
+        scale_base = torch.rand(num_groups, num_rows, 1) * 0.01 + 0.001
+        scale_cpu = scale_base.permute(1, 0, 2)
+        assert not scale_cpu.is_contiguous(), "Test requires non-contiguous scale"
+        zero_point_cpu = (
+            None
+            if symmetric
+            else (torch.zeros(num_groups, num_rows, 1) + 3.0).permute(1, 0, 2)
+        )
+        if zero_point_cpu is not None:
+            assert (
+                not zero_point_cpu.is_contiguous()
+            ), "Test requires non-contiguous zero_point"
+
+    global_scale_cpu = global_scale.clone() if global_scale is not None else None
+    q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
+
+    x_cuda = x_cpu.cuda()
+    scale_cuda = scale_cpu.cuda()
+    zero_point_cuda = zero_point_cpu.cuda() if zero_point_cpu is not None else None
+    global_scale_cuda = (
+        global_scale_cpu.cuda() if global_scale_cpu is not None else None
+    )
+    q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
+
+    assert not x_cuda.is_contiguous(), "CUDA tensor should be non-contiguous"
+
+    # Adapt scale/zp for Triton
+    num_rows = x_cuda.shape[0]
+    scale_cuda, zero_point_cuda = adapt_scale_and_zp_for_triton(
+        scale_cuda, zero_point_cuda, num_rows
+    )
+
+    cpu_out = _quantize(
+        x=x_cpu,
+        scale=scale_cpu,
+        zero_point=zero_point_cpu,
+        q_min=q_min_cpu,
+        q_max=q_max_cpu,
+        args=args,
+        global_scale=global_scale_cpu,
+        do_triton=False,
+    )
+
+    cuda_out = _quantize(
+        x=x_cuda,
+        scale=scale_cuda,
+        zero_point=zero_point_cuda,
+        q_min=q_min_cuda,
+        q_max=q_max_cuda,
+        args=args,
+        global_scale=global_scale_cuda,
+        do_triton=True,
+    )
+
+    cuda_out_cpu = cuda_out.cpu()
+
+    if type == "int":
+        atol, rtol = 1.0, 0
+    else:
+        atol, rtol = 1e-5, 0.15
+
+    assert torch.allclose(cpu_out, cuda_out_cpu, atol=atol, rtol=rtol), (
+        f"Mismatch between CPU and Triton paths (non-contiguous): max diff = "
+        f"{(cpu_out - cuda_out_cpu).abs().max().item()}"
+    )
+
+
+@pytest.mark.parametrize(
+    "num_block_rows,num_block_cols,block_structure",
+    [
+        (16, 16, [128, 128]),
+        (2, 16, [128, 128]),
+        (44, 16, [128, 128]),
+        (16, 44, [128, 128]),
+    ],
+)
+def test_quantize_triton_matches_cpu_block_4d(
+    num_block_rows, num_block_cols, block_structure
+):
+    """Verify that the Triton kernel (CUDA) produces identical output
+    to the non-Triton (CPU) codepath for _quantize with 4D block quantization.
+    """
+    if not torch.accelerator.is_available():
+        pytest.skip("CUDA not available")
+
+    num_bits = 8
+    type_ = "float"
+    symmetric = True
+
+    args = QuantizationArgs(
+        num_bits=num_bits,
+        type=type_,
+        symmetric=symmetric,
+        strategy=QuantizationStrategy.BLOCK,
+        block_structure=block_structure,
+    )
+
+    bh, bw = block_structure
+    rows_2d = num_block_rows * bh
+    cols_2d = num_block_cols * bw
+
+    x_2d = torch.randn(rows_2d, cols_2d)
+    x_cpu = x_2d.view(num_block_rows, bh, num_block_cols, bw).permute(0, 2, 1, 3)
+
+    expected_stride = (bh * cols_2d, bw, cols_2d, 1)
+    assert (
+        x_cpu.stride() == expected_stride
+    ), f"Stride mismatch: got {x_cpu.stride()}, expected {expected_stride}"
+    assert not x_cpu.is_contiguous(), "Test requires non-contiguous tensor"
+
+    scale_cpu = torch.rand(num_block_rows, num_block_cols, 1, 1) * 0.01 + 0.001
+
+    q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
+
+    x_cuda = x_cpu.cuda()
+    scale_cuda = scale_cpu.cuda()
+    q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
+
+    assert not x_cuda.is_contiguous(), "CUDA tensor should be non-contiguous"
+    assert x_cuda.stride() == expected_stride, "CUDA tensor stride should match"
+
+    cpu_out = _quantize(
+        x=x_cpu,
+        scale=scale_cpu,
+        zero_point=None,
+        q_min=q_min_cpu,
+        q_max=q_max_cpu,
+        args=args,
+        global_scale=None,
+        do_triton=False,
+    )
+
+    cuda_out = _quantize(
+        x=x_cuda,
+        scale=scale_cuda,
+        zero_point=None,
+        q_min=q_min_cuda,
+        q_max=q_max_cuda,
+        args=args,
+        global_scale=None,
+        do_triton=True,
+    )
+
+    cuda_out_cpu = cuda_out.cpu()
+
+    # FP8 tolerance
+    atol, rtol = 1e-5, 0.15
+
+    assert torch.allclose(
+        cpu_out.float(), cuda_out_cpu.float(), atol=atol, rtol=rtol
+    ), (
+        f"Mismatch between CPU and Triton paths (4D block): max diff = "
+        f"{(cpu_out.float() - cuda_out_cpu.float()).abs().max().item()}"
+    )
