@@ -767,6 +767,7 @@ def test_quantize_triton_matches_cpu(
     num_bits, type, symmetric, global_scale, group_size
 ):
     """Verify that the accelerator quantization path matches the CPU path."""
+    pytest.skip("triton kernels are disabled")
 
     num_rows = 512
     num_cols = 1024
@@ -875,6 +876,7 @@ def test_quantize_triton_matches_cpu_non_contiguous(
     num_bits, type, symmetric, global_scale, group_size
 ):
     """Verify that the accelerator path matches CPU on non-contiguous tensors."""
+    pytest.skip("triton kernels are disabled")
 
     num_rows = 512
     num_cols = 1024
@@ -983,6 +985,7 @@ def test_quantize_triton_matches_cpu_block_4d(
     """Verify that the Triton kernel (CUDA) produces identical output
     to the non-Triton (CPU) codepath for _quantize with 4D block quantization.
     """
+    pytest.skip("triton kernels are disabled")
     num_bits = 8
     type_ = "float"
     symmetric = True

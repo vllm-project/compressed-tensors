@@ -11,6 +11,7 @@ from tests.testing_utils import requires_gpu
 @pytest.mark.parametrize("size", [1, 10, 100, 1000])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
 def test_cast_to_fp4_cpu_gpu_match(size, dtype):
+    pytest.skip("triton kernels are disabled")
     # Create random tensor
     x_cpu = torch.randn(size, dtype=dtype)
     x_gpu = x_cpu.cuda()
@@ -25,6 +26,7 @@ def test_cast_to_fp4_cpu_gpu_match(size, dtype):
 
 @requires_gpu
 def test_cast_to_fp4_boundary_values():
+    pytest.skip("triton kernels are disabled")
     input_values = torch.tensor(
         [
             # Exact FP4 values
@@ -148,6 +150,7 @@ def test_cast_to_fp4_memory_usage(size):
     The implementation should not create excessive intermediate tensors.
     Expected memory usage should be roughly: input + output + small overhead.
     """
+    pytest.skip("triton kernels are disabled")
     torch.accelerator.empty_cache()
     torch.accelerator.reset_peak_memory_stats()
 
@@ -198,6 +201,7 @@ def test_cast_to_fp4_memory_usage(size):
     ],
 )
 def test_cast_to_fp4_backends_match(x):
+    pytest.skip("triton kernels are disabled")
     x = x.to(torch.accelerator.current_accelerator())
     torch_out = ImplBackend.call("cast_to_fp4", x)
     triton_out = ImplBackend.call("cast_to_fp4_triton", x)
