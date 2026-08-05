@@ -2,6 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import math
+import subprocess
+import sys
+import textwrap
 
 import pytest
 import torch
@@ -1074,4 +1077,62 @@ def test_quantize_triton_matches_cpu_block_4d(
     ), (
         f"Mismatch between CPU and Triton paths (4D block): max diff = "
         f"{(cpu_out.float() - cuda_out_cpu.float()).abs().max().item()}"
+    )
+
+
+def test_import_and_quantize_without_triton():
+    """
+    Triton is an optional dependency: it is not in ``install_requires`` and the
+    ``import triton`` at the top of ``forward_helpers`` is wrapped in a
+    try/except. Any Triton-only symbol referenced at module scope therefore
+    makes ``import compressed_tensors`` fail outright on CPU-only installs.
+
+    Run in a subprocess with ``triton`` masked out so the check is meaningful
+    even on machines where Triton happens to be installed.
+    """
+    script = textwrap.dedent(
+        """
+        import sys
+
+        class _BlockTriton:
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == "triton" or fullname.startswith("triton."):
+                    raise ImportError("triton is masked for this test")
+                return None
+
+        for name in list(sys.modules):
+            if name == "triton" or name.startswith("triton."):
+                del sys.modules[name]
+        sys.meta_path.insert(0, _BlockTriton())
+
+        import torch
+        import compressed_tensors  # noqa: F401
+        from compressed_tensors.quantization.lifecycle import forward_helpers
+        from compressed_tensors.quantization.quant_args import QuantizationArgs
+
+        assert forward_helpers._triton_available is False, "triton mask did not take"
+
+        # the pure-torch fallback must still quantize
+        args = QuantizationArgs(
+            num_bits=8, type="int", symmetric=True, strategy="tensor"
+        )
+        out = forward_helpers._quantize(
+            x=torch.tensor([[-1.0, 0.0, 1.0, 2.0]]),
+            scale=torch.tensor(0.05),
+            zero_point=torch.tensor(0),
+            q_min=torch.tensor(-128.0),
+            q_max=torch.tensor(127.0),
+            args=args,
+            do_triton=False,
+        )
+        assert out.shape == (1, 4), out.shape
+        print("OK")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True
+    )
+    assert result.returncode == 0, (
+        "compressed_tensors must import and quantize without Triton:\n"
+        f"{result.stdout}\n{result.stderr}"
     )

@@ -21,7 +21,6 @@ from compressed_tensors.quantization.quant_args import (
     round_to_quantized_type_args,
 )
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
-from compressed_tensors.quantization.utils.fp4_utils import _round_to_fp4
 
 
 def _apply_quantize_op(
@@ -237,11 +236,14 @@ def _quantize_dequantize(
     return dequant * scale
 
 
-# Quantization type constants for Triton kernel
-QUANT_TYPE_INT = tl.constexpr(0)
-QUANT_TYPE_FLOAT = tl.constexpr(1)
-
 if _triton_available:
+    # `_round_to_fp4` is only defined when Triton is installed, and the constants
+    # below call into `triton.language`, so both must stay behind this guard.
+    from compressed_tensors.quantization.utils.fp4_utils import _round_to_fp4
+
+    # Quantization type constants for Triton kernel
+    QUANT_TYPE_INT = tl.constexpr(0)
+    QUANT_TYPE_FLOAT = tl.constexpr(1)
 
     @triton.jit
     def _quantize_kernel(
