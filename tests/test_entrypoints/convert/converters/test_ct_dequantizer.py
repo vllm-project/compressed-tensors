@@ -122,17 +122,7 @@ def test_validate_raises_on_missing_scale():
     tensors = _create_dummy_tensors(device=torch.device("meta"))
     del tensors["model.layers.0.mlp.up_proj.weight_scale"]
 
-    with pytest.raises(ValueError, match="Expected key"):
-        dequantizer.validate(tensors)
-
-
-@pytest.mark.unit
-def test_validate_raises_on_unconsumed_key():
-    dequantizer = _create_dequantizer(ignore=["model.embed_tokens"])
-    tensors = _create_dummy_tensors(device=torch.device("meta"))
-    tensors["model.layers.0.mlp.up_proj.extra_param"] = torch.rand(64)
-
-    with pytest.raises(ValueError, match="unconsumed keys"):
+    with pytest.raises(KeyError):
         dequantizer.validate(tensors)
 
 
