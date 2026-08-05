@@ -13,11 +13,7 @@ from compressed_tensors.quantization import QuantizationArgs, QuantizationType
 from compressed_tensors.quantization.lifecycle.forward import quantize
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_pack_unpack(device):
-    if device == "cuda" and not torch.accelerator.is_available():
-        pytest.skip("CUDA not available")
-
+def test_pack_unpack():
     x = torch.Tensor(
         [
             [-0.5000, -6.0000, -0.5000, -1.5000, -1.0000, 6.0000, 0.0000, -0.0000],
@@ -28,9 +24,9 @@ def test_pack_unpack(device):
     )
 
     dense_dtype = torch.bfloat16
-    x = x.to(dtype=dense_dtype, device=device)
+    x = x.to(dense_dtype)
     m, n = x.shape
-    packed = pack_fp4_to_uint8(x.clone())  # clone to avoid mutation
+    packed = pack_fp4_to_uint8(x)
     assert packed.dtype == torch.uint8
     unpacked = unpack_fp4_from_uint8(packed, m, n, dtype=dense_dtype)
     assert unpacked.dtype == dense_dtype
@@ -38,23 +34,17 @@ def test_pack_unpack(device):
     assert torch.equal(unpacked, x)  # misleading as -0 and 0 are considered equal
     sign_bitx = torch.signbit(x)
     sign_bitout = torch.signbit(unpacked)
-    # For nonzero values, sign bits must match exactly
-    nonzero_mask = x != 0
-    assert torch.equal(sign_bitout[nonzero_mask], sign_bitx[nonzero_mask])
+    assert torch.equal(sign_bitout, sign_bitx)
 
 
-@pytest.mark.parametrize("device", ["cpu", "cuda"])
-def test_pack_unpack_odd_dims(device):
-    if device == "cuda" and not torch.accelerator.is_available():
-        pytest.skip("CUDA not available")
-
+def test_pack_unpack_odd_dims():
     x = torch.Tensor(
         [
             [-0.5000, -6.0000, -0.5000, -1.5000, -1.0000, 6.0000, 0.0000],
             [-1.0000, -6.0000, -0.5000, -0.0000, 0.5000, 0.5000, -0.0000],
             [1.5000, 6.0000, -0.0000, -0.5000, 1.0000, 1.0000, -0.0000],
         ]
-    ).to(device)
+    )
 
     with pytest.raises((ValueError, torch._dynamo.exc.Unsupported)):
         _ = pack_fp4_to_uint8(x)
