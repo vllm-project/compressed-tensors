@@ -48,9 +48,7 @@ class ImplBackend:
     _fn_registry: dict[str, Callable] = {}  # fn.__name__ -> backend_fn
 
     @classmethod
-    def register(
-        cls, name: str, req: Callable[..., bool], priority: int | str
-    ):
+    def register(cls, name: str, req: Callable[..., bool], priority: int | str):
         """
         Decorator that registers a backend implementation.
 
