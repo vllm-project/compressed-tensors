@@ -714,6 +714,7 @@ def test_quantize_dequantize_matches_sequential(
         scale=scale_ground_dequant,
         zero_point=zero_point_dequant,
         global_scale=global_scale,
+        args=args,
     )
 
     # fused
@@ -732,6 +733,10 @@ def test_quantize_dequantize_matches_sequential(
 
     if type == "int":
         atol, rtol = 1.0, 0  # allow +/-1 due to rounding corner cases
+    elif type == "float" and num_bits == 4:
+        # FP4 has coarse quantization levels (0, 0.5, 1, 1.5, 2, 3, 4, 6)
+        # Fused vs sequential paths may have subtle rounding differences
+        atol, rtol = 0.5, 0.15
     else:
         atol, rtol = 1e-5, 0.15
 
@@ -856,6 +861,7 @@ def test_dequantize_triton_matches_cpu(
             scale=scale_cpu,
             zero_point=zero_point_cpu,
             global_scale=global_scale_cpu,
+            args=args,
         )
 
     # Copy to CUDA and run Triton path
@@ -879,6 +885,7 @@ def test_dequantize_triton_matches_cpu(
         scale=scale_cuda,
         zero_point=zero_point_cuda,
         global_scale=global_scale_cuda,
+        args=args,
     )
 
     assert torch.allclose(

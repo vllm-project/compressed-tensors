@@ -243,6 +243,7 @@ def _apply_quantize_op(
             scale=scale,
             zero_point=zero_point,
             global_scale=global_scale,
+            args=args,
         )
 
 
@@ -589,59 +590,102 @@ def _dequantize_scalar_kernel(
     tl.store(output_ptr + offsets, output, mask=mask)
 
 
-@triton.jit
-def _dequantize_kernel(
-    output_ptr: tl.tensor,
-    input_ptr: tl.tensor,
-    scale_ptr: tl.tensor,
-    zero_point_ptr: tl.tensor,
-    global_scale_ptr: tl.tensor,
-    num_rows,
-    num_cols,
-    group_size,
-    BLOCK_SIZE_R: tl.constexpr,
-    BLOCK_SIZE_C: tl.constexpr,
-):
-    """
-    Triton kernel for dequantization: output = (x_q - zero_point) * scale
+if _triton_available:
 
-    Handles per-group scale/zero_point with configurable group_size.
-    """
-    # Set up the pids.
-    pid_r = tl.program_id(axis=0)
-    pid_c = tl.program_id(axis=1)
-    offsets_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
-    offsets_c = pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)
-    offsets = num_cols * offsets_r[:, None] + offsets_c[None, :]
+    @triton.jit
+    def _dequantize_kernel(
+        output_ptr: tl.tensor,
+        input_ptr: tl.tensor,
+        scale_ptr: tl.tensor,
+        zero_point_ptr: tl.tensor,
+        global_scale_ptr: tl.tensor,
+        # Note: unused strides for tensors with fewer dimensions are set to 0.
+        input_stride_0,
+        input_stride_1,
+        input_stride_2,
+        input_stride_3,
+        output_stride_0,
+        output_stride_1,
+        output_stride_2,
+        output_stride_3,
+        dim_0,
+        dim_1,
+        dim_2,
+        dim_3,
+        group_size,
+        num_scale_cols,
+        BLOCK_SIZE_R: tl.constexpr,
+        BLOCK_SIZE_C: tl.constexpr,
+    ):
+        """General dequantize kernel using explicit strides.
 
-    masks_r = offsets_r < num_rows
-    masks_c = offsets_c < num_cols
-    masks = masks_r[:, None] & masks_c[None, :]
+        Handles tensors up to 4D by treating them as a 2D view:
+        - row indices span dim_0 * dim_1
+        - col indices span dim_2 * dim_3
 
-    scale_offsets_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
-    scale_offsets_c = (pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)) // group_size
-    scale_offsets = (num_cols // group_size) * scale_offsets_r[
-        :, None
-    ] + scale_offsets_c[None, :]
-    scale_masks_r = scale_offsets_r < num_rows
-    scale_masks_c = scale_offsets_c < num_cols // group_size
-    scale_masks = scale_masks_r[:, None] & scale_masks_c[None, :]
+        Scale is expected to be contiguous and indexed linearly as:
+        scale_offset = (idx_0 * dim_1 + idx_1) * num_scale_cols + tile_c // group_size
+        """
+        pid_r = tl.program_id(axis=0)
+        pid_c = tl.program_id(axis=1)
 
-    input = tl.load(input_ptr + offsets, masks, 0.0)
-    scale = tl.load(scale_ptr + scale_offsets, scale_masks, 0.0)
+        tile_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
+        tile_c = pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)
 
-    if global_scale_ptr is not None:
-        global_scale = tl.load(global_scale_ptr)
-        scale = scale / global_scale.to(scale.dtype)
+        idx_0 = tile_r // dim_1
+        idx_1 = tile_r % dim_1
 
-    # Dequantize: (x_q - zero_point) * scale
-    if zero_point_ptr is not None:
-        zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
-        output = (input - zero_point) * scale
-    else:
-        output = input * scale
+        idx_2 = tile_c // dim_3
+        idx_3 = tile_c % dim_3
 
-    tl.store(output_ptr + offsets, output, masks)
+        # Compute 2D offset matrices via broadcasting:
+        # - [:, None] reshapes [R] -> [R, 1] (column vector for row indices)
+        # - [None, :] reshapes [C] -> [1, C] (row vector for col indices)
+        # Adding them produces [R, C] matrix of all (row, col) offset combinations
+        input_offsets = (
+            idx_0[:, None] * input_stride_0
+            + idx_1[:, None] * input_stride_1
+            + idx_2[None, :] * input_stride_2
+            + idx_3[None, :] * input_stride_3
+        )
+
+        output_offsets = (
+            idx_0[:, None] * output_stride_0
+            + idx_1[:, None] * output_stride_1
+            + idx_2[None, :] * output_stride_2
+            + idx_3[None, :] * output_stride_3
+        )
+
+        scale_row_idx = idx_0 * dim_1 + idx_1
+        scale_col_idx = tile_c // group_size
+        scale_offsets = scale_row_idx[:, None] * num_scale_cols + scale_col_idx[None, :]
+
+        masks_0 = idx_0 < dim_0
+        masks_1 = idx_1 < dim_1
+        masks_2 = idx_2 < dim_2
+        masks_3 = idx_3 < dim_3
+        masks = (
+            masks_0[:, None] & masks_1[:, None] & masks_2[None, :] & masks_3[None, :]
+        )
+
+        num_scale_elements = dim_0 * dim_1 * num_scale_cols
+        scale_masks = scale_offsets < num_scale_elements
+
+        input = tl.load(input_ptr + input_offsets, masks, 0.0)
+        scale = tl.load(scale_ptr + scale_offsets, scale_masks, 1.0)
+
+        if global_scale_ptr is not None:
+            global_scale = tl.load(global_scale_ptr)
+            scale = scale / global_scale.to(scale.dtype)
+
+        # Dequantize: (x_q - zero_point) * scale
+        if zero_point_ptr is not None:
+            zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
+            output = (input - zero_point) * scale
+        else:
+            output = input * scale
+
+        tl.store(output_ptr + output_offsets, output, masks)
 
 
 # Quantization type constants for Triton kernel
@@ -964,17 +1008,25 @@ def _dequantize(
     zero_point: torch.Tensor | None = None,
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
+    args: QuantizationArgs | None = None,
 ) -> torch.Tensor:
 
     # Triton only works with CUDA and XPU tensors
     do_triton: bool = x_q.is_cuda or x_q.is_xpu
 
-    if not do_triton:
+    if not do_triton or not _triton_available:
         # CPU fallback
         if global_scale is not None:
             scale = scale / global_scale
 
         dequant_value = x_q.to(scale.dtype)
+
+        # Ensure scale broadcasts correctly to x_q shape
+        while scale.ndim < dequant_value.ndim:
+            scale = scale.unsqueeze(-1)
+        if zero_point is not None:
+            while zero_point.ndim < dequant_value.ndim:
+                zero_point = zero_point.unsqueeze(-1)
 
         if zero_point is not None:
             dequant_value = dequant_value - zero_point.to(scale.dtype)
@@ -994,8 +1046,8 @@ def _dequantize(
         # Fast path: use optimized scalar kernel
         return _dequantize_scalar(x_q, scale, zero_point, dtype)
 
-    # Slow path: use group-aware kernel for per-group scales
-    return _dequantize_grouped(x_q, scale, zero_point, dtype, global_scale)
+    # Strided path: use group-aware kernel for per-group scales
+    return _dequantize_grouped(x_q, scale, zero_point, dtype, global_scale, args)
 
 
 def _dequantize_scalar(
@@ -1043,49 +1095,64 @@ def _dequantize_grouped(
     zero_point: torch.Tensor | None = None,
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
+    args: QuantizationArgs | None = None,
 ) -> torch.Tensor:
-    """Dequantization for per-group scales."""
+    """Dequantization for per-group scales using strided kernel."""
     original_shape = x_q.shape
 
     # Convert to float for computation
     x_q = x_q.to(scale.dtype)
 
-    if x_q.ndim == 4:
-        n_rb, n_cb, bh, bw = x_q.shape
-        group_size = bh * bw  # Each block is one "group"
-        x_q = x_q.reshape(n_rb * n_cb, bh * bw)
-        scale = scale.reshape(n_rb * n_cb, 1)
-        if zero_point is not None:
-            zero_point = zero_point.reshape(n_rb * n_cb, 1)
-    elif x_q.ndim == 3:
-        group_size = x_q.shape[2]
-        x_q = x_q.reshape(x_q.shape[0], -1)
-        scale = scale.reshape(scale.shape[0], -1)
-        if zero_point is not None:
-            zero_point = zero_point.reshape(zero_point.shape[0], -1)
-    elif x_q.ndim == 2:
-        group_size = x_q.shape[1]  # Entire row is one "group"
-        num_rows = x_q.shape[0]
-        if scale.ndim == 0:
-            scale = scale.expand(num_rows, 1).contiguous()
-        elif scale.ndim == 1:
-            scale = scale.unsqueeze(1).expand(num_rows, 1).contiguous()
-        elif scale.shape[0] == 1:
-            scale = scale.expand(num_rows, -1).contiguous()
-        if zero_point is not None:
-            if zero_point.ndim == 0:
-                zero_point = zero_point.expand(num_rows, 1).contiguous()
-            elif zero_point.ndim == 1:
-                zero_point = zero_point.unsqueeze(1).expand(num_rows, 1).contiguous()
-            elif zero_point.shape[0] == 1:
-                zero_point = zero_point.expand(num_rows, -1).contiguous()
-    else:
-        raise ValueError(f"Expected 2D, 3D, or 4D tensor, got {x_q.ndim}D")
+    # Adapt scale and zero_point for Triton kernel
+    num_rows = x_q.shape[0]
+    scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
 
+    # Determine dimensions based on strategy (mirroring _quantize logic)
+    if args is not None and args.strategy == QuantizationStrategy.BLOCK:
+        dim_0, dim_1, dim_2, dim_3 = x_q.shape
+        group_size = dim_2 * dim_3  # all col elements share same scale
+        num_scale_cols = 1  # one scale per (idx_0, idx_1) pair
+    elif args is not None and args.strategy in (
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        dim_0 = 1
+        dim_1, dim_2, dim_3 = x_q.shape
+        group_size = dim_3
+        num_scale_cols = dim_2  # num_groups
+    elif args is not None and args.strategy in (
+        QuantizationStrategy.TENSOR,
+        QuantizationStrategy.CHANNEL,
+    ):
+        dim_0 = 1
+        dim_1, dim_3 = x_q.shape
+        dim_2 = 1
+        group_size = dim_3  # all cols share same scale
+        num_scale_cols = 1  # one scale per row
+    else:
+        # Fallback: infer from tensor shape (legacy behavior)
+        if x_q.ndim == 4:
+            dim_0, dim_1, dim_2, dim_3 = x_q.shape
+            group_size = dim_2 * dim_3
+            num_scale_cols = 1
+        elif x_q.ndim == 3:
+            dim_0 = 1
+            dim_1, dim_2, dim_3 = x_q.shape
+            group_size = dim_3
+            num_scale_cols = dim_2
+        elif x_q.ndim == 2:
+            dim_0 = 1
+            dim_1, dim_3 = x_q.shape
+            dim_2 = 1
+            group_size = dim_3
+            num_scale_cols = 1
+        else:
+            raise ValueError(f"Expected 2D, 3D, or 4D tensor, got {x_q.ndim}D")
+
+    num_rows = dim_0 * dim_1
+    num_cols = dim_2 * dim_3
     block_size_r: int = 32
     block_size_c: int = 32
-    num_rows = x_q.shape[0]
-    num_cols = x_q.shape[1]
 
     def grid(META):
         return (
@@ -1095,15 +1162,79 @@ def _dequantize_grouped(
 
     dequant_value = torch.empty_like(x_q)
 
+    x_strides = x_q.stride()
+    out_strides = dequant_value.stride()
+
+    # Compute strides based on strategy (mirroring _quantize logic)
+    if args is not None and args.strategy == QuantizationStrategy.BLOCK:
+        input_stride_0, input_stride_1, input_stride_2, input_stride_3 = x_strides
+        (
+            output_stride_0,
+            output_stride_1,
+            output_stride_2,
+            output_stride_3,
+        ) = out_strides
+    elif args is not None and args.strategy in (
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        input_stride_0 = 0
+        input_stride_1, input_stride_2, input_stride_3 = x_strides
+        output_stride_0 = 0
+        output_stride_1, output_stride_2, output_stride_3 = out_strides
+    elif args is not None and args.strategy in (
+        QuantizationStrategy.TENSOR,
+        QuantizationStrategy.CHANNEL,
+    ):
+        input_stride_0 = 0
+        input_stride_1, input_stride_3 = x_strides
+        input_stride_2 = 0
+        output_stride_0 = 0
+        output_stride_1, output_stride_3 = out_strides
+        output_stride_2 = 0
+    else:
+        # Fallback: infer from tensor shape
+        if x_q.ndim == 4:
+            input_stride_0, input_stride_1, input_stride_2, input_stride_3 = x_strides
+            (
+                output_stride_0,
+                output_stride_1,
+                output_stride_2,
+                output_stride_3,
+            ) = out_strides
+        elif x_q.ndim == 3:
+            input_stride_0 = 0
+            input_stride_1, input_stride_2, input_stride_3 = x_strides
+            output_stride_0 = 0
+            output_stride_1, output_stride_2, output_stride_3 = out_strides
+        else:
+            input_stride_0 = 0
+            input_stride_1, input_stride_3 = x_strides
+            input_stride_2 = 0
+            output_stride_0 = 0
+            output_stride_1, output_stride_3 = out_strides
+            output_stride_2 = 0
+
     _dequantize_kernel[grid](
         dequant_value,
         x_q,
         scale,
         zero_point,
         global_scale,
-        num_rows,
-        num_cols,
+        input_stride_0,
+        input_stride_1,
+        input_stride_2,
+        input_stride_3,
+        output_stride_0,
+        output_stride_1,
+        output_stride_2,
+        output_stride_3,
+        dim_0,
+        dim_1,
+        dim_2,
+        dim_3,
         group_size,
+        num_scale_cols,
         BLOCK_SIZE_R=block_size_r,
         BLOCK_SIZE_C=block_size_c,
     )
