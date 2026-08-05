@@ -98,56 +98,6 @@ class CompressedTensorsDequantizer(Converter):
 
         return dequantized_tensors
 
-    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        """
-        Ensure all tensor names of targeted layers are expected and no
-        untargeted layers have unexpected tensor names
-        """
-        consumed_keys = set()
-        matched_modules = set()
-        for scheme in self.quant_config.config_groups.values():
-            compressor = BaseCompressor.get_value_from_registry(scheme.format)
-            param_names = compressor.compression_param_names(scheme)
-            for module_name, _ in match_quantizable_tensors(
-                tensors,
-                self.quant_config.ignore,
-                scheme.targets,
-                param_targets=[param_names[0]],
-            ):
-                matched_modules.add(module_name)
-                for param_name in param_names:
-                    expected_key = f"{module_name}.{param_name}"
-
-                    if expected_key not in tensors:
-                        raise ValueError(f"Expected key {expected_key} not found")
-
-                    consumed_keys.add(expected_key)
-
-        unconsumed_tensor_names = [
-            name
-            for name in tensors
-            if name not in consumed_keys and name.rpartition(".")[0] in matched_modules
-        ]
-        if len(unconsumed_tensor_names) != 0:
-            raise ValueError(
-                f"Found {len(unconsumed_tensor_names)} unconsumed keys -- "
-                f"{unconsumed_tensor_names}"
-            )
-
-        output = {}
-        for module_name in matched_modules:
-            output[f"{module_name}.weight"] = torch.empty(0, dtype=self.dtype)
-
-        kv_cache_param_names = [v.value for v in KVCacheScaleType]
-        for name, tensor in tensors.items():
-            if name in consumed_keys:
-                continue
-            if any(name.endswith(param) for param in kv_cache_param_names):
-                continue
-            output[name] = tensor
-
-        return output
-
     def update_config(
         self, config: QuantizationConfig | None
     ) -> QuantizationConfig | None:

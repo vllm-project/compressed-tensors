@@ -82,69 +82,6 @@ class ModelOptNvfp4Converter(Converter):
 
         return tensors
 
-    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        """
-        Ensure all tensor names of targeted layers are expected and no
-        untargeted layers have unexpected tensor names
-        """
-
-        targeted_names = [
-            name
-            for _, name in match_quantizable_tensors(
-                tensors, self.ignore, self.targets, param_targets=self.param_names
-            )
-        ]
-        for name in targeted_names:
-            param_name = name.rpartition(".")[-1]
-
-        disallowed_names = [
-            "input_scale",
-            "weight_scale",
-            "weight_scale_2",
-            "k_scale",
-            "v_scale",
-        ]
-        untargeted_names = [
-            name
-            for name in tensors.keys()
-            if name not in targeted_names
-            and not any(match_name(name, ign) for ign in self.ignore)
-        ]
-        for name in untargeted_names:
-            param_name = name.rpartition(".")[-1]
-
-            if param_name in disallowed_names:
-                raise ValueError(f"Hit unexpected non-targeted tensor {name}")
-
-        output = dict(tensors)
-        for module_name, name in match_quantizable_tensors(
-            tensors, self.ignore, self.targets, param_targets=self.param_names
-        ):
-            param_name = name.rpartition(".")[-1]
-            match param_name:
-                case "input_scale":
-                    del output[name]
-                    output[f"{module_name}.input_global_scale"] = torch.empty(
-                        0, dtype=tensors[name].dtype
-                    )
-                case "weight":
-                    del output[name]
-                    output[f"{module_name}.weight_packed"] = torch.empty(
-                        0, dtype=tensors[name].dtype
-                    )
-                case "weight_scale":
-                    pass
-                case "weight_scale_2":
-                    del output[name]
-                    output[f"{module_name}.weight_global_scale"] = torch.empty(
-                        0, dtype=tensors[name].dtype
-                    )
-                case "k_scale" | "v_scale":
-                    output[name] = torch.empty(
-                        0, dtype=self.kv_cache_scheme.scale_dtype or torch.bfloat16
-                    )
-        return output
-
     def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, _, param_name = weight_name.rpartition(".")
         if (
