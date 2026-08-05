@@ -60,16 +60,15 @@ class ImplBackend:
             the same positional and keyword arguments as the dispatch wrapper, so
             requirements can inspect actual inputs (e.g. `lambda x: x.is_cuda`)
         :param priority: lower values are tried first (higher priority).
-            Set to ``"disable"`` to register the function in the registry
-            (so it can still be called directly via :meth:`call`) without
-            adding it as a dispatch candidate.
+            Set to ``"disable"`` to skip registration entirely, treating
+            the backend as if it were never registered.
         """
 
         def decorator(backend_fn: Callable) -> Callable:
-            cls._add_to_registery(backend_fn)
-
             if priority == "disable":
                 return backend_fn
+
+            cls._add_to_registery(backend_fn)
 
             if name not in cls._backends:
                 cls._backends[name] = []
