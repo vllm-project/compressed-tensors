@@ -95,7 +95,9 @@ def test_compress_scale_without_scale_dtype():
         (1024, 1024),
     ],
 )
-def test_quantize_and_pack_fused(m, n):
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+@pytest.mark.parametrize("symmetric", [True, False])
+def test_quantize_and_pack_fused(m, n, dtype, symmetric):
     """Test that fused quantize+pack produces identical results to separate ops."""
     if not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
@@ -103,12 +105,20 @@ def test_quantize_and_pack_fused(m, n):
     device = "cuda"
     group_size = 16
 
-    x = torch.randn(m, n, dtype=torch.bfloat16, device=device)
-    scale = torch.rand(m, n // group_size, dtype=torch.bfloat16, device=device) + 0.1
+    x = torch.randn(m, n, dtype=dtype, device=device)
+    scale = torch.rand(m, n // group_size, dtype=dtype, device=device) + 0.1
     global_scale = torch.tensor(1.0, device=device)
 
+    if symmetric:
+        zero_point = None
+    else:
+        zero_point = torch.randn(m, n // group_size, dtype=dtype, device=device) * 0.5
+
     args = QuantizationArgs(
-        num_bits=4, type=QuantizationType.FLOAT, group_size=group_size, symmetric=True
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        group_size=group_size,
+        symmetric=symmetric,
     )
 
     # Separate approach: quantize then pack
@@ -116,7 +126,7 @@ def test_quantize_and_pack_fused(m, n):
         x=x.clone(),
         scale=scale,
         global_scale=global_scale,
-        zero_point=None,
+        zero_point=zero_point,
         args=args,
     )
     packed_separate = pack_fp4_to_uint8(quantized)
@@ -126,6 +136,7 @@ def test_quantize_and_pack_fused(m, n):
         x=x.clone(),
         scale=scale,
         global_scale=global_scale,
+        zero_point=zero_point,
         group_size=group_size,
     )
 
@@ -141,31 +152,32 @@ def test_quantize_and_pack_fused_boundary_values():
     group_size = 16
 
     # Test exact boundary values for FP4 rounding thresholds
-    x = torch.tensor(
+    # Use multiple rows and groups to avoid edge case with single group
+    boundary_values = torch.tensor(
         [
-            [
-                0.25,
-                0.75,
-                1.25,
-                1.75,
-                2.5,
-                3.5,
-                5.0,
-                6.0,
-                -0.25,
-                -0.75,
-                -1.25,
-                -1.75,
-                -2.5,
-                -3.5,
-                -5.0,
-                -6.0,
-            ]
+            0.25,
+            0.75,
+            1.25,
+            1.75,
+            2.5,
+            3.5,
+            5.0,
+            6.0,
+            -0.25,
+            -0.75,
+            -1.25,
+            -1.75,
+            -2.5,
+            -3.5,
+            -5.0,
+            -6.0,
         ],
         dtype=torch.bfloat16,
         device=device,
     )
-    scale = torch.ones(1, 1, dtype=torch.bfloat16, device=device)
+    # Create a 4x32 tensor by repeating boundary values
+    x = boundary_values.repeat(8).reshape(4, 32)
+    scale = torch.ones(4, 2, dtype=torch.bfloat16, device=device)
     global_scale = torch.tensor(1.0, device=device)
 
     args = QuantizationArgs(
@@ -181,46 +193,6 @@ def test_quantize_and_pack_fused_boundary_values():
         x=x.clone(),
         scale=scale,
         global_scale=global_scale,
-        group_size=group_size,
-    )
-
-    assert torch.equal(packed_separate, packed_fused)
-
-
-def test_quantize_and_pack_fused_with_zero_point():
-    """Test fused kernel with asymmetric quantization (zero_point)."""
-    if not torch.accelerator.is_available():
-        pytest.skip("CUDA not available")
-
-    device = "cuda"
-    m, n = 64, 128
-    group_size = 16
-
-    x = torch.randn(m, n, dtype=torch.bfloat16, device=device)
-    scale = torch.rand(m, n // group_size, dtype=torch.bfloat16, device=device) + 0.1
-    zero_point = (
-        torch.randn(m, n // group_size, dtype=torch.bfloat16, device=device) * 0.5
-    )
-    global_scale = torch.tensor(1.0, device=device)
-
-    args = QuantizationArgs(
-        num_bits=4, type=QuantizationType.FLOAT, group_size=group_size, symmetric=False
-    )
-
-    quantized = quantize(
-        x=x.clone(),
-        scale=scale,
-        global_scale=global_scale,
-        zero_point=zero_point,
-        args=args,
-    )
-    packed_separate = pack_fp4_to_uint8(quantized)
-
-    packed_fused = quantize_and_pack_fp4(
-        x=x.clone(),
-        scale=scale,
-        global_scale=global_scale,
-        zero_point=zero_point,
         group_size=group_size,
     )
 

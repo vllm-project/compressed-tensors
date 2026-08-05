@@ -131,6 +131,9 @@ if _triton_available:
         3. Clamps to FP4 range [-6.0, 6.0]
         4. Maps directly to FP4 indices using threshold counting
         5. Packs two consecutive FP4 indices into one uint8
+
+        This kernel assumes that x is contiguous. This is ensured by calling
+        x.flatten() before calling this kernel.
         """
         pid = tl.program_id(0)
         block_start = pid * BLOCK_SIZE
@@ -172,15 +175,19 @@ if _triton_available:
             x_low = x_low + zp_low
             x_high = x_high + zp_high
 
-        x_low = tl.clamp(x_low, -6.0, 6.0)
-        x_high = tl.clamp(x_high, -6.0, 6.0)
+        # Clamp to FP4 range and convert to bf16 for consistent rounding
+        x_low = tl.clamp(x_low, -6.0, 6.0).to(tl.bfloat16)
+        x_high = tl.clamp(x_high, -6.0, 6.0).to(tl.bfloat16)
 
-        sign_low = (x_low < 0).to(tl.uint8)
-        sign_high = (x_high < 0).to(tl.uint8)
+        # Extract sign bit directly into bit 3 via bitcast (handles -0.0 correctly)
+        sign_low = (x_low.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
+        sign_high = (x_high.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
 
         abs_low = tl.abs(x_low)
         abs_high = tl.abs(x_high)
 
+        # Use same float thresholds as _round_to_fp4 to compute FP4 index directly
+        # Thresholds: >0.25→1, >=0.75→2, >1.25→3, >=1.75→4, >2.5→5, >=3.5→6, >5.0→7
         idx_low = (
             (abs_low > 0.25).to(tl.uint8)
             + (abs_low >= 0.75).to(tl.uint8)
@@ -190,6 +197,7 @@ if _triton_available:
             + (abs_low >= 3.5).to(tl.uint8)
             + (abs_low > 5.0).to(tl.uint8)
         )
+        idx_low = idx_low | sign_low
 
         idx_high = (
             (abs_high > 0.25).to(tl.uint8)
@@ -200,10 +208,9 @@ if _triton_available:
             + (abs_high >= 3.5).to(tl.uint8)
             + (abs_high > 5.0).to(tl.uint8)
         )
+        idx_high = idx_high | sign_high
 
-        idx_low = idx_low | (sign_low << 3)
-        idx_high = idx_high | (sign_high << 3)
-
+        # Pack nibbles
         packed = idx_low | (idx_high << 4)
 
         tl.store(packed_ptr + offsets, packed, mask=mask)
