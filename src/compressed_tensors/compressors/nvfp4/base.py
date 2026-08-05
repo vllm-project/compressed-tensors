@@ -8,6 +8,7 @@ from compressed_tensors.compressors.base import (
 )
 from compressed_tensors.compressors.nvfp4.helpers import (
     pack_fp4_to_uint8,
+    quantize_and_pack_fp4,
     unpack_fp4_from_uint8,
 )
 from compressed_tensors.config import CompressionFormat
@@ -82,14 +83,27 @@ class NVFP4PackedCompressor(BaseCompressor):
         zero_point = state_dict.get("weight_zero_point", None)
         weights = scheme.weights
 
-        quantized_weight = quantize(
-            x=weight,
-            scale=scale,
-            global_scale=global_scale,
-            zero_point=zero_point,
-            args=weights,
-        )
-        state_dict["weight_packed"] = pack_fp4_to_uint8(quantized_weight)
+        # Use fused quantize+pack kernel for better performance on GPU
+        # (~1-2ms savings by avoiding intermediate FP4 float buffer)
+        if weight.is_cuda or weight.is_xpu:
+            state_dict["weight_packed"] = quantize_and_pack_fp4(
+                x=weight,
+                scale=scale,
+                global_scale=global_scale,
+                zero_point=zero_point,
+                group_size=weights.group_size,
+            )
+        else:
+            # CPU fallback: use separate quantize + pack
+            quantized_weight = quantize(
+                x=weight,
+                scale=scale,
+                global_scale=global_scale,
+                zero_point=zero_point,
+                args=weights,
+            )
+            state_dict["weight_packed"] = pack_fp4_to_uint8(quantized_weight)
+
         state_dict["weight_scale"] = cls._compress_scale(scale, weights)
         state_dict = cls._remove_symmetric_zp(state_dict, scheme)
 
