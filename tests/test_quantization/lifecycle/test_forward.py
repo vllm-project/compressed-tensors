@@ -14,10 +14,8 @@ from compressed_tensors.quantization.lifecycle.forward import (
 from compressed_tensors.quantization.lifecycle.forward_helpers import (
     _dequantize,
     _is_fp8_supported,
-    _needs_fp8,
     _quantize,
     _quantize_dequantize,
-    adapt_scale_and_zp_for_triton,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
@@ -25,9 +23,11 @@ from compressed_tensors.quantization.lifecycle.initialize import (
 from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
     QuantizationStrategy,
+    QuantizationType,
 )
 from compressed_tensors.quantization.quant_config import QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import calculate_range
+from compressed_tensors.utils.impl_backend import ImplBackend
 from torch.nn import Embedding, Linear
 
 
@@ -679,35 +679,18 @@ def test_quantize_dequantize_matches_sequential(
     if global_scale is not None:
         global_scale = global_scale.to(device)
 
-    # Determine if Triton should be used
-    is_gpu = x.is_cuda or x.is_xpu
-    is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
-    fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
-    do_triton = is_gpu and (not is_fp8 or fp8_hw_ok)
-
-    # Keep original scale/zp for dequantize
+    # sequential: quantize then dequantize
     scale_ground_dequant = scale.clone()
     zero_point_dequant = zero_point.clone() if zero_point is not None else None
 
-    # Adapt scale/zp for Triton if needed (for _quantize only)
-    scale_quant = scale.clone()
-    zero_point_quant = zero_point.clone() if zero_point is not None else None
-    if do_triton:
-        num_rows = x.shape[0]
-        scale_quant, zero_point_quant = adapt_scale_and_zp_for_triton(
-            scale_quant, zero_point_quant, num_rows
-        )
-
-    # sequential: quantize then dequantize
     q = _quantize(
         x=x,
-        scale=scale_quant,
-        zero_point=zero_point_quant,
+        scale=scale,
+        zero_point=zero_point,
         q_min=q_min,
         q_max=q_max,
         args=args,
         global_scale=global_scale,
-        do_triton=do_triton,
     )
     sequential_out = _dequantize(
         x_q=q,
@@ -814,11 +797,6 @@ def test_quantize_triton_matches_cpu(
     )
     q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
 
-    num_rows = x_cuda.shape[0]
-    scale_cuda, zero_point_cuda = adapt_scale_and_zp_for_triton(
-        scale_cuda, zero_point_cuda, num_rows
-    )
-
     # Run CPU (non-Triton) path
     cpu_out = _quantize(
         x=x_cpu,
@@ -828,7 +806,6 @@ def test_quantize_triton_matches_cpu(
         q_max=q_max_cpu,
         args=args,
         global_scale=global_scale_cpu,
-        do_triton=False,
     )
 
     cuda_out = _quantize(
@@ -839,7 +816,6 @@ def test_quantize_triton_matches_cpu(
         q_max=q_max_cuda,
         args=args,
         global_scale=global_scale_cuda,
-        do_triton=True,
     )
 
     # Compare results (bring CUDA output back to CPU)
@@ -947,12 +923,6 @@ def test_quantize_triton_matches_cpu_non_contiguous(
 
     assert not x_cuda.is_contiguous(), "CUDA tensor should be non-contiguous"
 
-    # Adapt scale/zp for Triton
-    num_rows = x_cuda.shape[0]
-    scale_cuda, zero_point_cuda = adapt_scale_and_zp_for_triton(
-        scale_cuda, zero_point_cuda, num_rows
-    )
-
     cpu_out = _quantize(
         x=x_cpu,
         scale=scale_cpu,
@@ -961,7 +931,6 @@ def test_quantize_triton_matches_cpu_non_contiguous(
         q_max=q_max_cpu,
         args=args,
         global_scale=global_scale_cpu,
-        do_triton=False,
     )
 
     cuda_out = _quantize(
@@ -972,7 +941,6 @@ def test_quantize_triton_matches_cpu_non_contiguous(
         q_max=q_max_cuda,
         args=args,
         global_scale=global_scale_cuda,
-        do_triton=True,
     )
 
     cuda_out_cpu = cuda_out.cpu()
@@ -1050,7 +1018,6 @@ def test_quantize_triton_matches_cpu_block_4d(
         q_max=q_max_cpu,
         args=args,
         global_scale=None,
-        do_triton=False,
     )
 
     cuda_out = _quantize(
@@ -1061,7 +1028,6 @@ def test_quantize_triton_matches_cpu_block_4d(
         q_max=q_max_cuda,
         args=args,
         global_scale=None,
-        do_triton=True,
     )
 
     cuda_out_cpu = cuda_out.cpu()
@@ -1075,3 +1041,110 @@ def test_quantize_triton_matches_cpu_block_4d(
         f"Mismatch between CPU and Triton paths (4D block): max diff = "
         f"{(cpu_out.float() - cuda_out_cpu.float()).abs().max().item()}"
     )
+
+
+@pytest.mark.skipif(
+    not torch.accelerator.is_available(), reason="CUDA required for Triton backend"
+)
+@pytest.mark.parametrize(
+    "args,x,scale,zero_point,global_scale",
+    [
+        # int8, tensor strategy, scalar scale
+        (
+            QuantizationArgs(num_bits=8, type="int", strategy="tensor"),
+            torch.randn(256, 512),
+            torch.tensor([0.01]),
+            None,
+            None,
+        ),
+        # int8, channel strategy, per-row scale
+        (
+            QuantizationArgs(num_bits=8, type="int", strategy="channel"),
+            torch.randn(128, 256),
+            torch.rand(128, 1) * 0.01 + 0.001,
+            None,
+            None,
+        ),
+        # int4, group strategy
+        (
+            QuantizationArgs(num_bits=4, type="int", strategy="group", group_size=128),
+            torch.randn(64, 4, 128),
+            torch.rand(64, 4, 1) * 0.01 + 0.001,
+            None,
+            None,
+        ),
+        # fp8, tensor strategy with global_scale (requires SM90+)
+        (
+            QuantizationArgs(num_bits=8, type="float", strategy="tensor"),
+            torch.randn(128, 256),
+            torch.tensor([0.01]),
+            None,
+            torch.tensor([2.0]),
+        ),
+        # int8, tensor strategy, asymmetric (non-zero zero_point)
+        (
+            QuantizationArgs(
+                num_bits=8, type="int", symmetric=False, strategy="tensor"
+            ),
+            torch.randn(64, 128),
+            torch.tensor([0.005]),
+            torch.tensor([3.0]),
+            None,
+        ),
+        # int8, block strategy, strided x mirroring _process_block layout
+        # _process_block does reshape(nr, bh, nc, bw).transpose(1,2), producing
+        # non-contiguous x_blocks of shape (nr, nc, bh, bw) with swapped strides
+        (
+            QuantizationArgs(
+                num_bits=8, type="int", strategy="block", block_structure=[32, 64]
+            ),
+            torch.randn(128, 256)
+            .reshape(4, 32, 4, 64)
+            .transpose(1, 2),  # (4,4,32,64), non-contiguous
+            torch.rand(4, 4, 1, 1) * 0.01 + 0.001,
+            None,
+            None,
+        ),
+    ],
+)
+def test_quantize_backends_match(args, x, scale, zero_point, global_scale):
+    is_fp8 = args.type == QuantizationType.FLOAT and args.num_bits == 8
+    if is_fp8 and not _is_fp8_supported(torch.device("cuda")):
+        pytest.skip("FP8 Triton kernel requires SM90+ (Hopper)")
+
+    q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
+    q_min_cuda, q_max_cuda = calculate_range(args, torch.device("cuda"))
+
+    torch_out = ImplBackend.call(
+        "_quantize",
+        x=x.cpu(),
+        scale=scale.cpu(),
+        zero_point=zero_point.cpu() if zero_point is not None else None,
+        q_min=q_min_cpu,
+        q_max=q_max_cpu,
+        args=args,
+        global_scale=global_scale.cpu() if global_scale is not None else None,
+    )
+
+    triton_out = ImplBackend.call(
+        "_quantize_triton",
+        x.cuda(),
+        scale.cuda(),
+        zero_point.cuda() if zero_point is not None else None,
+        q_min_cuda,
+        q_max_cuda,
+        args,
+        None,  # dtype
+        global_scale.cuda() if global_scale is not None else None,
+    ).cpu()
+
+    assert torch_out.shape == triton_out.shape
+
+    if args.type == QuantizationType.INT:
+        atol, rtol = 1.0, 0  # allow ±1 for int rounding corner cases
+    else:
+        atol, rtol = 1e-3, 0.15
+
+    assert torch.allclose(
+        torch_out.float(), triton_out.float(), atol=atol, rtol=rtol
+    ), f"Max diff: {(torch_out.float() - triton_out.float()).abs().max().item()}"
