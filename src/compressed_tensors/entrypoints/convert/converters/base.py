@@ -46,20 +46,7 @@ class Converter(Protocol):
         raise NotImplementedError()
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        """
-        Validate tensors and return a dict describing this converter's output
-        format (tensor names and dtypes). Uses scalar-shaped meta tensors to
-        avoid allocating real data.
-
-        When converters are chained, each converter receives the previous
-        converter's validate output, allowing downstream converters to verify
-        compatibility with the upstream output format.
-
-        :param tensors: dictionary of tensor name to tensor
-        :returns: dictionary of output tensor name to meta tensor with the
-            correct dtype
-        """
-        raise NotImplementedError()
+        return self.process(tensors)
 
     def update_config(
         self, config: QuantizationConfig | None
