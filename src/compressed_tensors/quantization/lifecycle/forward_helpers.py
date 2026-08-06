@@ -66,10 +66,12 @@ def _quantize_dequantize_scalar_kernel(
     else:  # QUANT_TYPE_FLOAT
         quantized = tl.clamp(scaled, q_min, q_max)
         if NUM_BITS == 4:
-            quantized = _round_to_fp4(quantized)
+            quantized = _round_to_fp4(quantized.to(tl.bfloat16))
         # FP8: no additional rounding needed after clamp
 
     # Dequantize: (quantized - zero_point) * scale
+    # Note: for FP4, quantized is bfloat16 but scale is float32,
+    # so the result will be promoted to float32
     if HAS_ZERO_POINT:
         dequantized = (quantized - zero_point) * scale
     else:
@@ -146,9 +148,11 @@ def _quantize_dequantize_grouped_kernel(
     else:  # QUANT_TYPE_FLOAT
         quantized = tl.clamp(scaled, q_min, q_max)
         if NUM_BITS == 4:
-            quantized = _round_to_fp4(quantized)
+            quantized = _round_to_fp4(quantized.to(tl.bfloat16))
 
     # Dequantize: (quantized - zero_point) * scale
+    # Note: for FP4, quantized is bfloat16 but scale is float32,
+    # so the result will be promoted to float32
     if zero_point_ptr is not None:
         output = (quantized - zero_point) * scale
     else:
