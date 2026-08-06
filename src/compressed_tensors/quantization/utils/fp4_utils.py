@@ -5,7 +5,6 @@ import torch
 from compressed_tensors.utils.impl_backend import ImplBackend
 from compressed_tensors.utils.triton import tl, triton, triton_req
 
-
 __all__ = ["_round_to_fp4", "cast_to_fp4"]
 
 
@@ -90,14 +89,17 @@ def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
     sign = torch.sign(x)
     abs_x = torch.abs(x)
 
-    x = torch.where(abs_x <= 0.25, 0.0, torch.empty_like(x))
-    x = torch.where(abs_x > 0.25, 0.5, x)
-    x = torch.where(abs_x >= 0.75, 1.0, x)
-    x = torch.where(abs_x > 1.25, 1.5, x)
-    x = torch.where(abs_x >= 1.75, 2.0, x)
-    x = torch.where(abs_x > 2.5, 3.0, x)
-    x = torch.where(abs_x >= 3.5, 4.0, x)
-    x = torch.where(abs_x > 5.0, 6.0, x)
+    # Pre-allocate output in bfloat16
+    out = torch.zeros_like(abs_x)
 
-    x *= sign
-    return x.to(orig_dtype)
+    # Exact ties-to-even FP4 thresholds matching PR 819 logic
+    out[abs_x > 0.25] = 0.5
+    out[abs_x >= 0.75] = 1.0
+    out[abs_x > 1.25] = 1.5
+    out[abs_x >= 1.75] = 2.0
+    out[abs_x > 2.5] = 3.0
+    out[abs_x >= 3.5] = 4.0
+    out[abs_x > 5.0] = 6.0
+
+    out *= sign
+    return out.to(orig_dtype)
