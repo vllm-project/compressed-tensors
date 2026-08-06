@@ -84,22 +84,14 @@ def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
     Maps float values to the nearest E2M1 representable value:
     0.0, ±0.5, ±1.0, ±1.5, ±2.0, ±3.0, ±4.0, ±6.0
     """
-    orig_dtype = x.dtype
-    x = x.to(torch.bfloat16)
     sign = torch.sign(x)
-    abs_x = torch.abs(x)
-
-    # Pre-allocate output in bfloat16
-    out = torch.zeros_like(abs_x)
-
-    # Exact ties-to-even FP4 thresholds matching PR 819 logic
-    out[abs_x > 0.25] = 0.5
-    out[abs_x >= 0.75] = 1.0
-    out[abs_x > 1.25] = 1.5
-    out[abs_x >= 1.75] = 2.0
-    out[abs_x > 2.5] = 3.0
-    out[abs_x >= 3.5] = 4.0
-    out[abs_x > 5.0] = 6.0
-
-    out *= sign
-    return out.to(orig_dtype)
+    x = torch.abs(x)
+    x[(x >= 0.0) & (x <= 0.25)] = 0.0
+    x[(x > 0.25) & (x < 0.75)] = 0.5
+    x[(x >= 0.75) & (x <= 1.25)] = 1.0
+    x[(x > 1.25) & (x < 1.75)] = 1.5
+    x[(x >= 1.75) & (x <= 2.5)] = 2.0
+    x[(x > 2.5) & (x < 3.5)] = 3.0
+    x[(x >= 3.5) & (x <= 5.0)] = 4.0
+    x[x > 5.0] = 6.0
+    return x * sign
