@@ -743,6 +743,7 @@ def test_quantize_dequantize_matches_sequential(
         f"atol={atol}, rtol={rtol}"
     )
 
+
 @pytest.mark.parametrize(
     "num_bits,type,symmetric,global_scale,strategy,group_size",
     [
@@ -771,7 +772,7 @@ def test_dequantize_triton_matches_cpu(
     num_bits, type, symmetric, global_scale, strategy, group_size
 ):
     """Verify Triton _dequantize on GPU matches CPU implementation."""
-    if not torch.cuda.is_available():
+    if not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
 
     args = QuantizationArgs(
@@ -793,7 +794,9 @@ def test_dequantize_triton_matches_cpu(
     elif strategy == QuantizationStrategy.CHANNEL:
         # One scale per row (channel)
         scale_cpu = torch.rand(num_rows, 1) * 0.01 + 0.001
-        zero_point_cpu = None if symmetric else torch.randint(1, 5, (num_rows, 1)).float()
+        zero_point_cpu = (
+            None if symmetric else torch.randint(1, 5, (num_rows, 1)).float()
+        )
     elif strategy == QuantizationStrategy.GROUP:
         # One scale per group: shape (num_rows, num_cols // group_size)
         num_groups = num_cols // group_size
@@ -824,12 +827,16 @@ def test_dequantize_triton_matches_cpu(
             x_q_cpu = x_q_cpu + zp_expanded
     elif strategy == QuantizationStrategy.CHANNEL:
         # Scale broadcasts along columns
-        x_q_cpu = torch.clamp(torch.round(x_cpu / effective_scale), q_min_cpu, q_max_cpu)
+        x_q_cpu = torch.clamp(
+            torch.round(x_cpu / effective_scale), q_min_cpu, q_max_cpu
+        )
         if zero_point_cpu is not None:
             x_q_cpu = x_q_cpu + zero_point_cpu
     else:
         # Tensor strategy - scalar scale
-        x_q_cpu = torch.clamp(torch.round(x_cpu / effective_scale), q_min_cpu, q_max_cpu)
+        x_q_cpu = torch.clamp(
+            torch.round(x_cpu / effective_scale), q_min_cpu, q_max_cpu
+        )
         if zero_point_cpu is not None:
             x_q_cpu = x_q_cpu + zero_point_cpu
 
@@ -919,7 +926,7 @@ def test_quantize_dequantize_triton_matches_cpu(
     num_bits, type, symmetric, global_scale, strategy, group_size
 ):
     """Verify Triton _quantize_dequantize on GPU matches CPU implementation."""
-    if not torch.cuda.is_available():
+    if not torch.accelerator.is_available():
         pytest.skip("CUDA not available")
 
     from compressed_tensors.quantization.lifecycle.forward_helpers import (
@@ -945,7 +952,9 @@ def test_quantize_dequantize_triton_matches_cpu(
     elif strategy == QuantizationStrategy.CHANNEL:
         # One scale per row (channel)
         scale_cpu = torch.rand(num_rows, 1) * 0.1 + 0.01
-        zero_point_cpu = None if symmetric else torch.randint(1, 5, (num_rows, 1)).float()
+        zero_point_cpu = (
+            None if symmetric else torch.randint(1, 5, (num_rows, 1)).float()
+        )
     elif strategy == QuantizationStrategy.GROUP:
         # One scale per group: shape (num_rows, num_cols // group_size)
         num_groups = num_cols // group_size
@@ -975,7 +984,9 @@ def test_quantize_dequantize_triton_matches_cpu(
             q_min=q_min_cpu,
             q_max=q_max_cpu,
             args=args,
-            global_scale=global_scale_cpu.clone() if global_scale_cpu is not None else None,
+            global_scale=global_scale_cpu.clone()
+            if global_scale_cpu is not None
+            else None,
         )
 
         # CUDA path
@@ -986,7 +997,9 @@ def test_quantize_dequantize_triton_matches_cpu(
             q_min=q_min_cpu.cuda(),
             q_max=q_max_cpu.cuda(),
             args=args,
-            global_scale=global_scale_cpu.cuda() if global_scale_cpu is not None else None,
+            global_scale=global_scale_cpu.cuda()
+            if global_scale_cpu is not None
+            else None,
         )
     else:
         # TENSOR/CHANNEL: shapes work directly
@@ -998,7 +1011,9 @@ def test_quantize_dequantize_triton_matches_cpu(
             q_min=q_min_cpu,
             q_max=q_max_cpu,
             args=args,
-            global_scale=global_scale_cpu.clone() if global_scale_cpu is not None else None,
+            global_scale=global_scale_cpu.clone()
+            if global_scale_cpu is not None
+            else None,
         )
 
         # CUDA path
@@ -1009,7 +1024,9 @@ def test_quantize_dequantize_triton_matches_cpu(
             q_min=q_min_cpu.cuda(),
             q_max=q_max_cpu.cuda(),
             args=args,
-            global_scale=global_scale_cpu.cuda() if global_scale_cpu is not None else None,
+            global_scale=global_scale_cpu.cuda()
+            if global_scale_cpu is not None
+            else None,
         )
 
     # Fixed tolerances per quantization type:
@@ -1047,8 +1064,10 @@ def test_quantize_dequantize_triton_matches_cpu(
 
     assert torch.allclose(
         cpu_out, cuda_out.cpu(), rtol=computed_rtol, atol=computed_atol
-    ), f"Mismatch: max diff = {(cpu_out - cuda_out.cpu()).abs().max().item()}, rtol = {computed_rtol}, atol = {computed_atol}"
-
+    ), (
+        f"Mismatch: max diff = {(cpu_out - cuda_out.cpu()).abs().max().item()}, "
+        f"rtol = {computed_rtol}, atol = {computed_atol}"
+    )
 
 
 @pytest.mark.parametrize(

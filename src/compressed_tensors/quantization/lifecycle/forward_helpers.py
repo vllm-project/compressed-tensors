@@ -13,36 +13,12 @@ from compressed_tensors.quantization.quant_args import (
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
 from compressed_tensors.quantization.utils.fp4_utils import _round_to_fp4
 from compressed_tensors.utils.impl_backend import ImplBackend
-from compressed_tensors.utils.triton import tl, triton, triton_req
+from compressed_tensors.utils.triton import HAS_TRITON, tl, triton, triton_req
+
 
 # Quantization type constants for Triton kernel
 QUANT_TYPE_INT = tl.constexpr(0)
 QUANT_TYPE_FLOAT = tl.constexpr(1)
-
-
-@triton.jit
-def _round_to_fp4(x):
-    """
-    Round float values to the nearest E2M1 representable value.
-    FP4 values: 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 (and their negatives)
-
-    Matches the thresholds in the Python ``cast_to_fp4`` exactly.
-    Based on vllm's nvfp4_emulation_utils.py implementation.
-    """
-    sign = tl.where(x < 0.0, -1.0, 1.0)
-    abs_x = tl.abs(x)
-
-    # Map to FP4 representable values based on thresholds
-    # Start with default 0.0, then overwrite from highest to lowest threshold
-    result = tl.where(abs_x > 5.0, 6.0, 0.0)
-    result = tl.where((abs_x >= 3.5) & (abs_x <= 5.0), 4.0, result)
-    result = tl.where((abs_x > 2.5) & (abs_x < 3.5), 3.0, result)
-    result = tl.where((abs_x >= 1.75) & (abs_x <= 2.5), 2.0, result)
-    result = tl.where((abs_x > 1.25) & (abs_x < 1.75), 1.5, result)
-    result = tl.where((abs_x >= 0.75) & (abs_x <= 1.25), 1.0, result)
-    result = tl.where((abs_x > 0.25) & (abs_x < 0.75), 0.5, result)
-
-    return result * sign
 
 
 @triton.jit
@@ -422,7 +398,9 @@ def _quantize_dequantize_scalar(
     output = torch.empty_like(x_flat)
 
     # Determine quantization type for kernel
-    quant_type = QUANT_TYPE_INT if args.type == QuantizationType.INT.value else QUANT_TYPE_FLOAT
+    quant_type = (
+        QUANT_TYPE_INT if args.type == QuantizationType.INT.value else QUANT_TYPE_FLOAT
+    )
     num_bits = args.num_bits
 
     # Dummy pointer for zero_point if not provided
@@ -507,7 +485,9 @@ def _quantize_dequantize_grouped(
     output = torch.empty_like(x)
 
     # Determine quantization type for kernel
-    quant_type = QUANT_TYPE_INT if args.type == QuantizationType.INT.value else QUANT_TYPE_FLOAT
+    quant_type = (
+        QUANT_TYPE_INT if args.type == QuantizationType.INT.value else QUANT_TYPE_FLOAT
+    )
     num_bits = args.num_bits
 
     _quantize_dequantize_grouped_kernel[grid](
@@ -568,7 +548,7 @@ def _dequantize_scalar_kernel(
     tl.store(output_ptr + offsets, output, mask=mask)
 
 
-if _triton_available:
+if HAS_TRITON:
 
     @triton.jit
     def _dequantize_kernel(
@@ -1010,7 +990,7 @@ def _dequantize(
     # Triton only works with CUDA and XPU tensors
     do_triton: bool = x_q.is_cuda or x_q.is_xpu
 
-    if not do_triton or not _triton_available:
+    if not do_triton or not HAS_TRITON:
         # CPU fallback
         if global_scale is not None:
             scale = scale / global_scale
