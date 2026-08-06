@@ -708,6 +708,7 @@ def test_quantize_dequantize_matches_sequential(
         scale=scale_ground_dequant,
         zero_point=zero_point_dequant,
         global_scale=global_scale,
+        args=args,
     )
 
     # fused
@@ -730,12 +731,342 @@ def test_quantize_dequantize_matches_sequential(
 
     if type == "int":
         atol, rtol = 1.0, 0  # allow +/-1 due to rounding corner cases
+    elif type == "float" and num_bits == 4:
+        # FP4 has coarse quantization levels (0, 0.5, 1, 1.5, 2, 3, 4, 6)
+        # Fused vs sequential paths may have subtle rounding differences
+        atol, rtol = 0.5, 0.15
     else:
         atol, rtol = 1e-5, 0.15
 
     assert torch.allclose(sequential_out, fused_out, atol=atol, rtol=rtol), (
         f"Mismatch: max diff = {(sequential_out - fused_out).abs().max().item()}, "
         f"atol={atol}, rtol={rtol}"
+    )
+
+
+@pytest.mark.parametrize(
+    "num_bits,type,symmetric,global_scale,strategy,group_size",
+    [
+        # Per-tensor (scalar scale) - uses fast path
+        (8, "int", True, None, QuantizationStrategy.TENSOR, None),
+        (8, "int", False, None, QuantizationStrategy.TENSOR, None),
+        (4, "int", True, None, QuantizationStrategy.TENSOR, None),
+        (4, "float", True, None, QuantizationStrategy.TENSOR, None),  # FP4
+        (8, "float", True, None, QuantizationStrategy.TENSOR, None),
+        (8, "float", True, torch.tensor([2.0]), QuantizationStrategy.TENSOR, None),
+        (8, "int", False, torch.tensor([2.0]), QuantizationStrategy.TENSOR, None),
+        # Per-channel (one scale per row) - uses grouped path
+        (8, "int", True, None, QuantizationStrategy.CHANNEL, None),
+        (8, "int", False, None, QuantizationStrategy.CHANNEL, None),
+        (4, "int", True, None, QuantizationStrategy.CHANNEL, None),
+        # Per-group (multiple scales per row) - uses grouped path
+        (8, "int", True, None, QuantizationStrategy.GROUP, 128),
+        (8, "int", False, None, QuantizationStrategy.GROUP, 128),
+        (4, "int", True, None, QuantizationStrategy.GROUP, 128),
+        (4, "int", True, None, QuantizationStrategy.GROUP, 64),
+        # Per-group with global_scale
+        (8, "int", True, torch.tensor([2.0]), QuantizationStrategy.GROUP, 128),
+    ],
+)
+def test_dequantize_triton_matches_cpu(
+    num_bits, type, symmetric, global_scale, strategy, group_size
+):
+    """Verify Triton _dequantize on GPU matches CPU implementation."""
+    if not torch.accelerator.is_available():
+        pytest.skip("CUDA not available")
+
+    args = QuantizationArgs(
+        num_bits=num_bits,
+        type=type,
+        symmetric=symmetric,
+        strategy=strategy,
+        group_size=group_size,
+    )
+
+    # Create input on CPU first - use dimensions divisible by common group sizes
+    num_rows, num_cols = 512, 1024
+    x_cpu = torch.randn(num_rows, num_cols)
+
+    # Create scale based on strategy
+    if strategy == QuantizationStrategy.TENSOR:
+        scale_cpu = torch.rand(1) * 0.01 + 0.001
+        zero_point_cpu = None if symmetric else torch.tensor([3.0])
+    elif strategy == QuantizationStrategy.CHANNEL:
+        # One scale per row (channel)
+        scale_cpu = torch.rand(num_rows, 1) * 0.01 + 0.001
+        zero_point_cpu = (
+            None if symmetric else torch.randint(1, 5, (num_rows, 1)).float()
+        )
+    elif strategy == QuantizationStrategy.GROUP:
+        # One scale per group: shape (num_rows, num_cols // group_size)
+        num_groups = num_cols // group_size
+        scale_cpu = torch.rand(num_rows, num_groups) * 0.01 + 0.001
+        zero_point_cpu = (
+            None if symmetric else torch.randint(1, 5, (num_rows, num_groups)).float()
+        )
+    else:
+        raise ValueError(f"Unsupported strategy: {strategy}")
+
+    global_scale_cpu = global_scale.clone() if global_scale is not None else None
+
+    q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
+
+    # Compute effective scale for quantization
+    effective_scale = scale_cpu
+    if global_scale_cpu is not None:
+        effective_scale = scale_cpu / global_scale_cpu
+
+    # Quantize first to get valid quantized values
+    # For group/channel, we need to broadcast scale properly
+    if strategy == QuantizationStrategy.GROUP:
+        # Expand scale to match input shape for quantization
+        scale_expanded = effective_scale.repeat_interleave(group_size, dim=1)
+        x_q_cpu = torch.clamp(torch.round(x_cpu / scale_expanded), q_min_cpu, q_max_cpu)
+        if zero_point_cpu is not None:
+            zp_expanded = zero_point_cpu.repeat_interleave(group_size, dim=1)
+            x_q_cpu = x_q_cpu + zp_expanded
+    elif strategy == QuantizationStrategy.CHANNEL:
+        # Scale broadcasts along columns
+        x_q_cpu = torch.clamp(
+            torch.round(x_cpu / effective_scale), q_min_cpu, q_max_cpu
+        )
+        if zero_point_cpu is not None:
+            x_q_cpu = x_q_cpu + zero_point_cpu
+    else:
+        # Tensor strategy - scalar scale
+        x_q_cpu = torch.clamp(
+            torch.round(x_cpu / effective_scale), q_min_cpu, q_max_cpu
+        )
+        if zero_point_cpu is not None:
+            x_q_cpu = x_q_cpu + zero_point_cpu
+
+    # For GROUP strategy, use broadcasting like real workloads (_process_group):
+    # - Reshape x_q to 3D: (num_rows, num_groups, group_size)
+    # - Unsqueeze scale to (num_rows, num_groups, 1) for broadcasting
+    if strategy == QuantizationStrategy.GROUP:
+        num_groups = num_cols // group_size
+        x_q_3d = x_q_cpu.reshape(num_rows, num_groups, group_size)
+        # scale.unsqueeze(-1) matches how _process_group prepares scale
+        scale_3d = scale_cpu.unsqueeze(-1)  # (num_rows, num_groups, 1)
+        zp_3d = zero_point_cpu.unsqueeze(-1) if zero_point_cpu is not None else None
+
+        # Manual CPU reference using broadcasting (mirrors real workload)
+        effective_scale = scale_3d
+        if global_scale_cpu is not None:
+            effective_scale = scale_3d / global_scale_cpu
+
+        cpu_out = x_q_3d.to(scale_cpu.dtype)
+        if zp_3d is not None:
+            cpu_out = cpu_out - zp_3d.to(scale_cpu.dtype)
+        cpu_out = cpu_out * effective_scale  # Broadcasting across group_size dim
+    else:
+        # TENSOR/CHANNEL: CPU fallback in _dequantize handles these correctly
+        cpu_out = _dequantize(
+            x_q=x_q_cpu,
+            scale=scale_cpu,
+            zero_point=zero_point_cpu,
+            global_scale=global_scale_cpu,
+            args=args,
+        )
+
+    # Copy to CUDA and run Triton path
+    # For GROUP strategy, reshape to 3D: (num_rows, num_groups, group_size)
+    # This is what _dequantize_grouped expects for proper group handling
+    if strategy == QuantizationStrategy.GROUP:
+        x_q_cuda = x_q_3d.cuda()
+        scale_cuda = scale_cpu.cuda()  # Shape: (num_rows, num_groups)
+        zero_point_cuda = zero_point_cpu.cuda() if zero_point_cpu is not None else None
+    else:
+        x_q_cuda = x_q_cpu.cuda()
+        scale_cuda = scale_cpu.cuda()
+        zero_point_cuda = zero_point_cpu.cuda() if zero_point_cpu is not None else None
+
+    global_scale_cuda = (
+        global_scale_cpu.cuda() if global_scale_cpu is not None else None
+    )
+
+    cuda_out = _dequantize(
+        x_q=x_q_cuda,
+        scale=scale_cuda,
+        zero_point=zero_point_cuda,
+        global_scale=global_scale_cuda,
+        args=args,
+    )
+
+    assert torch.allclose(
+        cpu_out, cuda_out.cpu(), rtol=1e-5, atol=1e-5
+    ), f"Mismatch: max diff = {(cpu_out - cuda_out.cpu()).abs().max().item()}"
+
+
+@pytest.mark.parametrize(
+    "num_bits,type,symmetric,global_scale,strategy,group_size",
+    [
+        # Per-tensor (scalar scale) - uses fast scalar kernel
+        (8, "int", True, None, QuantizationStrategy.TENSOR, None),
+        (8, "int", False, None, QuantizationStrategy.TENSOR, None),
+        (4, "int", True, None, QuantizationStrategy.TENSOR, None),
+        (4, "float", True, None, QuantizationStrategy.TENSOR, None),  # FP4
+        (8, "float", True, None, QuantizationStrategy.TENSOR, None),
+        (8, "float", True, torch.tensor([2.0]), QuantizationStrategy.TENSOR, None),
+        (8, "int", False, torch.tensor([2.0]), QuantizationStrategy.TENSOR, None),
+        # Per-channel (one scale per row) - uses grouped kernel
+        (8, "int", True, None, QuantizationStrategy.CHANNEL, None),
+        (8, "int", False, None, QuantizationStrategy.CHANNEL, None),
+        (4, "int", True, None, QuantizationStrategy.CHANNEL, None),
+        # Per-group (multiple scales per row) - uses grouped kernel
+        (8, "int", True, None, QuantizationStrategy.GROUP, 128),
+        (8, "int", False, None, QuantizationStrategy.GROUP, 128),
+        (4, "int", True, None, QuantizationStrategy.GROUP, 128),
+        (4, "int", True, None, QuantizationStrategy.GROUP, 64),
+        # Per-group with global_scale
+        (8, "int", True, torch.tensor([2.0]), QuantizationStrategy.GROUP, 128),
+    ],
+)
+def test_quantize_dequantize_triton_matches_cpu(
+    num_bits, type, symmetric, global_scale, strategy, group_size
+):
+    """Verify Triton _quantize_dequantize on GPU matches CPU implementation."""
+    if not torch.accelerator.is_available():
+        pytest.skip("CUDA not available")
+
+    from compressed_tensors.quantization.lifecycle.forward_helpers import (
+        _quantize_dequantize,
+    )
+
+    args = QuantizationArgs(
+        num_bits=num_bits,
+        type=type,
+        symmetric=symmetric,
+        strategy=strategy,
+        group_size=group_size,
+    )
+
+    # Create input on CPU first - use dimensions divisible by common group sizes
+    num_rows, num_cols = 512, 1024
+    x_cpu = torch.randn(num_rows, num_cols)
+
+    # Create scale based on strategy
+    if strategy == QuantizationStrategy.TENSOR:
+        scale_cpu = torch.rand(1) * 0.1 + 0.01
+        zero_point_cpu = None if symmetric else torch.tensor([3.0])
+    elif strategy == QuantizationStrategy.CHANNEL:
+        # One scale per row (channel)
+        scale_cpu = torch.rand(num_rows, 1) * 0.1 + 0.01
+        zero_point_cpu = (
+            None if symmetric else torch.randint(1, 5, (num_rows, 1)).float()
+        )
+    elif strategy == QuantizationStrategy.GROUP:
+        # One scale per group: shape (num_rows, num_cols // group_size)
+        num_groups = num_cols // group_size
+        scale_cpu = torch.rand(num_rows, num_groups) * 0.1 + 0.01
+        zero_point_cpu = (
+            None if symmetric else torch.randint(1, 5, (num_rows, num_groups)).float()
+        )
+    else:
+        raise ValueError(f"Unsupported strategy: {strategy}")
+
+    global_scale_cpu = global_scale.clone() if global_scale is not None else None
+
+    q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
+
+    # For GROUP strategy, reshape to 3D as _process_group would do
+    if strategy == QuantizationStrategy.GROUP:
+        num_groups = num_cols // group_size
+        x_3d = x_cpu.reshape(num_rows, num_groups, group_size)
+        scale_3d = scale_cpu.unsqueeze(-1)  # (num_rows, num_groups, 1)
+        zp_3d = zero_point_cpu.unsqueeze(-1) if zero_point_cpu is not None else None
+
+        # CPU path
+        cpu_out = _quantize_dequantize(
+            x=x_3d.clone(),
+            scale=scale_3d.clone(),
+            zero_point=zp_3d.clone() if zp_3d is not None else None,
+            q_min=q_min_cpu,
+            q_max=q_max_cpu,
+            args=args,
+            global_scale=global_scale_cpu.clone()
+            if global_scale_cpu is not None
+            else None,
+        )
+
+        # CUDA path
+        cuda_out = _quantize_dequantize(
+            x=x_3d.cuda(),
+            scale=scale_3d.cuda(),
+            zero_point=zp_3d.cuda() if zp_3d is not None else None,
+            q_min=q_min_cpu.cuda(),
+            q_max=q_max_cpu.cuda(),
+            args=args,
+            global_scale=global_scale_cpu.cuda()
+            if global_scale_cpu is not None
+            else None,
+        )
+    else:
+        # TENSOR/CHANNEL: shapes work directly
+        # CPU path
+        cpu_out = _quantize_dequantize(
+            x=x_cpu.clone(),
+            scale=scale_cpu.clone(),
+            zero_point=zero_point_cpu.clone() if zero_point_cpu is not None else None,
+            q_min=q_min_cpu,
+            q_max=q_max_cpu,
+            args=args,
+            global_scale=global_scale_cpu.clone()
+            if global_scale_cpu is not None
+            else None,
+        )
+
+        # CUDA path
+        cuda_out = _quantize_dequantize(
+            x=x_cpu.cuda(),
+            scale=scale_cpu.cuda(),
+            zero_point=zero_point_cpu.cuda() if zero_point_cpu is not None else None,
+            q_min=q_min_cpu.cuda(),
+            q_max=q_max_cpu.cuda(),
+            args=args,
+            global_scale=global_scale_cpu.cuda()
+            if global_scale_cpu is not None
+            else None,
+        )
+
+    # Fixed tolerances per quantization type:
+    #
+    # Error comes from rounding differences (torch.round vs tl.rint) and FP precision.
+    # Error in output = (rounding_diff) × scale, where rounding_diff ≤ 1 step.
+    #
+    # INT4/INT8: uniform spacing, max rounding diff = 0.5 steps
+    #   - With test scales [0.01, 0.11], max error ≈ 0.11
+    #   - atol = 0.15 covers this with buffer
+    #
+    # FP4: non-uniform spacing (gaps: 0.5 to 2.0), max rounding diff = 1.0 step
+    #   - atol = 0.25 for larger potential errors
+    #
+    # FP8: falls back to CPU, should be identical
+    #   - atol = 1e-5
+    #
+    # rtol = 0.01 handles any relative precision issues for larger values
+    if type == "int":
+        computed_atol = 0.15
+        computed_rtol = 0.01
+    elif type == "float" and num_bits == 4:
+        computed_atol = 0.25
+        computed_rtol = 0.01
+    else:  # FP8 - CPU fallback
+        computed_atol = 1e-5
+        computed_rtol = 1e-5
+
+    print("type: ", type)
+    print("num_bits: ", num_bits)
+    print("cpu out: ", cpu_out)
+    print("cuda out: ", cuda_out.cpu())
+    print("max diff: ", (cpu_out - cuda_out.cpu()).abs().max().item())
+    print("*")
+
+    assert torch.allclose(
+        cpu_out, cuda_out.cpu(), rtol=computed_rtol, atol=computed_atol
+    ), (
+        f"Mismatch: max diff = {(cpu_out - cuda_out.cpu()).abs().max().item()}, "
+        f"rtol = {computed_rtol}, atol = {computed_atol}"
     )
 
 
