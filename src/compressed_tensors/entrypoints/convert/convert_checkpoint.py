@@ -32,7 +32,7 @@ __all__ = ["convert_checkpoint", "exec_jobs"]
 def convert_checkpoint(
     model_stub: str | os.PathLike,
     save_directory: str | os.PathLike,
-    converters: Converter | list[Converter],
+    converter: Converter | list[Converter],
     max_workers: int = 1,
 ):
     """
@@ -49,11 +49,10 @@ def convert_checkpoint(
     :param save_directory: new checkpoint will be saved in this directory.
     :param max_workers: number of worker threads to process files with
     :param device: gpu device to accelerate quantization with
-    :param converters: single converter or list of converters to apply
+    :param converter: single converter or list of converters to apply
         in order, e.g. a dequantizer followed by a re-quantizer
     """
-    if not isinstance(converters, list):
-        converters = [converters]
+    converters = converter if isinstance(converter, list) else [converter]
     # get all model_files for checkpoint
     model_files = get_checkpoint_files(model_stub)
 
