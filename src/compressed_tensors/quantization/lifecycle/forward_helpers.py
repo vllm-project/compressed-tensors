@@ -249,6 +249,8 @@ def _quantize_kernel(
     use_intel_libdevice: tl.constexpr,
     BLOCK_SIZE_R: tl.constexpr,
     BLOCK_SIZE_C: tl.constexpr,
+    has_zero_point: tl.constexpr,
+    has_global_scale: tl.constexpr,
 ):
     """General quantize kernel using explicit strides.
 
@@ -305,13 +307,13 @@ def _quantize_kernel(
     input = tl.load(input_ptr + input_offsets, masks, 0.0)
     scale = tl.load(scale_ptr + scale_offsets, scale_masks, 1.0)
 
-    if global_scale_ptr is not None:
+    if has_global_scale:
         global_scale = tl.load(global_scale_ptr)
         scale = scale / global_scale.to(scale.dtype)
 
     output = input / scale
 
-    if zero_point_ptr is not None:
+    if has_zero_point:
         zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
         output += zero_point
 
@@ -487,10 +489,10 @@ def _quantize_triton(
         quantized_value,
         x,
         scale,
-        zero_point,
+        zero_point if zero_point is not None else x,  # pass x as dummy
         q_min,
         q_max,
-        global_scale,
+        global_scale if global_scale is not None else x,  # pass x as dummy
         input_stride_0,
         input_stride_1,
         input_stride_2,
@@ -510,6 +512,8 @@ def _quantize_triton(
         use_intel_libdevice=x.device.type == "xpu",
         BLOCK_SIZE_R=block_size_r,
         BLOCK_SIZE_C=block_size_c,
+        has_zero_point=zero_point is not None,
+        has_global_scale=global_scale is not None,
     )
 
     quantized_value = quantized_value.reshape(original_shape)
