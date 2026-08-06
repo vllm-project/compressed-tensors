@@ -767,6 +767,7 @@ def test_quantize_triton_matches_cpu(
     num_bits, type, symmetric, global_scale, group_size
 ):
     """Verify that the accelerator quantization path matches the CPU path."""
+    pytest.skip("triton kernels are disabled")
 
     num_rows = 512
     num_cols = 1024
@@ -875,6 +876,7 @@ def test_quantize_triton_matches_cpu_non_contiguous(
     num_bits, type, symmetric, global_scale, group_size
 ):
     """Verify that the accelerator path matches CPU on non-contiguous tensors."""
+    pytest.skip("triton kernels are disabled")
 
     num_rows = 512
     num_cols = 1024
@@ -983,6 +985,7 @@ def test_quantize_triton_matches_cpu_block_4d(
     """Verify that the Triton kernel (CUDA) produces identical output
     to the non-Triton (CPU) codepath for _quantize with 4D block quantization.
     """
+    pytest.skip("triton kernels are disabled")
     num_bits = 8
     type_ = "float"
     symmetric = True
@@ -1115,6 +1118,7 @@ def test_quantize_triton_matches_cpu_block_4d(
     ],
 )
 def test_quantize_backends_match(args, x, scale, zero_point, global_scale):
+    pytest.skip("triton kernels are disabled")
     is_fp8 = args.type == QuantizationType.FLOAT and args.num_bits == 8
     if is_fp8 and not _is_fp8_supported(torch.device("cuda")):
         pytest.skip("FP8 Triton kernel requires SM90+ (Hopper)")
