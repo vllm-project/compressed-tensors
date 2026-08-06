@@ -229,6 +229,31 @@ def test_autoawq_converter_validate_returns_correct_meta_tensors(zero_point):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("scale_dtype", [torch.float16, torch.bfloat16, torch.float32])
+def test_autoawq_converter_validate_weight_scale_dtype(scale_dtype):
+    converter = AutoAWQConverter(
+        group_size=2,
+        targets=[r"re:.*proj$"],
+        zero_point=False,
+    )
+    tensors = {
+        "model.layers.0.mlp.up_proj.qweight": torch.empty(
+            2, 1, dtype=torch.int32, device="meta"
+        ),
+        "model.layers.0.mlp.up_proj.scales": torch.empty(
+            1, 8, dtype=scale_dtype, device="meta"
+        ),
+        "model.embed_tokens.weight": torch.empty(
+            4, 4, dtype=torch.bfloat16, device="meta"
+        ),
+    }
+
+    result = converter.validate(tensors)
+
+    assert result["model.layers.0.mlp.up_proj.weight_scale"].dtype == scale_dtype
+
+
+@pytest.mark.unit
 def test_autoawq_converter_update_config_merges():
     converter = AutoAWQConverter(group_size=128, targets=["Linear"])
 
