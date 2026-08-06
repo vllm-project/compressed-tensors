@@ -160,7 +160,9 @@ class AutoAWQConverter(Converter):
             # Simulate process output
             output[f"{module_name}.weight_packed"] = torch.empty(0, dtype=torch.int32)
             output[f"{module_name}.weight_shape"] = torch.empty(0, dtype=torch.int64)
-            output[f"{module_name}.weight_scale"] = torch.empty(0, dtype=torch.float16)
+            output[f"{module_name}.weight_scale"] = torch.empty(
+                0, dtype=tensors[f"{module_name}.scales"].dtype
+            )
             if self.zero_point:
                 output[f"{module_name}.weight_zero_point"] = torch.empty(
                     0, dtype=torch.int32
