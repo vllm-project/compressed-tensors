@@ -96,6 +96,8 @@ def _quantize_dequantize_grouped_kernel(
     NUM_BITS: tl.constexpr,
     BLOCK_SIZE_R: tl.constexpr,
     BLOCK_SIZE_C: tl.constexpr,
+    has_zero_point: tl.constexpr,
+    has_global_scale: tl.constexpr,
 ):
     """
     Fused quantize-dequantize kernel for per-group/channel scales.
@@ -130,14 +132,14 @@ def _quantize_dequantize_grouped_kernel(
     q_max = tl.load(q_max_ptr)
 
     # Apply global scale if present
-    if global_scale_ptr is not None:
+    if has_global_scale:
         global_scale = tl.load(global_scale_ptr)
         scale = scale / global_scale.to(scale.dtype)
 
     # Quantize: x / scale + zero_point
     scaled = x / scale
 
-    if zero_point_ptr is not None:
+    if has_zero_point:
         zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
         scaled = scaled + zero_point
 
@@ -153,7 +155,7 @@ def _quantize_dequantize_grouped_kernel(
     # Dequantize: (quantized - zero_point) * scale
     # Note: for FP4, quantized is bfloat16 but scale is float32,
     # so the result will be promoted to float32
-    if zero_point_ptr is not None:
+    if has_zero_point:
         output = (quantized - zero_point) * scale
     else:
         output = quantized * scale
@@ -410,19 +412,20 @@ def _quantize_dequantize_scalar(
     # Dummy pointer for zero_point if not provided
     zp_ptr = zero_point if zero_point is not None else scale
 
-    _quantize_dequantize_scalar_kernel[grid](
-        output,
-        x_flat,
-        scale,
-        zp_ptr,
-        q_min,
-        q_max,
-        n_elements,
-        HAS_ZERO_POINT=zero_point is not None,
-        QUANT_TYPE=quant_type,
-        NUM_BITS=num_bits,
-        BLOCK_SIZE=BLOCK_SIZE,
-    )
+    with torch.get_device_module().device(x.device):
+        _quantize_dequantize_scalar_kernel[grid](
+            output,
+            x_flat,
+            scale,
+            zp_ptr,
+            q_min,
+            q_max,
+            n_elements,
+            HAS_ZERO_POINT=zero_point is not None,
+            QUANT_TYPE=quant_type,
+            NUM_BITS=num_bits,
+            BLOCK_SIZE=BLOCK_SIZE,
+        )
 
     return output.reshape(original_shape)
 
@@ -494,22 +497,25 @@ def _quantize_dequantize_grouped(
     )
     num_bits = args.num_bits
 
-    _quantize_dequantize_grouped_kernel[grid](
-        output,
-        x,
-        scale,
-        zero_point,
-        global_scale,
-        q_min,
-        q_max,
-        num_rows,
-        num_cols,
-        group_size,
-        QUANT_TYPE=quant_type,
-        NUM_BITS=num_bits,
-        BLOCK_SIZE_R=block_size_r,
-        BLOCK_SIZE_C=block_size_c,
-    )
+    with torch.get_device_module().device(x.device):
+        _quantize_dequantize_grouped_kernel[grid](
+            output,
+            x,
+            scale,
+            zero_point if zero_point is not None else x,  # dummy pointer
+            global_scale if global_scale is not None else x,  # dummy pointer
+            q_min,
+            q_max,
+            num_rows,
+            num_cols,
+            group_size,
+            QUANT_TYPE=quant_type,
+            NUM_BITS=num_bits,
+            BLOCK_SIZE_R=block_size_r,
+            BLOCK_SIZE_C=block_size_c,
+            has_zero_point=zero_point is not None,
+            has_global_scale=global_scale is not None,
+        )
 
     return output.reshape(original_shape)
 
@@ -578,6 +584,8 @@ if HAS_TRITON:
         num_scale_cols,
         BLOCK_SIZE_R: tl.constexpr,
         BLOCK_SIZE_C: tl.constexpr,
+        has_zero_point: tl.constexpr,
+        has_global_scale: tl.constexpr,
     ):
         """General dequantize kernel using explicit strides.
 
@@ -636,12 +644,12 @@ if HAS_TRITON:
         input = tl.load(input_ptr + input_offsets, masks, 0.0)
         scale = tl.load(scale_ptr + scale_offsets, scale_masks, 1.0)
 
-        if global_scale_ptr is not None:
+        if has_global_scale:
             global_scale = tl.load(global_scale_ptr)
             scale = scale / global_scale.to(scale.dtype)
 
         # Dequantize: (x_q - zero_point) * scale
-        if zero_point_ptr is not None:
+        if has_zero_point:
             zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
             output = (input - zero_point) * scale
         else:
@@ -684,6 +692,8 @@ def _quantize_kernel(
     use_intel_libdevice: tl.constexpr,
     BLOCK_SIZE_R: tl.constexpr,
     BLOCK_SIZE_C: tl.constexpr,
+    has_zero_point: tl.constexpr,
+    has_global_scale: tl.constexpr,
 ):
     """General quantize kernel using explicit strides.
 
@@ -740,13 +750,13 @@ def _quantize_kernel(
     input = tl.load(input_ptr + input_offsets, masks, 0.0)
     scale = tl.load(scale_ptr + scale_offsets, scale_masks, 1.0)
 
-    if global_scale_ptr is not None:
+    if has_global_scale:
         global_scale = tl.load(global_scale_ptr)
         scale = scale / global_scale.to(scale.dtype)
 
     output = input / scale
 
-    if zero_point_ptr is not None:
+    if has_zero_point:
         zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
         output += zero_point
 
@@ -918,34 +928,37 @@ def _quantize_triton(
         output_stride_1, output_stride_3 = out_strides
         output_stride_2 = 0
 
-    _quantize_kernel[grid](
-        quantized_value,
-        x,
-        scale,
-        zero_point,
-        q_min,
-        q_max,
-        global_scale,
-        input_stride_0,
-        input_stride_1,
-        input_stride_2,
-        input_stride_3,
-        output_stride_0,
-        output_stride_1,
-        output_stride_2,
-        output_stride_3,
-        dim_0,
-        dim_1,
-        dim_2,
-        dim_3,
-        group_size,
-        num_scale_cols,
-        quant_type=quant_type,
-        num_bits=num_bits,
-        use_intel_libdevice=x.device.type == "xpu",
-        BLOCK_SIZE_R=block_size_r,
-        BLOCK_SIZE_C=block_size_c,
-    )
+    with torch.get_device_module().device(x.device):
+        _quantize_kernel[grid](
+            quantized_value,
+            x,
+            scale,
+            zero_point if zero_point is not None else x,  # dummy pointer
+            q_min,
+            q_max,
+            global_scale if global_scale is not None else x,  # dummy pointer
+            input_stride_0,
+            input_stride_1,
+            input_stride_2,
+            input_stride_3,
+            output_stride_0,
+            output_stride_1,
+            output_stride_2,
+            output_stride_3,
+            dim_0,
+            dim_1,
+            dim_2,
+            dim_3,
+            group_size,
+            num_scale_cols,
+            quant_type=quant_type,
+            num_bits=num_bits,
+            use_intel_libdevice=x.device.type == "xpu",
+            BLOCK_SIZE_R=block_size_r,
+            BLOCK_SIZE_C=block_size_c,
+            has_zero_point=zero_point is not None,
+            has_global_scale=global_scale is not None,
+        )
 
     quantized_value = quantized_value.reshape(original_shape)
 
@@ -1051,15 +1064,16 @@ def _dequantize_scalar(
     # Dummy pointer for zero_point if not provided
     zp_ptr = zero_point if zero_point is not None else scale
 
-    _dequantize_scalar_kernel[grid](
-        dequant_value,
-        x_q_float,
-        scale,
-        zp_ptr,
-        n_elements,
-        HAS_ZERO_POINT=zero_point is not None,
-        BLOCK_SIZE=BLOCK_SIZE,
-    )
+    with torch.get_device_module().device(x_q.device):
+        _dequantize_scalar_kernel[grid](
+            dequant_value,
+            x_q_float,
+            scale,
+            zp_ptr,
+            n_elements,
+            HAS_ZERO_POINT=zero_point is not None,
+            BLOCK_SIZE=BLOCK_SIZE,
+        )
 
     dequant_value = dequant_value.reshape(original_shape)
 
@@ -1195,29 +1209,32 @@ def _dequantize_grouped(
             output_stride_1, output_stride_3 = out_strides
             output_stride_2 = 0
 
-    _dequantize_kernel[grid](
-        dequant_value,
-        x_q,
-        scale,
-        zero_point,
-        global_scale,
-        input_stride_0,
-        input_stride_1,
-        input_stride_2,
-        input_stride_3,
-        output_stride_0,
-        output_stride_1,
-        output_stride_2,
-        output_stride_3,
-        dim_0,
-        dim_1,
-        dim_2,
-        dim_3,
-        group_size,
-        num_scale_cols,
-        BLOCK_SIZE_R=block_size_r,
-        BLOCK_SIZE_C=block_size_c,
-    )
+    with torch.get_device_module().device(x_q.device):
+        _dequantize_kernel[grid](
+            dequant_value,
+            x_q,
+            scale,
+            zero_point if zero_point is not None else x_q,  # dummy pointer
+            global_scale if global_scale is not None else x_q,  # dummy pointer
+            input_stride_0,
+            input_stride_1,
+            input_stride_2,
+            input_stride_3,
+            output_stride_0,
+            output_stride_1,
+            output_stride_2,
+            output_stride_3,
+            dim_0,
+            dim_1,
+            dim_2,
+            dim_3,
+            group_size,
+            num_scale_cols,
+            BLOCK_SIZE_R=block_size_r,
+            BLOCK_SIZE_C=block_size_c,
+            has_zero_point=zero_point is not None,
+            has_global_scale=global_scale is not None,
+        )
 
     dequant_value = dequant_value.reshape(original_shape)
 
