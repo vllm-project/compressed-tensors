@@ -11,9 +11,34 @@ from compressed_tensors.quantization.quant_args import (
     round_to_quantized_type_args,
 )
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
-from compressed_tensors.quantization.utils.fp4_utils import _round_to_fp4
 from compressed_tensors.utils.impl_backend import ImplBackend
 from compressed_tensors.utils.triton import tl, triton, triton_req
+
+
+@triton.jit
+def _round_to_fp4(x):
+    """
+    Round float values to the nearest E2M1 representable value.
+    FP4 values: 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 (and their negatives)
+
+    Based on vllm's nvfp4_emulation_utils.py implementation.
+    """
+    sign_bit = x.to(tl.int16, bitcast=True) & (-32768)
+    abs_x = tl.abs(x)
+
+    result = tl.zeros_like(abs_x)
+    result = tl.where(abs_x > 0.25, 0.5, result)
+    result = tl.where(abs_x >= 0.75, 1.0, result)
+    result = tl.where(abs_x > 1.25, 1.5, result)
+    result = tl.where(abs_x >= 1.75, 2.0, result)
+    result = tl.where(abs_x > 2.5, 3.0, result)
+    result = tl.where(abs_x >= 3.5, 4.0, result)
+    result = tl.where(abs_x > 5.0, 6.0, result)
+
+    result = (result.to(tl.int16, bitcast=True) | sign_bit).to(
+        tl.bfloat16, bitcast=True
+    )
+    return result
 
 
 def _apply_quantize_op(

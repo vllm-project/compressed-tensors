@@ -54,18 +54,29 @@ class FP4_E2M1_DATA(FloatArgs):
     min = -6.0
 
     @staticmethod
-    def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
-        """Round float values to the nearest E2M1 representable value.
+    def cast_to_fp4(x):
+        # torch.compile guards on input rank, so rank-varying inputs (dense /
+        # MoE-expert / group-scaled activations) recompile the core once per
+        # rank and exhaust recompile_limit (#734). Flatten to rank-1 so the core
+        # (kept compiled per PR #331) is reused; flatten() keeps a stable 1-D size
+        # symbol that automatic dynamic shapes promotes, whereas reshape(-1)
+        # infers a rank-dependent numel that defeats it.
+        return FP4_E2M1_DATA._cast_to_fp4(x.flatten()).reshape(x.shape)
 
-        Uses Triton for CUDA/XPU tensors when available, falls back to
-        torch.compile for CPU tensors.
-
-        :param x: input tensor to quantize
-        :return: input tensor after rounding to fp4 (maintains same dtype)
-        """
-        from compressed_tensors.quantization.utils.fp4_utils import cast_to_fp4
-
-        return cast_to_fp4(x)
+    @staticmethod
+    @torch.compile
+    def _cast_to_fp4(x):
+        sign = torch.sign(x)
+        x = torch.abs(x)
+        x[(x >= 0.0) & (x <= 0.25)] = 0.0
+        x[(x > 0.25) & (x < 0.75)] = 0.5
+        x[(x >= 0.75) & (x <= 1.25)] = 1.0
+        x[(x > 1.25) & (x < 1.75)] = 1.5
+        x[(x >= 1.75) & (x <= 2.5)] = 2.0
+        x[(x > 2.5) & (x < 3.5)] = 3.0
+        x[(x >= 3.5) & (x <= 5.0)] = 4.0
+        x[x > 5.0] = 6.0
+        return x * sign
 
 
 class FP8_E4M3_DATA(FloatArgs):
