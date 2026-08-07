@@ -4,16 +4,6 @@
 from math import ceil
 
 import torch
-
-
-try:
-    import triton
-    import triton.language as tl
-
-    _triton_available = True
-except ImportError:
-    _triton_available = False
-
 from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
     QuantizationStrategy,
@@ -22,6 +12,8 @@ from compressed_tensors.quantization.quant_args import (
 )
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
 from compressed_tensors.quantization.utils.fp4_utils import _round_to_fp4
+from compressed_tensors.utils.impl_backend import ImplBackend
+from compressed_tensors.utils.triton import tl, triton, triton_req
 
 
 def _apply_quantize_op(
@@ -48,19 +40,6 @@ def _apply_quantize_op(
             global_scale=global_scale,
         )
     elif do_quantize:
-        # Determine if Triton should be used
-        is_gpu = x.is_cuda or x.is_xpu
-        is_fp8 = _needs_fp8(x, scale, zero_point, global_scale, args=args)
-        fp8_hw_ok = _is_fp8_supported(x.device) if is_fp8 else True
-        do_triton: bool = is_gpu and (not is_fp8 or fp8_hw_ok)
-
-        # Adapt scale/zp for Triton if needed
-        if do_triton:
-            num_rows = x.shape[0]
-            scale, zero_point = adapt_scale_and_zp_for_triton(
-                scale, zero_point, num_rows
-            )
-
         return _quantize(
             x=x,
             scale=scale,
@@ -70,7 +49,6 @@ def _apply_quantize_op(
             args=args,
             dtype=dtype,
             global_scale=global_scale,
-            do_triton=do_triton,
         )
     else:
         return _dequantize(
@@ -241,119 +219,120 @@ def _quantize_dequantize(
 QUANT_TYPE_INT = tl.constexpr(0)
 QUANT_TYPE_FLOAT = tl.constexpr(1)
 
-if _triton_available:
 
-    @triton.jit
-    def _quantize_kernel(
-        output_ptr: tl.tensor,
-        input_ptr: tl.tensor,
-        scale_ptr: tl.tensor,
-        zero_point_ptr: tl.tensor,
-        q_min_ptr: tl.tensor,
-        q_max_ptr: tl.tensor,
-        global_scale_ptr: tl.tensor,
-        # Note: unused strides for tensors with fewer dimensions are set to 0.
-        input_stride_0,
-        input_stride_1,
-        input_stride_2,
-        input_stride_3,
-        output_stride_0,
-        output_stride_1,
-        output_stride_2,
-        output_stride_3,
-        dim_0,
-        dim_1,
-        dim_2,
-        dim_3,
-        group_size,
-        num_scale_cols,
-        quant_type: tl.constexpr,  # QUANT_TYPE_INT or QUANT_TYPE_FLOAT
-        num_bits: tl.constexpr,  # 4 or 8
-        BLOCK_SIZE_R: tl.constexpr,
-        BLOCK_SIZE_C: tl.constexpr,
-    ):
-        """General quantize kernel using explicit strides.
+@triton.jit
+def _quantize_kernel(
+    output_ptr: tl.tensor,
+    input_ptr: tl.tensor,
+    scale_ptr: tl.tensor,
+    zero_point_ptr: tl.tensor,
+    q_min_ptr: tl.tensor,
+    q_max_ptr: tl.tensor,
+    global_scale_ptr: tl.tensor,
+    # Note: unused strides for tensors with fewer dimensions are set to 0.
+    input_stride_0,
+    input_stride_1,
+    input_stride_2,
+    input_stride_3,
+    output_stride_0,
+    output_stride_1,
+    output_stride_2,
+    output_stride_3,
+    dim_0,
+    dim_1,
+    dim_2,
+    dim_3,
+    group_size,
+    num_scale_cols,
+    quant_type: tl.constexpr,  # QUANT_TYPE_INT or QUANT_TYPE_FLOAT
+    num_bits: tl.constexpr,  # 4 or 8
+    use_intel_libdevice: tl.constexpr,
+    BLOCK_SIZE_R: tl.constexpr,
+    BLOCK_SIZE_C: tl.constexpr,
+):
+    """General quantize kernel using explicit strides.
 
-        Handles tensors up to 4D by treating them as a 2D view:
-        - row indices span dim_0 * dim_1
-        - col indices span dim_2 * dim_3
+    Handles tensors up to 4D by treating them as a 2D view:
+    - row indices span dim_0 * dim_1
+    - col indices span dim_2 * dim_3
 
-        Scale is expected to be contiguous and indexed linearly as:
-        scale_offset = (idx_0 * dim_1 + idx_1) * num_scale_cols + tile_c // group_size
-        """
-        pid_r = tl.program_id(axis=0)
-        pid_c = tl.program_id(axis=1)
+    Scale is expected to be contiguous and indexed linearly as:
+    scale_offset = (idx_0 * dim_1 + idx_1) * num_scale_cols + tile_c // group_size
+    """
+    pid_r = tl.program_id(axis=0)
+    pid_c = tl.program_id(axis=1)
 
-        tile_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
-        tile_c = pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)
+    tile_r = pid_r * BLOCK_SIZE_R + tl.arange(0, BLOCK_SIZE_R)
+    tile_c = pid_c * BLOCK_SIZE_C + tl.arange(0, BLOCK_SIZE_C)
 
-        idx_0 = tile_r // dim_1
-        idx_1 = tile_r % dim_1
+    idx_0 = tile_r // dim_1
+    idx_1 = tile_r % dim_1
 
-        idx_2 = tile_c // dim_3
-        idx_3 = tile_c % dim_3
+    idx_2 = tile_c // dim_3
+    idx_3 = tile_c % dim_3
 
-        # Compute 2D offset matrices via broadcasting:
-        # - [:, None] reshapes [R] -> [R, 1] (column vector for row indices)
-        # - [None, :] reshapes [C] -> [1, C] (row vector for col indices)
-        # Adding them produces [R, C] matrix of all (row, col) offset combinations
-        input_offsets = (
-            idx_0[:, None] * input_stride_0
-            + idx_1[:, None] * input_stride_1
-            + idx_2[None, :] * input_stride_2
-            + idx_3[None, :] * input_stride_3
-        )
+    # Compute 2D offset matrices via broadcasting:
+    # - [:, None] reshapes [R] -> [R, 1] (column vector for row indices)
+    # - [None, :] reshapes [C] -> [1, C] (row vector for col indices)
+    # Adding them produces [R, C] matrix of all (row, col) offset combinations
+    input_offsets = (
+        idx_0[:, None] * input_stride_0
+        + idx_1[:, None] * input_stride_1
+        + idx_2[None, :] * input_stride_2
+        + idx_3[None, :] * input_stride_3
+    )
 
-        output_offsets = (
-            idx_0[:, None] * output_stride_0
-            + idx_1[:, None] * output_stride_1
-            + idx_2[None, :] * output_stride_2
-            + idx_3[None, :] * output_stride_3
-        )
+    output_offsets = (
+        idx_0[:, None] * output_stride_0
+        + idx_1[:, None] * output_stride_1
+        + idx_2[None, :] * output_stride_2
+        + idx_3[None, :] * output_stride_3
+    )
 
-        scale_row_idx = idx_0 * dim_1 + idx_1
-        scale_col_idx = tile_c // group_size
-        scale_offsets = scale_row_idx[:, None] * num_scale_cols + scale_col_idx[None, :]
+    scale_row_idx = idx_0 * dim_1 + idx_1
+    scale_col_idx = tile_c // group_size
+    scale_offsets = scale_row_idx[:, None] * num_scale_cols + scale_col_idx[None, :]
 
-        masks_0 = idx_0 < dim_0
-        masks_1 = idx_1 < dim_1
-        masks_2 = idx_2 < dim_2
-        masks_3 = idx_3 < dim_3
-        masks = (
-            masks_0[:, None] & masks_1[:, None] & masks_2[None, :] & masks_3[None, :]
-        )
+    masks_0 = idx_0 < dim_0
+    masks_1 = idx_1 < dim_1
+    masks_2 = idx_2 < dim_2
+    masks_3 = idx_3 < dim_3
+    masks = masks_0[:, None] & masks_1[:, None] & masks_2[None, :] & masks_3[None, :]
 
-        num_scale_elements = dim_0 * dim_1 * num_scale_cols
-        scale_masks = scale_offsets < num_scale_elements
+    num_scale_elements = dim_0 * dim_1 * num_scale_cols
+    scale_masks = scale_offsets < num_scale_elements
 
-        input = tl.load(input_ptr + input_offsets, masks, 0.0)
-        scale = tl.load(scale_ptr + scale_offsets, scale_masks, 1.0)
+    input = tl.load(input_ptr + input_offsets, masks, 0.0)
+    scale = tl.load(scale_ptr + scale_offsets, scale_masks, 1.0)
 
-        if global_scale_ptr is not None:
-            global_scale = tl.load(global_scale_ptr)
-            scale = scale / global_scale.to(scale.dtype)
+    if global_scale_ptr is not None:
+        global_scale = tl.load(global_scale_ptr)
+        scale = scale / global_scale.to(scale.dtype)
 
-        output = input / scale
+    output = input / scale
 
-        if zero_point_ptr is not None:
-            zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
-            output += zero_point
+    if zero_point_ptr is not None:
+        zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
+        output += zero_point
 
-        # clamp and round (equivalent to round_to_quantized_type_args)
-        q_min = tl.load(q_min_ptr)
-        q_max = tl.load(q_max_ptr)
-        if quant_type == QUANT_TYPE_INT:
-            output = tl.clamp(output, q_min, q_max)
+    # clamp and round (equivalent to round_to_quantized_type_args)
+    q_min = tl.load(q_min_ptr)
+    q_max = tl.load(q_max_ptr)
+    if quant_type == QUANT_TYPE_INT:
+        output = tl.clamp(output, q_min, q_max)
+        if use_intel_libdevice:
+            output = tl.extra.intel.libdevice.rint(output)
+        else:
             output = tl.extra.cuda.libdevice.rint(output)
-        elif quant_type == QUANT_TYPE_FLOAT:
-            output = tl.clamp(output, q_min, q_max)
-            if num_bits == 4:
-                orig_dtype = output.dtype
-                output = _round_to_fp4(output.to(tl.bfloat16)).to(orig_dtype)
-            elif num_bits == 8:
-                output = output.to(tl.float8e4nv).to(output.dtype)
+    elif quant_type == QUANT_TYPE_FLOAT:
+        output = tl.clamp(output, q_min, q_max)
+        if num_bits == 4:
+            orig_dtype = output.dtype
+            output = _round_to_fp4(output.to(tl.bfloat16)).to(orig_dtype)
+        elif num_bits == 8:
+            output = output.to(tl.float8e4nv).to(output.dtype)
 
-        tl.store(output_ptr + output_offsets, output, masks)
+    tl.store(output_ptr + output_offsets, output, masks)
 
 
 def _needs_fp8(*tensors, args: QuantizationArgs) -> bool:
@@ -370,8 +349,8 @@ def _is_fp8_supported(device: torch.device) -> bool:
         major, _ = torch.get_device_module().get_device_capability(device)
         return major >= 9  # SM90+ (Hopper/Ada)
     elif device.type == "xpu":
-        # Intel XPU: conservatively disable FP8 in Triton
-        return False
+        # Intel XPU: Triton FP8 casting works on the current backend.
+        return True
     return False
 
 
@@ -405,49 +384,39 @@ def adapt_scale_and_zp_for_triton(
     return scale, zero_point
 
 
-@torch.no_grad()
-def _quantize(
+def _quantize_triton_req(
     x: torch.Tensor,
     scale: torch.Tensor,
-    zero_point: torch.Tensor,
+    zero_point: torch.Tensor | None,
     q_min: torch.Tensor,
     q_max: torch.Tensor,
     args: QuantizationArgs,
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
-    do_triton: bool = False,
-) -> torch.Tensor:
-
-    if not _triton_available or not do_triton:
-        # if a global scale is optionally provided, use it
-        # to further scale the local `scale` parameter
-        if global_scale is not None:
-            scale /= global_scale
-
-        scaled = x / scale
-        if zero_point is not None:
-            scaled += zero_point.to(x.dtype)
-        quantized_ground = round_to_quantized_type_args(
-            tensor=scaled, args=args, min=q_min, max=q_max
-        )
-        # quantized_ground = scaled
-        if dtype is not None:
-            quantized_ground = quantized_ground.to(dtype)
-        return quantized_ground
-
-    assert scale.is_contiguous(), (
-        f"Scale must be contiguous for Triton kernel. "
-        f"Got shape {scale.shape}, stride {scale.stride()}"
+) -> bool:
+    return triton_req(x) and (
+        not _needs_fp8(x, scale, zero_point, global_scale, args=args)
+        or _is_fp8_supported(x.device)
     )
-    if zero_point is not None:
-        assert zero_point.is_contiguous(), (
-            f"Zero point must be contiguous for Triton kernel. "
-            f"Got shape {zero_point.shape}, stride {zero_point.stride()}"
-        )
+
+
+@torch.no_grad()
+@ImplBackend.register("_quantize", _quantize_triton_req, "disable")
+def _quantize_triton(
+    x: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    q_min: torch.Tensor,
+    q_max: torch.Tensor,
+    args: QuantizationArgs,
+    dtype: torch.dtype | None = None,
+    global_scale: torch.Tensor | None = None,
+) -> torch.Tensor:
+    num_rows = x.shape[0]
+    scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
 
     original_shape = x.shape
 
-    # Determine quantization type
     quant_type = (
         QUANT_TYPE_INT if args.type == QuantizationType.INT else QUANT_TYPE_FLOAT
     )
@@ -538,6 +507,7 @@ def _quantize(
         num_scale_cols,
         quant_type=quant_type,
         num_bits=num_bits,
+        use_intel_libdevice=x.device.type == "xpu",
         BLOCK_SIZE_R=block_size_r,
         BLOCK_SIZE_C=block_size_c,
     )
@@ -548,6 +518,32 @@ def _quantize(
         quantized_value = quantized_value.to(dtype)
 
     return quantized_value
+
+
+@torch.no_grad()
+@ImplBackend.entrypoint("_quantize")
+def _quantize(
+    x: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    q_min: torch.Tensor,
+    q_max: torch.Tensor,
+    args: QuantizationArgs,
+    dtype: torch.dtype | None = None,
+    global_scale: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if global_scale is not None:
+        scale = scale / global_scale
+
+    scaled = x / scale
+    if zero_point is not None:
+        scaled += zero_point.to(x.dtype)
+    quantized_ground = round_to_quantized_type_args(
+        tensor=scaled, args=args, min=q_min, max=q_max
+    )
+    if dtype is not None:
+        quantized_ground = quantized_ground.to(dtype)
+    return quantized_ground
 
 
 @torch.no_grad()
