@@ -16,6 +16,7 @@ __all__ = ["infer_model_format", "infer_module_format"]
 # Priority order for compression format matching
 # More specific formats should come before more general ones
 COMPRESSION_FORMAT_PRIORITY: List[CompressionFormat] = [
+    CompressionFormat.lut_b,
     CompressionFormat.mxfp4_pack_quantized,
     CompressionFormat.mxfp8_quantized,
     CompressionFormat.nvfp4_pack_quantized,

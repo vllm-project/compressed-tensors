@@ -20,6 +20,7 @@ from compressed_tensors.quantization import (
     QuantizationScheme,
     QuantizationStatus,
     QuantizationStrategy,
+    QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import set_forward_quantized
 from compressed_tensors.quantization.utils import strategy_cdiv
@@ -178,6 +179,11 @@ def initialize_qparams(
     dynamic = quantization_args.dynamic
     actorder = quantization_args.actorder
     device = get_execution_device(module)  # avoid performing intialization ops on cpu
+
+    if quantization_args.type == QuantizationType.CODEBOOK:
+        # Codebook observers produce their named tensors directly instead of
+        # affine scale and zero-point parameters.
+        return
 
     # Skip all intialization for fully dynamic quantization
     if dynamic is True:
