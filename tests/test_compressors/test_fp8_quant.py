@@ -78,6 +78,7 @@ def test_quant_format(strategy, group_size, sc, zp):
 def test_compress_decompress_match(
     mock_per_group_calibration,
     mock_per_channel_calibration,
+    mock_per_tensor_calibration,
     strategy,
     group_size,
 ):
@@ -96,14 +97,20 @@ def test_compress_decompress_match(
     apply_quantization_config(model, quant_config)
     model.dummy.quantization_status = QuantizationStatus.CALIBRATION
 
-    if strategy == QuantizationStrategy.GROUP:
+    if strategy == QuantizationStrategy.TENSOR:
+        mock_per_tensor_calibration(
+            model.dummy, base_name="weight", value=model.dummy.weight
+        )
+    elif strategy == QuantizationStrategy.GROUP:
         mock_per_group_calibration(
             model.dummy, base_name="weight", value=model.dummy.weight, group_size=128
         )
-    if strategy == QuantizationStrategy.CHANNEL:
+    elif strategy == QuantizationStrategy.CHANNEL:
         mock_per_channel_calibration(
             model.dummy, base_name="weight", value=model.dummy.weight
         )
+    else:
+        raise ValueError(f"Unsupported strategy: {strategy}")
 
     scheme = quant_config.config_groups["group_1"]
 
