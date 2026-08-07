@@ -4,6 +4,7 @@
 import warnings
 from collections import defaultdict
 from enum import Enum
+import logging
 from typing import Annotated, Any
 
 from compressed_tensors.config import CompressionFormat
@@ -17,6 +18,9 @@ from compressed_tensors.utils import find_unique_name
 from compressed_tensors.utils.match import match_name
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 __all__ = [
@@ -170,6 +174,13 @@ class QuantizationConfig(BaseModel):
         updates any quantization schemes defined as presets to be fully loaded
         schemes
         """
+        try:
+            self.format = CompressionFormat(self.format).value
+        except ValueError:
+            _LOGGER.debug(
+                "Unknown compression format %r; leaving it unchanged", self.format
+            )
+
         for group_name, targets_or_scheme in self.config_groups.items():
             if isinstance(targets_or_scheme, QuantizationScheme):
                 continue  # scheme already defined

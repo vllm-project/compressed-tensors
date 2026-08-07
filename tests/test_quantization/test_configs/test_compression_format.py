@@ -101,6 +101,7 @@ def test_compression_format_in_config():
         CompressionFormat.naive_quantized,
         CompressionFormat.mixed_precision,
         CompressionFormat.nvfp4_pack_quantized,
+        CompressionFormat.mixfp4_pack_quantized,
         CompressionFormat.mxfp4_pack_quantized,
     ],
 )
