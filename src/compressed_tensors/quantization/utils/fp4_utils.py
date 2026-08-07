@@ -68,7 +68,8 @@ def cast_to_fp4_triton(x: torch.Tensor) -> torch.Tensor:
     block_size = 1024
 
     grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)  # noqa: E731
-    _cast_to_fp4_kernel[grid](x, output, n, BLOCK_SIZE=block_size)
+    with torch.get_device_module().device(x.device):
+        _cast_to_fp4_kernel[grid](x, output, n, BLOCK_SIZE=block_size)
 
     return output.reshape(shape)
 

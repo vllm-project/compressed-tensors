@@ -66,7 +66,6 @@ def triton_quantize_cuda(x, scale, zero_point, q_min, q_max, args):
         q_min=q_min,
         q_max=q_max,
         args=args,
-        do_triton=True,
     )
 
 
