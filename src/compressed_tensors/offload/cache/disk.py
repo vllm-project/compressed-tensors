@@ -2,8 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+from collections import OrderedDict
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, ClassVar, Literal, Optional
 
 import torch
 import torch.distributed as dist
@@ -18,6 +19,81 @@ from safetensors.torch import save_file
 if TYPE_CHECKING:
     from torch._prims_common import DeviceLikeType
 
+try:
+    import instanttensor as _instanttensor
+
+    _INSTANTTENSOR_AVAILABLE = True
+except ImportError:
+    _INSTANTTENSOR_AVAILABLE = False
+
+
+class _LoadContextCache:
+    """
+    LRU cache of open instanttensor load contexts, keyed by resolved file path.
+
+    Instanttensor contexts are expensive to initialize (~470ms each). Once entered,
+    a context holds tensor data in a GPU buffer. Resetting `ctx.iterated = False`
+    allows `tensors()` to be called again from the buffer without re-reading disk.
+
+    When a context is evicted or invalidated, `__exit__` is called to release the
+    GPU buffer. Cache entries are invalidated when the backing file is overwritten
+    or deleted.
+    """
+
+    def __init__(self, maxsize: int):
+        self._cache: OrderedDict[str, "_instanttensor.safe_open"] = OrderedDict()
+        self.maxsize = maxsize
+
+    def get(self, path: str) -> tuple[str, Optional["_instanttensor.safe_open"]]:
+        """
+        Look up the context for *path* (resolved). Promotes entry to MRU on hit.
+
+        :return: (resolved_path, context_or_None)
+        """
+        resolved = os.path.realpath(path)
+        ctx = self._cache.get(resolved)
+        if ctx is not None:
+            self._cache.move_to_end(resolved)
+        return resolved, ctx
+
+    def put(self, resolved_path: str, ctx: "_instanttensor.safe_open") -> None:
+        """
+        Insert a new context, evicting the LRU entry if over capacity.
+
+        :param resolved_path: realpath of the file this context loaded
+        :param ctx: open (entered) instanttensor safe_open context
+        """
+        self._cache[resolved_path] = ctx
+        self._cache.move_to_end(resolved_path)
+        while len(self._cache) > self.maxsize:
+            _, evicted = self._cache.popitem(last=False)
+            self._close(evicted)
+
+    def invalidate(self, path: str) -> None:
+        """
+        Close and remove the context for *path* if one is cached.
+        Call before overwriting or deleting the backing file.
+
+        :param path: file path (resolved before lookup)
+        """
+        resolved = os.path.realpath(path)
+        ctx = self._cache.pop(resolved, None)
+        if ctx is not None:
+            self._close(ctx)
+
+    def clear(self) -> None:
+        """Close all cached contexts and empty the cache."""
+        for ctx in self._cache.values():
+            self._close(ctx)
+        self._cache.clear()
+
+    @staticmethod
+    def _close(ctx: "_instanttensor.safe_open") -> None:
+        try:
+            ctx.__exit__(None, None, None)
+        except Exception:
+            pass
+
 
 class DiskCache(OffloadCache):
     """
@@ -28,6 +104,11 @@ class DiskCache(OffloadCache):
 
     Tensors are stored in memory as meta tensors. The mapping between offloaded meta
     tensors and their locations on disk is defined by `index`.
+
+    When CT_USE_INSTANT_TENSOR is set, CUDA onloads use instanttensor for faster
+    disk-to-GPU transfers. A per-instance LRU cache of size `load_context_cache_size`
+    keeps instanttensor contexts open between onloads, avoiding repeated ~470ms
+    initialization overhead. Each cached context holds its tensor data in a GPU buffer.
     """
 
     offload_device = "disk"
@@ -38,6 +119,9 @@ class DiskCache(OffloadCache):
     # directory where new tensors are written to
     offload_dir: str
     _ct_file_prefix = "ct_disk_cache"
+
+    # number of instanttensor contexts to keep open simultaneously
+    load_context_cache_size: ClassVar[int] = 8
 
     def __init__(
         self,
@@ -57,6 +141,12 @@ class DiskCache(OffloadCache):
         # Resolve relative paths to absolute paths for symlink creation
         self.offload_dir = Path(offload_dir).resolve()
 
+        self._load_context_cache: Optional[_LoadContextCache] = (
+            _LoadContextCache(self.load_context_cache_size)
+            if _INSTANTTENSOR_AVAILABLE
+            else None
+        )
+
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Onload a tensor from disk/meta to device
@@ -70,6 +160,13 @@ class DiskCache(OffloadCache):
         weight_info = self.index[offloaded]
         device = _get_safe_open_device(self.onload_device)
 
+        if (
+            self._load_context_cache is not None
+            and os.environ.get("CT_USE_INSTANT_TENSOR")
+            and device.startswith("cuda")
+        ):
+            return self._onload_instanttensor(offloaded, weight_info, device)
+
         with safe_open(
             weight_info["safetensors_file"], framework="pt", device=device
         ) as file:
@@ -77,6 +174,39 @@ class DiskCache(OffloadCache):
             onloaded = to_tensor(onloaded, offloaded)
             onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
             return onloaded
+
+    def _onload_instanttensor(
+        self,
+        offloaded: torch.Tensor,
+        weight_info: dict,
+        device: str,
+    ) -> torch.Tensor:
+        """
+        Onload using a cached instanttensor context. On cache miss, opens a new
+        context and caches it. On cache hit, resets the context's iteration state
+        and reads from the already-loaded GPU buffer.
+
+        :param offloaded: meta tensor (used for subclass/dtype metadata)
+        :param weight_info: dict with safetensors_file, weight_name, dtype
+        :param device: CUDA device string (e.g. "cuda:0")
+        :return: onloaded tensor
+        """
+        path = weight_info["safetensors_file"]
+        resolved, ctx = self._load_context_cache.get(path)
+
+        if ctx is None:
+            ctx = _instanttensor.safe_open(path, framework="pt", device=device)
+            ctx.__enter__()
+            self._load_context_cache.put(resolved, ctx)
+        else:
+            # reset so tensors() can be called again from the GPU buffer
+            ctx.iterated = False
+
+        tensors = dict(ctx.tensors())
+        onloaded = tensors[weight_info["weight_name"]]
+        onloaded = to_tensor(onloaded, offloaded)
+        onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
+        return onloaded
 
     def offload(
         self, tensor: torch.Tensor | None, offloaded: Optional[torch.Tensor] = None
@@ -121,6 +251,8 @@ class DiskCache(OffloadCache):
         offloaded = self.offloaded_values[key]
         if not self.onloading_disabled:
             file_path = self.index[offloaded]["safetensors_file"]
+            if self._load_context_cache is not None:
+                self._load_context_cache.invalidate(file_path)
             if self._is_ct_file_path(file_path):
                 os.remove(file_path)
             del self.index[offloaded]
@@ -144,6 +276,10 @@ class DiskCache(OffloadCache):
         if os.path.islink(file_path):
             assert self._is_ct_file_path(file_path), f"Attempted to remove {file_path}"
             os.unlink(file_path)
+
+        # invalidate cached context before overwriting the file
+        if self._load_context_cache is not None:
+            self._load_context_cache.invalidate(file_path)
 
         # save with data using original weight_name
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
