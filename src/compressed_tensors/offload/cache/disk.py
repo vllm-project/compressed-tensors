@@ -133,8 +133,16 @@ class DiskCache(OffloadCache):
         :param offloaded: meta tensors representating parameter to update
         :param data: new data
         """
+        if offloaded not in self.index:
+            # Skip update if offloaded tensor is not index - this can happen
+            # during distributed module parallel where non-processing ranks
+            # create meta tensors that aren't in the index.
+            # In the same way that `a.copy_(b)` is only valid if both tensors
+            # are on the meta device, add an analogous assert here
+            assert data is not None and data.device.type == "meta"
+            return
+
         # get weight info from index
-        assert offloaded in self.index, "Cannot find offload to update"
         weight_info = self.index[offloaded]
         file_path = weight_info["safetensors_file"]
         weight_name = weight_info["weight_name"]
