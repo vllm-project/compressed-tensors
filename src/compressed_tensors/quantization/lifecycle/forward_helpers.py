@@ -400,7 +400,7 @@ def _quantize_triton_req(
 
 
 @torch.no_grad()
-@ImplBackend.register("_quantize", _quantize_triton_req, "disable")
+@ImplBackend.register("_quantize", _quantize_triton_req, 0)
 def _quantize_triton(
     x: torch.Tensor,
     scale: torch.Tensor,
