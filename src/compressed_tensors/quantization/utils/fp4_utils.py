@@ -26,13 +26,13 @@ def _round_to_fp4(x):
     # starting with largest bucket, round values to fp4 values divided by 32.
     # this moves each value temporarily into the 0 to .25 range so it won't be
     # picked up by subsequent threshold checks.
-    x = tl.where(x >  5.0,  6.0 / 32.0, x)
-    x = tl.where(x >= 3.5,  4.0 / 32.0, x)
-    x = tl.where(x >  2.5,  3.0 / 32.0, x)
+    x = tl.where(x > 5.0, 6.0 / 32.0, x)
+    x = tl.where(x >= 3.5, 4.0 / 32.0, x)
+    x = tl.where(x > 2.5, 3.0 / 32.0, x)
     x = tl.where(x >= 1.75, 2.0 / 32.0, x)
-    x = tl.where(x >  1.25, 1.5 / 32.0, x)
+    x = tl.where(x > 1.25, 1.5 / 32.0, x)
     x = tl.where(x >= 0.75, 1.0 / 32.0, x)
-    x = tl.where(x >  0.25, 0.5 / 32.0, x)
+    x = tl.where(x > 0.25, 0.5 / 32.0, x)
 
     #  sign is sign(x_orig)*32 so will rescale everything to exact fp4
     return x * sign
