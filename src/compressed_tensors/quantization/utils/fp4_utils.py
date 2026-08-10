@@ -15,24 +15,26 @@ def _round_to_fp4(x):
     Round float values to the nearest E2M1 representable value.
     FP4 values: 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 (and their negatives)
 
-    Uses a divide-by-32 trick: each matched value is replaced with
-    fp4_val/32, which falls in [0, 0.1875] and won't trigger subsequent
-    threshold checks. Multiplying by sign*32 restores both sign and scale.
-    All fp4_val/32 values are exactly representable in any float with
-    >= 2 mantissa bits and >= 3 exponent bits.
     """
     sign = tl.where(x < 0.0, -32.0, 32.0)
     x = tl.abs(x)
 
+    # moves all values from 0 to .25 to 0. We do this first to clear up space
+    # to store the other rounded values temporarily in 0-.25 range.
     x = tl.where(x <= 0.25, 0.0, x)
-    x = tl.where(x > 5.0, 6.0 / 32.0, x)
-    x = tl.where(x >= 3.5, 4.0 / 32.0, x)
-    x = tl.where(x > 2.5, 3.0 / 32.0, x)
-    x = tl.where(x >= 1.75, 2.0 / 32.0, x)
-    x = tl.where(x > 1.25, 1.5 / 32.0, x)
-    x = tl.where(x >= 0.75, 1.0 / 32.0, x)
-    x = tl.where(x > 0.25, 0.5 / 32.0, x)
 
+    # starting with largest bucket, round values to fp4 values divided by 32.
+    # this moves each value temporarily into the 0 to .25 range so it won't be
+    # picked up by subsequent threshold checks.
+    x = tl.where(x >  5.0,  6.0 / 32.0, x)
+    x = tl.where(x >= 3.5,  4.0 / 32.0, x)
+    x = tl.where(x >  2.5,  3.0 / 32.0, x)
+    x = tl.where(x >= 1.75, 2.0 / 32.0, x)
+    x = tl.where(x >  1.25, 1.5 / 32.0, x)
+    x = tl.where(x >= 0.75, 1.0 / 32.0, x)
+    x = tl.where(x >  0.25, 0.5 / 32.0, x)
+
+    #  sign is sign(x_orig)*32 so will rescale everything to exact fp4
     return x * sign
 
 
