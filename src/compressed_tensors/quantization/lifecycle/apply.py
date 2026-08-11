@@ -5,6 +5,8 @@ from collections import OrderedDict
 from copy import deepcopy
 
 import torch
+import torch.distributed as dist
+from compressed_tensors.distributed import is_distributed
 from compressed_tensors.modeling import (
     initialize_hooked_attention,
     initialize_hooked_kv_cache,
@@ -140,7 +142,8 @@ def apply_quantization_config(
     for name, module in tqdm(
         matched_modules,
         desc="Applying quantization config",
-        disable=not show_progress,
+        disable=(not show_progress),
+        position=(dist.get_rank() if is_distributed() else 0),
     ):
         # a module may match multiple scheme targets
         matched_targets = match_targets(name, module, target_to_scheme)
@@ -172,7 +175,7 @@ def _apply_kv_cache_scheme(
     status: QuantizationStatus,
 ):
     if not kv_cache_scheme.symmetric:
-        raise logger.warning("vLLM does not support asymmetric kv cache quantization")
+        logger.warning("vLLM does not support asymmetric kv cache quantization")
 
     # applies and initializes kv cache quantization
     # this step cannot come after attention apply/initialize
