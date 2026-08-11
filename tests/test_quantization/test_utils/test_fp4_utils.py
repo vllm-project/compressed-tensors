@@ -189,7 +189,6 @@ def test_cast_to_fp4_memory_usage(size):
     The implementation should not create excessive intermediate tensors.
     Expected memory usage should be roughly: input + output + small overhead.
     """
-    pytest.skip("triton kernels are disabled")
     torch.accelerator.empty_cache()
     torch.accelerator.reset_peak_memory_stats()
 
@@ -240,7 +239,6 @@ def test_cast_to_fp4_memory_usage(size):
     ],
 )
 def test_cast_to_fp4_backends_match(x):
-    pytest.skip("triton kernels are disabled")
     x = x.to(torch.accelerator.current_accelerator())
     torch_out = ImplBackend.call("cast_to_fp4", x)
     triton_out = ImplBackend.call("cast_to_fp4_triton", x)
