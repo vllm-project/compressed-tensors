@@ -94,7 +94,6 @@ _FP4_VALUES = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0])
     ],
 )
 def test_pack_fp4_to_uint8_backends_match(x):
-    pytest.skip("triton kernels are disabled")
     torch_out = pack_fp4_to_uint8(x.cpu())  # CPU → torch fallback
     triton_out = ImplBackend.call(
         "pack_fp4_to_uint8_triton", x.to(torch.bfloat16).cuda()
