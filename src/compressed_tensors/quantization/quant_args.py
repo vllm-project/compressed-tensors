@@ -8,6 +8,7 @@ from typing import Any
 import torch
 from compressed_tensors.utils import Aliasable
 from compressed_tensors.utils.type import TorchDtype
+from loguru import logger
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -53,28 +54,18 @@ class FP4_E2M1_DATA(FloatArgs):
     min = -6.0
 
     @staticmethod
-    def cast_to_fp4(x: torch.Tensor, backend: str = "triton"):
+    def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
         """Round float values to the nearest E2M1 representable value.
 
-        Uses Triton for GPU tensors and torch.compile for CPU tensors.
+        Uses Triton for CUDA/XPU tensors when available, falls back to
+        torch.compile for CPU tensors.
 
         :param x: input tensor to quantize
-        :param backend: "eager" or "triton". CPU/ Meta tensors will always use "eager"
         :return: input tensor after rounding to fp4 (maintains same dtype)
         """
-        from compressed_tensors.quantization.utils.fp4_utils import (
-            cast_to_fp4_torch,
-            cast_to_fp4_triton,
-        )
+        from compressed_tensors.quantization.utils.fp4_utils import cast_to_fp4
 
-        if backend == "torch" or x.device.type in ("cpu", "meta", "mps"):
-            return cast_to_fp4_torch(x)
-
-        elif backend == "triton":
-            return cast_to_fp4_triton(x)
-
-        else:
-            raise ValueError(f"Unknown backend {backend}")
+        return cast_to_fp4(x)
 
 
 class FP8_E4M3_DATA(FloatArgs):
@@ -288,7 +279,15 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             return ActivationOrdering.GROUP if value else None
 
         if isinstance(value, str):
-            return ActivationOrdering(value.lower())
+            actorder = ActivationOrdering(value.lower())
+            # Check if it's GROUP or DYNAMIC (which is an alias for GROUP)
+            if actorder == ActivationOrdering.GROUP:
+                logger.bind(log_once=True).warning(
+                    "actorder='group' (and its alias 'dynamic') will be removed in a "
+                    "future release. Please use actorder='weight' instead for "
+                    "activation ordering during calibration."
+                )
+            return actorder
 
         return value
 

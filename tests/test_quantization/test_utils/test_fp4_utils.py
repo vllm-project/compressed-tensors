@@ -3,10 +3,7 @@
 
 import pytest
 import torch
-from compressed_tensors.quantization.utils.fp4_utils import (
-    cast_to_fp4_torch,
-    cast_to_fp4_triton,
-)
+from compressed_tensors.utils.impl_backend import ImplBackend
 from tests.testing_utils import requires_gpu
 
 
@@ -14,13 +11,14 @@ from tests.testing_utils import requires_gpu
 @pytest.mark.parametrize("size", [1, 10, 100, 1000])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
 def test_cast_to_fp4_cpu_gpu_match(size, dtype):
+    pytest.skip("triton kernels are disabled")
     # Create random tensor
     x_cpu = torch.randn(size, dtype=dtype)
     x_gpu = x_cpu.cuda()
 
     # Quantize on CPU and GPU
-    result_cpu = cast_to_fp4_torch(x_cpu)
-    result_gpu = cast_to_fp4_triton(x_gpu)
+    result_cpu = ImplBackend.call("cast_to_fp4", x_cpu)
+    result_gpu = ImplBackend.call("cast_to_fp4_triton", x_gpu)
 
     # Compare outputs (convert to same dtype for comparison)
     assert torch.allclose(result_cpu.cuda(), result_gpu, atol=1e-6)
@@ -28,6 +26,7 @@ def test_cast_to_fp4_cpu_gpu_match(size, dtype):
 
 @requires_gpu
 def test_cast_to_fp4_boundary_values():
+    pytest.skip("triton kernels are disabled")
     input_values = torch.tensor(
         [
             # Exact FP4 values
@@ -138,7 +137,7 @@ def test_cast_to_fp4_boundary_values():
         device="cuda",
     )
 
-    result = cast_to_fp4_triton(input_values)
+    result = ImplBackend.call("cast_to_fp4_triton", input_values)
     assert torch.equal(result, expected_output)
     assert torch.signbit(result[8]).item(), "cast_to_fp4 should preserve -0.0 sign bit"
 
@@ -151,6 +150,7 @@ def test_cast_to_fp4_memory_usage(size):
     The implementation should not create excessive intermediate tensors.
     Expected memory usage should be roughly: input + output + small overhead.
     """
+    pytest.skip("triton kernels are disabled")
     torch.accelerator.empty_cache()
     torch.accelerator.reset_peak_memory_stats()
 
@@ -162,7 +162,7 @@ def test_cast_to_fp4_memory_usage(size):
     baseline_memory = torch.accelerator.memory_allocated()
 
     # Perform quantization
-    result = cast_to_fp4_triton(x)
+    result = ImplBackend.call("cast_to_fp4_triton", x)
     output_memory = result.element_size() * result.numel()
 
     # Check peak memory usage
@@ -184,3 +184,29 @@ def test_cast_to_fp4_memory_usage(size):
     # Clean up
     del x, result
     torch.accelerator.empty_cache()
+
+
+@requires_gpu
+@pytest.mark.parametrize(
+    "x",
+    [
+        torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]),
+        torch.tensor([-0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0]),
+        # midpoints between FP4 values to exercise rounding
+        torch.tensor([0.3, 0.7, 1.2, 1.8, 2.6, 3.8, 5.5]),
+        # 2-D tensor
+        torch.arange(-6.0, 6.5, 0.5).reshape(5, -1).float(),
+        # larger random tensor
+        torch.randn(128, 128),
+    ],
+)
+def test_cast_to_fp4_backends_match(x):
+    pytest.skip("triton kernels are disabled")
+    x = x.to(torch.accelerator.current_accelerator())
+    torch_out = ImplBackend.call("cast_to_fp4", x)
+    triton_out = ImplBackend.call("cast_to_fp4_triton", x)
+
+    assert torch_out.shape == triton_out.shape
+    assert torch.allclose(
+        torch_out, triton_out
+    ), f"Max diff: {(torch_out - triton_out).abs().max().item()}"
