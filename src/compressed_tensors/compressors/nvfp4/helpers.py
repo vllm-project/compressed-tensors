@@ -10,23 +10,12 @@ packing of two FP4 values into a single uint8 for storage.
 """
 
 import torch
-import triton
-import triton.language as tl
+from compressed_tensors.utils.impl_backend import ImplBackend
+from compressed_tensors.utils.triton import tl, triton, triton_req
 
 
 __all__ = ["pack_fp4_to_uint8", "unpack_fp4_from_uint8"]
 
-
-FLOAT_TO_E2M1 = [
-    0.0,
-    0.5,
-    1.0,
-    1.5,
-    2.0,
-    3.0,
-    4.0,
-    6.0,
-]
 
 kE2M1ToFloat = torch.tensor(
     [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], dtype=torch.float32
@@ -98,6 +87,25 @@ def _pack_fp4_kernel(
     tl.store(packed_ptr + offsets, packed, mask=mask)
 
 
+@ImplBackend.register("pack_fp4_to_uint8", triton_req, "disable")
+def pack_fp4_to_uint8_triton(x: torch.Tensor) -> torch.Tensor:
+    m, n = x.shape
+
+    if x.dtype not in (torch.bfloat16, torch.float16):
+        x = x.to(torch.bfloat16)
+    x_flat = x.contiguous().flatten()
+    n_pairs = x_flat.numel() // 2
+
+    packed = torch.empty(n_pairs, dtype=torch.uint8, device=x.device)
+
+    BLOCK_SIZE = 1024
+    grid = (triton.cdiv(n_pairs, BLOCK_SIZE),)
+    _pack_fp4_kernel[grid](x_flat, packed, n_pairs, BLOCK_SIZE)
+
+    return packed.reshape(m, n // 2)
+
+
+@ImplBackend.entrypoint("pack_fp4_to_uint8")
 def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     """
     Packs a tensor with values in the fp4 range into uint8.
@@ -120,23 +128,6 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
         raise ValueError(
             "tensor must have an even number of columns for nvfp4 compression"
         )
-
-    # Use Triton kernel on GPU (CUDA, ROCm, XPU)
-    if x.is_cuda or x.is_xpu:
-        # Valid FP4 values are exactly representable in bf16, so this lossless
-        # cast keeps Triton's 16-bit bitcast path working for float32 inputs.
-        if x.dtype not in (torch.bfloat16, torch.float16):
-            x = x.to(torch.bfloat16)
-        x_flat = x.contiguous().flatten()
-        n_pairs = x_flat.numel() // 2
-
-        packed = torch.empty(n_pairs, dtype=torch.uint8, device=x.device)
-
-        BLOCK_SIZE = 1024
-        grid = (triton.cdiv(n_pairs, BLOCK_SIZE),)
-        _pack_fp4_kernel[grid](x_flat, packed, n_pairs, BLOCK_SIZE)
-
-        return packed.reshape(m, n // 2)
 
     # CPU fallback
     # Extract sign before conversion

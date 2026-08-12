@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import logging
+import inspect
 import math
 
 import torch
@@ -29,18 +29,18 @@ from compressed_tensors.utils import (
     get_num_attn_heads,
     get_num_kv_heads,
 )
+from compressed_tensors.utils.helpers import deprecated
+from loguru import logger
 from torch.nn import Module, Parameter
 
 
 __all__ = [
     "initialize_module_for_quantization",
     "is_attention_module",
+    "is_cached_attention_module",
     "initialize_qparams",
     "initialize_attn_qparams",
 ]
-
-
-_LOGGER = logging.getLogger(__name__)
 
 
 def initialize_module_for_quantization(
@@ -70,7 +70,7 @@ def initialize_module_for_quantization(
 
     QuantizationMetadata.clear_all_qparams(module)
 
-    if is_attention_module(module):
+    if is_cached_attention_module(module):
         initialize_attn_qparams(module, scheme, force_zero_point)
 
     elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
@@ -120,13 +120,35 @@ def initialize_module_for_quantization(
     module.quantization_status = QuantizationStatus.INITIALIZED
 
 
-def is_attention_module(module: Module):
+def _is_attention_module(module: Module) -> bool:
     return "attention" in module.__class__.__name__.lower() and (
         hasattr(module, "k_proj")
         or hasattr(module, "v_proj")
         or hasattr(module, "qkv_proj")
         or hasattr(module, "kv_b_proj")
     )
+
+
+@deprecated("is_cached_attention_module")
+def is_attention_module(module: Module) -> bool:
+    return _is_attention_module(module)
+
+
+def is_cached_attention_module(module: Module) -> bool:
+    if not _is_attention_module(module):
+        return False
+
+    try:
+        parameters = inspect.signature(module.forward).parameters
+    except (TypeError, ValueError):
+        logger.warning(
+            "Unable to inspect an attention module's forward signature; "
+            "skipping KV cache quantization for uninspectable modules",
+            log_once=True,
+        )
+        return False
+
+    return "past_key_value" in parameters or "past_key_values" in parameters
 
 
 def initialize_qparams(
@@ -271,7 +293,7 @@ def initialize_attn_qparams(
 
     _validate_attention_scheme(scheme)
 
-    # extract shapes from config
+    # extract shapes from decoder config
     config = kv_cache.config
     num_attn_heads = get_num_attn_heads(config)
     num_kv_heads = get_num_kv_heads(config)

@@ -6,6 +6,7 @@ import torch
 from compressed_tensors.quantization import (
     DEFAULT_QUANTIZATION_FORMAT,
     DEFAULT_QUANTIZATION_METHOD,
+    QuantizationArgs,
     QuantizationConfig,
     QuantizationScheme,
     QuantizationStatus,
@@ -71,7 +72,6 @@ def test_load_scheme_from_preset(scheme_name: str):
 
 def test_to_dict():
     """Test serialization of QuantizationConfig including format"""
-    from compressed_tensors.quantization import QuantizationArgs
 
     config_groups = {
         "group_1": QuantizationScheme(
@@ -173,6 +173,42 @@ def test_get_vllm_module_type():
     assert get_vllm_module_type("JetMoeTopKGating") == "Linear"
     assert get_vllm_module_type("Qwen3NextGatedDeltaNet") == "Linear"
     assert get_vllm_module_type("JetMoeTopKGating") == "Linear"
+
+
+def test_quantization_config_merge():
+    config = QuantizationConfig(
+        config_groups={
+            "config_group_0": QuantizationScheme(
+                targets=["re:.*self_attn.*"],
+                weights=QuantizationArgs(num_bits=4, symmetric=True, group_size=128),
+            )
+        },
+        ignore=["lm_head", "model.layers.0.mlp.gate_proj", "re:.*mtp.*"],
+        quantization_status=QuantizationStatus.INITIALIZED,
+    )
+
+    new_config = QuantizationConfig(
+        config_groups={
+            "config_group_0": QuantizationScheme(
+                targets=["re:.*mlp.*"],
+                weights=QuantizationArgs(num_bits=8, symmetric=False, group_size=128),
+            )
+        },
+        ignore=["lm_head"],
+        quantization_status=QuantizationStatus.COMPRESSED,
+    )
+
+    config.merge(new_config)
+
+    ordered_schemes = list(config.config_groups.values())
+    assert len(ordered_schemes) == 2
+    assert ordered_schemes[0].targets[0] == "re:.*self_attn.*"
+    assert ordered_schemes[1].targets[0] == "re:.*mlp.*"
+
+    # should strip out "model.layers.0.mlp.gate_proj" from ignore
+    assert set(config.ignore) == set(["lm_head", "re:.*mtp.*"])
+
+    assert config.quantization_status == QuantizationStatus.COMPRESSED
 
 
 def test_imatrix_mse_weight_observer_requires_calibration_data():
