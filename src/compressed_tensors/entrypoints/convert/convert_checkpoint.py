@@ -104,6 +104,8 @@ def convert_checkpoint(
 
     # Update config and safetensors index
     write_checkpoint_quantization_config(save_directory, converter)
+    if hasattr(converter, "update_model_config"):
+        converter.update_model_config(save_directory)
     update_safetensors_index(save_directory, total_size, weight_map)
 
 
