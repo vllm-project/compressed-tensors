@@ -192,12 +192,12 @@ class OffloadCache(MutableMapping, ABC):
         """
         offloaded = self.offloaded_values[key]
 
+        if offloaded is None:
+            return offloaded
+        
         # when onloading is disabled, offloaded tensors can be accessed directly
-        if offloaded is None or self.onloading_disabled:
-            # if offloaded is not None:
-            #     slice = self.view_index.get(key, ...)
-            #     offloaded = offloaded[slice]
-            if offloaded is not None and key in self.view_index:
+        if self.onloading_disabled:
+            if key in self.view_index:
                 offloaded = offloaded[self.view_index[key]]
             return offloaded
 
