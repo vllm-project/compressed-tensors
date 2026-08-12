@@ -8,6 +8,7 @@ from typing import Any
 import torch
 from compressed_tensors.utils import Aliasable
 from compressed_tensors.utils.type import TorchDtype
+from loguru import logger
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -53,29 +54,18 @@ class FP4_E2M1_DATA(FloatArgs):
     min = -6.0
 
     @staticmethod
-    def cast_to_fp4(x):
-        # torch.compile guards on input rank, so rank-varying inputs (dense /
-        # MoE-expert / group-scaled activations) recompile the core once per
-        # rank and exhaust recompile_limit (#734). Flatten to rank-1 so the core
-        # (kept compiled per PR #331) is reused; flatten() keeps a stable 1-D size
-        # symbol that automatic dynamic shapes promotes, whereas reshape(-1)
-        # infers a rank-dependent numel that defeats it.
-        return FP4_E2M1_DATA._cast_to_fp4(x.flatten()).reshape(x.shape)
+    def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
+        """Round float values to the nearest E2M1 representable value.
 
-    @staticmethod
-    @torch.compile
-    def _cast_to_fp4(x):
-        sign = torch.sign(x)
-        x = torch.abs(x)
-        x[(x >= 0.0) & (x <= 0.25)] = 0.0
-        x[(x > 0.25) & (x < 0.75)] = 0.5
-        x[(x >= 0.75) & (x <= 1.25)] = 1.0
-        x[(x > 1.25) & (x < 1.75)] = 1.5
-        x[(x >= 1.75) & (x <= 2.5)] = 2.0
-        x[(x > 2.5) & (x < 3.5)] = 3.0
-        x[(x >= 3.5) & (x <= 5.0)] = 4.0
-        x[x > 5.0] = 6.0
-        return x * sign
+        Uses Triton for CUDA/XPU tensors when available, falls back to
+        torch.compile for CPU tensors.
+
+        :param x: input tensor to quantize
+        :return: input tensor after rounding to fp4 (maintains same dtype)
+        """
+        from compressed_tensors.quantization.utils.fp4_utils import cast_to_fp4
+
+        return cast_to_fp4(x)
 
 
 class FP8_E4M3_DATA(FloatArgs):
@@ -255,25 +245,26 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     def validate_block_structure(cls, value) -> list[int] | None:
         if value is None:
             return value
+
+        error = ValueError(
+            f"Invalid block_structure '{value}'. Must be a list of positive ints "
+            "[rows, cols]."
+        )
         # For backward compatibility, allow string format "2x4", "8x16", etc.
         if isinstance(value, str):
             try:
-                return [int(x) for x in value.split("x")]
+                value = [int(x) for x in value.split("x")]
             except Exception:
-                raise ValueError(
-                    f"Invalid block_structure '{value}'. Must be a list of ints "
-                    "[rows, cols]."
-                )
+                raise error
         if isinstance(value, (list, tuple)):
-            if len(value) != 2 or not all(isinstance(v, int) for v in value):
-                raise ValueError(
-                    f"Invalid block_structure '{value}'. Must be a list of ints "
-                    "[rows, cols]."
-                )
+            if (
+                len(value) != 2
+                or not all(isinstance(v, int) for v in value)
+                or not all(v > 0 for v in value)
+            ):
+                raise error
             return list(value)
-        raise ValueError(
-            f"Invalid block_structure '{value}'. Must be a list of ints [rows, cols]."
-        )
+        raise error
 
     @field_validator("strategy", mode="before")
     def validate_strategy(cls, value) -> QuantizationStrategy | None:
@@ -288,7 +279,15 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             return ActivationOrdering.GROUP if value else None
 
         if isinstance(value, str):
-            return ActivationOrdering(value.lower())
+            actorder = ActivationOrdering(value.lower())
+            # Check if it's GROUP or DYNAMIC (which is an alias for GROUP)
+            if actorder == ActivationOrdering.GROUP:
+                logger.bind(log_once=True).warning(
+                    "actorder='group' (and its alias 'dynamic') will be removed in a "
+                    "future release. Please use actorder='weight' instead for "
+                    "activation ordering during calibration."
+                )
+            return actorder
 
         return value
 
