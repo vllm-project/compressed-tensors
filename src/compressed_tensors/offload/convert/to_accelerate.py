@@ -20,7 +20,23 @@ if TYPE_CHECKING:
     from accelerate.utils import OffloadedWeightsLoader
 
 
-__all__ = ["to_accelerate", "to_accelerate_module"]
+__all__ = ["materialize_views", "to_accelerate", "to_accelerate_module"]
+
+
+def materialize_views(model: torch.nn.Module):
+    """
+    Materialize any viewed parameters/buffers in offloaded modules so that no
+    offloaded value shares storage with another. This must be called before
+    converting to accelerate offloading, otherwise shared base tensors appear
+    as falsely tied parameters during saving.
+
+    :param model: model dispatched with ``compressed_tensors`` offloading
+    """
+    for module in model.modules():
+        if isinstance(module._parameters, OffloadCache):
+            module._parameters.materialize_views()
+        if isinstance(module._buffers, OffloadCache):
+            module._buffers.materialize_views()
 
 
 def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
@@ -33,6 +49,7 @@ def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
     :return: accelerate-style device map
     """
     hf_device_map = {}
+    materialize_views(model)
     hf_weights_loader = _to_accelerate_weights_loader(model, DiskCache.index)
 
     for name, module in model.named_modules():

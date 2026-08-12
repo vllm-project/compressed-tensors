@@ -278,6 +278,20 @@ class OffloadCache(MutableMapping, ABC):
     def __len__(self):
         return len(self.offloaded_values)
 
+    def materialize_views(self):
+        """
+        Replace viewed offloaded values with independent copies by onloading
+        (which applies the view index) and re-offloading. After this call,
+        no offloaded value shares storage with another, and ``view_index``
+        is empty.
+        """
+        for key in list(self.view_index):
+            onloaded = self.onload(key, self.offloaded_values[key])
+            self.offloaded_values[key] = self.offload(onloaded)
+            del self.view_index[key]
+
+        assert not self.view_index
+
     @classmethod
     @contextlib.contextmanager
     def disable_offloading(cls):
