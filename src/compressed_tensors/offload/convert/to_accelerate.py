@@ -32,11 +32,16 @@ def materialize_views(model: torch.nn.Module):
 
     :param model: model dispatched with ``compressed_tensors`` offloading
     """
-    for module in model.modules():
+    keys = list()
+    for name, module in model.named_modules():
         if isinstance(module._parameters, OffloadCache):
-            module._parameters.materialize_views()
+            for key in module._parameters.materialize_views():
+                keys.append(name + key)
         if isinstance(module._buffers, OffloadCache):
-            module._buffers.materialize_views()
+            for key in module._buffers.materialize_views():
+                keys.append(name + key)
+
+    print(f"materialized {keys}")
 
 
 def to_accelerate(model: torch.nn.Module) -> dict[str, str]:

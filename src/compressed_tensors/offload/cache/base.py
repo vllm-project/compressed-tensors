@@ -265,6 +265,9 @@ class OffloadCache(MutableMapping, ABC):
         if offloaded in self.keep_onloaded_values:
             del self.keep_onloaded_values[offloaded]
 
+        if key in self.view_index:
+            del self.view_index[key]
+
         self.ref_counter[offloaded] -= 1
         if self.ref_counter[offloaded] <= 0:
             del self.ref_counter[offloaded]
@@ -278,19 +281,28 @@ class OffloadCache(MutableMapping, ABC):
     def __len__(self):
         return len(self.offloaded_values)
 
-    def materialize_views(self):
+    def materialize_views(self) -> list[str]:
         """
         Replace viewed offloaded values with independent copies by onloading
         (which applies the view index) and re-offloading. After this call,
         no offloaded value shares storage with another, and ``view_index``
         is empty.
         """
-        for key in list(self.view_index):
-            onloaded = self.onload(key, self.offloaded_values[key])
-            self.offloaded_values[key] = self.offload(onloaded)
-            del self.view_index[key]
+        from compressed_tensors.distributed import is_source_process
 
-        assert not self.view_index
+        keys = list(self.view_index)
+        if is_source_process():
+            for key in keys:
+                onloaded = self.onload(key, self.offloaded_values[key])
+                self.offloaded_values[key] = self.offload(onloaded)
+                del self.view_index[key]
+
+            assert not self.view_index
+
+        else:
+            self.view_index = dict()
+
+        return keys
 
     @classmethod
     @contextlib.contextmanager

@@ -63,5 +63,6 @@ class DistributedDiskCache(DiskCache):
         else:
             if not self.onloading_disabled:
                 offloaded = self.offloaded_values[key]
-                del self.index[offloaded]
+                if self.ref_counter[offloaded] <= 1:
+                    del self.index[offloaded]
             super(DiskCache, self).__delitem__(key)

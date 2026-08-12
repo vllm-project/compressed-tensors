@@ -124,7 +124,7 @@ class DiskCache(OffloadCache):
         offloaded = self.offloaded_values[key]
         if not self.onloading_disabled:
             file_path = self.index[offloaded]["safetensors_file"]
-            if self.ref_counter[offloaded] <= 1:  # delete after via `super()` call
+            if self.ref_counter[offloaded] <= 1:  # decrement after via super call
                 if self._is_ct_file_path(file_path):
                     os.remove(file_path)
                 del self.index[offloaded]
