@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import math
+
 import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
@@ -33,9 +35,10 @@ PACK_ZP_STRATS = [
 @BaseCompressor.register(name=CompressionFormat.pack_quantized.value)
 class PackedQuantizationCompressor(BaseCompressor):
     """
-    Compresses a quantized weight by packing multiple sub-8-bit INT values into an
-    int32. Supports num_bits in [1, 8]; each int32 holds
-    ``pack_factor = 32 // num_bits`` values, with any unused high bits left as zero.
+    Compresses a quantized weight by packing multiple sub-8-bit INT values into
+    int32s using dense cross-element packing. Supports num_bits in [1, 8]; 32
+    consecutive elements are packed into exactly num_bits int32 words with no
+    wasted bits.
     """
 
     @classmethod
@@ -80,6 +83,16 @@ class PackedQuantizationCompressor(BaseCompressor):
         g_idx = state_dict.get("weight_g_idx", None)
         weights = scheme.weights
 
+        if weight.device.type == "meta":
+            packed_cols = math.ceil(weight.shape[-1] * weights.num_bits / 32)
+            packed_shape = (*weight.shape[:-1], packed_cols)
+            state_dict["weight_packed"] = torch.empty(
+                packed_shape, dtype=torch.int32, device="meta"
+            )
+            state_dict["weight_shape"] = torch.tensor(weight.shape)
+            state_dict = cls._remove_symmetric_zp(state_dict, scheme)
+            return state_dict
+
         quantized_weight = quantize(
             x=weight,
             scale=scale,
@@ -122,6 +135,14 @@ class PackedQuantizationCompressor(BaseCompressor):
         original_shape = state_dict.get("weight_shape")
         weights = scheme.weights
 
+        if packed.device.type == "meta":
+            state_dict["weight"] = torch.empty(
+                tuple(original_shape.tolist()),
+                dtype=scale.dtype,
+                device="meta",
+            )
+            return state_dict
+
         # Unpack zero_point before dequantization if needed
         if not weights.symmetric and weights.strategy in PACK_ZP_STRATS:
             assert zero_point is not None, "Asymmetric quant requires zero-point values"
@@ -143,11 +164,14 @@ class PackedQuantizationCompressor(BaseCompressor):
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
-        """Pack quantized matches weight-only INT quantization with 1..8 bits."""
+        """Pack quantized matches INT-only weight quantization with 1..8 bits.
+        Excludes schemes with floating-point activation quantization."""
+        if scheme.input_activations is not None:
+            if scheme.input_activations.type == QuantizationType.FLOAT.value:
+                return False
         return (
             module_type in COMPRESSIBLE_MODULE_TYPES
             and scheme.weights is not None
-            and scheme.input_activations is None
             and 1 <= scheme.weights.num_bits <= 8
             and scheme.weights.type == QuantizationType.INT.value
         )

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import warnings
 from collections import defaultdict
 from enum import Enum
 from typing import Annotated, Any
 
-import torch
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
 from compressed_tensors.quantization.quant_scheme import (
@@ -13,6 +13,8 @@ from compressed_tensors.quantization.quant_scheme import (
     preset_name_to_scheme,
 )
 from compressed_tensors.quantization.utils import is_module_quantized
+from compressed_tensors.utils import find_unique_name
+from compressed_tensors.utils.match import match_name
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
@@ -24,6 +26,31 @@ __all__ = [
     "DEFAULT_QUANTIZATION_METHOD",
     "DEFAULT_QUANTIZATION_FORMAT",
 ]
+
+
+def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]:
+    """Translate ignore list entries from HF module names to checkpoint names.
+
+    Transformers v5 may rename weight keys on load (e.g. vision_embedder ->
+    embed_vision).  The ignore list is built from ``model.named_modules()``
+    which uses HF names, but safetensors keys use checkpoint names.  This
+    applies the same reverse mapping that ``save_pretrained`` uses for weights.
+    """
+    weight_conversions = getattr(model, "_weight_conversions", None)
+    if not weight_conversions:
+        return ignore_list
+
+    inverted = [conv.reverse_transform() for conv in reversed(weight_conversions)]
+
+    result = []
+    for name in ignore_list:
+        for rev in inverted:
+            renamed, matched = rev.rename_source_key(name)
+            if matched is not None:
+                name = renamed
+        result.append(name)
+
+    return result
 
 
 class QuantizationStatus(str, Enum):
@@ -168,7 +195,7 @@ class QuantizationConfig(BaseModel):
         """
         from compressed_tensors.modeling import IMPL_ATTR
         from compressed_tensors.quantization.lifecycle.initialize import (
-            is_attention_module,
+            is_cached_attention_module,
         )
 
         # set of all quantization schemes
@@ -190,16 +217,15 @@ class QuantizationConfig(BaseModel):
         kv_cache_scheme: QuantizationArgs | None = None
 
         for name, submodule in model.named_modules():
-            layer_type: str = get_vllm_module_type(submodule)
+            layer_type: str = get_vllm_module_type(type(submodule).__name__)
+            is_cached_attention = is_cached_attention_module(submodule)
 
             # add config group if quantized non-attention or attention quant
             has_config_group = is_module_quantized(submodule) and (
-                not is_attention_module(submodule) or hasattr(submodule, IMPL_ATTR)
+                not is_cached_attention or hasattr(submodule, IMPL_ATTR)
             )
             # only add kvcache if quant attention (which always implies kvcache)
-            has_kv_cache = is_module_quantized(submodule) and is_attention_module(
-                submodule
-            )
+            has_kv_cache = is_module_quantized(submodule) and is_cached_attention
 
             if has_config_group:
                 # add to running set of schemes/layer_type_names
@@ -231,6 +257,8 @@ class QuantizationConfig(BaseModel):
                 consolidated_ignore += ignore_names
             # else we leave it off the ignore list, doesn't fall under any of the
             # existing quantization schemes so it won't be quantized
+
+        consolidated_ignore = _map_to_checkpoint_names(model, consolidated_ignore)
 
         # create config groups from all unique schemes
         config_groups = {}
@@ -265,6 +293,9 @@ class QuantizationConfig(BaseModel):
             return True
 
         for _, scheme in self.config_groups.items():
+            if scheme.weights is not None:
+                if scheme.weights.observer == "imatrix_mse":
+                    return True
             if scheme.input_activations is not None:
                 if scheme.input_activations.dynamic in (False, DynamicType.LOCAL):
                     return True
@@ -274,20 +305,78 @@ class QuantizationConfig(BaseModel):
 
         return False
 
+    def merge(self, config: "QuantizationConfig") -> None:
+        """
+        Merge another QuantizationConfig into self, modifying in-place. The current
+        quant config (self) will take precedence over the second quant config,
+        i.e. the config groups will be appended rather than inserted before. Python's
+        json stdlib and pydantic both respect order when serializing/deserializing.
+
+        Because QuantizationConfig has a global ignore list while targets are scoped to
+        a given scheme, merging is not a straightforward task. A warning will be raised
+        when this function is called to indicate that invalid quantization configs are
+        possible when using this method, particularly when complex ignore lists are
+        used. For best results, use complex targets lists over complex ignore lists.
+
+        If a new quant format is added, the global format will be set to
+        "mixed-precision".
+
+        The QuantizationStatus will be set to whichever is largest.
+
+        Excluding regexes, any names in the ignore list that are targeted in the new
+        quant config will be pruned.
+
+        :param config: QuantizationConfig to merge into self.
+        """
+        warnings.warn(
+            "Attempting to merge quantization configs. This is not a straightforward "
+            "task and can lead to quantization configs that fail to load. For best "
+            "results, use complex targets lists instead of complex ingore lists"
+        )
+
+        pruned_ignore_list = []
+        for ign in self.ignore:
+            if ign.startswith("re:"):
+                pruned_ignore_list.append(ign)
+                continue
+            if any(
+                match_name(ign, target)
+                for scheme in config.config_groups.values()
+                for target in scheme.targets
+            ):
+                continue
+            pruned_ignore_list.append(ign)
+        self.ignore = pruned_ignore_list
+
+        for scheme_name, scheme in config.config_groups.items():
+            new_scheme_name = find_unique_name(scheme_name, self.config_groups.keys())
+
+            self.config_groups[new_scheme_name] = scheme
+
+        unique_formats = set(scheme.format for scheme in self.config_groups.values())
+        self.format = (
+            next(iter(unique_formats))
+            if len(unique_formats) == 1
+            else CompressionFormat.mixed_precision.value
+        )
+
+        if config.quantization_status > self.quantization_status:
+            self.quantization_status = config.quantization_status
+
     # TODO set `extra="forbid"` when upstream transformers is compatible
     model_config = ConfigDict(extra="ignore")
 
 
-def get_vllm_module_type(module: torch.nn.Module) -> str:
+def get_vllm_module_type(module_type: str) -> str:
     """
     Returns a string representing the module type used when loading in vLLM.
     This is typically going to be the same as the `torch.nn.Module` type,
     however specific cases like MoE gate layers need to be treated like "Linear"
     layers for the purposes of config matching.
     """
-
-    module_type = type(module).__name__
-    if "Router" in module_type or "Gate" in module_type or "Gating" in module_type:
+    if "ExpertMLP" not in module_type and (
+        "Router" in module_type or "Gate" in module_type or "Gating" in module_type
+    ):
         module_type = "Linear"
 
     return module_type
