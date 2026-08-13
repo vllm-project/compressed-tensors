@@ -46,6 +46,22 @@ class Converter(Protocol):
         raise NotImplementedError()
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        Validation layer to quickly log warnings or raise an error if the
+        safetensors file is not compatible with the Converter. Returns the
+        tensors that `process` would produce, so that chained converters can
+        see the output format (tensor names and dtypes) of the one before them.
+
+        By default this simply calls `process`, which is meta-safe for most converters
+        (renames, dtype casts, inversions). Converters whose `process` cannot run
+        on meta tensors (e.g. AutoAWQ) should override this
+        to simulate the output instead.
+
+        :param tensors: dictionary of tensor name to tensor, as loaded from
+        safetensors file.
+        :returns: dictionary of converted tensor name to tensor, matching what
+        `process` would produce.
+        """
         return self.process(tensors)
 
     def update_config(
