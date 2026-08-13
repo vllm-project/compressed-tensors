@@ -145,7 +145,7 @@ class AutoAWQConverter(Converter):
                     )
 
         # Build output meta tensor dict
-        output = {}
+        output: dict[str, torch.Tensor] = {}
         for name, tensor in tensors.items():
             if not name.endswith(".qweight"):
                 if not name.endswith((".qzeros", ".scales")):
