@@ -329,8 +329,7 @@ def _quantize_kernel(
     elif quant_type == QUANT_TYPE_FLOAT:
         output = tl.clamp(output, q_min, q_max)
         if num_bits == 4:
-            orig_dtype = output.dtype
-            output = _round_to_fp4(output.to(tl.bfloat16)).to(orig_dtype)
+            output = _round_to_fp4(output)
         elif num_bits == 8:
             output = output.to(tl.float8e4nv).to(output.dtype)
 
@@ -403,7 +402,7 @@ def _quantize_triton_req(
 
 
 @torch.no_grad()
-@ImplBackend.register("_quantize", _quantize_triton_req, "disable")
+@ImplBackend.register("_quantize", _quantize_triton_req, priority=0)
 def _quantize_triton(
     x: torch.Tensor,
     scale: torch.Tensor,
