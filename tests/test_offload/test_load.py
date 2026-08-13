@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
 from unittest.mock import MagicMock, patch
 
+import compressed_tensors.offload.load as load_module
 import pytest
 import torch
 from compressed_tensors.offload import (
@@ -138,3 +140,57 @@ def test_patch_forwards_positional_args(mock_from_accelerate):
     assert received["path"] == "org/model"
     assert received["kwargs"]["device_map"] == "cpu"
     assert received["kwargs"]["torch_dtype"] == "auto"
+
+
+@pytest.mark.unit
+def test_mmap_cap_reduces_shared_memory():
+    """Tight mmap limit reduces _get_shared_memory return value."""
+    with (
+        patch.object(load_module, "_get_max_map_count", return_value=100),
+        patch.object(load_module, "_get_current_map_count", return_value=50),
+    ):
+        # 500 tensors, 1024 bytes each = 512KB total
+        # Available maps = 100 - 50 = 50
+        # Avg tensor = 512000 / 500 = 1024 bytes
+        # mmap budget = 50 * 1024 = 51200
+        result = load_module._get_shared_memory(
+            num_tensors=500, total_model_bytes=512000
+        )
+        assert result == 51200
+
+
+@pytest.mark.unit
+def test_mmap_cap_no_reduction_when_limit_high():
+    """When mmap limit is very high, byte capacity is the bottleneck."""
+    with (
+        patch.object(load_module, "_get_max_map_count", return_value=10_000_000),
+        patch.object(load_module, "_get_current_map_count", return_value=500),
+    ):
+        result = load_module._get_shared_memory(
+            num_tensors=5000, total_model_bytes=5_000_000_000
+        )
+        # Should be the /dev/shm byte size, not reduced by mmap
+        import shutil
+
+        if os.path.exists("/dev/shm"):
+            expected = shutil.disk_usage("/dev/shm").total
+            assert result == expected
+
+
+@pytest.mark.unit
+def test_mmap_cap_graceful_on_non_linux():
+    """When /proc files aren't available, skip the mmap cap entirely."""
+    with patch.object(load_module, "_get_max_map_count", return_value=None):
+        # Should not crash, should return full /dev/shm size
+        result = load_module._get_shared_memory(
+            num_tensors=5000, total_model_bytes=5_000_000_000
+        )
+        assert result > 0
+
+
+@pytest.mark.unit
+def test_mmap_cap_skipped_without_tensor_info():
+    """When no tensor info provided, behave like before (bytes only)."""
+    result_no_info = load_module._get_shared_memory()
+    result_zero = load_module._get_shared_memory(num_tensors=0, total_model_bytes=0)
+    assert result_no_info == result_zero
