@@ -8,19 +8,28 @@ from tests.testing_utils import requires_gpu
 
 
 @requires_gpu
-@pytest.mark.parametrize("size", [1, 10, 100, 1000])
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
-def test_cast_to_fp4_cpu_gpu_match(size, dtype):
-    # Create random tensor
-    x_cpu = torch.randn(size, dtype=dtype)
-    x_gpu = x_cpu.cuda()
+@pytest.mark.parametrize("dtype, log_elements", [
+    (torch.float32, 22), # these were the fastest settings
+    (torch.float16, 16),
+    (torch.bfloat16, 16),
+])
+def test_cast_to_fp4_cpu_gpu_match(dtype, log_elements):
+    # check every possible value in 2**log_elements chunks, (about 15 seconds total)
+    bits = 16 if dtype in [torch.float16, torch.bfloat16] else 32
+    num_loops = 2**(bits - log_elements)
+    elements = torch.arange(2**log_elements, dtype=torch.int32)
+    for i in range(num_loops):
+        x_cpu = (i << log_elements | elements).view(dtype)
+        x_cpu[x_cpu.isnan()] = 0.0
 
-    # Quantize on CPU and GPU
-    result_cpu = ImplBackend.call("cast_to_fp4", x_cpu)
-    result_gpu = ImplBackend.call("cast_to_fp4_triton", x_gpu)
+        x_gpu = x_cpu.cuda()
 
-    # Compare outputs (convert to same dtype for comparison)
-    assert torch.equal(result_cpu.cuda(), result_gpu)
+        # Quantize on CPU and GPU
+        result_cpu = ImplBackend.call("cast_to_fp4", x_cpu).cuda()
+        result_gpu = ImplBackend.call("cast_to_fp4_triton", x_gpu)
+
+        # Compare outputs (convert to same dtype for comparison)
+        assert torch.equal(result_cpu, result_gpu)
 
 
 @requires_gpu
