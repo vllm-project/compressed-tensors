@@ -11,7 +11,6 @@ from tests.testing_utils import requires_gpu
 @pytest.mark.parametrize("size", [1, 10, 100, 1000])
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
 def test_cast_to_fp4_cpu_gpu_match(size, dtype):
-    # pytest.skip("triton kernels are disabled")
     # Create random tensor
     x_cpu = torch.randn(size, dtype=dtype)
     x_gpu = x_cpu.cuda()
