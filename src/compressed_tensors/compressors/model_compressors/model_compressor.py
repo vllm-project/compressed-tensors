@@ -52,7 +52,7 @@ class ModelCompressor:
                 - apply_quantization_config(model, ct_config.quantization_config)
                 - compressor.compress_model(model)
             - CompressedTensorsHfQuantizer._process_model_after_weight_loading
-                - if run_compressed == False: compressor.decompress_model(model)
+                - if dequantize == True: compressor.decompress_model(model)
     """
 
     # these attributes are used by `CompressedTensorsHfQuantizer` to apply configs
@@ -89,7 +89,6 @@ class ModelCompressor:
     def from_pretrained_model(
         cls,
         model: torch.nn.Module,
-        sparsity_config_or_format: Optional[object] = None,
         quantization_format: Optional[str] = None,
     ):
         """
@@ -104,9 +103,6 @@ class ModelCompressor:
             that should be applied to the entire model, overrides inferred formats
             for all quantized modules
         """
-        if sparsity_config_or_format is not None:
-            logger.warning("Passing sparsity config or format is no longer supported")
-
         # reconstruct qconfig from qschemes that are attached to the model
         quantization_config = QuantizationConfig.from_pretrained(model)
         transform_config = getattr(model, TRANSFORM_CONFIG_NAME, None)
