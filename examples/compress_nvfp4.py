@@ -24,6 +24,7 @@
 
 import torch
 import torch.nn as nn
+import json
 import os
 from safetensors.torch import save_file
 from compressed_tensors.compressors import ModelCompressor
@@ -37,6 +38,14 @@ from compressed_tensors.quantization.quant_scheme import NVFP4
 GROUP_SIZE = 16
 
 scheme = QuantizationScheme(targets=["Linear"], **NVFP4)
+
+# Minimal model config to be saved alongside the compressed weights
+MODEL_CONFIG = {
+    "model_type": "tiny_model",
+    "hidden_size": 256,
+    "intermediate_size": 128,
+    "output_size": 64,
+}
 
 
 class TinyModel(nn.Module):
@@ -102,6 +111,12 @@ compressor.compress_model(model)
 output_dir = "./TinyModel-NVFP4"
 os.makedirs(output_dir, exist_ok=True)
 save_file(model.state_dict(), os.path.join(output_dir, "model.safetensors"))
+
+# Save the model config with quantization details
+config_path = os.path.join(output_dir, "config.json")
+with open(config_path, "w") as f:
+    json.dump(MODEL_CONFIG, f, indent=2)
+compressor.update_config(output_dir)
 
 # The compressed safetensors file replaces the original weight tensors with:
 #
