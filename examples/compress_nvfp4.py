@@ -89,9 +89,9 @@ for module in model.modules():
         module.quantization_scheme = scheme
         module.quantization_status = QuantizationStatus.FROZEN
 
-# Compress using the nvfp4-pack-quantized compressor - this can also
+# Compress using the nvfp4-pack-quantized compressor - this can
 # just be inferred from the quantization scheme attached to the model or
-# overridden with a different quantization_format if desired.
+# overridden with a provided quantization_format if desired.
 compressor = ModelCompressor.from_pretrained_model(
     model, quantization_format="nvfp4-pack-quantized"
 )
@@ -117,7 +117,7 @@ with open(config_path, "w") as f:
     json.dump(MODEL_CONFIG, f, indent=2)
 compressor.update_config(output_dir)
 
-# The compressed safetensors file replaces the original weight tensors with:
+# The compressed safetensors file includes:
 #
 # For each quantized layer (e.g. fc1 with original weight shape [128, 256]):
 #   - weight_packed [128, 128] uint8: two FP4 values packed per byte,
