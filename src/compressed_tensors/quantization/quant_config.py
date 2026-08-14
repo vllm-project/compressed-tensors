@@ -4,7 +4,6 @@
 import warnings
 from collections import defaultdict
 from enum import Enum
-from typing import Annotated, Any
 
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
@@ -161,9 +160,6 @@ class QuantizationConfig(BaseModel):
     quantization_status: QuantizationStatus = QuantizationStatus.INITIALIZED
     global_compression_ratio: float | None = None
     ignore: list[str] | None = Field(default_factory=list)
-    # `run_compressed` is a dummy, unused arg for backwards compatibility
-    # see: https://github.com/huggingface/transformers/pull/39324
-    run_compressed: Annotated[Any, Field(exclude=True)] = None
 
     def model_post_init(self, __context):
         """
