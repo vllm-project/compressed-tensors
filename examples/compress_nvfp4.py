@@ -81,12 +81,21 @@ for module in model.modules():
         module.quantization_scheme = scheme
         module.quantization_status = QuantizationStatus.FROZEN
 
-# Compress using the nvfp4-pack-quantized compressor - this can also 
-# just be inferred from the quantization scheme attached to the model or 
+# Compress using the nvfp4-pack-quantized compressor - this can also
+# just be inferred from the quantization scheme attached to the model or
 # overridden with a different quantization_format if desired.
 compressor = ModelCompressor.from_pretrained_model(
     model, quantization_format="nvfp4-pack-quantized"
 )
+
+# Alternatively, the compressor can be constructed directly:
+#   compressor = ModelCompressor(
+#       quantization_config=QuantizationConfig(
+#           config_groups={"group_1": scheme},
+#           quantization_status=QuantizationStatus.FROZEN,
+#       ),
+#       force_compression_format="nvfp4-pack-quantized",
+#   )
 compressor.compress_model(model)
 
 
