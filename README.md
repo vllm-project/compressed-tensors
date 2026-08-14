@@ -1,6 +1,6 @@
 # compressed-tensors
 
-The `compressed-tensors` library extends the [safetensors](https://github.com/huggingface/safetensors) format, providing a versatile and efficient way to store and manage compressed tensor data. This library supports various quantization and sparsity schemes, making it a unified format for handling models compressed with algorithms like GPTQ, AWQ, SmoothQuant, and SparseGPT, across formats like INT8, FP8, NVFP4, MXFP4, MXFP8, and more.
+The `compressed-tensors` library extends the [safetensors](https://github.com/huggingface/safetensors) format, providing a versatile and efficient way to store and manage compressed tensor data. This library supports various compression schemes, making it a unified format for handling models compressed with algorithms like GPTQ, AWQ, SmoothQuant, and SparseGPT, across formats like INT8, FP8, NVFP4, MXFP4, MXFP8, and more.
 
 ## Why `compressed-tensors`?
 
@@ -14,13 +14,13 @@ Each method often comes with its own storage format and loading procedures, maki
   * Activation quantization: W8A8 (int8 and fp8), W4AFP8, Microscale (NVFP4, MXFP4, MXFP8)
   * Mixed precision: W4A16, W8A16, MXFP8A16, MXFP4A16, NVFP4A16
   * Low/arbitrary-bit: WNA4, WNA8, WNA16
-  * KV cache quantization: FP8, NVFP4
+  * KV cache & Attention: FP8, NVFP4
   * Block quantization (e.g., DeepSeek-style FP8 block)
   * Non-uniform schemes (different layers can be quantized in different ways!)
 * **Sparsity Support**: Handles both unstructured and semi-structured (e.g., 2:4) sparsity patterns.
 * **Transform Support**: Rotation-based quantization techniques (Hadamard, random Hadamard, random matrix transforms).
 * **Checkpoint Conversion**: Convert between formats like AutoAWQ, ModelOpt NVFP4, FP8 block, and compressed-tensors.
-* **Model Offloading**: Transparent CPU/disk/multi-GPU offloading for models larger than available VRAM.
+* **Model Offloading**: Transparent CPU/disk/distributed offloading for models larger than available VRAM.
 * **Open-Source Integration**: Designed to work seamlessly with Hugging Face models, PyTorch, [vLLM](https://github.com/vllm-project/vllm), and [SGLang](https://github.com/sgl-project/sglang).
 
 This allows developers and researchers to easily experiment with composing different quantization methods, simplify model deployment pipelines, and reduce the overhead of supporting multiple compression formats in inference engines.
@@ -113,7 +113,7 @@ model.save_pretrained(output_dir)
 compressor.update_config(output_dir)
 ```
 
-One done, the config.json will have the following quantization_config:
+Once done, the config.json will have the following quantization_config:
 ```yaml
 "quantization_config": {
     "config_groups": {
