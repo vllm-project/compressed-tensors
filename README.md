@@ -11,11 +11,10 @@ Each method often comes with its own storage format and loading procedures, maki
 * **Unified Checkpoint Format**: Supports various compression schemes in a single, consistent format.
 * **Wide Compatibility**: Works with popular quantization methods like GPTQ, SmoothQuant, AWQ, AutoRound, etc. See [llm-compressor](https://github.com/vllm-project/llm-compressor)
 * **Flexible Quantization Support**: 
-  * Activation quantization: W8A8 (int8 and fp8), W4AFP8, Microscale (NVFP4, MXFP4, MXFP8)
-  * Mixed precision: W4A16, W8A16, MXFP8A16, MXFP4A16, NVFP4A16
-  * Low/arbitrary-bit: WNA4, WNA8, WNA16
-  * KV cache & Attention: FP8, NVFP4
-  * Block quantization (e.g., DeepSeek-style FP8 block)
+  * Activation quantization
+  * Mixed precision
+  * Low/arbitrary-bit
+  * KV cache quantization
   * Non-uniform schemes (different layers can be quantized in different ways!)
 * **Sparsity Support**: Handles both unstructured and semi-structured (e.g., 2:4) sparsity patterns.
 * **Transform Support**: Rotation-based quantization techniques (Hadamard, random Hadamard, random matrix transforms).
