@@ -28,20 +28,23 @@ from compressed_tensors.quantization.utils import calculate_qparams
 from transformers import AutoModelForCausalLM
 
 
-config_file = Path(__file__).parent / "int4_config.json"
 model_name = "meta-llama/Meta-Llama-3-8B"
-output_dir = "./Meta-Llama-3-8B-W4A16"
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-
 # Load the model
 model = AutoModelForCausalLM.from_pretrained(
     model_name, device_map=device, torch_dtype="auto"
 )
 
+
+
 # Set-up the quantization config from a JSON file. This defines:
 # 1. What quantization scheme we're applying and to which layers
 # 2. Any layers that should be ignored
-# In this case, int4_config.json targets all Linear layers with weights-only INT4 quantization
+# In this case, int4_config.json targets all Linear layers with weights-only INT4 quantization.
+# All the quantization arguments are described through the QuantizationArgs, 
+# found in src/compressed_tensors/quantization/quant_args.py
+ 
+config_file = Path(__file__).parent / "int4_config.json"
 config = QuantizationConfig.model_validate_json(config_file.read_text())
 
 # Apply the config to the model. This step uses the config to define
@@ -63,6 +66,8 @@ for name, module in model.named_modules():
     # In this case, that is group_size=128 defined in int4_config.json
     group_size = args.group_size
 
+    # Reshape based on the group_size. With group quantization, we apply a scale every
+    # group_size number of rows. Reshape to make it easier to identify the min and max values per group.
     if group_size is not None and group_size > 0:
         reshaped = weight.unflatten(
             -1, (math.ceil(weight.shape[-1] / group_size), group_size)
@@ -79,10 +84,19 @@ for name, module in model.named_modules():
     update_offload_parameter(module, "weight_scale", scale)
 
 # set-up a compressor
+# The compression format is inferred by iterating over all quantized modules and
+# checking each format's `can_compress(module_type, scheme)` in priority order
+# (see compressed_tensors/compressors/format.py). The format can also be set
+# explicitly by passing quantization_format (e.g. quantization_format="pack-quantized")
 compressor = ModelCompressor.from_pretrained_model(model)
 # Compress the model using the calibrated scales and save it using the pack-quantized format.
 # This format defines the weight packing, which can be seamlessly loaded through vLLM.
 compressor.compress_model(model)
+
+output_dir = "./Meta-Llama-3-8B-W4A16"
+# With pack-quantized, weights are quantized and then packed into int32 tensors
+# (e.g. eight 4-bit values per int32). The saved state dict stores weight_packed,
+# weight_scale, and weight_shape (replacing the original weight tensor).
 model.save_pretrained(output_dir)
 # Update the model's config with the relevant compressed-tensors details
 compressor.update_config(output_dir)
