@@ -4,7 +4,6 @@
 import warnings
 from collections import defaultdict
 from enum import Enum
-from typing import Annotated, Any
 
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs

@@ -63,8 +63,6 @@ def test_compress_model(frozen_stub, compressed_stub):
     ],
 )
 def test_decompress_model(model_stub, compressed_stub):
-    from transformers.utils.quantization_config import CompressedTensorsConfig
-
     model = AutoModelForCausalLM.from_pretrained(model_stub, torch_dtype=torch.float32)
     compressor = ModelCompressor.from_pretrained_model(model)
     true_decompressed_model = AutoModelForCausalLM.from_pretrained(
