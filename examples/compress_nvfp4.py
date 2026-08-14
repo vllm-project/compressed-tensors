@@ -3,11 +3,10 @@
 # The following example shows how a model with pre-calibrated scales
 # can be compressed using the nvfp4-pack-quantized compressor.
 #
-# We define a simple PyTorch model that already includes weight_scale,
-# weight_global_scale, and input_global_scale parameters, attach the
-# NVFP4 quantization scheme, and then compress.
+# We define a simple PyTorch model that already includes quantization 
+# scales, calibrated previously, which we then compress to the NVFP4 format.
 #
-# The nvfp4-pack-quantized format stores:
+# The NVFP4 format stores:
 #   - weight_packed: FP4 weights packed into uint8 (two FP4 values per byte)
 #   - weight_scale: per-group scale in float8_e4m3fn (group_size=16)
 #   - weight_global_scale: per-tensor scalar (float32) that maps group scales
