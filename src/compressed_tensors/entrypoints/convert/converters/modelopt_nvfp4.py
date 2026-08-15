@@ -82,40 +82,6 @@ class ModelOptNvfp4Converter(Converter):
 
         return tensors
 
-    def validate(self, tensors: dict[str, torch.Tensor]):
-        """
-        Ensure all tensor names of targeted layers are expected and no
-        untargeted layers have unexpected tensor names
-        """
-
-        targeted_names = [
-            name
-            for _, name in match_quantizable_tensors(
-                tensors, self.ignore, self.targets, param_targets=self.param_names
-            )
-        ]
-        for name in targeted_names:
-            param_name = name.rpartition(".")[-1]
-
-        disallowed_names = [
-            "input_scale",
-            "weight_scale",
-            "weight_scale_2",
-            "k_scale",
-            "v_scale",
-        ]
-        untargeted_names = [
-            name
-            for name in tensors.keys()
-            if name not in targeted_names
-            and not any(match_name(name, ign) for ign in self.ignore)
-        ]
-        for name in untargeted_names:
-            param_name = name.rpartition(".")[-1]
-
-            if param_name in disallowed_names:
-                raise ValueError(f"Hit unexpected non-targeted tensor {name}")
-
     def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, _, param_name = weight_name.rpartition(".")
         if (
@@ -139,7 +105,7 @@ class ModelOptNvfp4Converter(Converter):
 
         return set()
 
-    def create_config(self) -> QuantizationConfig:
+    def _build_quant_config(self) -> QuantizationConfig:
         return QuantizationConfig(
             config_groups={
                 "config_group_0": QuantizationScheme(
@@ -153,3 +119,12 @@ class ModelOptNvfp4Converter(Converter):
             format=CompressionFormat.nvfp4_pack_quantized.value,
             quantization_status=QuantizationStatus.COMPRESSED.value,
         )
+
+    def update_config(
+        self, config: QuantizationConfig | None
+    ) -> QuantizationConfig | None:
+        quant_config = self._build_quant_config()
+        if config is not None:
+            config.merge(quant_config)
+            return config
+        return quant_config

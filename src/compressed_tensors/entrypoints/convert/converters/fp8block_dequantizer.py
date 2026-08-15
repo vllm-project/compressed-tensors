@@ -52,51 +52,10 @@ class FP8BlockDequantizer(Converter):
 
         return tensors
 
-    def validate(self, tensors: dict[str, torch.Tensor]):
-        """
-        Ensure all tensor names of targeted layers are expected and no
-        untargeted layers have unexpected tensor names
-        """
-
-        targeted_names = [
-            name
-            for _, name in match_quantizable_tensors(
-                tensors, self.ignore, self.targets, param_targets=self.param_names
-            )
-        ]
-        for name in targeted_names:
-            module_name, _, param_name = name.rpartition(".")
-
-            if (
-                param_name == "weight"
-                and f"{module_name}.weight_scale_inv" not in tensors
-            ):
-                raise ValueError(
-                    f"Found weight without corresponding weight_scale_inv {name}"
-                )
-            if (
-                param_name == "weight_scale_inv"
-                and f"{module_name}.weight" not in tensors
-            ):
-                raise ValueError(
-                    f"Found weight_scale_inv without corresponding weight {name}"
-                )
-
-        disallowed_names = ["weight_scale_inv"]
-        untargeted_names = [
-            name
-            for name in tensors.keys()
-            if name not in targeted_names
-            and not any(match_name(name, ign) for ign in self.ignore)
-        ]
-        for name in untargeted_names:
-            param_name = name.rsplit(".", 1)[-1]
-
-            if param_name in disallowed_names:
-                raise ValueError(f"Found unexpected non-targeted tensor {name}")
-
-    def create_config(self) -> QuantizationConfig | None:
-        return None
+    def update_config(
+        self, config: QuantizationConfig | None
+    ) -> QuantizationConfig | None:
+        return None  # dequantizing removes quantization
 
     def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, _, param_name = weight_name.rpartition(".")

@@ -18,8 +18,10 @@ if TYPE_CHECKING:
 
 class Converter(Protocol):
     """
-    Converter interface, to modify safetensors files based on tensor name and
-    pointer to torch.Tensor, and create the QuantizationConfig
+    Converter interface for modifying safetensors checkpoints.
+
+    Converters can be chained: the pipeline passes each file through a list of
+    converters in order, feeding one converter's output to the next.
     """
 
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -43,22 +45,38 @@ class Converter(Protocol):
         """
         raise NotImplementedError()
 
-    def validate(self, tensors: dict[str, torch.Tensor]):
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Validation layer to quickly log warnings or raise an error if the safetensors
-        file is not compatible with Converter.
+        Validation layer to quickly log warnings or raise an error if the
+        safetensors file is not compatible with the Converter. Returns the
+        tensors that `process` would produce, so that chained converters can
+        see the output format (tensor names and dtypes) of the one before them.
+
+        By default this simply calls `process`, which is meta-safe for most converters
+        (renames, dtype casts, inversions). Converters whose `process` cannot run
+        on meta tensors (e.g. AutoAWQ) should override this
+        to simulate the output instead.
 
         :param tensors: dictionary of tensor name to tensor, as loaded from
         safetensors file.
+        :returns: dictionary of converted tensor name to tensor, matching what
+        `process` would produce.
         """
-        raise NotImplementedError()
+        return self.process(tensors)
 
-    def create_config(self) -> QuantizationConfig | None:
+    def update_config(
+        self, config: QuantizationConfig | None
+    ) -> QuantizationConfig | None:
         """
-        Create compressed-tensors QuantizationConfig so that it can be set in the
-        new model checkpoint's config.json.
-        If the converter is moving checkpoint to full-precision, have this function
-        return None, and quantization_config will be removed from config.json
+        Build or update the QuantizationConfig for config.json.
+
+        When converters are chained, each receives the previous converter's
+        config output. Re-quantizers merge their config into the existing one;
+        dequantizers return None to strip quantization_config entirely.
+
+        :param config: config from the previous converter, or None if this
+            is the first converter (or if a previous dequantizer cleared it)
+        :returns: updated QuantizationConfig, or None to remove it
         """
         raise NotImplementedError()
 
