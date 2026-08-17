@@ -11,7 +11,6 @@ import torch
 from compressed_tensors.offload import set_onload_device
 from compressed_tensors.quantization import (
     FP8_E4M3_DATA,
-    ActivationOrdering,
     QuantizationArgs,
     QuantizationScheme,
     QuantizationStatus,
@@ -237,10 +236,6 @@ def test_initialize_module_for_quantization_offloaded(
             None,
         ),
         (
-            QuantizationArgs(strategy="group", group_size=2, actorder="group"),
-            None,
-        ),
-        (
             QuantizationArgs(strategy="group", group_size=2, actorder="weight"),
             None,
         ),
@@ -339,9 +334,3 @@ def test_initialize_quantization_parameters(weights, input_activations):
         if not args.dynamic:
             assert getattr(layer, f"{q_param_name}_scale").shape == expected_shape
             assert getattr(layer, f"{q_param_name}_zero_point").shape == expected_shape
-
-        # g_idx
-        if args.actorder == ActivationOrdering.GROUP:
-            assert getattr(layer, f"{q_param_name}_g_idx").shape == (
-                layer.weight.shape[1],
-            )

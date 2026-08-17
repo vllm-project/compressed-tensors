@@ -207,17 +207,9 @@ def _load_quant_args_from_mapping(
     """
     scale_name = f"{base_name}_scale"
     zp_name = f"{base_name}_zero_point"
-    g_idx_name = f"{base_name}_g_idx"
 
     state_dict_scale_path = mapping.get(f"{module_name}.{scale_name}", None)
     state_dict_zp_path = mapping.get(f"{module_name}.{zp_name}", None)
-    state_dict_g_idx_path = mapping.get(f"{module_name}.{g_idx_name}", None)
-
-    if state_dict_g_idx_path is not None:
-        with safe_open(state_dict_g_idx_path, framework="pt", device="cpu") as f:
-            state_dict_g_idx = f.get_tensor(f"{module_name}.{g_idx_name}")
-
-        update_offload_parameter(module, g_idx_name, state_dict_g_idx)
 
     if state_dict_scale_path is not None:
         # module is quantized

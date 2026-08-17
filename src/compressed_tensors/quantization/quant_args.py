@@ -8,7 +8,6 @@ from typing import Any
 import torch
 from compressed_tensors.utils import Aliasable
 from compressed_tensors.utils.type import TorchDtype
-from loguru import logger
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -139,29 +138,19 @@ class ActivationOrdering(Aliasable, str, Enum):
     """
     Enum storing strategies for activation ordering during GPTQ calibration
 
-    Group: Columns are permuted by activation order during calibration. Quantization
-    groups are defined based on this permuted order. Weights are saved in original
-    column order with g_idx mapping columns to groups. Runtime requires reordering
-    columns by g_idx (higher latency but improved accuracy compared to no activation
-    ordering).\n
     Weight: Changes the way calibration occurs but doesn't change the quantization
-    format compared to no activation ordering (normal latency). Compared to Group,
-    it has lower latency and slightly worse accuracy. Compared to no activation
-    ordering during calibration it has slightly better accuracy. \n
-    Dynamic: alias for Group\n
+    format compared to no activation ordering (normal latency). Compared to no
+    activation ordering during calibration it has slightly better accuracy. \n
     Static: alias for Weight\n
     """
 
-    GROUP = "group"
     WEIGHT = "weight"
     # aliases
-    DYNAMIC = "dynamic"
     STATIC = "static"
 
     @staticmethod
     def get_aliases() -> dict[str, str]:
         return {
-            "dynamic": "group",
             "static": "weight",
         }
 
@@ -184,10 +173,9 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         quantization. Note that enabling dynamic quantization will change the default
         observer to a memoryless one
     :param actorder: activation ordering strategy for GPTQ calibration. Options are
-        GROUP (reorder by activation with g_idx mapping, higher accuracy but higher
-        latency), WEIGHT (reorder during calibration only, normal latency with slight
-        accuracy improvement), or None (no activation ordering). See ActivationOrdering
-        enum for detailed explanations. Defaults to None
+        WEIGHT (reorder during calibration only, normal latency with slight accuracy
+        improvement), or None (no activation ordering). See ActivationOrdering enum
+        for detailed explanations. Defaults to None
     """
 
     num_bits: int = 8
@@ -276,18 +264,21 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     @field_validator("actorder", mode="before")
     def validate_actorder(cls, value) -> ActivationOrdering | None:
         if isinstance(value, bool):
-            return ActivationOrdering.GROUP if value else None
+            if value:
+                raise ValueError(
+                    "actorder=True previously mapped to ActivationOrdering.GROUP, "
+                    "which has been removed. Use actorder='weight' instead."
+                )
+            return None
 
         if isinstance(value, str):
-            actorder = ActivationOrdering(value.lower())
-            # Check if it's GROUP or DYNAMIC (which is an alias for GROUP)
-            if actorder == ActivationOrdering.GROUP:
-                logger.bind(log_once=True).warning(
-                    "actorder='group' (and its alias 'dynamic') will be removed in a "
-                    "future release. Please use actorder='weight' instead for "
-                    "activation ordering during calibration."
+            lower = value.lower()
+            if lower in ("group", "dynamic"):
+                raise ValueError(
+                    f"actorder='{value}' (ActivationOrdering.GROUP) has been removed. "
+                    "Use actorder='weight' instead."
                 )
-            return actorder
+            return ActivationOrdering(lower)
 
         return value
 
@@ -351,16 +342,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             raise ValueError(f"Block strategy requires block structure\n{model}")
         if has_block_structure and not has_block_strategy:
             raise ValueError(f"Block structure requires block strategy\n{model}")
-
-        # validate activation ordering and strategy
-        if actorder == ActivationOrdering.GROUP and strategy not in (
-            QuantizationStrategy.GROUP,
-            QuantizationStrategy.TENSOR_GROUP,
-        ):
-            raise ValueError(
-                "Must use group or tensor_group quantization strategy in "
-                "order to apply group activation ordering"
-            )
 
         # infer observer w.r.t. dynamic
         if dynamic:
