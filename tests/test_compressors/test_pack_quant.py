@@ -414,3 +414,48 @@ def test_power_of_2_bits_same_packed_output_as_old(num_bits, k):
     assert torch.equal(
         pack_to_int32(value, num_bits), _old_pack_to_int32(value, num_bits)
     )
+
+
+@pytest.mark.parametrize(
+    "strategy,group_size,scale_shape",
+    [
+        (QuantizationStrategy.GROUP, 128, (256, 4)),
+        (QuantizationStrategy.CHANNEL, None, (256, 1)),
+    ],
+)
+def test_decompress_on_meta(strategy, group_size, scale_shape):
+    """
+    decompress must run on meta tensors: the validate_file convert path loads
+    every param on device="meta", so weight_shape arrives with no data. The
+    original weight shape is rebuilt from the packed/scale shapes rather than
+    read from weight_shape. Regression for the pack-quantized meta crash
+    (NotImplementedError: Cannot copy out of meta tensor; no data!).
+    """
+    out_features, in_features = 256, 512
+    module_sd = {
+        "weight": torch.rand((out_features, in_features)),
+        "weight_scale": torch.rand(scale_shape).to(torch.float32),
+    }
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(
+            num_bits=4,
+            strategy=strategy.value,
+            symmetric=True,
+            group_size=group_size,
+        ),
+    )
+    compressed = PackedQuantizationCompressor.compress(module_sd, scheme=scheme)
+
+    # emulate validate_file: every param, including weight_shape, loaded on meta
+    meta_sd = {k: v.to("meta") for k, v in compressed.items()}
+    assert meta_sd["weight_shape"].device.type == "meta"
+
+    decompressed = PackedQuantizationCompressor.decompress(meta_sd, scheme=scheme)
+    weight = decompressed["weight"]
+
+    assert weight.device.type == "meta"
+    assert weight.shape[0] == out_features
+    # group in_features is recovered exactly from the scale; channel is a
+    # packed-width placeholder, exact here since in_features packs with no padding
+    assert weight.shape[-1] == in_features
