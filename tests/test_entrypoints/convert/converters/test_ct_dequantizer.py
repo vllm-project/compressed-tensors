@@ -122,7 +122,7 @@ def test_validate_raises_on_missing_scale():
     tensors = _create_dummy_tensors(device=torch.device("meta"))
     del tensors["model.layers.0.mlp.up_proj.weight_scale"]
 
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError):
         dequantizer.validate(tensors)
 
 

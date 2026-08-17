@@ -36,6 +36,38 @@ class ModelOptNvfp4Converter(Converter):
         if self.kv_cache_scheme is not None:
             self.param_names += ["k_scale", "v_scale"]
 
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        Ensure no untargeted module carries a quantization param that should only
+        appear on targeted modules, raising ValueError otherwise. Returns the
+        processed tensors so chained converters observe the resulting format.
+        """
+        targeted_names = [
+            name
+            for _, name in match_quantizable_tensors(
+                tensors, self.ignore, self.targets, param_targets=self.param_names
+            )
+        ]
+        disallowed_names = [
+            "input_scale",
+            "weight_scale",
+            "weight_scale_2",
+            "k_scale",
+            "v_scale",
+        ]
+        untargeted_names = [
+            name
+            for name in tensors.keys()
+            if name not in targeted_names
+            and not any(match_name(name, ign) for ign in self.ignore)
+        ]
+        for name in untargeted_names:
+            param_name = name.rpartition(".")[-1]
+            if param_name in disallowed_names:
+                raise ValueError(f"Hit unexpected non-targeted tensor {name}")
+
+        return self.process(tensors)
+
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Map the modelopt NVFP4 tensors to the appropriate compressed-tensors

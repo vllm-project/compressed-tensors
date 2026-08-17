@@ -32,6 +32,50 @@ class FP8BlockDequantizer(Converter):
 
         self.param_names = ["weight", "weight_scale_inv"]
 
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        Ensure every targeted weight has its matching weight_scale_inv (and vice
+        versa), and no untargeted module carries a stray weight_scale_inv, raising
+        ValueError otherwise. Returns the processed tensors so chained converters
+        observe the resulting format.
+        """
+        targeted_names = [
+            name
+            for _, name in match_quantizable_tensors(
+                tensors, self.ignore, self.targets, param_targets=self.param_names
+            )
+        ]
+        for name in targeted_names:
+            module_name, _, param_name = name.rpartition(".")
+            if (
+                param_name == "weight"
+                and f"{module_name}.weight_scale_inv" not in tensors
+            ):
+                raise ValueError(
+                    f"Found weight without corresponding weight_scale_inv {name}"
+                )
+            if (
+                param_name == "weight_scale_inv"
+                and f"{module_name}.weight" not in tensors
+            ):
+                raise ValueError(
+                    f"Found weight_scale_inv without corresponding weight {name}"
+                )
+
+        disallowed_names = ["weight_scale_inv"]
+        untargeted_names = [
+            name
+            for name in tensors.keys()
+            if name not in targeted_names
+            and not any(match_name(name, ign) for ign in self.ignore)
+        ]
+        for name in untargeted_names:
+            param_name = name.rpartition(".")[-1]
+            if param_name in disallowed_names:
+                raise ValueError(f"Found unexpected non-targeted tensor {name}")
+
+        return self.process(tensors)
+
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Dequantize the fp8 block tensors (weight, weight_scale_inv) to full-precision

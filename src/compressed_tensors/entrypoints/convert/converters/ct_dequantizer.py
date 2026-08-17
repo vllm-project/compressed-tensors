@@ -60,6 +60,48 @@ class CompressedTensorsDequantizer(Converter):
                 infer_module_format(torch.nn.Linear, scheme)
             )
 
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        Validate that every targeted module carries exactly its expected
+        compression params, and that no matched module has stray tensors,
+        raising a descriptive ValueError otherwise. Returns the dequantized
+        tensors so chained converters observe the resulting (uncompressed)
+        format.
+        """
+        consumed_keys = set()
+        matched_modules = set()
+        for scheme in self.quant_config.config_groups.values():
+            compressor = BaseCompressor.get_value_from_registry(scheme.format)
+            param_names = compressor.compression_param_names(scheme)
+            for module_name, _ in match_quantizable_tensors(
+                tensors,
+                ignore=self.quant_config.ignore,
+                targets=scheme.targets,
+                param_targets=[param_names[0]],
+            ):
+                matched_modules.add(module_name)
+                for param_name in param_names:
+                    expected_key = f"{module_name}.{param_name}"
+                    if expected_key not in tensors:
+                        raise ValueError(
+                            f"Expected compression param {expected_key} not found "
+                            f"for targeted module {module_name}"
+                        )
+                    consumed_keys.add(expected_key)
+
+        unconsumed_tensor_names = [
+            name
+            for name in tensors
+            if name not in consumed_keys and name.rpartition(".")[0] in matched_modules
+        ]
+        if unconsumed_tensor_names:
+            raise ValueError(
+                f"Found {len(unconsumed_tensor_names)} unconsumed tensor(s) within "
+                f"matched modules -- {unconsumed_tensor_names}"
+            )
+
+        return self.process(tensors)
+
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Dequantize compressed tensors to full-precision weight tensors in dtype
