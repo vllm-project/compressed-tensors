@@ -10,29 +10,29 @@ from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
 )
 from compressed_tensors.quantization.quant_args import FP8_E4M3_DATA
-from tests.testing_utils import requires_gpu
+from tests.testing_utils import requires_gpu, requires_version
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers.utils.quantization_config import CompressedTensorsConfig
 
 
+@requires_version("transformers", "!=5.15.0")
 @pytest.mark.parametrize(
-    "frozen_stub,q_format,compressed_stub",
+    "frozen_stub,compressed_stub",
     [
         (
             "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-uncompressed",
-            "float-quantized",
             "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-compressed",
         ),
         (
             "nm-testing/llama2.c-stories15M-ultrachat-mixed-uncompressed",
-            "pack-quantized",
             "nm-testing/llama2.c-stories15M-ultrachat-mixed-compressed",
         ),
     ],
 )
-def test_compress_model(frozen_stub, q_format, compressed_stub):
+def test_compress_model(frozen_stub, compressed_stub):
     """Check that compression generates the expected compressed model"""
     model = AutoModelForCausalLM.from_pretrained(frozen_stub, torch_dtype=torch.float32)
-    compressor = ModelCompressor.from_pretrained_model(model, None, q_format)
+    compressor = ModelCompressor.from_pretrained_model(model)
     true_compressed_model = AutoModelForCausalLM.from_pretrained(
         compressed_stub, torch_dtype=torch.float32
     )
@@ -47,30 +47,27 @@ def test_compress_model(frozen_stub, q_format, compressed_stub):
         assert torch.equal(compressed[key], true_compressed[key])
 
 
+@requires_version("transformers", "!=5.15.0")
 @pytest.mark.filterwarnings("ignore::UserWarning")
 @pytest.mark.parametrize(
-    "model_stub,q_format,compressed_stub",
+    "model_stub,compressed_stub",
     [
         (
             "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-uncompressed",
-            "float-quantized",
             "nm-testing/llama2.c-stories42M-gsm8k-quantized-only-compressed",
         ),
         (
             "nm-testing/llama2.c-stories15M-ultrachat-mixed-uncompressed",
-            "pack-quantized",
             "nm-testing/llama2.c-stories15M-ultrachat-mixed-compressed",
         ),
     ],
 )
-def test_decompress_model(model_stub, q_format, compressed_stub):
-    from transformers.utils.quantization_config import CompressedTensorsConfig
-
+def test_decompress_model(model_stub, compressed_stub):
     model = AutoModelForCausalLM.from_pretrained(model_stub, torch_dtype=torch.float32)
-    compressor = ModelCompressor.from_pretrained_model(model, None, q_format)
+    compressor = ModelCompressor.from_pretrained_model(model)
     true_decompressed_model = AutoModelForCausalLM.from_pretrained(
         compressed_stub,
-        quantization_config=CompressedTensorsConfig(run_compressed=False),
+        quantization_config=CompressedTensorsConfig(dequantize=True),
         torch_dtype=torch.float32,
     )
 
@@ -125,7 +122,7 @@ def test_multiple_quant_compressors():
     initialize_module_for_quantization(model[1])
     model[1].quantization_status = "frozen"
 
-    compressor = ModelCompressor.from_pretrained_model(model, None)
+    compressor = ModelCompressor.from_pretrained_model(model)
     compressor.compress_model(model)
     assert compressor.quantization_config.format == CompressionFormat.mixed_precision
     assert model[0].quantization_scheme.format == scheme_fp8.format
