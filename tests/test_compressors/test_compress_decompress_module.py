@@ -16,9 +16,11 @@ from compressed_tensors.quantization import (
     initialize_module_for_quantization,
     preset_name_to_scheme,
 )
+from compressed_tensors.quantization.quant_scheme import PRESET_SCHEMES
 from compressed_tensors.quantization.utils import is_module_quantized
 from compressed_tensors.utils import get_direct_state_dict
 from tests.testing_utils import requires_gpu
+from transformers.modeling_utils import local_torch_dtype
 
 
 @requires_gpu
@@ -55,13 +57,9 @@ def _run_compress_decompress(
 
     # 3. Decompress the module and verify shapes and dtypes are restored.
     # Set default dtype to bfloat16 to match the module dtype, since
-    # decompress_module casts weights to torch.get_default_dtype().
-    prev_dtype = torch.get_default_dtype()
-    try:
-        torch.set_default_dtype(torch.bfloat16)
+    # NVFP4/MXFP4 decompression uses torch.get_default_dtype().
+    with local_torch_dtype(torch.bfloat16):
         decompress_module(module)
-    finally:
-        torch.set_default_dtype(prev_dtype)
 
     post_state_dict = get_direct_state_dict(module)
     for name, tensor in post_state_dict.items():
@@ -178,20 +176,17 @@ def test_linear_only_config_leaves_embedding_untouched():
 
 
 @requires_gpu
-@pytest.mark.parametrize(
-    "scheme_name,expected_format",
-    [
-        ("NVFP4A16", CompressionFormat.nvfp4_pack_quantized),
-        ("MXFP4A16", CompressionFormat.mxfp4_pack_quantized),
-    ],
-)
+@pytest.mark.parametrize("scheme_name", list(PRESET_SCHEMES.keys()))
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
-def test_decompress_module_respects_default_dtype(scheme_name, expected_format, dtype):
+def test_decompress_module_respects_default_dtype(scheme_name, dtype):
     """
-    decompress_module should cast the decompressed weight to match
-    torch.get_default_dtype(). Without this, FP4 decompression always returns
-    bfloat16 (hardcoded in unpack_fp4_from_uint8), causing dtype mismatches
-    when the model runs in a different dtype (e.g. float32).
+    FP4 decompression (NVFP4/MXFP4) should produce weights matching
+    torch.get_default_dtype(). Without this, unpack_fp4_from_uint8 always
+    returns bfloat16, causing dtype mismatches when the model runs in a
+    different dtype (e.g. float32).
+
+    All other schemes are included to verify they don't break under a
+    non-default dtype context.
     """
     module = nn.Linear(256, 256, bias=False).to(dtype=torch.bfloat16, device="cuda")
     scheme = preset_name_to_scheme(scheme_name, ["Linear"])
@@ -202,14 +197,12 @@ def test_decompress_module_respects_default_dtype(scheme_name, expected_format, 
 
     compress_module(module)
 
-    prev_dtype = torch.get_default_dtype()
-    try:
-        torch.set_default_dtype(dtype)
+    with local_torch_dtype(dtype):
         decompress_module(module)
-    finally:
-        torch.set_default_dtype(prev_dtype)
 
     weight = get_direct_state_dict(module)["weight"]
-    assert weight.dtype == dtype, (
-        f"Expected decompressed weight dtype {dtype}, got {weight.dtype}"
-    )
+    fp4_schemes = {"NVFP4A16", "NVFP4", "MXFP4A16", "MXFP4"}
+    if scheme_name in fp4_schemes:
+        assert weight.dtype == dtype, (
+            f"Expected decompressed weight dtype {dtype}, got {weight.dtype}"
+        )
