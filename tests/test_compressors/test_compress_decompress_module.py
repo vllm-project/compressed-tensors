@@ -54,7 +54,14 @@ def _run_compress_decompress(
     assert module.quantization_scheme.format == expected_format
 
     # 3. Decompress the module and verify shapes and dtypes are restored.
-    decompress_module(module)
+    # Set default dtype to bfloat16 to match the module dtype, since
+    # decompress_module casts weights to torch.get_default_dtype().
+    prev_dtype = torch.get_default_dtype()
+    try:
+        torch.set_default_dtype(torch.bfloat16)
+        decompress_module(module)
+    finally:
+        torch.set_default_dtype(prev_dtype)
 
     post_state_dict = get_direct_state_dict(module)
     for name, tensor in post_state_dict.items():
@@ -179,10 +186,10 @@ def test_linear_only_config_leaves_embedding_untouched():
     ],
 )
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
-def test_decompress_module_respects_target_dtype(scheme_name, expected_format, dtype):
+def test_decompress_module_respects_default_dtype(scheme_name, expected_format, dtype):
     """
-    decompress_module should cast the decompressed weight to the target dtype
-    when one is provided. Without this, FP4 decompression always returns
+    decompress_module should cast the decompressed weight to match
+    torch.get_default_dtype(). Without this, FP4 decompression always returns
     bfloat16 (hardcoded in unpack_fp4_from_uint8), causing dtype mismatches
     when the model runs in a different dtype (e.g. float32).
     """
@@ -194,7 +201,13 @@ def test_decompress_module_respects_target_dtype(scheme_name, expected_format, d
         module.weight.fill_(1)
 
     compress_module(module)
-    decompress_module(module, dtype=dtype)
+
+    prev_dtype = torch.get_default_dtype()
+    try:
+        torch.set_default_dtype(dtype)
+        decompress_module(module)
+    finally:
+        torch.set_default_dtype(prev_dtype)
 
     weight = get_direct_state_dict(module)["weight"]
     assert weight.dtype == dtype, (
