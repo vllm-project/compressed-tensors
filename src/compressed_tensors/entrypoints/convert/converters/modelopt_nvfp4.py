@@ -45,29 +45,35 @@ class ModelOptNvfp4Converter(Converter):
         rather than re-deriving the target matching. Returns the processed
         tensors so chained converters observe the resulting format.
         """
-        tensors = self.process(tensors)
+        targeted_names = [
+            name
+            for _, name in match_quantizable_tensors(
+                tensors, self.ignore, self.targets, param_targets=self.param_names
+            )
+        ]
+        for name in targeted_names:
+            param_name = name.rpartition(".")[-1]
 
-        qparam_names = {
+        disallowed_names = [
             "input_scale",
             "weight_scale",
             "weight_scale_2",
             "k_scale",
             "v_scale",
-        }
-        orphans = []
-        for name in tensors:
-            module_name, _, param_name = name.rpartition(".")
-            if (
-                param_name in qparam_names
-                and f"{module_name}.weight_packed" not in tensors
-                and not any(match_name(module_name, ign) for ign in self.ignore)
-            ):
-                orphans.append(name)
-        if orphans:
-            raise ValueError(
-                f"Found {len(orphans)} quantization param(s) without a converted "
-                f"weight_packed, indicating untargeted or orphan qparams: {orphans}"
-            )
+        ]
+        untargeted_names = [
+            name
+            for name in tensors.keys()
+            if name not in targeted_names
+            and not any(match_name(name, ign) for ign in self.ignore)
+        ]
+        for name in untargeted_names:
+            param_name = name.rpartition(".")[-1]
+
+            if param_name in disallowed_names:
+                raise ValueError(f"Hit unexpected non-targeted tensor {name}")
+
+        tensors = self.process(tensors)
 
         return tensors
 
