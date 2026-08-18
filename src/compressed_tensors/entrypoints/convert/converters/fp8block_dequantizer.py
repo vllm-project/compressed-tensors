@@ -34,47 +34,31 @@ class FP8BlockDequantizer(Converter):
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Ensure every targeted weight has its matching weight_scale_inv (and vice
-        versa), and no untargeted module carries a stray weight_scale_inv, raising
-        ValueError otherwise. Returns the processed tensors so chained converters
-        observe the resulting format.
+        Dequantize, then assert no leftover weight_scale_inv remains on a
+        non-ignored module. A residual weight_scale_inv means the configured
+        targets missed a block-quantized weight. A targeted weight missing its
+        weight_scale_inv surfaces as a KeyError from process and is re-raised as
+        a ValueError so CI catches it. Returns the processed tensors so chained
+        converters observe the resulting format.
         """
-        targeted_names = [
+        try:
+            tensors = self.process(tensors)
+        except KeyError as e:
+            raise ValueError(f"Missing expected weight_scale_inv {e}") from e
+
+        residual = [
             name
-            for _, name in match_quantizable_tensors(
-                tensors, self.ignore, self.targets, param_targets=self.param_names
+            for name in tensors
+            if name.rpartition(".")[-1] == "weight_scale_inv"
+            and not any(match_name(name.rpartition(".")[0], ign) for ign in self.ignore)
+        ]
+        if residual:
+            raise ValueError(
+                f"Found {len(residual)} residual weight_scale_inv after "
+                f"dequantization, indicating untargeted or orphan scales: {residual}"
             )
-        ]
-        for name in targeted_names:
-            module_name, _, param_name = name.rpartition(".")
-            if (
-                param_name == "weight"
-                and f"{module_name}.weight_scale_inv" not in tensors
-            ):
-                raise ValueError(
-                    f"Found weight without corresponding weight_scale_inv {name}"
-                )
-            if (
-                param_name == "weight_scale_inv"
-                and f"{module_name}.weight" not in tensors
-            ):
-                raise ValueError(
-                    f"Found weight_scale_inv without corresponding weight {name}"
-                )
 
-        disallowed_names = ["weight_scale_inv"]
-        untargeted_names = [
-            name
-            for name in tensors.keys()
-            if name not in targeted_names
-            and not any(match_name(name, ign) for ign in self.ignore)
-        ]
-        for name in untargeted_names:
-            param_name = name.rpartition(".")[-1]
-            if param_name in disallowed_names:
-                raise ValueError(f"Found unexpected non-targeted tensor {name}")
-
-        return self.process(tensors)
+        return tensors
 
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """

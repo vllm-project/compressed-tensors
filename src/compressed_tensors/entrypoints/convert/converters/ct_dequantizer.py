@@ -9,7 +9,11 @@ from compressed_tensors.compressors import BaseCompressor
 from compressed_tensors.compressors.format import infer_module_format
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.quantization import KVCacheScaleType, QuantizationConfig
+from compressed_tensors.quantization import (
+    KVCacheScaleType,
+    QuantizationConfig,
+    QuantizationMetadata,
+)
 from compressed_tensors.utils.match import match_name, match_quantizable_tensors
 from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
@@ -62,45 +66,35 @@ class CompressedTensorsDequantizer(Converter):
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Validate that every targeted module carries exactly its expected
-        compression params, and that no matched module has stray tensors,
-        raising a descriptive ValueError otherwise. Returns the dequantized
-        tensors so chained converters observe the resulting (uncompressed)
-        format.
+        Dequantize, then assert the result carries no leftover quantization
+        params on non-ignored modules. A residual qparam means the configured
+        targets missed a module that still holds compressed weights. Missing
+        params surface as a KeyError from process and are re-raised as a
+        ValueError so CI catches them. Returns the dequantized tensors so
+        chained converters observe the resulting (uncompressed) format.
         """
-        consumed_keys = set()
-        matched_modules = set()
-        for scheme in self.quant_config.config_groups.values():
-            compressor = BaseCompressor.get_value_from_registry(scheme.format)
-            param_names = compressor.compression_param_names(scheme)
-            for module_name, _ in match_quantizable_tensors(
-                tensors,
-                ignore=self.quant_config.ignore,
-                targets=scheme.targets,
-                param_targets=[param_names[0]],
-            ):
-                matched_modules.add(module_name)
-                for param_name in param_names:
-                    expected_key = f"{module_name}.{param_name}"
-                    if expected_key not in tensors:
-                        raise ValueError(
-                            f"Expected compression param {expected_key} not found "
-                            f"for targeted module {module_name}"
-                        )
-                    consumed_keys.add(expected_key)
+        try:
+            tensors = self.process(tensors)
+        except KeyError as e:
+            raise ValueError(f"Missing expected compression param {e}") from e
 
-        unconsumed_tensor_names = [
+        qparam_names = set(QuantizationMetadata.all_qparam_names())
+        residual = [
             name
             for name in tensors
-            if name not in consumed_keys and name.rpartition(".")[0] in matched_modules
+            if name.rpartition(".")[-1] in qparam_names
+            and not any(
+                match_name(name.rpartition(".")[0], ignore)
+                for ignore in self.quant_config.ignore
+            )
         ]
-        if unconsumed_tensor_names:
+        if residual:
             raise ValueError(
-                f"Found {len(unconsumed_tensor_names)} unconsumed tensor(s) within "
-                f"matched modules -- {unconsumed_tensor_names}"
+                f"Found {len(residual)} residual quantization param(s) after "
+                f"dequantization, indicating untargeted or orphan qparams: {residual}"
             )
 
-        return self.process(tensors)
+        return tensors
 
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
