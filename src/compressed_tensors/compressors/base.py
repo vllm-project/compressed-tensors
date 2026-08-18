@@ -112,7 +112,11 @@ class BaseCompressor(RegistryMixin, ABC):
         module.quantization_status = QuantizationStatus.COMPRESSED
 
     @classmethod
-    def decompress_module(cls, module: torch.nn.Module) -> None:
+    def decompress_module(
+        cls,
+        module: torch.nn.Module,
+        dtype: Optional[torch.dtype] = None,
+    ) -> None:
         """
         Decompress a module in-place by decompressing its state dict.
 
@@ -121,11 +125,20 @@ class BaseCompressor(RegistryMixin, ABC):
         version.
 
         :param module: the module to decompress in-place
+        :param dtype: target dtype for the decompressed weight. When provided,
+            the decompressed weight is cast to this dtype to match the model's
+            parameter dtype.
         """
         scheme = getattr(module, "quantization_scheme")
 
         state_dict = get_direct_state_dict(module)
         decompressed_state_dict = cls.decompress(state_dict, scheme)
+
+        if dtype is not None and "weight" in decompressed_state_dict:
+            weight = decompressed_state_dict["weight"]
+            if weight.is_floating_point() and weight.dtype != dtype:
+                decompressed_state_dict["weight"] = weight.to(dtype)
+
         replace_direct_state_dict(module, decompressed_state_dict)
 
         module.quantization_status = QuantizationStatus.DECOMPRESSED
@@ -194,7 +207,9 @@ def compress_module(
 
 
 def decompress_module(
-    module: torch.nn.Module, format: Optional[CompressionFormat] = None
+    module: torch.nn.Module,
+    format: Optional[CompressionFormat] = None,
+    dtype: Optional[torch.dtype] = None,
 ):
     """
     Decompress a module which has had quantization applied to it. Sets the
@@ -207,6 +222,9 @@ def decompress_module(
 
     :param module: module to decompress inplace
     :param format: force override for decompression format
+    :param dtype: target dtype for the decompressed weight. When provided,
+        the decompressed weight is cast to this dtype to match the model's
+        parameter dtype.
     """
     scheme = getattr(module, "quantization_scheme", None)
     if not isinstance(scheme, QuantizationScheme):
@@ -216,4 +234,4 @@ def decompress_module(
         format or scheme.format or infer_module_format(type(module), scheme)
     )
     compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
-    compressor.decompress_module(module)
+    compressor.decompress_module(module, dtype=dtype)
