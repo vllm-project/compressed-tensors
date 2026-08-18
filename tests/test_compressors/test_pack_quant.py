@@ -417,13 +417,18 @@ def test_power_of_2_bits_same_packed_output_as_old(num_bits, k):
 
 
 @pytest.mark.parametrize(
-    "strategy,group_size,scale_shape",
+    "strategy,group_size,scale_shape,in_features,expected_width",
     [
-        (QuantizationStrategy.GROUP, 128, (256, 4)),
-        (QuantizationStrategy.CHANNEL, None, (256, 1)),
+        (QuantizationStrategy.GROUP, 128, (256, 4), 512, 512),
+        (QuantizationStrategy.CHANNEL, None, (256, 1), 512, 512),
+        # non-aligned channel: 350*4 bits pack to 44 int32 cols, whose upper-bound
+        # placeholder is 44*32//4 = 352 (inexact by design on meta)
+        (QuantizationStrategy.CHANNEL, None, (256, 1), 350, 352),
     ],
 )
-def test_decompress_on_meta(strategy, group_size, scale_shape):
+def test_decompress_on_meta(
+    strategy, group_size, scale_shape, in_features, expected_width
+):
     """
     decompress must run on meta tensors: the validate_file convert path loads
     every param on device="meta", so weight_shape arrives with no data. The
@@ -431,7 +436,7 @@ def test_decompress_on_meta(strategy, group_size, scale_shape):
     read from weight_shape. Regression for the pack-quantized meta crash
     (NotImplementedError: Cannot copy out of meta tensor; no data!).
     """
-    out_features, in_features = 256, 512
+    out_features = 256
     module_sd = {
         "weight": torch.rand((out_features, in_features)),
         "weight_scale": torch.rand(scale_shape).to(torch.float32),
@@ -456,6 +461,6 @@ def test_decompress_on_meta(strategy, group_size, scale_shape):
 
     assert weight.device.type == "meta"
     assert weight.shape[0] == out_features
-    # group in_features is recovered exactly from the scale; channel is a
-    # packed-width placeholder, exact here since in_features packs with no padding
-    assert weight.shape[-1] == in_features
+    # group recovers in_features exactly from the scale; channel is a packed-width
+    # upper bound, exact only when in_features packs with no padding
+    assert weight.shape[-1] == expected_width
