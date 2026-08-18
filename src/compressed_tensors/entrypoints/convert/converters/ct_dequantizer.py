@@ -9,7 +9,11 @@ from compressed_tensors.compressors import BaseCompressor
 from compressed_tensors.compressors.format import infer_module_format
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.quantization import KVCacheScaleType, QuantizationConfig
+from compressed_tensors.quantization import (
+    KVCacheScaleType,
+    QuantizationConfig,
+    QuantizationMetadata,
+)
 from compressed_tensors.utils.match import match_name, match_quantizable_tensors
 from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
@@ -59,6 +63,38 @@ class CompressedTensorsDequantizer(Converter):
             scheme.format = CompressionFormat(
                 infer_module_format(torch.nn.Linear, scheme)
             )
+
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        Dequantize, then assert the result carries no leftover quantization
+        params on non-ignored modules. A residual qparam means the configured
+        targets missed a module that still holds compressed weights. Missing
+        params surface as a KeyError from process and are re-raised as a
+        ValueError so CI catches them. Returns the dequantized tensors so
+        chained converters observe the resulting (uncompressed) format.
+        """
+        try:
+            tensors = self.process(tensors)
+        except KeyError as e:
+            raise ValueError(f"Missing expected compression param {e}") from e
+
+        qparam_names = set(QuantizationMetadata.all_qparam_names())
+        residual = [
+            name
+            for name in tensors
+            if name.rpartition(".")[-1] in qparam_names
+            and not any(
+                match_name(name.rpartition(".")[0], ignore)
+                for ignore in self.quant_config.ignore
+            )
+        ]
+        if residual:
+            raise ValueError(
+                f"Found {len(residual)} residual quantization param(s) after "
+                f"dequantization, indicating untargeted or orphan qparams: {residual}"
+            )
+
+        return tensors
 
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """

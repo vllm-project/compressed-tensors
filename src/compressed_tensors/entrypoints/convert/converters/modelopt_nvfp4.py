@@ -36,6 +36,39 @@ class ModelOptNvfp4Converter(Converter):
         if self.kv_cache_scheme is not None:
             self.param_names += ["k_scale", "v_scale"]
 
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        Process, then flag any non-ignored qparam that a full process run would
+        only leave on a converted module. process renames weight to weight_packed
+        on every module it handles, so weight_packed marks a processed module,
+        and it only retypes k/v scales when a kv_cache_scheme is configured.
+        Checking both keys off process's output rather than re-deriving the
+        target matching. Returns the processed tensors so chained converters
+        observe the resulting format.
+        """
+        tensors = self.process(tensors)
+
+        source_qparams = {"input_scale", "weight_scale", "weight_scale_2"}
+        orphans = []
+        for name in tensors:
+            module_name, _, param_name = name.rpartition(".")
+            if any(match_name(module_name, ign) for ign in self.ignore):
+                continue
+            converted = f"{module_name}.weight_packed" in tensors
+            if param_name in source_qparams and not converted:
+                orphans.append(name)
+            elif param_name in {"k_scale", "v_scale"} and (
+                self.kv_cache_scheme is None or not converted
+            ):
+                orphans.append(name)
+        if orphans:
+            raise ValueError(
+                f"Found {len(orphans)} quantization param(s) without a converted "
+                f"weight_packed, indicating untargeted or orphan qparams: {orphans}"
+            )
+
+        return tensors
+
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Map the modelopt NVFP4 tensors to the appropriate compressed-tensors
