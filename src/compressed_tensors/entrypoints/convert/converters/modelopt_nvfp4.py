@@ -38,42 +38,34 @@ class ModelOptNvfp4Converter(Converter):
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Process, then flag any non-ignored module that still carries a source
-        quantization param without a converted weight_packed. process renames
-        weight to weight_packed only on modules it handled, so weight_packed is
-        the marker of a processed module; checking for it keys off process output
-        rather than re-deriving the target matching. Returns the processed
-        tensors so chained converters observe the resulting format.
+        Process, then flag any non-ignored qparam that a full process run would
+        only leave on a converted module. process renames weight to weight_packed
+        on every module it handles, so weight_packed marks a processed module,
+        and it only retypes k/v scales when a kv_cache_scheme is configured.
+        Checking both keys off process's output rather than re-deriving the
+        target matching. Returns the processed tensors so chained converters
+        observe the resulting format.
         """
-        targeted_names = [
-            name
-            for _, name in match_quantizable_tensors(
-                tensors, self.ignore, self.targets, param_targets=self.param_names
-            )
-        ]
-        for name in targeted_names:
-            param_name = name.rpartition(".")[-1]
-
-        disallowed_names = [
-            "input_scale",
-            "weight_scale",
-            "weight_scale_2",
-            "k_scale",
-            "v_scale",
-        ]
-        untargeted_names = [
-            name
-            for name in tensors.keys()
-            if name not in targeted_names
-            and not any(match_name(name, ign) for ign in self.ignore)
-        ]
-        for name in untargeted_names:
-            param_name = name.rpartition(".")[-1]
-
-            if param_name in disallowed_names:
-                raise ValueError(f"Hit unexpected non-targeted tensor {name}")
-
         tensors = self.process(tensors)
+
+        source_qparams = {"input_scale", "weight_scale", "weight_scale_2"}
+        orphans = []
+        for name in tensors:
+            module_name, _, param_name = name.rpartition(".")
+            if any(match_name(module_name, ign) for ign in self.ignore):
+                continue
+            converted = f"{module_name}.weight_packed" in tensors
+            if param_name in source_qparams and not converted:
+                orphans.append(name)
+            elif param_name in {"k_scale", "v_scale"} and (
+                self.kv_cache_scheme is None or not converted
+            ):
+                orphans.append(name)
+        if orphans:
+            raise ValueError(
+                f"Found {len(orphans)} quantization param(s) without a converted "
+                f"weight_packed, indicating untargeted or orphan qparams: {orphans}"
+            )
 
         return tensors
 
