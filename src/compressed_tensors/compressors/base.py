@@ -126,13 +126,6 @@ class BaseCompressor(RegistryMixin, ABC):
 
         state_dict = get_direct_state_dict(module)
         decompressed_state_dict = cls.decompress(state_dict, scheme)
-
-        dtype = torch.get_default_dtype()
-        if "weight" in decompressed_state_dict:
-            weight = decompressed_state_dict["weight"]
-            if weight.is_floating_point() and weight.dtype != dtype:
-                decompressed_state_dict["weight"] = weight.to(dtype)
-
         replace_direct_state_dict(module, decompressed_state_dict)
 
         module.quantization_status = QuantizationStatus.DECOMPRESSED
