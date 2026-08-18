@@ -156,7 +156,7 @@ class PackedQuantizationCompressor(BaseCompressor):
                     f"Cannot recover exact weight shape on meta for "
                     f"{weights.strategy} pack-quantized weights; using an upper "
                     "bound within 32/num_bits of the true in_features. This "
-                    "affects meta validation only."
+                    "affect validation only."
                 )
                 in_features = packed.shape[-1] * 32 // weights.num_bits
             state_dict["weight"] = torch.empty(
