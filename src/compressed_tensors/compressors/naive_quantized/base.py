@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
     BaseCompressor,
@@ -116,11 +117,13 @@ class NaiveQuantizationCompressor(BaseCompressor):
         zero_point = state_dict.get("weight_zero_point", None)
         g_idx = state_dict.get("weight_g_idx", None)
 
+        dtype = torch.get_default_dtype()
         state_dict["weight"] = dequantize(
             x_q=weight,
             scale=scale,
             zero_point=zero_point,
             g_idx=g_idx,
+            dtype=dtype,
         )
 
         return state_dict

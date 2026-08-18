@@ -180,13 +180,13 @@ def test_linear_only_config_leaves_embedding_untouched():
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
 def test_decompress_module_respects_default_dtype(scheme_name, dtype):
     """
-    FP4 decompression (NVFP4/MXFP4) should produce weights matching
-    torch.get_default_dtype(). Without this, unpack_fp4_from_uint8 always
-    returns bfloat16, causing dtype mismatches when the model runs in a
-    different dtype (e.g. float32).
+    Decompression should produce weights matching torch.get_default_dtype(),
+    regardless of the quantization scheme. Without this, some compressors
+    (e.g. FP4 via unpack_fp4_from_uint8, or MXFP8 via decompress_mx_scale)
+    hardcode bfloat16, causing dtype mismatches when the model runs in a
+    different dtype.
 
-    All other schemes are included to verify they don't break under a
-    non-default dtype context.
+    UNQUANTIZED is excluded because DenseCompressor is a no-op.
     """
     module = nn.Linear(256, 256, bias=False).to(dtype=torch.bfloat16, device="cuda")
     scheme = preset_name_to_scheme(scheme_name, ["Linear"])
@@ -201,8 +201,7 @@ def test_decompress_module_respects_default_dtype(scheme_name, dtype):
         decompress_module(module)
 
     weight = get_direct_state_dict(module)["weight"]
-    fp4_schemes = {"NVFP4A16", "NVFP4", "MXFP4A16", "MXFP4"}
-    if scheme_name in fp4_schemes:
+    if scheme_name != "UNQUANTIZED":
         assert (
             weight.dtype == dtype
         ), f"Expected decompressed weight dtype {dtype}, got {weight.dtype}"

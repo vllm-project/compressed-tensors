@@ -136,6 +136,8 @@ class PackedQuantizationCompressor(BaseCompressor):
         original_shape = state_dict.get("weight_shape")
         weights = scheme.weights
 
+        dtype = torch.get_default_dtype()
+
         if packed.device.type == "meta":
             # Build the dequantized weight shape locally instead of reading
             # weight_shape, which arrives on meta (no data) in the validate
@@ -161,7 +163,7 @@ class PackedQuantizationCompressor(BaseCompressor):
                 in_features = packed.shape[-1] * 32 // weights.num_bits
             state_dict["weight"] = torch.empty(
                 (*packed.shape[:-1], in_features),
-                dtype=scale.dtype,
+                dtype=dtype,
                 device="meta",
             )
             return state_dict
@@ -181,6 +183,7 @@ class PackedQuantizationCompressor(BaseCompressor):
             scale=scale,
             zero_point=zero_point,
             g_idx=g_idx,
+            dtype=dtype,
         )
 
         return state_dict
