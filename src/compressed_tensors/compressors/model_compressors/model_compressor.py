@@ -189,7 +189,7 @@ class ModelCompressor:
         ]
 
         # TODO: support distributed decompression
-        dtype = getattr(model, "dtype", None)
+        dtype = torch.get_default_dtype()
         for module in tqdm(modules, desc=desc):
             decompress_module(module, self.force_compression_format, dtype=dtype)
 
