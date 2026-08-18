@@ -168,3 +168,35 @@ def test_linear_only_config_leaves_embedding_untouched():
     assert embed_keys == {"weight"}
     assert not hasattr(model.embed, "quantization_status")
     assert torch.equal(model.embed.weight, embed_weight_before)
+
+
+@requires_gpu
+@pytest.mark.parametrize(
+    "scheme_name,expected_format",
+    [
+        ("NVFP4A16", CompressionFormat.nvfp4_pack_quantized),
+        ("MXFP4A16", CompressionFormat.mxfp4_pack_quantized),
+    ],
+)
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+def test_decompress_module_respects_target_dtype(scheme_name, expected_format, dtype):
+    """
+    decompress_module should cast the decompressed weight to the target dtype
+    when one is provided. Without this, FP4 decompression always returns
+    bfloat16 (hardcoded in unpack_fp4_from_uint8), causing dtype mismatches
+    when the model runs in a different dtype (e.g. float32).
+    """
+    module = nn.Linear(256, 256, bias=False).to(dtype=torch.bfloat16, device="cuda")
+    scheme = preset_name_to_scheme(scheme_name, ["Linear"])
+    initialize_module_for_quantization(module, scheme)
+
+    with torch.no_grad():
+        module.weight.fill_(1)
+
+    compress_module(module)
+    decompress_module(module, dtype=dtype)
+
+    weight = get_direct_state_dict(module)["weight"]
+    assert weight.dtype == dtype, (
+        f"Expected decompressed weight dtype {dtype}, got {weight.dtype}"
+    )

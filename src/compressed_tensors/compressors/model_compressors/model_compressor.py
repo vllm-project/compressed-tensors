@@ -189,8 +189,9 @@ class ModelCompressor:
         ]
 
         # TODO: support distributed decompression
+        dtype = getattr(model, "dtype", None)
         for module in tqdm(modules, desc=desc):
-            decompress_module(module, self.force_compression_format)
+            decompress_module(module, self.force_compression_format, dtype=dtype)
 
         # update config status to reflect decompression
         if self.quantization_config is not None:
