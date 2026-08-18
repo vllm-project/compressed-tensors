@@ -203,6 +203,6 @@ def test_decompress_module_respects_default_dtype(scheme_name, dtype):
     weight = get_direct_state_dict(module)["weight"]
     fp4_schemes = {"NVFP4A16", "NVFP4", "MXFP4A16", "MXFP4"}
     if scheme_name in fp4_schemes:
-        assert weight.dtype == dtype, (
-            f"Expected decompressed weight dtype {dtype}, got {weight.dtype}"
-        )
+        assert (
+            weight.dtype == dtype
+        ), f"Expected decompressed weight dtype {dtype}, got {weight.dtype}"

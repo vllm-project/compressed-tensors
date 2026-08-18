@@ -20,6 +20,7 @@ from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
     get_quantization_config,
 )
+from loguru import logger
 from transformers.file_utils import CONFIG_NAME
 from transformers.modeling_utils import local_torch_dtype
 
@@ -126,14 +127,16 @@ class CompressedTensorsDequantizer(Converter):
                         for param_name in param_names
                     }
 
-                    dequantized_state_dict = compressor.decompress(
-                        state_dict, scheme
-                    )
+                    dequantized_state_dict = compressor.decompress(state_dict, scheme)
 
                     # Add only weight param to dequantized tensors
-                    dequantized_tensors[f"{module_name}.weight"] = (
-                        dequantized_state_dict["weight"].to(self.dtype)
-                    )
+                    weight = dequantized_state_dict["weight"]
+                    dequantized_tensors[f"{module_name}.weight"] = weight
+                    if weight.dtype != self.dtype:
+                        logger.warning(
+                            f"{module_name} decompressed dtype ({weight.dtype}) "
+                            f"does not match model dtype ({self.dtype})"
+                        )
 
         # Copy over any remaining ignored/untargeted tensors, skipping kv cache qparams
         kv_cache_param_names = [v.value for v in KVCacheScaleType]
