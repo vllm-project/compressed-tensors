@@ -3,7 +3,14 @@
 
 import pytest
 import torch
+from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert import ModelOptNvfp4Converter
+from compressed_tensors.quantization import (
+    QuantizationArgs,
+    QuantizationConfig,
+    QuantizationScheme,
+    QuantizationStatus,
+)
 
 
 @pytest.mark.unit
@@ -93,7 +100,8 @@ def test_modelopt_nvfp4_converter_get_dependencies():
 @pytest.mark.unit
 def test_modelopt_nvfp4_converter_validate_with_meta_tensors():
     """
-    Test that the converter's validate method works correctly with meta tensors.
+    Test that the converter's validate method works correctly with meta tensors
+    and returns the correct output dict.
     """
     converter = ModelOptNvfp4Converter(targets=[r"re:.*layer\d+\.mlp\..*proj$"])
 
@@ -123,5 +131,57 @@ def test_modelopt_nvfp4_converter_validate_with_meta_tensors():
             "model.embed_tokens.weight": torch.empty(128, 128, dtype=torch.bfloat16),
         }
 
-    # Should not raise any errors
-    converter.validate(tensors)
+    result = converter.validate(tensors)
+
+    # Renamed params present with correct dtypes
+    assert "model.layer0.mlp.up_proj.input_global_scale" in result
+    assert result["model.layer0.mlp.up_proj.input_global_scale"].dtype == torch.float32
+    assert "model.layer0.mlp.up_proj.weight_packed" in result
+    assert result["model.layer0.mlp.up_proj.weight_packed"].dtype == torch.uint8
+    assert "model.layer0.mlp.up_proj.weight_global_scale" in result
+    assert result["model.layer0.mlp.up_proj.weight_global_scale"].dtype == torch.float32
+
+    # weight_scale stays (no rename)
+    assert "model.layer0.mlp.up_proj.weight_scale" in result
+
+    # Source names removed
+    assert "model.layer0.mlp.up_proj.input_scale" not in result
+    assert "model.layer0.mlp.up_proj.weight" not in result
+    assert "model.layer0.mlp.up_proj.weight_scale_2" not in result
+
+    # Untargeted passes through
+    assert "model.embed_tokens.weight" in result
+
+
+@pytest.mark.unit
+def test_modelopt_nvfp4_update_config_from_none():
+    converter = ModelOptNvfp4Converter(targets=[r"re:.*proj$"])
+
+    config = converter.update_config(None)
+
+    assert config is not None
+    assert len(config.config_groups) == 1
+    assert "config_group_0" in config.config_groups
+    assert config.format == CompressionFormat.nvfp4_pack_quantized.value
+    assert config.quantization_status == QuantizationStatus.COMPRESSED
+
+
+@pytest.mark.unit
+def test_modelopt_nvfp4_update_config_merges():
+    converter = ModelOptNvfp4Converter(targets=[r"re:.*proj$"])
+
+    # Start with an existing config from another converter
+    existing = QuantizationConfig(
+        config_groups={
+            "prior_group": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(num_bits=8, type="int", symmetric=True),
+            )
+        },
+    )
+
+    merged = converter.update_config(existing)
+
+    assert merged is existing  # in-place mutation
+    assert len(merged.config_groups) == 2  # prior_group + config_group_0
+    assert "prior_group" in merged.config_groups
