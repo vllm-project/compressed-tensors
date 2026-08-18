@@ -38,35 +38,38 @@ class ModelOptNvfp4Converter(Converter):
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Ensure no untargeted module carries a quantization param that should only
-        appear on targeted modules, raising ValueError otherwise. Returns the
-        processed tensors so chained converters observe the resulting format.
+        Process, then flag any non-ignored module that still carries a source
+        quantization param without a converted weight_packed. process renames
+        weight to weight_packed only on modules it handled, so weight_packed is
+        the marker of a processed module; checking for it keys off process output
+        rather than re-deriving the target matching. Returns the processed
+        tensors so chained converters observe the resulting format.
         """
-        targeted_names = [
-            name
-            for _, name in match_quantizable_tensors(
-                tensors, self.ignore, self.targets, param_targets=self.param_names
-            )
-        ]
-        disallowed_names = [
+        tensors = self.process(tensors)
+
+        qparam_names = {
             "input_scale",
             "weight_scale",
             "weight_scale_2",
             "k_scale",
             "v_scale",
-        ]
-        untargeted_names = [
-            name
-            for name in tensors.keys()
-            if name not in targeted_names
-            and not any(match_name(name, ign) for ign in self.ignore)
-        ]
-        for name in untargeted_names:
-            param_name = name.rpartition(".")[-1]
-            if param_name in disallowed_names:
-                raise ValueError(f"Hit unexpected non-targeted tensor {name}")
+        }
+        orphans = []
+        for name in tensors:
+            module_name, _, param_name = name.rpartition(".")
+            if (
+                param_name in qparam_names
+                and f"{module_name}.weight_packed" not in tensors
+                and not any(match_name(module_name, ign) for ign in self.ignore)
+            ):
+                orphans.append(name)
+        if orphans:
+            raise ValueError(
+                f"Found {len(orphans)} quantization param(s) without a converted "
+                f"weight_packed, indicating untargeted or orphan qparams: {orphans}"
+            )
 
-        return self.process(tensors)
+        return tensors
 
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
