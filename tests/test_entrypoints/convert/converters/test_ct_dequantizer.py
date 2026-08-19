@@ -122,7 +122,35 @@ def test_validate_raises_on_missing_scale():
     tensors = _create_dummy_tensors(device=torch.device("meta"))
     del tensors["model.layers.0.mlp.up_proj.weight_scale"]
 
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError):
+        dequantizer.validate(tensors)
+
+
+@pytest.mark.unit
+def test_validate_passes_with_ignored_compressed_module():
+    # An ignored module keeps its compressed qparams; the residual check must
+    # not flag them as orphans.
+    dequantizer = _create_dequantizer(ignore=["model.embed_tokens", "re:.*down_proj.*"])
+    tensors = _create_dummy_tensors(device=torch.device("meta"))
+
+    result = dequantizer.validate(tensors)
+
+    # up_proj is dequantized, down_proj is left compressed (ignored)
+    assert result["model.layers.0.mlp.up_proj.weight"].dtype == torch.bfloat16
+    assert "model.layers.0.mlp.down_proj.weight_scale" in result
+
+
+@pytest.mark.unit
+def test_validate_raises_on_untargeted_scale():
+    # A module that is neither targeted nor ignored but carries a qparam is an
+    # orphan and must raise.
+    dequantizer = _create_dequantizer(ignore=["model.embed_tokens"])
+    tensors = _create_dummy_tensors(device=torch.device("meta"))
+    tensors["model.layers.0.self_attn.q_proj.weight_scale"] = torch.rand(
+        128, 1, dtype=torch.float32, device="meta"
+    )
+
+    with pytest.raises(ValueError):
         dequantizer.validate(tensors)
 
 

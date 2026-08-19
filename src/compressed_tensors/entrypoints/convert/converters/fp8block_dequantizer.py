@@ -32,6 +32,34 @@ class FP8BlockDequantizer(Converter):
 
         self.param_names = ["weight", "weight_scale_inv"]
 
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        Dequantize, then assert no leftover weight_scale_inv remains on a
+        non-ignored module. A residual weight_scale_inv means the configured
+        targets missed a block-quantized weight. A targeted weight missing its
+        weight_scale_inv surfaces as a KeyError from process and is re-raised as
+        a ValueError so CI catches it. Returns the processed tensors so chained
+        converters observe the resulting format.
+        """
+        try:
+            tensors = self.process(tensors)
+        except KeyError as e:
+            raise ValueError(f"Missing expected weight_scale_inv {e}") from e
+
+        residual = [
+            name
+            for name in tensors
+            if name.rpartition(".")[-1] == "weight_scale_inv"
+            and not any(match_name(name.rpartition(".")[0], ign) for ign in self.ignore)
+        ]
+        if residual:
+            raise ValueError(
+                f"Found {len(residual)} residual weight_scale_inv after "
+                f"dequantization, indicating untargeted or orphan scales: {residual}"
+            )
+
+        return tensors
+
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Dequantize the fp8 block tensors (weight, weight_scale_inv) to full-precision
