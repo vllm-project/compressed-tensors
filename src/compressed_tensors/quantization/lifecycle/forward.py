@@ -77,58 +77,24 @@ def quantize(
 def dequantize(
     x_q: torch.Tensor,
     scale: torch.Tensor,
+    args: QuantizationArgs,
     zero_point: torch.Tensor | None = None,
-    args: QuantizationArgs | None = None,
     dtype: torch.dtype | None = None,
     g_idx: torch.Tensor | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
-    Dequantize a quantized input tensor x_q based on the strategy specified in args. If
-    args is not provided, the strategy will be inferred.
+    Dequantize a quantized input tensor x_q based on the strategy specified in args.
 
     :param x: quantized input tensor
     :param scale: scale tensor
-    :param zero_point: zero point tensor
     :param args: quantization args used to quantize x_q
+    :param zero_point: zero point tensor
     :param dtype: optional dtype to cast the dequantized output to
     :param g_idx: optional mapping from column index to group index
     :param global_scale: optional constant to scale the quantization scale during QDQ
     :return: dequantized float tensor
     """
-    if args is None:
-        if scale.ndim == 0 or scale.ndim == 1:
-            args = QuantizationArgs(strategy=QuantizationStrategy.TENSOR)
-        elif scale.ndim == 2:
-            if scale.shape[1] == 1:
-                args = QuantizationArgs(strategy=QuantizationStrategy.CHANNEL)
-            # Scale height matches input or is 1 -> group quantization across columns
-            #
-            # Example 1: scale.shape[0] == 1
-            # x_q: (4, 8), scale: (1, 4) -> 2 columns per group
-            #
-            # Example 2: scale.shape[0] == x_q.shape[0]
-            # x_q: (4, 8), scale: (4, 4) -> 2 elements per group (per row)
-            elif (scale.shape[0] == 1) or (scale.shape[0] == x_q.shape[0]):
-                group_size = int(x_q.shape[1] / scale.shape[1])
-                args = QuantizationArgs(
-                    strategy=QuantizationStrategy.GROUP, group_size=group_size
-                )
-            else:
-                rows, cols = x_q.shape[-2], x_q.shape[-1]
-                block_height = rows // scale.shape[0]  # Rows per block
-                block_width = cols // scale.shape[1]  # Columns per block
-
-                args = QuantizationArgs(
-                    strategy=QuantizationStrategy.BLOCK,
-                    block_structure=[block_height, block_width],
-                )
-        else:
-            raise ValueError(
-                f"Could not infer a quantization strategy from scale with {scale.ndim} "
-                "dimmensions. Expected 0 or 2 dimmensions."
-            )
-
     if dtype is None:
         dtype = scale.dtype
 

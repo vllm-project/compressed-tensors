@@ -119,6 +119,7 @@ class NVFP4PackedCompressor(BaseCompressor):
         state_dict["weight"] = dequantize(
             x_q=unpacked,
             scale=scale_float,
+            args=scheme.weights,
             global_scale=global_scale,
             dtype=dtype,
         )

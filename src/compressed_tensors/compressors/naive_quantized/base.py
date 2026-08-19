@@ -121,6 +121,7 @@ class NaiveQuantizationCompressor(BaseCompressor):
         state_dict["weight"] = dequantize(
             x_q=weight,
             scale=scale,
+            args=scheme.weights,
             zero_point=zero_point,
             g_idx=g_idx,
             dtype=dtype,
