@@ -281,14 +281,12 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             return None
 
         if isinstance(value, str):
-            actorder = ActivationOrdering(value.lower())
-            # Check if it's GROUP or DYNAMIC (which is an alias for GROUP)
-            if actorder in (ActivationOrdering.GROUP, ActivationOrdering.DYNAMIC):
+            if value.lower() in ("group", "weight"):
                 raise ValueError(
-                    "actorder='group' (and its alias 'dynamic') have been removed"
+                    f"actorder='{value}' is no longer supported. "
+                    "Use actorder=False instead."
                 )
-            return actorder
-
+            return None
         return value
 
     @field_validator("dynamic", mode="before")
