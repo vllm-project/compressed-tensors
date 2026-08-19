@@ -283,10 +283,10 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         if isinstance(value, str):
             if value.lower() in ("group", "dynamic"):
                 raise ValueError(
-                    f"actorder='{value}' is no longer supported. "
+                    f"actorder='{value}' has been removed. "
                     "Use actorder=False instead."
                 )
-            return None
+                return None
         return value
 
     @field_validator("dynamic", mode="before")
