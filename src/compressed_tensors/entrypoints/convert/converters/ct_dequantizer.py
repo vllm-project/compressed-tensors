@@ -22,7 +22,6 @@ from compressed_tensors.utils.safetensors_load import (
 )
 from loguru import logger
 from transformers.file_utils import CONFIG_NAME
-from transformers.modeling_utils import local_torch_dtype
 
 
 class CompressedTensorsDequantizer(Converter):
@@ -111,32 +110,33 @@ class CompressedTensorsDequantizer(Converter):
         """
         dequantized_tensors = {}
 
-        with local_torch_dtype(self.dtype):
-            for scheme in self.quant_config.config_groups.values():
-                compressor = BaseCompressor.get_value_from_registry(scheme.format)
-                param_names = compressor.compression_param_names(scheme)
-                for module_name, tensor_name in match_quantizable_tensors(
-                    tensors,
-                    ignore=self.quant_config.ignore,
-                    targets=scheme.targets,
-                    param_targets=[param_names[0]],
-                ):
-                    # Create state dict of param_name -> torch.Tensor
-                    state_dict = {
-                        f"{param_name}": tensors.pop(f"{module_name}.{param_name}")
-                        for param_name in param_names
-                    }
+        for scheme in self.quant_config.config_groups.values():
+            compressor = BaseCompressor.get_value_from_registry(scheme.format)
+            param_names = compressor.compression_param_names(scheme)
+            for module_name, tensor_name in match_quantizable_tensors(
+                tensors,
+                ignore=self.quant_config.ignore,
+                targets=scheme.targets,
+                param_targets=[param_names[0]],
+            ):
+                # Create state dict of param_name -> torch.Tensor
+                state_dict = {
+                    f"{param_name}": tensors.pop(f"{module_name}.{param_name}")
+                    for param_name in param_names
+                }
 
-                    dequantized_state_dict = compressor.decompress(state_dict, scheme)
+                dequantized_state_dict = compressor.decompress(
+                    state_dict, scheme, dtype=self.dtype
+                )
 
-                    # Add only weight param to dequantized tensors
-                    weight = dequantized_state_dict["weight"]
-                    dequantized_tensors[f"{module_name}.weight"] = weight
-                    if weight.dtype != self.dtype:
-                        logger.warning(
-                            f"{module_name} decompressed dtype ({weight.dtype}) "
-                            f"does not match model dtype ({self.dtype})"
-                        )
+                # Add only weight param to dequantized tensors
+                weight = dequantized_state_dict["weight"]
+                dequantized_tensors[f"{module_name}.weight"] = weight
+                if weight.dtype != self.dtype:
+                    logger.warning(
+                        f"{module_name} decompressed dtype ({weight.dtype}) "
+                        f"does not match model dtype ({self.dtype})"
+                    )
 
         # Copy over any remaining ignored/untargeted tensors, skipping kv cache qparams
         kv_cache_param_names = [v.value for v in KVCacheScaleType]
