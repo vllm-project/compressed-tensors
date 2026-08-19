@@ -117,12 +117,13 @@ class NVFP4PackedCompressor(BaseCompressor):
         scale = state_dict.get("weight_scale")
         global_scale = state_dict.get("weight_global_scale", None)
 
-        m, n = packed.shape
-        unpacked = unpack_fp4_from_uint8(packed, m, n * 2)
-
-        scale_float = cls._decompress_scale(scale, unpacked.dtype)
-
         dtype = dtype or torch.get_default_dtype()
+
+        m, n = packed.shape
+        unpacked = unpack_fp4_from_uint8(packed, m, n * 2, dtype=dtype)
+
+        scale_float = cls._decompress_scale(scale, dtype)
+
         state_dict["weight"] = dequantize(
             x_q=unpacked,
             scale=scale_float,
