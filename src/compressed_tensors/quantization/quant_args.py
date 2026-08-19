@@ -150,8 +150,6 @@ class ActivationOrdering(Aliasable, str, Enum):
     it has lower latency and slightly worse accuracy. Compared to no activation
     ordering during calibration it has slightly better accuracy. \n
     Dynamic: alias for Group\n
-    format compared to no activation ordering (normal latency). Compared to no
-    activation ordering during calibration it has slightly better accuracy. \n
     Static: alias for Weight\n
     """
 
@@ -188,9 +186,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         latency), WEIGHT (reorder during calibration only, normal latency with slight
         accuracy improvement), or None (no activation ordering). See ActivationOrdering
         enum for detailed explanations. Defaults to None (Removed, 2026/08/19)
-        WEIGHT (reorder during calibration only, normal latency with slight accuracy
-        improvement), or None (no activation ordering). See ActivationOrdering enum
-        for detailed explanations. Defaults to None
     """
 
     num_bits: int = 8
