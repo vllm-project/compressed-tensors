@@ -186,6 +186,11 @@ def compress_module(
     if not isinstance(scheme, QuantizationScheme):
         return
 
+    if getattr(module, "quantization_status", None) == QuantizationStatus.FROZEN:
+        weight = getattr(module, "weight", None)
+        if weight is not None and weight.device.type == "meta":
+            return
+
     scheme.format = CompressionFormat(
         format or scheme.format or infer_module_format(type(module), scheme)
     )
@@ -210,6 +215,9 @@ def decompress_module(
     """
     scheme = getattr(module, "quantization_scheme", None)
     if not isinstance(scheme, QuantizationScheme):
+        return
+
+    if getattr(module, "quantization_status", None) != QuantizationStatus.COMPRESSED:
         return
 
     scheme.format = CompressionFormat(
