@@ -8,6 +8,7 @@ from typing import Any
 import torch
 from compressed_tensors.utils import Aliasable
 from compressed_tensors.utils.type import TorchDtype
+from loguru import logger
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -139,7 +140,16 @@ class ActivationOrdering(Aliasable, str, Enum):
     """
     Enum storing strategies for activation ordering during GPTQ calibration
 
+    Group: Columns are permuted by activation order during calibration. Quantization
+    groups are defined based on this permuted order. Weights are saved in original
+    column order with g_idx mapping columns to groups. Runtime requires reordering
+    columns by g_idx (higher latency but improved accuracy compared to no activation
+    ordering). (Removed, 2026/08/19) \n
     Weight: Changes the way calibration occurs but doesn't change the quantization
+    format compared to no activation ordering (normal latency). Compared to Group,
+    it has lower latency and slightly worse accuracy. Compared to no activation
+    ordering during calibration it has slightly better accuracy. \n
+    Dynamic: alias for Group\n
     format compared to no activation ordering (normal latency). Compared to no
     activation ordering during calibration it has slightly better accuracy. \n
     Static: alias for Weight\n
@@ -174,6 +184,10 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         quantization. Note that enabling dynamic quantization will change the default
         observer to a memoryless one
     :param actorder: activation ordering strategy for GPTQ calibration. Options are
+        GROUP (reorder by activation with g_idx mapping, higher accuracy but higher
+        latency), WEIGHT (reorder during calibration only, normal latency with slight
+        accuracy improvement), or None (no activation ordering). See ActivationOrdering
+        enum for detailed explanations. Defaults to None (Removed, 2026/08/19)
         WEIGHT (reorder during calibration only, normal latency with slight accuracy
         improvement), or None (no activation ordering). See ActivationOrdering enum
         for detailed explanations. Defaults to None
@@ -273,13 +287,13 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             return None
 
         if isinstance(value, str):
-            lower = value.lower()
-            if lower in ("group", "dynamic"):
+            actorder = ActivationOrdering(value.lower())
+            # Check if it's GROUP or DYNAMIC (which is an alias for GROUP)
+            if actorder in (ActivationOrdering.GROUP, ActivationOrdering.DYNAMIC):
                 raise ValueError(
-                    f"actorder='{value}' (ActivationOrdering.GROUP) has been removed. "
-                    "Use actorder='weight' instead."
+                    "actorder='group' (and its alias 'dynamic') have been removed"
                 )
-            return ActivationOrdering(lower)
+            return actorder
 
         return value
 
