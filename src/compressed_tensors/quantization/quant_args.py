@@ -281,7 +281,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             return None
 
         if isinstance(value, str):
-            if value.lower() in ("group", "weight"):
+            if value.lower() in ("group", "dynamic"):
                 raise ValueError(
                     f"actorder='{value}' is no longer supported. "
                     "Use actorder=False instead."
