@@ -7,7 +7,6 @@ from compressed_tensors.compressors.base import (
 )
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
-    ActivationOrdering,
     QuantizationScheme,
     QuantizationStrategy,
     QuantizationType,

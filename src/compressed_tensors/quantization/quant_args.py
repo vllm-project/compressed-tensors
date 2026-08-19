@@ -8,7 +8,6 @@ from typing import Any
 import torch
 from compressed_tensors.utils import Aliasable
 from compressed_tensors.utils.type import TorchDtype
-from loguru import logger
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -304,7 +303,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         strategy = model.strategy
         group_size = model.group_size
         block_structure = model.block_structure
-        actorder = model.actorder
+        # commenting for linting, what should we do with this?
+        # actorder = model.actorder
         dynamic = model.dynamic
         observer = model.observer
         dynamic = model.dynamic
