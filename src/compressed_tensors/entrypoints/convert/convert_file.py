@@ -40,7 +40,7 @@ def write_checkpoint_quantization_config(
     """
     config = None
     for converter in converters:
-        config = converter.update_config(config)
+        config = converter.update_config(config, save_directory)
 
     quant_config_data = None
     if config is not None:

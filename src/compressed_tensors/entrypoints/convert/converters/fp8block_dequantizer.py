@@ -81,7 +81,7 @@ class FP8BlockDequantizer(Converter):
         return tensors
 
     def update_config(
-        self, config: QuantizationConfig | None
+        self, config: QuantizationConfig | None, save_directory: str | None = None
     ) -> QuantizationConfig | None:
         return None  # dequantizing removes quantization
 

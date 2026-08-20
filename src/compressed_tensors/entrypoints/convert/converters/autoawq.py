@@ -192,7 +192,7 @@ class AutoAWQConverter(Converter):
         )
 
     def update_config(
-        self, config: QuantizationConfig | None
+        self, config: QuantizationConfig | None, save_directory: str | None = None
     ) -> QuantizationConfig | None:
         quant_config = self._build_quant_config()
         if config is not None:
