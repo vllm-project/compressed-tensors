@@ -13,6 +13,7 @@ from compressed_tensors.compressors.pack_quantized.helpers import (
     unpack_from_int32,
 )
 from compressed_tensors.config import CompressionFormat
+from compressed_tensors.logger import logger
 from compressed_tensors.quantization import (
     ActivationOrdering,
     QuantizationScheme,
@@ -136,8 +137,30 @@ class PackedQuantizationCompressor(BaseCompressor):
         weights = scheme.weights
 
         if packed.device.type == "meta":
+            # Build the dequantized weight shape locally instead of reading
+            # weight_shape, which arrives on meta (no data) in the validate
+            # pass. The validate pass discards this tensor, so an inexact
+            # in_features does not affect correctness.
+            if weights.strategy in (
+                QuantizationStrategy.GROUP.value,
+                QuantizationStrategy.TENSOR_GROUP.value,
+            ):
+                # exact: the scale pins down in_features for grouped strategies
+                in_features = scale.shape[-1] * weights.group_size
+            else:
+                # channel/tensor packing does not preserve exact in_features:
+                # the packed width only pins it to within 32/num_bits values,
+                # so this is the ceil-consistent upper bound. weight_shape
+                # holds the exact value but arrives on meta with no data.
+                logger.bind(log_once=True).warning(
+                    f"Cannot recover exact weight shape on meta for "
+                    f"{weights.strategy} pack-quantized weights; using an upper "
+                    "bound within 32/num_bits of the true in_features. This "
+                    "affects validation only."
+                )
+                in_features = packed.shape[-1] * 32 // weights.num_bits
             state_dict["weight"] = torch.empty(
-                tuple(original_shape.tolist()),
+                (*packed.shape[:-1], in_features),
                 dtype=scale.dtype,
                 device="meta",
             )

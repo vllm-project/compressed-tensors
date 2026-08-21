@@ -185,3 +185,32 @@ def test_modelopt_nvfp4_update_config_merges():
     assert merged is existing  # in-place mutation
     assert len(merged.config_groups) == 2  # prior_group + config_group_0
     assert "prior_group" in merged.config_groups
+
+
+@pytest.mark.unit
+def test_modelopt_nvfp4_validate_raises_on_untargeted_qparam():
+    """
+    An untargeted module carrying a quantization param that should only appear on
+    targeted modules must raise ValueError. Regression for validation dropped in
+    the multi-converter refactor (#805).
+    """
+    converter = ModelOptNvfp4Converter(targets=[r"re:.*up_proj$"])
+
+    with torch.device("meta"):
+        tensors = {
+            "model.layer0.mlp.up_proj.input_scale": torch.empty(1, dtype=torch.float32),
+            "model.layer0.mlp.up_proj.weight": torch.empty(256, 256, dtype=torch.uint8),
+            "model.layer0.mlp.up_proj.weight_scale": torch.empty(
+                256, 1, dtype=torch.float8_e4m3fn
+            ),
+            "model.layer0.mlp.up_proj.weight_scale_2": torch.empty(
+                1, dtype=torch.float32
+            ),
+            # untargeted module carrying a disallowed qparam
+            "model.layer0.mlp.down_proj.weight_scale": torch.empty(
+                256, 1, dtype=torch.float8_e4m3fn
+            ),
+        }
+
+    with pytest.raises(ValueError):
+        converter.validate(tensors)
