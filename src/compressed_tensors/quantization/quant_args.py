@@ -396,7 +396,11 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                     observer = "minmax"
 
         elif observer is None:
-            if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
+            if (
+                model.num_bits == 4
+                and model.type == QuantizationType.FLOAT
+                and strategy == QuantizationStrategy.TENSOR_GROUP
+            ):
                 observer = "fouroversix"
             else:
                 observer = "memoryless_minmax"
