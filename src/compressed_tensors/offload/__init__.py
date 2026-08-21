@@ -6,10 +6,11 @@ from collections.abc import Iterable
 from typing import Literal
 
 import torch
+
 from compressed_tensors.distributed.utils import set_source_process
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.convert import from_accelerate, to_accelerate
-from compressed_tensors.offload.dispatch import (  # noqa: F401
+from compressed_tensors.offload.dispatch import (
     dispatch_model,
     dispatch_with_map,
     get_device_map,
@@ -24,6 +25,7 @@ from compressed_tensors.offload.dist_utils import (
     is_rank0,
 )
 from compressed_tensors.offload.load import load_offloaded_model
+
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
 from compressed_tensors.offload.utils import (
     as_single_threaded,
@@ -32,7 +34,6 @@ from compressed_tensors.offload.utils import (
     to_meta,
 )
 from compressed_tensors.utils.helpers import deprecated, patch_attr
-
 
 __all__ = [
     # dispatch models
@@ -71,7 +72,6 @@ __all__ = [
     "as_single_threaded",
     "set_source_process",
     "to_meta",
-    "get_cache_init_kwargs",
 ]
 
 
