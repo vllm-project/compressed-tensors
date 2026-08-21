@@ -80,6 +80,29 @@ def test_cpu_path_preserves_order():
     assert out == list(range(10))
 
 
+# ── exec_jobs_dynamic: input validation ───────────────────────────────
+
+
+def test_raises_on_mismatched_lengths():
+    with pytest.raises(ValueError, match="memory_estimates length"):
+        exec_jobs_dynamic([lambda dev: None], [torch.device("cpu")], 1, [100, 200])
+
+
+def test_raises_on_negative_estimate():
+    with pytest.raises(ValueError, match="negative"):
+        exec_jobs_dynamic([lambda dev: None], [torch.device("cpu")], 1, [-1])
+
+
+def test_raises_on_max_workers_below_one():
+    with pytest.raises(ValueError, match="max_workers"):
+        exec_jobs_dynamic([lambda dev: None], [torch.device("cpu")], 0, [100])
+
+
+def test_raises_on_empty_devices_with_jobs():
+    with pytest.raises(ValueError, match="devices must not be empty"):
+        exec_jobs_dynamic([lambda dev: None], [], 1, [100])
+
+
 # ── exec_jobs_dynamic: error handling ─────────────────────────────────
 
 
@@ -97,5 +120,17 @@ def test_raises_when_no_device_fits(mock_mem_info):
             jobs=[lambda dev: None],
             devices=[torch.device("cuda:0")],
             max_workers=2,
+            memory_estimates=[10_000_000_000],
+        )
+
+
+@patch(_PATCH_TARGET)
+def test_single_worker_raises_when_job_exceeds_capacity(mock_mem_info):
+    mock_mem_info.return_value = (1000, 96_000_000_000)
+    with pytest.raises(RuntimeError, match="exceeds estimated capacity"):
+        exec_jobs_dynamic(
+            jobs=[lambda dev: None],
+            devices=[torch.device("cuda:0")],
+            max_workers=1,
             memory_estimates=[10_000_000_000],
         )

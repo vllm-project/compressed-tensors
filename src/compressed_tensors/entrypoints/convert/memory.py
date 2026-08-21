@@ -77,8 +77,25 @@ def exec_jobs_dynamic(
     :param memory_estimates: per-job memory estimate in bytes, parallel to *jobs*
     :param desc: tqdm progress bar label
     :return: list of results in the same order as *jobs*
+    :raises ValueError: if inputs are invalid (length mismatch, negative estimates,
+        max_workers < 1, or empty devices with non-empty jobs)
+    :raises RuntimeError: if no device has enough estimated free memory for a job.
+        Note: if a worker raises mid-run, the ThreadPoolExecutor drains all
+        in-flight jobs before the exception surfaces to the caller.
     """
     n = len(jobs)
+
+    if len(memory_estimates) != n:
+        raise ValueError(
+            f"memory_estimates length ({len(memory_estimates)}) must match "
+            f"jobs length ({n})"
+        )
+    if any(e < 0 for e in memory_estimates):
+        raise ValueError("memory_estimates must not contain negative values")
+    if max_workers < 1:
+        raise ValueError(f"max_workers must be at least 1, got {max_workers}")
+    if n > 0 and not devices:
+        raise ValueError("devices must not be empty when jobs are provided")
 
     # CPU path: run sequentially regardless of max_workers
     if all(d.type == "cpu" for d in devices):
@@ -89,6 +106,11 @@ def exec_jobs_dynamic(
 
     # Snapshot free VRAM once; all later decisions use accounting only
     initial_free = _snapshot_free(devices)
+    if not initial_free:
+        raise RuntimeError(
+            "Could not query free memory for any device. "
+            "Ensure at least one non-CPU device is accessible."
+        )
 
     # Single worker: pick the best device once upfront
     if max_workers == 1:
@@ -96,7 +118,7 @@ def exec_jobs_dynamic(
         out = []
         for i, job in enumerate(tqdm.tqdm(jobs, desc=desc)):
             if memory_estimates[i] > initial_free[device]:
-                logger.warning(
+                raise RuntimeError(
                     f"Job {i} (~{memory_estimates[i] / 1e9:.2f} GB) "
                     f"exceeds estimated capacity of {device}"
                 )
