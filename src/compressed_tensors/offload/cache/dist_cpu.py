@@ -45,7 +45,7 @@ class DistributedCPUCache(CPUCache):
         dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
         if not is_source_process():
-            src_dtype = broadcast_obj[3]
+            src_dtype = broadcast_obj.pop(3)
 
             if tensor.device.type == "meta" or tensor.dtype != src_dtype:
                 tensor = to_empty(tensor, device=self.offload_device, dtype=src_dtype)
@@ -55,9 +55,7 @@ class DistributedCPUCache(CPUCache):
             # reconstruct tensor from shared memory file handle
             with torch.no_grad():
                 tensor.set_(
-                    torch.UntypedStorage._new_shared_filename_cpu(
-                        *broadcast_obj[:3]
-                    ),
+                    torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj),
                     storage_offset=0,
                     size=tensor.size(),
                     stride=tensor.stride(),
