@@ -17,7 +17,12 @@ class DistributedCPUCache(CPUCache):
     @catch_cpu_mem_error
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
-        Synchronously create shared cpu memory for offload
+        Synchronously create shared cpu memory for offload.
+
+        The dtype of ``tensor`` on non-source ranks cannot be trusted because
+        transformers may initialize buffers (e.g. ``inv_freq``) with a
+        different dtype than the checkpoint value on the source rank. See
+        https://github.com/huggingface/transformers/pull/47486
 
         :param tensor: tensor on any device
         :return: cpu tensor whose data is located in shared memory
@@ -32,25 +37,28 @@ class DistributedCPUCache(CPUCache):
             # create shared memory cpu tensor
             tensor = super().offload(tensor).share_memory_()
             handle, filename, nbytes = tensor.untyped_storage()._share_filename_cpu_()
-            broadcast_obj = [handle, filename, nbytes]
+            broadcast_obj = [handle, filename, nbytes, tensor.dtype]
         else:
-            broadcast_obj = [None, None, None]
+            broadcast_obj = [None, None, None, None]
 
         # receive shared memory file handle
         dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
         if not is_source_process():
-            # materialize meta tensor only if necessary
-            if tensor.device.type == "meta":
-                tensor = to_empty(tensor, device=self.offload_device)
+            src_dtype = broadcast_obj[3]
+
+            if tensor.device.type == "meta" or tensor.dtype != src_dtype:
+                tensor = to_empty(tensor, device=self.offload_device, dtype=src_dtype)
             else:
                 tensor = send_tensors(tensor, device=self.offload_device)
 
             # reconstruct tensor from shared memory file handle
             with torch.no_grad():
                 tensor.set_(
-                    torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj),
-                    storage_offset=tensor.storage_offset(),
+                    torch.UntypedStorage._new_shared_filename_cpu(
+                        *broadcast_obj[:3]
+                    ),
+                    storage_offset=0,
                     size=tensor.size(),
                     stride=tensor.stride(),
                 )
