@@ -65,24 +65,19 @@ class Converter(Protocol):
         return self.process(tensors)
 
     def update_config(
-        self,
-        config: QuantizationConfig | None,
-        save_directory: str | None = None,
+        self, config: QuantizationConfig | None
     ) -> QuantizationConfig | None:
         """
-        Build or update the QuantizationConfig for config.json and optionally
-        apply any other changes to the model config in save_directory.
+        Build or update the QuantizationConfig for config.json.
 
         When converters are chained, each receives the previous converter's
         config output. Re-quantizers merge their config into the existing one;
         dequantizers return None to strip quantization_config entirely.
         Converters that need to update non-quantization fields in config.json
-        (e.g. expert count after pruning) should do so via save_directory.
+        (e.g. expert count after pruning) should override `update_model_config`.
 
         :param config: config from the previous converter, or None if this
             is the first converter (or if a previous dequantizer cleared it)
-        :param save_directory: output directory containing config.json, or
-            None if not yet available (e.g. during validation)
         :returns: updated QuantizationConfig, or None to remove it
         """
         raise NotImplementedError()
