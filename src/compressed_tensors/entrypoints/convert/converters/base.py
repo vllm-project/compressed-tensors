@@ -73,12 +73,28 @@ class Converter(Protocol):
         When converters are chained, each receives the previous converter's
         config output. Re-quantizers merge their config into the existing one;
         dequantizers return None to strip quantization_config entirely.
+        Converters that need to update non-quantization fields in config.json
+        (e.g. expert count after pruning) should override `update_model_config`.
 
         :param config: config from the previous converter, or None if this
             is the first converter (or if a previous dequantizer cleared it)
         :returns: updated QuantizationConfig, or None to remove it
         """
         raise NotImplementedError()
+
+    def update_model_config(self, model_config: dict) -> dict:
+        """
+        Update non-quantization fields of the model config (config.json) dict.
+
+        Most converters only touch the quantization_config (see `update_config`),
+        so this is a pass-through by default. Converters that alter model
+        structure (e.g. pruning experts) override this to mutate the config dict,
+        while the pipeline owns loading and saving the file.
+
+        :param model_config: the parsed config.json dict
+        :returns: the updated config dict
+        """
+        return model_config
 
     def get_dependencies(self, weight_name: str) -> set[str]:
         """
