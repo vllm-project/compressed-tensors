@@ -87,6 +87,20 @@ class Converter(Protocol):
         """
         raise NotImplementedError()
 
+    def update_model_config(self, model_config: dict) -> dict:
+        """
+        Update non-quantization fields of the model config (config.json) dict.
+
+        Most converters only touch the quantization_config (see `update_config`),
+        so this is a pass-through by default. Converters that alter model
+        structure (e.g. pruning experts) override this to mutate the config dict,
+        while the pipeline owns loading and saving the file.
+
+        :param model_config: the parsed config.json dict
+        :returns: the updated config dict
+        """
+        return model_config
+
     def get_dependencies(self, weight_name: str) -> set[str]:
         """
         Given a weight name, return a set of all dependency weight names, so that

@@ -40,7 +40,7 @@ def write_checkpoint_quantization_config(
     """
     config = None
     for converter in converters:
-        config = converter.update_config(config, save_directory)
+        config = converter.update_config(config)
 
     quant_config_data = None
     if config is not None:
@@ -65,6 +65,10 @@ def write_checkpoint_quantization_config(
         else:
             # if new quant config, overwrite checkpoint quant config
             config_data[QUANTIZATION_CONFIG_NAME] = quant_config_data
+
+        # let converters update non-quantization model config fields
+        for converter in converters:
+            config_data = converter.update_model_config(config_data)
 
         with open(config_file_path, "w") as file:
             json.dump(config_data, file, indent=2, sort_keys=True)

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 
@@ -19,7 +18,6 @@ from compressed_tensors.utils.moe import (
     renumber_expert_name,
 )
 from compressed_tensors.utils.safetensors_load import (
-    find_config_path,
     get_checkpoint_files,
     get_weight_map,
 )
@@ -221,36 +219,20 @@ class MagnitudeExpertPruner(Converter):
         return out
 
     def update_config(
-        self, config: QuantizationConfig | None, save_directory: str | None = None
+        self, config: QuantizationConfig | None
     ) -> QuantizationConfig | None:
-        if save_directory is not None:
-            config_path = find_config_path(save_directory)
-            if config_path is None:
-                logger.warning(
-                    f"Could not find config file in {save_directory} to update "
-                    f"{self.num_experts_config_key}"
-                )
-            else:
-                with open(config_path, "r") as f:
-                    config_data = json.load(f)
-
-                counts = {len(val) for val in self.retained_experts.values()}
-                if len(counts) != 1:
-                    raise ValueError(
-                        f"non-uniform retained expert counts {counts}; "
-                        "cannot write a single num_experts"
-                    )
-                num_experts = counts.pop()
-                _set_nested_key(config_data, self.num_experts_config_key, num_experts)
-
-                with open(config_path, "w") as f:
-                    json.dump(config_data, f, indent=2, sort_keys=True)
-
-                logger.info(
-                    f"Updated {self.num_experts_config_key} -> {num_experts} "
-                    f"in {config_path}"
-                )
         return config
+
+    def update_model_config(self, model_config: dict) -> dict:
+        counts = {len(val) for val in self.retained_experts.values()}
+        if len(counts) != 1:
+            raise ValueError(
+                f"non-uniform retained expert counts {counts}; "
+                "cannot write a single num_experts"
+            )
+        num_experts = counts.pop()
+        _set_nested_key(model_config, self.num_experts_config_key, num_experts)
+        return model_config
 
     def get_dependencies(self, weight_name: str) -> set[str]:
         return set()

@@ -238,10 +238,10 @@ def test_update_model_config(mock_2d_checkpoint):
         sparsity=0.5,
     )
 
-    converter.update_config(None, mock_2d_checkpoint)
-
     with open(mock_2d_checkpoint / "config.json") as f:
         config = json.load(f)
+
+    config = converter.update_model_config(config)
 
     assert config["num_local_experts"] == 2
 
@@ -274,10 +274,10 @@ def test_update_model_config_text_config(tmp_path):
         expert_pattern=r"\.experts\.\w+\.weight$",
         sparsity=0.5,
     )
-    converter.update_config(None, tmp_path)
-
     with open(tmp_path / "config.json") as f:
         config = json.load(f)
+
+    config = converter.update_model_config(config)
     assert config["text_config"]["num_local_experts"] == 2
 
 
@@ -505,9 +505,6 @@ def test_update_model_config_non_uniform(tmp_path):
     ``config.json`` holds a single expert count, so pruning must resolve to the
     same keep-count across every router. Mismatched counts should raise.
     """
-    with open(tmp_path / "config.json", "w") as f:
-        json.dump({"num_experts": 4, "model_type": "test"}, f)
-
     converter = MagnitudeExpertPruner(
         router_pattern=r"\.gate\.weight$",
         expert_pattern=r"\.experts\.\d+\.",
@@ -523,4 +520,4 @@ def test_update_model_config_non_uniform(tmp_path):
     )
 
     with pytest.raises(ValueError, match="non-uniform"):
-        converter.update_config(None, tmp_path)
+        converter.update_model_config({"num_experts": 4, "model_type": "test"})
