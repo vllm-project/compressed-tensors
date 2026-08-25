@@ -66,6 +66,10 @@ def write_checkpoint_quantization_config(
             # if new quant config, overwrite checkpoint quant config
             config_data[QUANTIZATION_CONFIG_NAME] = quant_config_data
 
+        # let converters update non-quantization model config fields
+        for converter in converters:
+            config_data = converter.update_model_config(config_data)
+
         with open(config_file_path, "w") as file:
             json.dump(config_data, file, indent=2, sort_keys=True)
 
