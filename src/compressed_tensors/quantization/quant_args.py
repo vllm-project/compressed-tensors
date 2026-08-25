@@ -395,10 +395,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 if dynamic == DynamicType.LOCAL:
                     observer = "minmax"
 
-        elif observer is None:
-            # default to minmax for non-dynamic cases
-            observer = "memoryless_minmax"
-
         if zp_dtype is None:
             if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
                 zp_dtype = FP8_E4M3_DATA.dtype
