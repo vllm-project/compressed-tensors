@@ -288,13 +288,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 )
                 return None
 
-            if value.lower() not in ("weight", "static"):
-                raise ValueError(
-                    f"Invalid actorder '{value}'. Must be one of "
-                    "'weight', 'static', or None."
-                )
-                return None
-
         return value
 
     @field_validator("dynamic", mode="before")
