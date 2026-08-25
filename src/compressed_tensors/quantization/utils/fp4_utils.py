@@ -54,7 +54,7 @@ def _cast_to_fp4_kernel(
     tl.store(x_ptr + offsets, result, mask=mask)
 
 
-@ImplBackend.register("cast_to_fp4", triton_req, "disable")
+@ImplBackend.register("cast_to_fp4", triton_req, 0)
 def cast_to_fp4_triton(x: torch.Tensor) -> torch.Tensor:
     """
     Triton implementation for FP4 E2M1 quantization
