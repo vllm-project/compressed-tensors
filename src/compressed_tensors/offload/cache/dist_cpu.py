@@ -56,7 +56,7 @@ class DistributedCPUCache(CPUCache):
             with torch.no_grad():
                 tensor.set_(
                     torch.UntypedStorage._new_shared_filename_cpu(*broadcast_obj),
-                    storage_offset=0,
+                    storage_offset=tensor.storage_offset(),
                     size=tensor.size(),
                     stride=tensor.stride(),
                 )
