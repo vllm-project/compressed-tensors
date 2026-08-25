@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import math
+from typing import Optional
 
 import torch
 from compressed_tensors.compressors.base import (
@@ -116,7 +117,10 @@ class PackedQuantizationCompressor(BaseCompressor):
 
     @classmethod
     def decompress(
-        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
+        cls,
+        state_dict: TensorStateDict,
+        scheme: QuantizationScheme,
+        dtype: Optional[torch.dtype] = None,
     ) -> TensorStateDict:
         """
         Decompress a per-module state dict.
@@ -125,7 +129,9 @@ class PackedQuantizationCompressor(BaseCompressor):
         ``weight_packed``, and unpacks the zero-point if present.
 
         :param state_dict: local-name state dict (weight_packed, weight_scale, …)
-        :param quantization_args: quantization parameters for the weight
+        :param scheme: quantization scheme for the weight
+        :param dtype: target dtype for decompressed weights. If None, defaults to
+            ``torch.get_default_dtype()``
         :return: decompressed state dict with weight in float dtype
         """
         state_dict = state_dict.copy()
@@ -135,6 +141,8 @@ class PackedQuantizationCompressor(BaseCompressor):
         g_idx = state_dict.get("weight_g_idx", None)
         original_shape = state_dict.get("weight_shape")
         weights = scheme.weights
+
+        dtype = dtype or torch.get_default_dtype()
 
         if packed.device.type == "meta":
             # Build the dequantized weight shape locally instead of reading
@@ -161,7 +169,7 @@ class PackedQuantizationCompressor(BaseCompressor):
                 in_features = packed.shape[-1] * 32 // weights.num_bits
             state_dict["weight"] = torch.empty(
                 (*packed.shape[:-1], in_features),
-                dtype=scale.dtype,
+                dtype=dtype,
                 device="meta",
             )
             return state_dict
@@ -181,6 +189,7 @@ class PackedQuantizationCompressor(BaseCompressor):
             scale=scale,
             zero_point=zero_point,
             g_idx=g_idx,
+            dtype=dtype,
         )
 
         return state_dict

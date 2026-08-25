@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from typing import Optional
+
+import torch
 from compressed_tensors.compressors.base import BaseCompressor
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import QuantizationScheme
@@ -41,7 +44,10 @@ class DenseCompressor(BaseCompressor):
 
     @classmethod
     def decompress(
-        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
+        cls,
+        state_dict: TensorStateDict,
+        scheme: QuantizationScheme,
+        dtype: Optional[torch.dtype] = None,
     ) -> TensorStateDict:
         """
         Decompress a per-module state dict.
@@ -50,6 +56,7 @@ class DenseCompressor(BaseCompressor):
 
         :param state_dict: local-name state dict (weight, ...)
         :param scheme: quantization scheme (unused)
+        :param dtype: target dtype (unused for dense models)
         :return: unmodified state dict
         """
         return state_dict

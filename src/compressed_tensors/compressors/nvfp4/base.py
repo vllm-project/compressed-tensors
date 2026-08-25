@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from typing import Optional
+
 import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
@@ -93,7 +95,10 @@ class NVFP4PackedCompressor(BaseCompressor):
 
     @classmethod
     def decompress(
-        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
+        cls,
+        state_dict: TensorStateDict,
+        scheme: QuantizationScheme,
+        dtype: Optional[torch.dtype] = None,
     ) -> TensorStateDict:
         """
         Decompress a per-module state dict.
@@ -103,6 +108,8 @@ class NVFP4PackedCompressor(BaseCompressor):
 
         :param state_dict: local-name state dict (weight_packed, weight_scale, …)
         :param scheme: quantization scheme for the weight
+        :param dtype: target dtype for decompressed weights. If None, defaults to
+            ``torch.get_default_dtype()``
         :return: decompressed state dict with weight in float dtype
         """
         state_dict = state_dict.copy()
@@ -110,16 +117,18 @@ class NVFP4PackedCompressor(BaseCompressor):
         scale = state_dict.get("weight_scale")
         global_scale = state_dict.get("weight_global_scale", None)
 
-        m, n = packed.shape
-        unpacked = unpack_fp4_from_uint8(packed, m, n * 2)
+        dtype = dtype or torch.get_default_dtype()
 
-        scale_float = cls._decompress_scale(scale, unpacked.dtype)
+        m, n = packed.shape
+        unpacked = unpack_fp4_from_uint8(packed, m, n * 2, dtype=dtype)
+
+        scale_float = cls._decompress_scale(scale, dtype)
 
         state_dict["weight"] = dequantize(
             x_q=unpacked,
             scale=scale_float,
             global_scale=global_scale,
-            dtype=unpacked.dtype,
+            dtype=dtype,
         )
         state_dict["weight_scale"] = torch.nn.Parameter(
             scale_float, requires_grad=False
