@@ -1159,3 +1159,25 @@ def test_quantize_backends_match(args, x, scale, zero_point, global_scale):
     assert torch.allclose(
         torch_out.float(), triton_out.float(), atol=atol, rtol=rtol
     ), f"Max diff: {(torch_out.float() - triton_out.float()).abs().max().item()}"
+
+
+def test_calculate_range_memoized_on_field_values():
+    """calculate_range is memoized on (type, num_bits, device), not on
+    QuantizationArgs identity, so equal args constructed separately share
+    one cached result."""
+    device = torch.device("cpu")
+    args_a = QuantizationArgs(num_bits=4, type="int", symmetric=True)
+    args_b = QuantizationArgs(num_bits=4, type="int", symmetric=True)
+
+    q_min_a, q_max_a = calculate_range(args_a, device)
+    q_min_b, q_max_b = calculate_range(args_b, device)
+
+    assert q_min_a is q_min_b
+    assert q_max_a is q_max_b
+    assert q_min_a.item() == -8.0
+    assert q_max_a.item() == 7.0
+
+    # distinct field values map to distinct cache entries
+    q_min_8, q_max_8 = calculate_range(QuantizationArgs(num_bits=8, type="int"), device)
+    assert q_min_8.item() == -128.0
+    assert q_max_8.item() == 127.0
