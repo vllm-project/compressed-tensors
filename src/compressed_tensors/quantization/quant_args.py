@@ -138,7 +138,7 @@ class DynamicType(str, Enum):
 class ActivationOrdering(Aliasable, str, Enum):
     """
     Enum storing strategies for activation ordering during GPTQ calibration
-    
+
     Weight: Changes the way calibration occurs but doesn't change the quantization
     format compared to no activation ordering (normal latency). Compared to Group,
     it has lower latency and slightly worse accuracy. Compared to no activation
@@ -268,7 +268,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             if value:
                 raise ValueError(
                     "actorder=True previously mapped to ActivationOrdering.GROUP, "
-                    "which has been removed. Use actorder='weight' instead."
+                    "which has been removed. Consider using actorder='weight' instead."
                 )
             return None
 
@@ -276,9 +276,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             if value.lower() in ("group", "dynamic"):
                 raise ValueError(
                     f"actorder='{value}' has been removed. "
-                    "Use actorder=False instead."
+                    "Consider using actorder='weight' or actorder=None instead."
                 )
-                return None
 
         return value
 
