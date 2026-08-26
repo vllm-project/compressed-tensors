@@ -138,17 +138,11 @@ class DynamicType(str, Enum):
 class ActivationOrdering(Aliasable, str, Enum):
     """
     Enum storing strategies for activation ordering during GPTQ calibration
-
-    Group: Columns are permuted by activation order during calibration. Quantization
-    groups are defined based on this permuted order. Weights are saved in original
-    column order with g_idx mapping columns to groups. Runtime requires reordering
-    columns by g_idx (higher latency but improved accuracy compared to no activation
-    ordering). (Removed, 2026/08/19) \n
+    
     Weight: Changes the way calibration occurs but doesn't change the quantization
     format compared to no activation ordering (normal latency). Compared to Group,
     it has lower latency and slightly worse accuracy. Compared to no activation
     ordering during calibration it has slightly better accuracy. \n
-    Dynamic: alias for Group\n
     Static: alias for Weight\n
     """
 
@@ -181,10 +175,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         quantization. Note that enabling dynamic quantization will change the default
         observer to a memoryless one
     :param actorder: activation ordering strategy for GPTQ calibration. Options are
-        GROUP (reorder by activation with g_idx mapping, higher accuracy but higher
-        latency), WEIGHT (reorder during calibration only, normal latency with slight
-        accuracy improvement), or None (no activation ordering). See ActivationOrdering
-        enum for detailed explanations. Defaults to None (Removed, 2026/08/19)
+        WEIGHT (reorder columns by activation magnitude during calibration only, normal
+        latency with slight accuracy improvement) or None (no activation ordering).
     """
 
     num_bits: int = 8
