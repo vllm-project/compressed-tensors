@@ -216,7 +216,9 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     )
 
     @field_serializer("zp_dtype")
-    def serialize_dtype(self, dtype: torch.dtype):
+    def serialize_dtype(self, dtype: torch.dtype | None):
+        if dtype is None:
+            return None
         return str(dtype)
 
     @field_validator("type", mode="before")

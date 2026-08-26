@@ -26,15 +26,12 @@ def _args(**kwargs):
 
 
 def test_defaults():
-    with pytest.raises(ValidationError, match="Field required"):
-        QuantizationArgs()
-
-    default = _args()
+    default = QuantizationArgs()
 
     assert default.num_bits == 8
     assert default.type == QuantizationType.INT
     assert default.symmetric
-    assert default.strategy == QuantizationStrategy.TENSOR
+    assert default.strategy is None
     assert default.group_size is None
     assert default.block_structure is None
 
@@ -92,26 +89,22 @@ def test_block_structure_requires_positive_dimensions(block_structure):
 
 
 def test_strategy_is_not_inferred():
-    with pytest.raises(ValidationError, match="strategy"):
-        QuantizationArgs(
-            num_bits=8,
-            type="int",
-            symmetric=True,
-            group_size=128,
-            dynamic=False,
-        )
+    with pytest.raises(ValidationError, match="group_size requires strategy"):
+        QuantizationArgs(group_size=128)
+    assert QuantizationArgs(group_size=-1).strategy is None
 
 
 def test_observer_is_not_defaulted_by_format_schema():
     assert (
-        _args(
+        QuantizationArgs(
             strategy="tensor_group", group_size=16, dynamic="local"
         ).observer
         is None
     )
-    assert _args(dynamic=True, observer="static_minmax").observer == (
-        "static_minmax"
+    args = QuantizationArgs(
+        strategy="tensor", dynamic=True, observer="static_minmax"
     )
+    assert args.observer == "static_minmax"
 
 
 def test_enums():
