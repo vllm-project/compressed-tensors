@@ -24,7 +24,7 @@ from tests.test_offload.conftest import (
     torchrun,
 )
 from tests.testing_utils import requires_gpu
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 
 
 acclerate = pytest.importorskip("accelerate")
@@ -197,6 +197,43 @@ def test_mmap_cap_skipped_without_tensor_info():
     result_no_info = load_module._get_shared_memory()
     result_zero = load_module._get_shared_memory(num_tensors=0, total_model_bytes=0)
     assert result_no_info == result_zero
+
+
+LOAD_NO_MISSING_KEYS_PARAMETERS = [
+    # multimodal and tied tensors
+    ("inference-optimization/gemma-4-1B-0.8B-tiny", AutoModelForImageTextToText),
+    # non-tied tensors
+    ("inference-optimization/Qwen3.8-1.0B-A0.6B", AutoModelForCausalLM),
+    # tied word embeddings, only one in the checkpoint
+    ("inference-optimization/Llama-3.2-0.5B-Instruct", AutoModelForCausalLM),
+    # tied word embeddings, both in the checkpoint
+    ("nm-testing/tinysmokellama-3.2", AutoModelForCausalLM),
+]
+
+
+def _assert_load_no_missing_keys(model_id, model_class, **from_pretrained_kwargs):
+    """Load under `load_offloaded_model` and error if any keys are reported missing."""
+
+    def checked_report(*args, loading_info=None, **kwargs):
+        assert (
+            not loading_info.missing_keys
+        ), f"Missing keys when loading {model_id}: {loading_info.missing_keys}"
+
+    with patch(
+        "transformers.modeling_utils.log_state_dict_report", side_effect=checked_report
+    ):
+        with load_offloaded_model(model_class):
+            model = model_class.from_pretrained(
+                model_id, dtype=torch.bfloat16, **from_pretrained_kwargs
+            )
+
+    assert model is not None
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("model_id,model_class", LOAD_NO_MISSING_KEYS_PARAMETERS)
+def test_load_no_missing_keys(model_id, model_class):
+    _assert_load_no_missing_keys(model_id, model_class, device_map="cpu")
 
 
 @pytest.mark.integration
