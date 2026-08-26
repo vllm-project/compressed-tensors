@@ -13,7 +13,6 @@ from compressed_tensors.quantization.quant_args import (
     DynamicType,
     QuantizationArgs,
     QuantizationStrategy,
-    QuantizationType,
 )
 from compressed_tensors.quantization.quant_config import QuantizationStatus
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
@@ -99,24 +98,10 @@ def dequantize(
     """
     if args is None:
         if scale.ndim == 0 or scale.ndim == 1:
-            args = QuantizationArgs(
-                num_bits=8,
-                type=QuantizationType.INT,
-                symmetric=True,
-                strategy=QuantizationStrategy.TENSOR,
-                dynamic=False,
-                zp_dtype=torch.int8,
-            )
+            args = QuantizationArgs(strategy=QuantizationStrategy.TENSOR)
         elif scale.ndim == 2:
             if scale.shape[1] == 1:
-                args = QuantizationArgs(
-                    num_bits=8,
-                    type=QuantizationType.INT,
-                    symmetric=True,
-                    strategy=QuantizationStrategy.CHANNEL,
-                    dynamic=False,
-                    zp_dtype=torch.int8,
-                )
+                args = QuantizationArgs(strategy=QuantizationStrategy.CHANNEL)
             # Scale height matches input or is 1 -> group quantization across columns
             #
             # Example 1: scale.shape[0] == 1
@@ -127,13 +112,7 @@ def dequantize(
             elif (scale.shape[0] == 1) or (scale.shape[0] == x_q.shape[0]):
                 group_size = int(x_q.shape[1] / scale.shape[1])
                 args = QuantizationArgs(
-                    num_bits=8,
-                    type=QuantizationType.INT,
-                    symmetric=True,
-                    strategy=QuantizationStrategy.GROUP,
-                    group_size=group_size,
-                    dynamic=False,
-                    zp_dtype=torch.int8,
+                    strategy=QuantizationStrategy.GROUP, group_size=group_size
                 )
             else:
                 rows, cols = x_q.shape[-2], x_q.shape[-1]
@@ -141,13 +120,8 @@ def dequantize(
                 block_width = cols // scale.shape[1]  # Columns per block
 
                 args = QuantizationArgs(
-                    num_bits=8,
-                    type=QuantizationType.INT,
-                    symmetric=True,
                     strategy=QuantizationStrategy.BLOCK,
                     block_structure=[block_height, block_width],
-                    dynamic=False,
-                    zp_dtype=torch.int8,
                 )
         else:
             raise ValueError(
