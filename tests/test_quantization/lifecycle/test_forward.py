@@ -1061,7 +1061,14 @@ def test_quantize_triton_matches_cpu_block_4d(
     [
         # int8, tensor strategy, scalar scale
         (
-            QuantizationArgs(num_bits=8, type="int", strategy="tensor"),
+            QuantizationArgs(
+                num_bits=8,
+                type="int",
+                symmetric=True,
+                strategy="tensor",
+                dynamic=False,
+                zp_dtype=torch.int8,
+            ),
             torch.randn(256, 512),
             torch.tensor([0.01]),
             None,
@@ -1069,7 +1076,14 @@ def test_quantize_triton_matches_cpu_block_4d(
         ),
         # int8, channel strategy, per-row scale
         (
-            QuantizationArgs(num_bits=8, type="int", strategy="channel"),
+            QuantizationArgs(
+                num_bits=8,
+                type="int",
+                symmetric=True,
+                strategy="channel",
+                dynamic=False,
+                zp_dtype=torch.int8,
+            ),
             torch.randn(128, 256),
             torch.rand(128, 1) * 0.01 + 0.001,
             None,
@@ -1077,7 +1091,15 @@ def test_quantize_triton_matches_cpu_block_4d(
         ),
         # int4, group strategy
         (
-            QuantizationArgs(num_bits=4, type="int", strategy="group", group_size=128),
+            QuantizationArgs(
+                num_bits=4,
+                type="int",
+                symmetric=True,
+                strategy="group",
+                group_size=128,
+                dynamic=False,
+                zp_dtype=torch.int8,
+            ),
             torch.randn(64, 4, 128),
             torch.rand(64, 4, 1) * 0.01 + 0.001,
             None,
@@ -1085,7 +1107,14 @@ def test_quantize_triton_matches_cpu_block_4d(
         ),
         # fp8, tensor strategy with global_scale (requires SM90+)
         (
-            QuantizationArgs(num_bits=8, type="float", strategy="tensor"),
+            QuantizationArgs(
+                num_bits=8,
+                type="float",
+                symmetric=True,
+                strategy="tensor",
+                dynamic=False,
+                zp_dtype=torch.float8_e4m3fn,
+            ),
             torch.randn(128, 256),
             torch.tensor([0.01]),
             None,
@@ -1094,7 +1123,12 @@ def test_quantize_triton_matches_cpu_block_4d(
         # int8, tensor strategy, asymmetric (non-zero zero_point)
         (
             QuantizationArgs(
-                num_bits=8, type="int", symmetric=False, strategy="tensor"
+                num_bits=8,
+                type="int",
+                symmetric=False,
+                strategy="tensor",
+                dynamic=False,
+                zp_dtype=torch.int8,
             ),
             torch.randn(64, 128),
             torch.tensor([0.005]),
@@ -1106,7 +1140,13 @@ def test_quantize_triton_matches_cpu_block_4d(
         # non-contiguous x_blocks of shape (nr, nc, bh, bw) with swapped strides
         (
             QuantizationArgs(
-                num_bits=8, type="int", strategy="block", block_structure=[32, 64]
+                num_bits=8,
+                type="int",
+                symmetric=True,
+                strategy="block",
+                block_structure=[32, 64],
+                dynamic=False,
+                zp_dtype=torch.int8,
             ),
             torch.randn(128, 256)
             .reshape(4, 32, 4, 64)

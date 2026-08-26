@@ -118,6 +118,7 @@ def _int_wnam(weight_bits: int, act_bits: int = 16) -> dict:
             group_size=128,
             symmetric=True,
             dynamic=False,
+            zp_dtype=torch.int8,
         ),
     )
     if act_bits < 16:
@@ -127,6 +128,7 @@ def _int_wnam(weight_bits: int, act_bits: int = 16) -> dict:
             strategy=QuantizationStrategy.TOKEN,
             symmetric=True,
             dynamic=True,
+            zp_dtype=torch.int8,
         )
     return scheme
 
@@ -300,6 +302,7 @@ INT8_W8A8 = dict(
         strategy=QuantizationStrategy.CHANNEL,
         symmetric=True,
         dynamic=False,
+        zp_dtype=torch.int8,
     ),
     input_activations=QuantizationArgs(
         num_bits=8,
@@ -307,6 +310,7 @@ INT8_W8A8 = dict(
         strategy=QuantizationStrategy.TOKEN,
         symmetric=True,
         dynamic=True,
+        zp_dtype=torch.int8,
     ),
 )
 
@@ -319,6 +323,7 @@ W4A16_ASYM = dict(
         group_size=128,
         symmetric=False,
         dynamic=False,
+        zp_dtype=torch.int8,
     ),
 )
 
@@ -331,6 +336,7 @@ W4AFP8 = dict(
         group_size=128,
         symmetric=True,
         dynamic=False,
+        zp_dtype=torch.int8,
     ),
     input_activations=QuantizationArgs(
         num_bits=8,
@@ -339,6 +345,7 @@ W4AFP8 = dict(
         symmetric=True,
         dynamic=True,
         observer=None,
+        zp_dtype=FP8_E4M3_DATA.dtype,
     ),
 )
 
@@ -350,6 +357,7 @@ FP8 = dict(
         strategy=QuantizationStrategy.TENSOR,
         symmetric=True,
         dynamic=False,
+        zp_dtype=FP8_E4M3_DATA.dtype,
     ),
     input_activations=QuantizationArgs(
         num_bits=8,
@@ -358,6 +366,7 @@ FP8 = dict(
         symmetric=True,
         dynamic=False,
         observer="static_minmax",
+        zp_dtype=FP8_E4M3_DATA.dtype,
     ),
 )
 
@@ -369,6 +378,7 @@ FP8_DYNAMIC = dict(
         strategy=QuantizationStrategy.CHANNEL,
         symmetric=True,
         dynamic=False,
+        zp_dtype=FP8_E4M3_DATA.dtype,
     ),
     input_activations=QuantizationArgs(
         num_bits=8,
@@ -376,6 +386,7 @@ FP8_DYNAMIC = dict(
         strategy=QuantizationStrategy.TOKEN,
         symmetric=True,
         dynamic=True,
+        zp_dtype=FP8_E4M3_DATA.dtype,
     ),
 )
 
@@ -390,6 +401,7 @@ FP8_BLOCK = dict(
         symmetric=True,
         dynamic=False,
         block_structure=[128, 128],
+        zp_dtype=FP8_E4M3_DATA.dtype,
     ),
     input_activations=QuantizationArgs(
         num_bits=8,
@@ -398,6 +410,7 @@ FP8_BLOCK = dict(
         symmetric=True,
         dynamic=True,
         group_size=128,
+        zp_dtype=FP8_E4M3_DATA.dtype,
     ),
 )
 

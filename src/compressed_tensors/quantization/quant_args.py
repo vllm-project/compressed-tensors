@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import warnings
 from enum import Enum
 from typing import Any
 
@@ -169,8 +168,8 @@ class ActivationOrdering(Aliasable, str, Enum):
 
 class QuantizationArgs(BaseModel, use_enum_values=True):
     """
-    User facing arguments used to define a quantization config for weights or
-    activations
+    Explicit format arguments for quantized weights or activations. Authoring tools
+    must resolve defaults before constructing this model.
 
     :param num_bits: quantization bit depth
     :param type: dtype to quantize to, either int or float
@@ -218,8 +217,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
 
     @field_serializer("zp_dtype")
     def serialize_dtype(self, dtype: torch.dtype):
-        if self.symmetric:
-            return None
         return str(dtype)
 
     @field_validator("type", mode="before")
@@ -306,23 +303,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         block_structure = model.block_structure
         actorder = model.actorder
         dynamic = model.dynamic
-        observer = model.observer
-        dynamic = model.dynamic
-        zp_dtype = model.zp_dtype
-
-        # infer strategy
-        if strategy is None:
-            if group_size is None:
-                strategy = QuantizationStrategy.TENSOR
-            elif group_size > 0:
-                strategy = QuantizationStrategy.GROUP
-            elif group_size == -1:
-                strategy = QuantizationStrategy.CHANNEL
-            else:
-                raise ValueError(
-                    f"Invalid group size {group_size}. Use group_size > 0 for "
-                    "strategy='group' and group_size = -1 for 'channel'"
-                )
 
         # validate token strategy
         if strategy == QuantizationStrategy.TOKEN and not dynamic:
@@ -363,7 +343,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 "order to apply group activation ordering"
             )
 
-        # infer observer w.r.t. dynamic
+        # validate dynamic quantization
         if dynamic:
             supported_strategies = (
                 QuantizationStrategy.TOKEN,
@@ -382,29 +362,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             ):
                 raise ValueError("local is only supported for strategy tensor_group")
 
-            if observer is not None:
-                if dynamic is True:  # checking if dynamic is True, not "local"
-                    if (
-                        observer != "memoryless"
-                    ):  # avoid annoying users with old configs
-                        warnings.warn(
-                            "No observer is used for dynamic quant., setting to None"
-                        )
-                    observer = None
-            else:
-                if dynamic == DynamicType.LOCAL:
-                    observer = "minmax"
-
-        if zp_dtype is None:
-            if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
-                zp_dtype = FP8_E4M3_DATA.dtype
-            else:
-                zp_dtype = model.pytorch_dtype()
-
-        # write back modified values
-        model.strategy = strategy
-        model.observer = observer
-        model.zp_dtype = zp_dtype
         return model
 
     def pytorch_dtype(self) -> torch.dtype:

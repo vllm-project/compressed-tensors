@@ -177,6 +177,8 @@ class AutoAWQConverter(Converter):
             symmetric=not self.zero_point,
             group_size=self.group_size,
             strategy=QuantizationStrategy.GROUP,
+            dynamic=False,
+            zp_dtype=torch.int8,
         )
         return QuantizationConfig(
             config_groups={

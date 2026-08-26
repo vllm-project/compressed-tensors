@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import pytest
+import torch
 from compressed_tensors.quantization import (
     ActivationOrdering,
     QuantizationArgs,
@@ -11,8 +12,24 @@ from compressed_tensors.quantization import (
 from pydantic import ValidationError
 
 
+def _args(**kwargs):
+    values = {
+        "num_bits": 8,
+        "type": QuantizationType.INT,
+        "symmetric": True,
+        "strategy": QuantizationStrategy.TENSOR,
+        "dynamic": False,
+        "zp_dtype": torch.int8,
+    }
+    values.update(kwargs)
+    return QuantizationArgs(**values)
+
+
 def test_defaults():
-    default = QuantizationArgs()
+    with pytest.raises(ValidationError, match="Field required"):
+        QuantizationArgs()
+
+    default = _args()
 
     assert default.num_bits == 8
     assert default.type == QuantizationType.INT
@@ -25,14 +42,14 @@ def test_defaults():
 def test_group():
     kwargs = {"strategy": "group", "group_size": 128}
 
-    group = QuantizationArgs(**kwargs)
+    group = _args(**kwargs)
     assert group.strategy == QuantizationStrategy.GROUP
     assert group.group_size == kwargs["group_size"]
 
     with pytest.raises(ValueError):
         QuantizationArgs(strategy=QuantizationStrategy.GROUP, group_size=-1)
 
-    args = QuantizationArgs(group_size=128, strategy="group")
+    args = _args(group_size=128, strategy="group")
     assert args.group_size == 128
     assert args.strategy == "group"
 
@@ -46,7 +63,7 @@ def test_group():
 def test_block():
     kwargs = {"strategy": "block", "block_structure": "2x4"}
 
-    block = QuantizationArgs(**kwargs)
+    block = _args(**kwargs)
     assert block.strategy == QuantizationStrategy.BLOCK
     assert block.block_structure == [2, 4]
     assert block.block_structure != kwargs["block_structure"]  # "2x4" != [2, 4]
@@ -74,28 +91,47 @@ def test_block_structure_requires_positive_dimensions(block_structure):
         QuantizationArgs(strategy="block", block_structure=block_structure)
 
 
-def test_infer_strategy():
-    args = QuantizationArgs(group_size=128)
-    assert args.strategy == QuantizationStrategy.GROUP
+def test_strategy_is_not_inferred():
+    with pytest.raises(ValidationError, match="strategy"):
+        QuantizationArgs(
+            num_bits=8,
+            type="int",
+            symmetric=True,
+            group_size=128,
+            dynamic=False,
+        )
 
-    args = QuantizationArgs(group_size=-1)
-    assert args.strategy == QuantizationStrategy.CHANNEL
+
+def test_observer_is_not_defaulted_by_format_schema():
+    assert (
+        _args(
+            strategy="tensor_group", group_size=16, dynamic="local"
+        ).observer
+        is None
+    )
+    assert _args(dynamic=True, observer="static_minmax").observer == (
+        "static_minmax"
+    )
 
 
 def test_enums():
-    assert QuantizationArgs(
+    assert _args(
         type=QuantizationType.INT,
         strategy=QuantizationStrategy.GROUP,
         actorder=ActivationOrdering.WEIGHT,
         group_size=1,
-    ) == QuantizationArgs(type="InT", strategy="GROUP", actorder="weight", group_size=1)
+    ) == _args(type="InT", strategy="GROUP", actorder="weight", group_size=1)
 
 
 def test_actorder():
     # test group inference with actorder
-    args = QuantizationArgs(group_size=128, actorder=ActivationOrdering.GROUP)
+    args = _args(
+        strategy="group", group_size=128, actorder=ActivationOrdering.GROUP
+    )
     assert args.strategy == QuantizationStrategy.GROUP
-    args = QuantizationArgs(group_size=128, actorder=ActivationOrdering.DYNAMIC)
+    args = _args(
+        strategy="group", group_size=128, actorder=ActivationOrdering.DYNAMIC
+    )
     assert args.strategy == QuantizationStrategy.GROUP
 
     # test invalid pairings
@@ -108,11 +144,11 @@ def test_actorder():
 
     # test boolean and none defaulting
     assert (
-        QuantizationArgs(group_size=1, actorder=True).actorder
+        _args(strategy="group", group_size=1, actorder=True).actorder
         == ActivationOrdering.GROUP
     )
-    assert QuantizationArgs(group_size=1, actorder=False).actorder is None
-    assert QuantizationArgs(group_size=1, actorder=None).actorder is None
+    assert _args(strategy="group", group_size=1, actorder=False).actorder is None
+    assert _args(strategy="group", group_size=1, actorder=None).actorder is None
 
 
 def test_actorder_aliases():
@@ -163,6 +199,9 @@ def test_serialize_args():
         type=QuantizationType.INT,
         symmetric=True,
         group_size=128,
+        strategy=QuantizationStrategy.GROUP,
+        dynamic=False,
+        zp_dtype=torch.int8,
         actorder=ActivationOrdering.GROUP,
     )
 

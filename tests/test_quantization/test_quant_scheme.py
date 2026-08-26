@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import pytest
+import torch
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationScheme,
@@ -10,9 +11,22 @@ from compressed_tensors.quantization import (
 from pydantic import ValidationError
 
 
+def _args(**kwargs):
+    values = {
+        "num_bits": 8,
+        "type": "int",
+        "symmetric": True,
+        "strategy": "tensor",
+        "dynamic": False,
+        "zp_dtype": torch.int8,
+    }
+    values.update(kwargs)
+    return QuantizationArgs(**values)
+
+
 def test_basic_scheme():
     targets = ["model.layer.0", "model.layer.3"]
-    weights = QuantizationArgs()
+    weights = _args()
 
     scheme = QuantizationScheme(targets=targets, weights=weights)
     assert scheme.targets == targets
@@ -24,9 +38,9 @@ def test_basic_scheme():
 
 def test_full_scheme():
     targets = ["Linear"]
-    weights = QuantizationArgs()
-    input_activations = QuantizationArgs(num_bits=8)
-    output_activations = QuantizationArgs(num_bits=8, type="float", symmetric=False)
+    weights = _args()
+    input_activations = _args()
+    output_activations = _args(type="float", symmetric=False)
 
     scheme = QuantizationScheme(
         targets=targets,
@@ -46,7 +60,7 @@ def test_group_dynamic_input_activations_supported():
     # GROUP strategy dynamic input activations are handled by
     # compute_dynamic_scales_and_zp, so scheme validation must accept them
     # rather than rejecting with a "not supported" error (#758).
-    input_activations = QuantizationArgs(
+    input_activations = _args(
         num_bits=8,
         strategy=QuantizationStrategy.GROUP,
         group_size=128,
@@ -54,7 +68,7 @@ def test_group_dynamic_input_activations_supported():
     )
     scheme = QuantizationScheme(
         targets=["Linear"],
-        weights=QuantizationArgs(num_bits=4, group_size=128),
+        weights=_args(num_bits=4, strategy="group", group_size=128),
         input_activations=input_activations,
     )
     assert scheme.input_activations.strategy == QuantizationStrategy.GROUP
@@ -66,9 +80,7 @@ def test_unsupported_activation_strategy_still_rejected():
     with pytest.raises(NotImplementedError):
         QuantizationScheme(
             targets=["Linear"],
-            input_activations=QuantizationArgs(
-                num_bits=8, strategy=QuantizationStrategy.CHANNEL
-            ),
+            input_activations=_args(strategy=QuantizationStrategy.CHANNEL),
         )
 
 
@@ -91,9 +103,9 @@ def test_serialize_scheme():
     from compressed_tensors.config import CompressionFormat
 
     targets = ["Linear"]
-    weights = QuantizationArgs(num_bits=4, symmetric=True, group_size=128)
-    input_activations = QuantizationArgs(num_bits=8, dynamic=True)
-    output_activations = QuantizationArgs(num_bits=8, type="float", symmetric=False)
+    weights = _args(num_bits=4, strategy="group", group_size=128)
+    input_activations = _args(strategy="token", dynamic=True)
+    output_activations = _args(type="float", symmetric=False)
 
     scheme = QuantizationScheme(
         targets=targets,
