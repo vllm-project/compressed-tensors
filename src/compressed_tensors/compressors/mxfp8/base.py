@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Optional
-
 import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
@@ -46,8 +44,8 @@ class MXFP8QuantizationCompressor(NaiveQuantizationCompressor):
         return compress_mx_scale(scale, scale_dtype)
 
     @classmethod
-    def _decompress_scale(cls, scale: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
-        return decompress_mx_scale(scale).to(dtype)
+    def _decompress_scale(cls, scale: torch.Tensor) -> torch.Tensor:
+        return decompress_mx_scale(scale)
 
     @classmethod
     def compress(
@@ -73,10 +71,7 @@ class MXFP8QuantizationCompressor(NaiveQuantizationCompressor):
 
     @classmethod
     def decompress(
-        cls,
-        state_dict: TensorStateDict,
-        scheme: QuantizationScheme,
-        dtype: Optional[torch.dtype] = None,
+        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
         """
         Decompress a per-module state dict for MXFP8 format.
@@ -86,19 +81,15 @@ class MXFP8QuantizationCompressor(NaiveQuantizationCompressor):
 
         :param state_dict: local-name state dict (weight, weight_scale, ...)
         :param scheme: quantization scheme for the weight
-        :param dtype: target dtype for decompressed weights. If None, defaults to
-            ``torch.get_default_dtype()``
         :return: decompressed state dict with weight in float dtype
         """
         state_dict = state_dict.copy()
 
-        dtype = dtype or torch.get_default_dtype()
-
-        # Convert E8M0 scale back to target dtype for consistency with model dtype
+        # Convert E8M0 scale back to bfloat16 for consistency with model dtype
         scale = state_dict["weight_scale"]
-        state_dict["weight_scale"] = cls._decompress_scale(scale, dtype)
+        state_dict["weight_scale"] = cls._decompress_scale(scale)
 
-        return NaiveQuantizationCompressor.decompress(state_dict, scheme, dtype=dtype)
+        return NaiveQuantizationCompressor.decompress(state_dict, scheme)
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:

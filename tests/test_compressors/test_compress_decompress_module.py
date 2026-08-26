@@ -16,11 +16,9 @@ from compressed_tensors.quantization import (
     initialize_module_for_quantization,
     preset_name_to_scheme,
 )
-from compressed_tensors.quantization.quant_scheme import PRESET_SCHEMES
 from compressed_tensors.quantization.utils import is_module_quantized
 from compressed_tensors.utils import get_direct_state_dict
 from tests.testing_utils import requires_gpu
-from transformers.modeling_utils import local_torch_dtype
 
 
 @requires_gpu
@@ -56,10 +54,7 @@ def _run_compress_decompress(
     assert module.quantization_scheme.format == expected_format
 
     # 3. Decompress the module and verify shapes and dtypes are restored.
-    # Set default dtype to bfloat16 to match the module dtype, since
-    # NVFP4/MXFP4 decompression uses torch.get_default_dtype().
-    with local_torch_dtype(torch.bfloat16):
-        decompress_module(module)
+    decompress_module(module)
 
     post_state_dict = get_direct_state_dict(module)
     for name, tensor in post_state_dict.items():
@@ -173,35 +168,3 @@ def test_linear_only_config_leaves_embedding_untouched():
     assert embed_keys == {"weight"}
     assert not hasattr(model.embed, "quantization_status")
     assert torch.equal(model.embed.weight, embed_weight_before)
-
-
-@requires_gpu
-@pytest.mark.parametrize("scheme_name", list(PRESET_SCHEMES.keys()))
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
-def test_decompress_module_respects_default_dtype(scheme_name, dtype):
-    """
-    Decompression should produce weights matching torch.get_default_dtype(),
-    regardless of the quantization scheme. Without this, some compressors
-    (e.g. FP4 via unpack_fp4_from_uint8, or MXFP8 via decompress_mx_scale)
-    hardcode bfloat16, causing dtype mismatches when the model runs in a
-    different dtype.
-
-    UNQUANTIZED is excluded because DenseCompressor is a no-op.
-    """
-    module = nn.Linear(256, 256, bias=False).to(dtype=torch.bfloat16, device="cuda")
-    scheme = preset_name_to_scheme(scheme_name, ["Linear"])
-    initialize_module_for_quantization(module, scheme)
-
-    with torch.no_grad():
-        module.weight.fill_(1)
-
-    compress_module(module)
-
-    with local_torch_dtype(dtype):
-        decompress_module(module)
-
-    weight = get_direct_state_dict(module)["weight"]
-    if scheme_name != "UNQUANTIZED":
-        assert (
-            weight.dtype == dtype
-        ), f"Expected decompressed weight dtype {dtype}, got {weight.dtype}"
