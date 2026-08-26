@@ -49,7 +49,7 @@ class DistributedCPUCache(CPUCache):
             # before pointing at the shared storage. See
             # https://github.com/huggingface/transformers/pull/47486
             if (
-                tensor.device.type == "meta"
+                tensor.is_meta
                 or tensor.dtype != src_dtype
                 or tensor.shape != src_shape
             ):
