@@ -19,7 +19,6 @@ from pathlib import Path
 
 import torch
 from compressed_tensors.compressors import ModelCompressor
-from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization import (
     QuantizationConfig,
     apply_quantization_config,
@@ -81,7 +80,7 @@ for name, module in model.named_modules():
     scale, _ = calculate_qparams(min_val, max_val, args)
     # Update the parameters attached to the module based on the calculated value
     # In this case, we update the `weight_scale` attached to the targeted linear layers
-    update_offload_parameter(module, "weight_scale", scale)
+    module.weight_scale.copy_(scale)
 
 # set-up a compressor
 # The compression format is inferred by iterating over all quantized modules and
