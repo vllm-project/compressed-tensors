@@ -87,9 +87,7 @@ def test_observer_is_not_defaulted_by_format_schema():
         ).observer
         is None
     )
-    args = QuantizationArgs(
-        strategy="tensor", dynamic=True, observer="static_minmax"
-    )
+    args = QuantizationArgs(strategy="tensor", dynamic=True, observer="static_minmax")
     assert args.observer == "static_minmax"
 
 
@@ -131,8 +129,7 @@ def test_actorder():
         is None
     )
     assert (
-        QuantizationArgs(strategy="group", group_size=1, actorder=None).actorder
-        is None
+        QuantizationArgs(strategy="group", group_size=1, actorder=None).actorder is None
     )
 
 
