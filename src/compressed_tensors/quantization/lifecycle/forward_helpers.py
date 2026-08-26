@@ -55,7 +55,6 @@ def _apply_quantize_op(
             x_q=x,
             scale=scale,
             zero_point=zero_point,
-            dtype=dtype,
             global_scale=global_scale,
         )
 

@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-import json
 import os
-from typing import Iterable, Optional
+from typing import Iterable
 
 import pydantic
 import torch
@@ -20,7 +19,6 @@ from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
     get_quantization_config,
 )
-from loguru import logger
 from transformers.file_utils import CONFIG_NAME
 
 
@@ -34,8 +32,10 @@ class CompressedTensorsDequantizer(Converter):
         self,
         model_stub: str | os.PathLike,
         ignore: Iterable[str] = tuple(),
-        dtype: Optional[torch.dtype] = None,
+        dtype=torch.bfloat16,
     ):
+        self.dtype = dtype
+
         # load quantization config from model_stub
         model_files = get_checkpoint_files(model_stub)
         if CONFIG_NAME in model_files:
@@ -44,13 +44,6 @@ class CompressedTensorsDequantizer(Converter):
             config_resolved_path = model_files["params.json"]
         else:
             raise ValueError("Could not find config.json file")
-
-        if dtype is None:
-            with open(config_resolved_path, "r") as f:
-                config = json.load(f)
-            dtype_str = config.get("dtype", config.get("torch_dtype", "bfloat16"))
-            dtype = getattr(torch, dtype_str)
-        self.dtype = dtype
 
         quant_config_data = get_quantization_config(config_resolved_path)
         if quant_config_data is None:
@@ -125,18 +118,12 @@ class CompressedTensorsDequantizer(Converter):
                     for param_name in param_names
                 }
 
-                dequantized_state_dict = compressor.decompress(
-                    state_dict, scheme, dtype=self.dtype
-                )
+                dequantized_state_dict = compressor.decompress(state_dict, scheme)
 
                 # Add only weight param to dequantized tensors
-                weight = dequantized_state_dict["weight"]
-                dequantized_tensors[f"{module_name}.weight"] = weight
-                if weight.dtype != self.dtype:
-                    logger.warning(
-                        f"{module_name} decompressed dtype ({weight.dtype}) "
-                        f"does not match model dtype ({self.dtype})"
-                    )
+                dequantized_tensors[f"{module_name}.weight"] = dequantized_state_dict[
+                    "weight"
+                ].to(self.dtype)
 
         # Copy over any remaining ignored/untargeted tensors, skipping kv cache qparams
         kv_cache_param_names = [v.value for v in KVCacheScaleType]

@@ -77,10 +77,7 @@ class BaseCompressor(RegistryMixin, ABC):
 
     @classmethod
     def decompress(
-        cls,
-        state_dict: TensorStateDict,
-        scheme: QuantizationScheme,
-        dtype: Optional[torch.dtype] = None,
+        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
         """
         Decompress a per-module state dict. Does not modify the input.
@@ -89,8 +86,6 @@ class BaseCompressor(RegistryMixin, ABC):
 
         :param state_dict: compressed per-module state dict with local parameter names
         :param scheme: quantization scheme containing quantization parameters
-        :param dtype: target dtype for decompressed weights. If None, defaults to
-            ``torch.get_default_dtype()``
         :return: decompressed per-module state dict
         """
         raise NotImplementedError(
@@ -117,9 +112,7 @@ class BaseCompressor(RegistryMixin, ABC):
         module.quantization_status = QuantizationStatus.COMPRESSED
 
     @classmethod
-    def decompress_module(
-        cls, module: torch.nn.Module, dtype: Optional[torch.dtype] = None
-    ) -> None:
+    def decompress_module(cls, module: torch.nn.Module) -> None:
         """
         Decompress a module in-place by decompressing its state dict.
 
@@ -128,13 +121,11 @@ class BaseCompressor(RegistryMixin, ABC):
         version.
 
         :param module: the module to decompress in-place
-        :param dtype: target dtype for decompressed weights. If None, defaults to
-            ``torch.get_default_dtype()``
         """
         scheme = getattr(module, "quantization_scheme")
 
         state_dict = get_direct_state_dict(module)
-        decompressed_state_dict = cls.decompress(state_dict, scheme, dtype=dtype)
+        decompressed_state_dict = cls.decompress(state_dict, scheme)
         replace_direct_state_dict(module, decompressed_state_dict)
 
         module.quantization_status = QuantizationStatus.DECOMPRESSED
@@ -203,9 +194,7 @@ def compress_module(
 
 
 def decompress_module(
-    module: torch.nn.Module,
-    format: Optional[CompressionFormat] = None,
-    dtype: Optional[torch.dtype] = None,
+    module: torch.nn.Module, format: Optional[CompressionFormat] = None
 ):
     """
     Decompress a module which has had quantization applied to it. Sets the
@@ -218,8 +207,6 @@ def decompress_module(
 
     :param module: module to decompress inplace
     :param format: force override for decompression format
-    :param dtype: target dtype for decompressed weights. If None, defaults to
-        ``torch.get_default_dtype()``
     """
     scheme = getattr(module, "quantization_scheme", None)
     if not isinstance(scheme, QuantizationScheme):
@@ -229,4 +216,4 @@ def decompress_module(
         format or scheme.format or infer_module_format(type(module), scheme)
     )
     compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
-    compressor.decompress_module(module, dtype=dtype)
+    compressor.decompress_module(module)
