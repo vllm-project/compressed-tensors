@@ -176,7 +176,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         observer to a memoryless one
     :param actorder: activation ordering strategy for GPTQ calibration. Options are
         GROUP (reorder by activation with g_idx mapping, higher accuracy but higher
-        latency -- removed 2026/08/27), WEIGHT (reorder columns by activation magnitude during calibration only, normal
+        latency -- removed 2026/08/27), WEIGHT (reorder columns by activation
+        magnitude during calibration only, normal
         latency with slight accuracy improvement) or None (no activation ordering).
     """
 
