@@ -86,6 +86,8 @@ def update_scales_hook(
             # which maps per-group FP8 scales into the full FP8 dynamic range.
             tensor_min, tensor_max = torch.aminmax(weight)
             weight_global_scale = generate_gparam(tensor_min, tensor_max)
+            # Note: you can also directly use module.weight_global_scale.copy_(weight_global_scale)
+            # udate_offload_parameter is used here to demonstrate how to update the offloaded parameter in case the model is offloaded to CPU or disk.
             update_offload_parameter(module, "weight_global_scale", weight_global_scale)
 
             scale, _ = calculate_qparams(

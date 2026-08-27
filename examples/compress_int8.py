@@ -68,7 +68,6 @@ def update_scales_hook(
     module: torch.nn.Module, input: torch.Tensor, _output: torch.Tensor
 ):
     from compressed_tensors.quantization.utils import calculate_qparams
-    from compressed_tensors.offload import update_offload_parameter
 
     quantization_scheme = getattr(module, "quantization_scheme", None)
     if not quantization_scheme:
@@ -77,13 +76,12 @@ def update_scales_hook(
     quantization_args = getattr(quantization_scheme, "weights", None)
     min_val, max_val = torch.aminmax(module.weight.data)
     scale, _ = calculate_qparams(min_val, max_val, quantization_args)
-    update_offload_parameter(module, "weight_scale", scale)
+    module.weight_scale.copy_(scale)
 
     quantization_args = getattr(quantization_scheme, "input_activations", None)
     min_val, max_val = torch.aminmax(input[0])
     scale, _ = calculate_qparams(min_val, max_val, quantization_args)
-    update_offload_parameter(module, "input_scale", scale)
-
+    module.input_scale.copy_(scale)
 
 model.apply(lambda module: module.register_forward_hook(update_scales_hook))
 
