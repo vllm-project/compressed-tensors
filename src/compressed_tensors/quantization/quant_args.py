@@ -168,8 +168,8 @@ class ActivationOrdering(Aliasable, str, Enum):
 
 class QuantizationArgs(BaseModel, use_enum_values=True):
     """
-    Explicit format arguments for quantized weights or activations. Authoring tools
-    must resolve defaults before constructing this model.
+    User facing arguments used to define a quantization config for weights or
+    activations
 
     :param num_bits: quantization bit depth
     :param type: dtype to quantize to, either int or float
@@ -216,8 +216,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     )
 
     @field_serializer("zp_dtype")
-    def serialize_dtype(self, dtype: torch.dtype | None):
-        if dtype is None:
+    def serialize_dtype(self, dtype: torch.dtype):
+        if self.symmetric:
             return None
         return str(dtype)
 
@@ -305,6 +305,21 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         block_structure = model.block_structure
         actorder = model.actorder
         dynamic = model.dynamic
+        zp_dtype = model.zp_dtype
+
+        # infer strategy
+        if strategy is None:
+            if group_size is None:
+                strategy = QuantizationStrategy.TENSOR
+            elif group_size > 0:
+                strategy = QuantizationStrategy.GROUP
+            elif group_size == -1:
+                strategy = QuantizationStrategy.CHANNEL
+            else:
+                raise ValueError(
+                    f"Invalid group size {group_size}. Use group_size > 0 for "
+                    "strategy='group' and group_size = -1 for 'channel'"
+                )
 
         # validate token strategy
         if strategy == QuantizationStrategy.TOKEN and not dynamic:
@@ -363,6 +378,16 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 and strategy != QuantizationStrategy.TENSOR_GROUP
             ):
                 raise ValueError("local is only supported for strategy tensor_group")
+
+        if zp_dtype is None:
+            if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
+                zp_dtype = FP8_E4M3_DATA.dtype
+            else:
+                zp_dtype = model.pytorch_dtype()
+
+        # write back modified values
+        model.strategy = strategy
+        model.zp_dtype = zp_dtype
 
         return model
 
