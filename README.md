@@ -166,4 +166,4 @@ Once done, the config.json will have the following quantization_config:
   },
 ```
 
-See `examples/` for more examples including quantization with calibration (`examples/llama_1.1b/`) and checkpoint conversion (`examples/convert_checkpoint/`).
+See `examples/` for more examples including quantization with calibration and checkpoint conversion (`examples/convert_checkpoint/`).
