@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from __future__ import annotations
+
+import os
 from typing import Iterable
 
 import torch
@@ -10,6 +13,14 @@ from compressed_tensors.quantization.utils.helpers import (
     maybe_pad_tensor_for_block_quant,
 )
 from compressed_tensors.utils.match import match_name, match_quantizable_tensors
+from compressed_tensors.utils.safetensors_load import (
+    get_checkpoint_files,
+    get_weight_map,
+)
+
+
+# param names that indicate a module carries a block-quantization scale
+_SCALE_PARAM_NAMES = ("weight_scale", "weight_scale_inv")
 
 
 class FP8BlockDequantizer(Converter):
@@ -25,12 +36,54 @@ class FP8BlockDequantizer(Converter):
         weight_block_size: tuple[int] = (128, 128),
         dtype=torch.bfloat16,
     ):
+        raise ValueError("Use `from_pretrained`")
+        self.resolved_targets = ...
         self.ignore = ignore
         self.targets = targets
         self.weight_block_size = weight_block_size
         self.dtype = dtype
 
         self.param_names = ["weight", "weight_scale_inv"]
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        model_name_or_path: str | os.PathLike,
+        ignore: Iterable[str] = tuple(),
+        weight_block_size: tuple[int] = (128, 128),
+        dtype=torch.bfloat16,
+    ) -> FP8BlockDequantizer:
+        """
+        Build the converter by scanning the checkpoint's weight map and targeting
+        every module that carries a block-quantization scale (a ``weight_scale``
+        or ``weight_scale_inv`` parameter).
+
+        :param model_name_or_path: HuggingFace stub or local checkpoint path
+        :param ignore: module names (regex allowed) to exclude from dequantization
+        :param weight_block_size: block dimensions used during quantization
+        :param dtype: dtype to store the dequantized weights in
+        """
+        model_files = get_checkpoint_files(model_name_or_path)
+        weight_map = get_weight_map(model_files)
+
+        # collect the module name for every scale parameter in the checkpoint
+        targets = sorted(
+            {
+                name.rpartition(".")[0]
+                for name in weight_map
+                if name.rpartition(".")[-1] in _SCALE_PARAM_NAMES
+            }
+        )
+
+        instance = cls.__new__()
+        instance.ignore = ignore
+        ...
+        return instance
+        #     ignore=ignore,
+        #     targets=targets,
+        #     weight_block_size=weight_block_size,
+        #     dtype=dtype,
+        # )
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """

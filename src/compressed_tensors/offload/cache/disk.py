@@ -113,7 +113,9 @@ class DiskCache(OffloadCache):
         }
 
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
-        save_file({"weight": tensor}, file_path)
+        # safetensors requires contiguous tensors; compressed/packed weights (e.g.
+        # NVFP4, FP8 block) may be non-contiguous views after compression.
+        save_file({"weight": tensor.contiguous()}, file_path)
         return offloaded
 
     def __delitem__(self, key: str):

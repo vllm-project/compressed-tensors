@@ -125,10 +125,15 @@ class NaiveQuantizationCompressor(BaseCompressor):
         g_idx = state_dict.get("weight_g_idx", None)
 
         dtype = dtype or torch.get_default_dtype()
+        # Pass the scheme's weight args so the dequantization strategy is taken
+        # from the scheme rather than inferred from the scale shape. Inference
+        # misreads block scales whose columns fit in a single block (shape
+        # [n_row_blocks, 1]) as per-channel, producing a shape mismatch.
         state_dict["weight"] = dequantize(
             x_q=weight,
             scale=scale,
             zero_point=zero_point,
+            args=scheme.weights,
             g_idx=g_idx,
             dtype=dtype,
         )
