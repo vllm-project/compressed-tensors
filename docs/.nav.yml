@@ -1,0 +1,5 @@
+nav:
+  - Home: index.md
+  - Getting Started: getting-started/install.md
+  - API Reference:
+    - api/*
