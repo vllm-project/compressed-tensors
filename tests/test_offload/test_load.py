@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 import compressed_tensors.offload.load as load_module
 import pytest
 import torch
+from compressed_tensors.distributed import utils as dist_utils
+from compressed_tensors.distributed.utils import is_distributed
 from compressed_tensors.offload import (
     disable_onloading,
     from_accelerate,
@@ -15,6 +17,7 @@ from compressed_tensors.offload import (
 from compressed_tensors.offload.convert import to_accelerate
 from compressed_tensors.offload.convert.from_accelerate import _infer_module_device
 from compressed_tensors.offload.load import load_offloaded_model
+from compressed_tensors.offload.utils import as_single_threaded
 from tests.test_offload.conftest import (
     assert_device_equal,
     skip_if_mps_device,
@@ -194,3 +197,31 @@ def test_mmap_cap_skipped_without_tensor_info():
     result_no_info = load_module._get_shared_memory()
     result_zero = load_module._get_shared_memory(num_tensors=0, total_model_bytes=0)
     assert result_no_info == result_zero
+
+
+@pytest.mark.integration
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
+def test_load_dist_estimate_tensor_count(tmp_path):
+    """Loading with default max_memory triggers _estimate_tensor_count without hang."""
+    with load_offloaded_model(AutoModelForCausalLM):
+        model = AutoModelForCausalLM.from_pretrained(
+            "inference-optimization/Llama-3.2-1B-Instruct-FP8-Block",
+            device_map="auto",
+            dtype=torch.bfloat16,
+        )
+    assert model is not None
+
+
+@pytest.mark.unit
+def test_as_single_threaded_toggles_is_distributed():
+    """as_single_threaded suppresses is_distributed and restores on exit."""
+    with patch.object(dist_utils, "_force_single_threaded", False), patch(
+        "torch.distributed.is_available", return_value=True
+    ), patch("torch.distributed.is_initialized", return_value=True):
+        assert is_distributed() is True
+
+        with as_single_threaded():
+            assert is_distributed() is False
+
+        assert is_distributed() is True
