@@ -87,7 +87,7 @@ def _pack_fp4_kernel(
     tl.store(packed_ptr + offsets, packed, mask=mask)
 
 
-@ImplBackend.register("pack_fp4_to_uint8", triton_req, "disable")
+@ImplBackend.register("pack_fp4_to_uint8", triton_req, 0)
 def pack_fp4_to_uint8_triton(x: torch.Tensor) -> torch.Tensor:
     m, n = x.shape
 

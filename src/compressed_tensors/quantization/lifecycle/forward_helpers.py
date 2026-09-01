@@ -296,9 +296,9 @@ def _quantize_kernel(
 
     if has_global_scale:
         global_scale = tl.load(global_scale_ptr)
-        scale = scale / global_scale.to(scale.dtype)
+        scale = tl.div_rn(scale.to(tl.float32), global_scale.to(tl.float32))
 
-    output = input / scale
+    output = tl.div_rn(input.to(tl.float32), scale.to(tl.float32))
 
     if has_zero_point:
         zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
@@ -389,7 +389,7 @@ def _quantize_triton_req(
 
 
 @torch.no_grad()
-@ImplBackend.register("_quantize", _quantize_triton_req, "disable")
+@ImplBackend.register("_quantize", _quantize_triton_req, 0)
 def _quantize_triton(
     x: torch.Tensor,
     scale: torch.Tensor,

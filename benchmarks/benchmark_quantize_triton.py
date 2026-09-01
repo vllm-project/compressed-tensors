@@ -10,7 +10,6 @@ Based on https://github.com/vllm-project/compressed-tensors/blob/6186e34ac31e932
 """
 
 import gc
-import time
 import torch
 
 from compressed_tensors.quantization.lifecycle.forward_helpers import (
@@ -70,38 +69,53 @@ def triton_quantize_cuda(x, scale, zero_point, q_min, q_max, args):
 
 
 def benchmark_cuda(func, x, scale, zero_point, q_min, q_max, args, name, warmup=False):
-    """Benchmark a quantization function on CUDA."""
+    """Benchmark a quantization function on CUDA using CUDA events for accurate timing."""
     x = x.clone()
+
+    # Warmup phase
     if warmup:
         print(f"  Warming up {name}...")
-        for _ in range(10):
+        for _ in range(50):
             _ = func(x, scale, zero_point, q_min, q_max, args)
-        torch.cuda.empty_cache()
-        gc.collect()
         torch.cuda.synchronize()
         print("  Warmup complete, starting benchmark...")
+
+    torch.cuda.empty_cache()
+    gc.collect()
+    torch.cuda.synchronize()
 
     times = []
 
     for _ in range(N_RUNS):
-        torch.cuda.empty_cache()
-        gc.collect()
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
 
-        torch.cuda.synchronize()
-        start = time.time()
+        start_event.record()
         result = func(x, scale, zero_point, q_min, q_max, args)
-        torch.cuda.synchronize()
-        elapsed = time.time() - start
+        end_event.record()
 
-        times.append(elapsed)
+        torch.cuda.synchronize()
+        elapsed_ms = start_event.elapsed_time(end_event)  # milliseconds
+        times.append(elapsed_ms / 1000.0)  # convert to seconds
 
         del result
-        torch.cuda.empty_cache()
-        gc.collect()
 
-    avg_time = sum(times) / N_RUNS
+    # Use median for robustness against outliers
+    times.sort()
+    median_time = times[len(times) // 2]
+    
+    # Print variance info for debugging stability
+    min_time = times[0]
+    max_time = times[-1]
+    p10 = times[int(len(times) * 0.1)]
+    p90 = times[int(len(times) * 0.9)]
+    variance_ratio = max_time / min_time if min_time > 0 else float('inf')
+    print(f"    {name}: median={median_time*1000:.2f}ms, "
+          f"min={min_time*1000:.2f}ms, max={max_time*1000:.2f}ms, "
+          f"p10={p10*1000:.2f}ms, p90={p90*1000:.2f}ms, "
+          f"variance_ratio={variance_ratio:.2f}x")
 
-    return avg_time
+    return median_time
 
 
 def run_config(quant_type, num_bits, rows, cols):
