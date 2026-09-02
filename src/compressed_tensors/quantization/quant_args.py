@@ -294,8 +294,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         strategy = model.strategy
         group_size = model.group_size
         block_structure = model.block_structure
-        # commenting for linting, what should we do with this?
-        # actorder = model.actorder
+        actorder = model.actorder
         dynamic = model.dynamic
         zp_dtype = model.zp_dtype
 
@@ -341,16 +340,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             raise ValueError(f"Block strategy requires block structure\n{model}")
         if has_block_structure and not has_block_strategy:
             raise ValueError(f"Block structure requires block strategy\n{model}")
-
-        # validate activation ordering and strategy
-        if actorder == ActivationOrdering.GROUP and strategy not in (
-            QuantizationStrategy.GROUP,
-            QuantizationStrategy.TENSOR_GROUP,
-        ):
-            raise ValueError(
-                "Must use group or tensor_group quantization strategy in "
-                "order to apply group activation ordering"
-            )
 
         # validate dynamic quantization
         if dynamic:
