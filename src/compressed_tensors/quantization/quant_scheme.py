@@ -15,7 +15,6 @@ from compressed_tensors.quantization.quant_args import (
 )
 from pydantic import BaseModel, ConfigDict, model_validator
 
-
 __all__ = [
     "QuantizationScheme",
     "preset_name_to_scheme",
@@ -185,6 +184,7 @@ def is_preset_scheme(name: str) -> bool:
 
 UNQUANTIZED = dict()
 
+# TODO: confirm block structure and scale_dtype (None or e8m0)
 LUTB = dict(
     weights=QuantizationArgs(
         num_bits=3,
