@@ -35,7 +35,7 @@ class LutBCompressor(BaseCompressor):
         weight = state_dict.pop("weight")
         codebooks = state_dict.pop("weight_codebook", None)
 
-        packed, codebooks = quantize_lut_b(weight, codebooks)
+        packed, codebooks = quantize_lut_b(weight, scheme.weights, codebooks)
         state_dict["weight_packed"] = packed
         state_dict["weight_codebook"] = codebooks
         state_dict = cls._remove_symmetric_zp(state_dict, scheme)
@@ -54,6 +54,7 @@ class LutBCompressor(BaseCompressor):
         state_dict["weight"] = dequantize_lut_b(
             packed,
             codebooks,
+            scheme.weights,
             dtype=torch.bfloat16,
         )
         return state_dict

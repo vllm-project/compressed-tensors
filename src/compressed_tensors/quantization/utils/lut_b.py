@@ -5,6 +5,12 @@
 
 Tiles remain in logical weight order. Runtime backends may swizzle these tensors
 into their kernel-specific layouts after checkpoint loading.
+
+The tile geometry (block shape, codebook size and packed byte count) is derived
+from the :class:`QuantizationArgs` describing the weight, so a scheme's
+``block_structure`` and ``num_bits`` fully determine the on-disk layout. Callers
+are expected to have validated the args with :func:`is_lut_b_quantization`
+first, so the helpers here read the args directly without re-validating them.
 """
 
 import torch
@@ -16,10 +22,6 @@ from compressed_tensors.quantization.quant_args import (
 
 
 __all__ = [
-    "LUT_B_BLOCK_K",
-    "LUT_B_BLOCK_N",
-    "LUT_B_CODEBOOK_SIZE",
-    "LUT_B_PACKED_TILE_BYTES",
     "dequantize_lut_b",
     "fake_quantize_lut_b",
     "is_lut_b_quantization",
@@ -29,10 +31,6 @@ __all__ = [
 ]
 
 
-LUT_B_BLOCK_N = 8
-LUT_B_BLOCK_K = 64
-LUT_B_CODEBOOK_SIZE = 8
-LUT_B_PACKED_TILE_BYTES = LUT_B_BLOCK_N * LUT_B_BLOCK_K * 3 // 8
 LUT_B_LLOYD_ITERATIONS = 8
 LUT_B_MAX_TILES_PER_CHUNK = 4096
 
@@ -43,12 +41,17 @@ def is_lut_b_quantization(args: QuantizationArgs) -> bool:
         args.type == QuantizationType.CODEBOOK
         and args.num_bits == 3
         and args.strategy == QuantizationStrategy.BLOCK
-        and args.block_structure == [LUT_B_BLOCK_N, LUT_B_BLOCK_K]
+        and isinstance(args.block_structure, list)
+        and len(args.block_structure) == 2
     )
 
 
-def pack_lut_b_indices(indices: torch.Tensor) -> torch.Tensor:
+def pack_lut_b_indices(indices: torch.Tensor, args: QuantizationArgs) -> torch.Tensor:
     """Pack eight 3-bit LUT indices into three bytes."""
+    if args.num_bits != 3:
+        raise ValueError(
+            f"LUT-B packing currently supports only num_bits=3, got {args.num_bits}"
+        )
     if indices.shape[-1] % 8 != 0:
         raise ValueError("The number of LUT indices must be divisible by 8")
     if indices.device.type != "meta" and torch.any((indices < 0) | (indices > 7)):
@@ -77,8 +80,12 @@ def pack_lut_b_indices(indices: torch.Tensor) -> torch.Tensor:
     )
 
 
-def unpack_lut_b_indices(packed: torch.Tensor) -> torch.Tensor:
+def unpack_lut_b_indices(packed: torch.Tensor, args: QuantizationArgs) -> torch.Tensor:
     """Unpack three-byte groups into eight 3-bit LUT indices."""
+    if args.num_bits != 3:
+        raise ValueError(
+            f"LUT-B packing currently supports only num_bits=3, got {args.num_bits}"
+        )
     if packed.shape[-1] % 3 != 0:
         raise ValueError("The number of packed bytes must be divisible by 3")
 
@@ -96,32 +103,36 @@ def unpack_lut_b_indices(packed: torch.Tensor) -> torch.Tensor:
     )
 
 
-def _validate_weight(weight: torch.Tensor) -> tuple[torch.Size, int, int]:
+def _validate_weight(
+    weight: torch.Tensor, args: QuantizationArgs
+) -> tuple[torch.Size, int, int]:
     if weight.ndim < 2:
         raise ValueError(
             f"LUT-B expects a weight with at least two dimensions, got {weight.shape}"
         )
 
+    block_n, block_k = args.block_structure
     leading_shape = weight.shape[:-2]
     rows, columns = weight.shape[-2:]
-    if rows % LUT_B_BLOCK_N != 0 or columns % LUT_B_BLOCK_K != 0:
+    if rows % block_n != 0 or columns % block_k != 0:
         raise ValueError(
             "LUT-B requires the final weight dimensions to be divisible by "
-            f"({LUT_B_BLOCK_N}, {LUT_B_BLOCK_K}), got ({rows}, {columns})"
+            f"({block_n}, {block_k}), got ({rows}, {columns})"
         )
     return leading_shape, rows, columns
 
 
-def _weight_to_tiles(weight: torch.Tensor) -> torch.Tensor:
-    leading_shape, rows, columns = _validate_weight(weight)
+def _weight_to_tiles(weight: torch.Tensor, args: QuantizationArgs) -> torch.Tensor:
+    block_n, block_k = args.block_structure
+    leading_shape, rows, columns = _validate_weight(weight, args)
     leading_dims = len(leading_shape)
     return (
         weight.reshape(
             *leading_shape,
-            rows // LUT_B_BLOCK_N,
-            LUT_B_BLOCK_N,
-            columns // LUT_B_BLOCK_K,
-            LUT_B_BLOCK_K,
+            rows // block_n,
+            block_n,
+            columns // block_k,
+            block_k,
         )
         .permute(
             *range(leading_dims),
@@ -130,7 +141,7 @@ def _weight_to_tiles(weight: torch.Tensor) -> torch.Tensor:
             leading_dims + 1,
             leading_dims + 3,
         )
-        .reshape(-1, LUT_B_BLOCK_N * LUT_B_BLOCK_K)
+        .reshape(-1, block_n * block_k)
     )
 
 
@@ -143,16 +154,17 @@ def _snap_to_e4m3(values: torch.Tensor) -> torch.Tensor:
     )
 
 
-def _initialize_centers(values: torch.Tensor) -> torch.Tensor:
+def _initialize_centers(values: torch.Tensor, args: QuantizationArgs) -> torch.Tensor:
+    codebook_size = 1 << args.num_bits
     centers = torch.empty(
         values.shape[0],
-        LUT_B_CODEBOOK_SIZE,
+        codebook_size,
         dtype=torch.float32,
         device=values.device,
     )
     centers[:, 0] = values.mean(dim=1)
     minimum_distance = (values - centers[:, :1]).square()
-    for center_index in range(1, LUT_B_CODEBOOK_SIZE):
+    for center_index in range(1, codebook_size):
         farthest = minimum_distance.argmax(dim=1, keepdim=True)
         new_center = torch.gather(values, 1, farthest).squeeze(1)
         centers[:, center_index] = new_center
@@ -170,10 +182,11 @@ def _assign_indices(values: torch.Tensor, centers: torch.Tensor) -> torch.Tensor
 
 def _fit_codebooks(
     values: torch.Tensor,
+    args: QuantizationArgs,
     num_iterations: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     values = values.to(torch.float32)
-    centers = _initialize_centers(values)
+    centers = _initialize_centers(values, args)
 
     for _ in range(num_iterations):
         indices = _assign_indices(values, centers)
@@ -192,8 +205,9 @@ def _fit_codebooks(
 def _validate_codebook_shape(
     codebooks: torch.Tensor,
     tile_shape: tuple[int, ...],
+    args: QuantizationArgs,
 ) -> None:
-    expected_shape = (*tile_shape, LUT_B_CODEBOOK_SIZE)
+    expected_shape = (*tile_shape, 1 << args.num_bits)
     if codebooks.shape != expected_shape:
         raise ValueError(
             f"LUT-B codebook shape must be {expected_shape}, got {codebooks.shape}"
@@ -203,8 +217,9 @@ def _validate_codebook_shape(
 def _prepare_codebooks(
     codebooks: torch.Tensor,
     tile_shape: tuple[int, ...],
+    args: QuantizationArgs,
 ) -> torch.Tensor:
-    _validate_codebook_shape(codebooks, tile_shape)
+    _validate_codebook_shape(codebooks, tile_shape, args)
     if codebooks.device.type == "meta":
         return codebooks.to(torch.float8_e4m3fn)
     return (
@@ -217,6 +232,7 @@ def _prepare_codebooks(
 @torch.no_grad()
 def quantize_lut_b(
     weight: torch.Tensor,
+    args: QuantizationArgs,
     codebooks: torch.Tensor | None = None,
     *,
     max_tiles_per_chunk: int = LUT_B_MAX_TILES_PER_CHUNK,
@@ -227,9 +243,13 @@ def quantize_lut_b(
     A supplied codebook is used as-is after E4M3 rounding and sorting. This is
     the integration point for calibration-aware codebook creation.
     """
-    leading_shape, rows, columns = _validate_weight(weight)
-    row_tiles = rows // LUT_B_BLOCK_N
-    column_tiles = columns // LUT_B_BLOCK_K
+    block_n, block_k = args.block_structure
+    codebook_size = 1 << args.num_bits
+    packed_tile_bytes = block_n * block_k * args.num_bits // 8
+
+    leading_shape, rows, columns = _validate_weight(weight, args)
+    row_tiles = rows // block_n
+    column_tiles = columns // block_k
     tile_shape = (*leading_shape, row_tiles, column_tiles)
 
     if max_tiles_per_chunk <= 0:
@@ -239,19 +259,19 @@ def quantize_lut_b(
     if codebooks is not None:
         if codebooks.device != weight.device:
             raise ValueError("LUT-B weight and codebooks must be on the same device")
-        codebooks = _prepare_codebooks(codebooks, tile_shape)
+        codebooks = _prepare_codebooks(codebooks, tile_shape, args)
 
     if weight.device.type == "meta":
         packed = torch.empty(
             *tile_shape,
-            LUT_B_PACKED_TILE_BYTES,
+            packed_tile_bytes,
             dtype=torch.uint8,
             device=weight.device,
         )
         if codebooks is None:
             codebooks = torch.empty(
                 *tile_shape,
-                LUT_B_CODEBOOK_SIZE,
+                codebook_size,
                 dtype=torch.float8_e4m3fn,
                 device=weight.device,
             )
@@ -259,33 +279,33 @@ def quantize_lut_b(
 
     packed = torch.empty(
         *tile_shape,
-        LUT_B_PACKED_TILE_BYTES,
+        packed_tile_bytes,
         dtype=torch.uint8,
         device=weight.device,
     )
     fitted_codebooks = torch.empty(
         *tile_shape,
-        LUT_B_CODEBOOK_SIZE,
+        codebook_size,
         dtype=torch.float8_e4m3fn,
         device=weight.device,
     )
 
-    tiles = _weight_to_tiles(weight)
+    tiles = _weight_to_tiles(weight, args)
     flat_codebooks = (
-        codebooks.reshape(-1, LUT_B_CODEBOOK_SIZE) if codebooks is not None else None
+        codebooks.reshape(-1, codebook_size) if codebooks is not None else None
     )
-    flat_packed = packed.reshape(-1, LUT_B_PACKED_TILE_BYTES)
-    flat_fitted_codebooks = fitted_codebooks.reshape(-1, LUT_B_CODEBOOK_SIZE)
+    flat_packed = packed.reshape(-1, packed_tile_bytes)
+    flat_fitted_codebooks = fitted_codebooks.reshape(-1, codebook_size)
 
     for start in range(0, tiles.shape[0], max_tiles_per_chunk):
         end = min(start + max_tiles_per_chunk, tiles.shape[0])
         values = tiles[start:end].to(torch.float32)
         if flat_codebooks is None:
-            indices, centers = _fit_codebooks(values, num_iterations)
+            indices, centers = _fit_codebooks(values, args, num_iterations)
         else:
             centers = flat_codebooks[start:end]
             indices = _assign_indices(values, centers.to(torch.float32)).to(torch.uint8)
-        flat_packed[start:end] = pack_lut_b_indices(indices)
+        flat_packed[start:end] = pack_lut_b_indices(indices, args)
         flat_fitted_codebooks[start:end] = centers
 
     return packed, fitted_codebooks
@@ -295,11 +315,16 @@ def quantize_lut_b(
 def dequantize_lut_b(
     packed: torch.Tensor,
     codebooks: torch.Tensor,
+    args: QuantizationArgs,
     *,
     dtype: torch.dtype = torch.bfloat16,
 ) -> torch.Tensor:
     """Reconstruct a logical ``[..., N, K]`` weight from LUT-B tensors."""
-    if packed.ndim < 3 or packed.shape[-1] != LUT_B_PACKED_TILE_BYTES:
+    block_n, block_k = args.block_structure
+    codebook_size = 1 << args.num_bits
+    packed_tile_bytes = block_n * block_k * args.num_bits // 8
+
+    if packed.ndim < 3 or packed.shape[-1] != packed_tile_bytes:
         raise ValueError(f"Unexpected packed LUT-B shape {packed.shape}")
     if packed.dtype != torch.uint8:
         raise ValueError(f"Canonical LUT-B indices must use uint8, got {packed.dtype}")
@@ -311,7 +336,7 @@ def dequantize_lut_b(
     leading_shape = packed.shape[:-3]
     row_tiles, column_tiles = packed.shape[-3:-1]
     tile_shape = (*leading_shape, row_tiles, column_tiles)
-    _validate_codebook_shape(codebooks, tile_shape)
+    _validate_codebook_shape(codebooks, tile_shape, args)
     if codebooks.dtype != torch.float8_e4m3fn:
         raise ValueError(
             "Canonical LUT-B codebooks must use torch.float8_e4m3fn, "
@@ -320,23 +345,23 @@ def dequantize_lut_b(
     if packed.device.type == "meta":
         return torch.empty(
             *leading_shape,
-            row_tiles * LUT_B_BLOCK_N,
-            column_tiles * LUT_B_BLOCK_K,
+            row_tiles * block_n,
+            column_tiles * block_k,
             dtype=dtype,
             device=packed.device,
         )
 
-    indices = unpack_lut_b_indices(packed).reshape(-1, LUT_B_BLOCK_N * LUT_B_BLOCK_K)
+    indices = unpack_lut_b_indices(packed, args).reshape(-1, block_n * block_k)
     values = torch.gather(
-        codebooks.reshape(-1, LUT_B_CODEBOOK_SIZE).to(dtype),
+        codebooks.reshape(-1, codebook_size).to(dtype),
         1,
         indices.to(torch.int64),
     ).reshape(
         *leading_shape,
         row_tiles,
         column_tiles,
-        LUT_B_BLOCK_N,
-        LUT_B_BLOCK_K,
+        block_n,
+        block_k,
     )
     leading_dims = len(leading_shape)
     return values.permute(
@@ -347,16 +372,17 @@ def dequantize_lut_b(
         leading_dims + 3,
     ).reshape(
         *leading_shape,
-        row_tiles * LUT_B_BLOCK_N,
-        column_tiles * LUT_B_BLOCK_K,
+        row_tiles * block_n,
+        column_tiles * block_k,
     )
 
 
 @torch.no_grad()
 def fake_quantize_lut_b(
     weight: torch.Tensor,
+    args: QuantizationArgs,
     codebooks: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Quantize and dequantize a weight through the canonical LUT-B format."""
-    packed, fitted_codebooks = quantize_lut_b(weight, codebooks)
-    return dequantize_lut_b(packed, fitted_codebooks, dtype=weight.dtype)
+    packed, fitted_codebooks = quantize_lut_b(weight, args, codebooks)
+    return dequantize_lut_b(packed, fitted_codebooks, args, dtype=weight.dtype)

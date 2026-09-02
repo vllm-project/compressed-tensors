@@ -25,6 +25,7 @@ from compressed_tensors.quantization.utils import (
 from compressed_tensors.utils import patch_attr
 from torch.nn import Module
 
+
 __all__ = [
     "quantize",
     "dequantize",
@@ -56,7 +57,6 @@ def quantize(
     :param args: quantization args dictating how to quantize x
     :param dtype: optional dtype to cast the quantized output to
     :param global_scale: optional constant to scale the quantization scale during QDQ
-    :param codebooks: optional precomputed codebooks for codebook QDQ
     :return: fake quantized tensor
     """
 
@@ -171,7 +171,7 @@ def fake_quantize(
     :return: fake quantized tensor
     """
     if args.type == QuantizationType.CODEBOOK:
-        return fake_quantize_lut_b(x, codebooks)
+        return fake_quantize_lut_b(x, args, codebooks)
 
     return _process_quantization(
         x=x,
@@ -312,6 +312,7 @@ def forward_quantize(
             raise ValueError("Codebook quantization is only supported for weights")
         return fake_quantize_lut_b(
             value,
+            args,
             getattr(module, "weight_codebook", None),
         )
 

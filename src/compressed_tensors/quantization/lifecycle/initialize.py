@@ -33,6 +33,7 @@ from compressed_tensors.utils.helpers import deprecated
 from loguru import logger
 from torch.nn import Module, Parameter
 
+
 __all__ = [
     "initialize_module_for_quantization",
     "is_attention_module",

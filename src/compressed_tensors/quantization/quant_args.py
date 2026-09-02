@@ -16,6 +16,7 @@ from pydantic import (
     model_validator,
 )
 
+
 __all__ = [
     "FP8_E4M3_DATA",
     "FP4_E2M1_DATA",
@@ -361,23 +362,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 and strategy != QuantizationStrategy.TENSOR_GROUP
             ):
                 raise ValueError("local is only supported for strategy tensor_group")
-
-            if observer is not None:
-                if dynamic is True:  # checking if dynamic is True, not "local"
-                    if (
-                        observer != "memoryless"
-                    ):  # avoid annoying users with old configs
-                        warnings.warn(
-                            "No observer is used for dynamic quant., setting to None"
-                        )
-                    observer = None
-            else:
-                if dynamic == DynamicType.LOCAL:
-                    observer = "minmax"
-
-        elif observer is None and model.type != QuantizationType.CODEBOOK:
-            # default to minmax for non-dynamic cases
-            observer = "memoryless_minmax"
 
         if model.type == QuantizationType.CODEBOOK:
             if not model.symmetric:
