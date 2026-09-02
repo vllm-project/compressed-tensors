@@ -42,7 +42,7 @@ def test_lut_b_qdq_linear_forward():
     inputs = torch.randn(3, 64, dtype=torch.bfloat16)
 
     output = layer(inputs)
-    expected_weight = fake_quantize_lut_b(layer.weight)
+    expected_weight = fake_quantize_lut_b(layer.weight, scheme.weights)
 
     torch.testing.assert_close(output, F.linear(inputs, expected_weight))
 
@@ -59,7 +59,7 @@ def test_lut_b_qdq_linear_forward_uses_precomputed_codebook():
     inputs = torch.randn(2, 64)
 
     output = layer(inputs)
-    expected_weight = fake_quantize_lut_b(layer.weight, codebooks)
+    expected_weight = fake_quantize_lut_b(layer.weight, scheme.weights, codebooks)
 
     torch.testing.assert_close(output, F.linear(inputs, expected_weight))
 
@@ -87,6 +87,7 @@ def test_lut_b_compressor_uses_canonical_checkpoint_tensors():
     expected = dequantize_lut_b(
         state_dict["weight_packed"],
         state_dict["weight_codebook"],
+        scheme.weights,
     )
     decompress_module(layer)
 
