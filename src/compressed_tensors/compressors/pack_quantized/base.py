@@ -15,7 +15,6 @@ from compressed_tensors.compressors.pack_quantized.helpers import (
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.logger import logger
 from compressed_tensors.quantization import (
-    ActivationOrdering,
     QuantizationScheme,
     QuantizationStrategy,
     QuantizationType,
@@ -51,8 +50,6 @@ class PackedQuantizationCompressor(BaseCompressor):
         )
         if not getattr_chain(scheme, "weights.symmetric", True):
             param_names += ("weight_zero_point",)
-        if getattr_chain(scheme, "weights.actorder", None) == ActivationOrdering.GROUP:
-            param_names += ("weight_g_idx",)
         if (
             getattr_chain(scheme, "input_activations.strategy", None)
             == QuantizationStrategy.TENSOR_GROUP
@@ -81,7 +78,6 @@ class PackedQuantizationCompressor(BaseCompressor):
         weight = state_dict.pop("weight")
         scale = state_dict.get("weight_scale")
         zero_point = state_dict.get("weight_zero_point", None)
-        g_idx = state_dict.get("weight_g_idx", None)
         weights = scheme.weights
 
         if weight.device.type == "meta":
@@ -98,7 +94,6 @@ class PackedQuantizationCompressor(BaseCompressor):
             x=weight,
             scale=scale,
             zero_point=zero_point,
-            g_idx=g_idx,
             args=scheme.weights,
             dtype=torch.int8,
         )
@@ -132,7 +127,6 @@ class PackedQuantizationCompressor(BaseCompressor):
         packed = state_dict.pop("weight_packed")
         scale = state_dict.get("weight_scale")
         zero_point = state_dict.get("weight_zero_point", None)
-        g_idx = state_dict.get("weight_g_idx", None)
         original_shape = state_dict.get("weight_shape")
         weights = scheme.weights
 
@@ -180,7 +174,6 @@ class PackedQuantizationCompressor(BaseCompressor):
             x_q=unpacked,
             scale=scale,
             zero_point=zero_point,
-            g_idx=g_idx,
         )
 
         return state_dict
