@@ -82,6 +82,11 @@ def test_infer_strategy():
     assert args.strategy == QuantizationStrategy.CHANNEL
 
 
+def test_observer_is_not_resolved():
+    assert QuantizationArgs().observer is None
+    assert QuantizationArgs(observer="static_minmax").observer == "static_minmax"
+
+
 def test_enums():
     assert QuantizationArgs(
         type=QuantizationType.INT,

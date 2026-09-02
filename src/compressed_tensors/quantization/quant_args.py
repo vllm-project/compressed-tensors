@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import warnings
 from enum import Enum
 from typing import Any
 
@@ -298,8 +297,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         # commenting for linting, what should we do with this?
         # actorder = model.actorder
         dynamic = model.dynamic
-        observer = model.observer
-        dynamic = model.dynamic
         zp_dtype = model.zp_dtype
 
         # infer strategy
@@ -345,7 +342,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         if has_block_structure and not has_block_strategy:
             raise ValueError(f"Block structure requires block strategy\n{model}")
 
-        # infer observer w.r.t. dynamic
+        # validate dynamic quantization
         if dynamic:
             supported_strategies = (
                 QuantizationStrategy.TOKEN,
@@ -364,23 +361,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             ):
                 raise ValueError("local is only supported for strategy tensor_group")
 
-            if observer is not None:
-                if dynamic is True:  # checking if dynamic is True, not "local"
-                    if (
-                        observer != "memoryless"
-                    ):  # avoid annoying users with old configs
-                        warnings.warn(
-                            "No observer is used for dynamic quant., setting to None"
-                        )
-                    observer = None
-            else:
-                if dynamic == DynamicType.LOCAL:
-                    observer = "minmax"
-
-        elif observer is None:
-            # default to minmax for non-dynamic cases
-            observer = "memoryless_minmax"
-
         if zp_dtype is None:
             if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
                 zp_dtype = FP8_E4M3_DATA.dtype
@@ -389,8 +369,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
 
         # write back modified values
         model.strategy = strategy
-        model.observer = observer
         model.zp_dtype = zp_dtype
+
         return model
 
     def pytorch_dtype(self) -> torch.dtype:
