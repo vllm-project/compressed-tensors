@@ -7,7 +7,6 @@ from compressed_tensors.compressors.base import (
 )
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
-    ActivationOrdering,
     QuantizationScheme,
     QuantizationStrategy,
     QuantizationType,
@@ -41,8 +40,6 @@ class NaiveQuantizationCompressor(BaseCompressor):
         )
         if not getattr_chain(scheme, "weights.symmetric", True):
             param_names += ("weight_zero_point",)
-        if getattr_chain(scheme, "weights.actorder", None) == ActivationOrdering.GROUP:
-            param_names += ("weight_g_idx",)
         return param_names
 
     @classmethod
@@ -63,7 +60,6 @@ class NaiveQuantizationCompressor(BaseCompressor):
         weight = state_dict.pop("weight")
         scale = state_dict.get("weight_scale")
         zero_point = state_dict.get("weight_zero_point", None)
-        g_idx = state_dict.get("weight_g_idx", None)
         weights = scheme.weights
 
         original_weight_shape = weight.shape
@@ -80,7 +76,6 @@ class NaiveQuantizationCompressor(BaseCompressor):
             x=weight,
             scale=scale,
             zero_point=zero_point,
-            g_idx=g_idx,
             args=weights,
             dtype=weights.pytorch_dtype(),
         )
@@ -114,13 +109,11 @@ class NaiveQuantizationCompressor(BaseCompressor):
         weight = state_dict.pop("weight")
         scale = state_dict.get("weight_scale")
         zero_point = state_dict.get("weight_zero_point", None)
-        g_idx = state_dict.get("weight_g_idx", None)
 
         state_dict["weight"] = dequantize(
             x_q=weight,
             scale=scale,
             zero_point=zero_point,
-            g_idx=g_idx,
         )
 
         return state_dict

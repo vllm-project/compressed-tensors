@@ -40,7 +40,6 @@ def quantize(
     zero_point: torch.Tensor,
     args: QuantizationArgs,
     dtype: torch.dtype | None = None,
-    g_idx: torch.Tensor | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
@@ -55,7 +54,6 @@ def quantize(
     :param zero_point: zero point tensor
     :param args: quantization args dictating how to quantize x
     :param dtype: optional dtype to cast the quantized output to
-    :param g_idx: optional mapping from column index to group index
     :param global_scale: optional constant to scale the quantization scale during QDQ
     :return: fake quantized tensor
     """
@@ -68,7 +66,6 @@ def quantize(
         dtype=dtype,
         do_quantize=True,
         do_dequantize=False,
-        g_idx=g_idx,
         global_scale=global_scale,
     )
 
@@ -80,7 +77,6 @@ def dequantize(
     zero_point: torch.Tensor | None = None,
     args: QuantizationArgs | None = None,
     dtype: torch.dtype | None = None,
-    g_idx: torch.Tensor | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
@@ -92,7 +88,6 @@ def dequantize(
     :param zero_point: zero point tensor
     :param args: quantization args used to quantize x_q
     :param dtype: optional dtype to cast the dequantized output to
-    :param g_idx: optional mapping from column index to group index
     :param global_scale: optional constant to scale the quantization scale during QDQ
     :return: dequantized float tensor
     """
@@ -140,7 +135,6 @@ def dequantize(
         do_quantize=False,
         do_dequantize=True,
         dtype=dtype,
-        g_idx=g_idx,
         global_scale=global_scale,
     )
 
@@ -151,7 +145,6 @@ def fake_quantize(
     scale: torch.Tensor,
     zero_point: torch.Tensor,
     args: QuantizationArgs,
-    g_idx: torch.Tensor | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
@@ -165,7 +158,6 @@ def fake_quantize(
     :param scale: scale tensor
     :param zero_point: zero point tensor
     :param args: quantization args dictating how to quantize x
-    :param g_idx: optional mapping from column index to group index
     :param global_scale: optional constant to scale the quantization scale during QDQ
     :return: fake quantized tensor
     """
@@ -176,7 +168,6 @@ def fake_quantize(
         args=args,
         do_quantize=True,
         do_dequantize=True,
-        g_idx=g_idx,
         global_scale=global_scale,
     )
 
@@ -187,7 +178,6 @@ def _process_quantization(
     scale: torch.Tensor,
     zero_point: torch.Tensor,
     args: QuantizationArgs,
-    g_idx: torch.Tensor | None = None,
     dtype: torch.dtype | None = None,
     do_quantize: bool = True,
     do_dequantize: bool = True,
@@ -222,7 +212,6 @@ def _process_quantization(
             dtype,
             do_quantize,
             do_dequantize,
-            g_idx,
             global_scale,
         )
     else:
@@ -306,7 +295,6 @@ def forward_quantize(
         # skip quantization
         return value
 
-    g_idx = getattr(module, "weight_g_idx", None)
     global_scale = getattr(module, f"{base_name}_global_scale", None)
 
     if args.dynamic in (True, DynamicType.LOCAL):
@@ -324,6 +312,5 @@ def forward_quantize(
         scale=scale,
         zero_point=zero_point,
         args=args,
-        g_idx=g_idx,
         global_scale=global_scale,
     )
