@@ -33,7 +33,6 @@ from compressed_tensors.utils.helpers import deprecated
 from loguru import logger
 from torch.nn import Module, Parameter
 
-
 __all__ = [
     "initialize_module_for_quantization",
     "is_attention_module",
@@ -179,8 +178,8 @@ def initialize_qparams(
     device = get_execution_device(module)  # avoid performing intialization ops on cpu
 
     if quantization_args.type == QuantizationType.CODEBOOK:
-        # Codebook observers produce their named tensors directly instead of
-        # affine scale and zero-point parameters.
+        # Codebooks are currently disconnected from observers and produce their named
+        # qparams (weight_codebook, weight_packed) directly during compression.
         return
 
     # Skip all intialization for fully dynamic quantization
