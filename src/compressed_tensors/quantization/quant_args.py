@@ -149,10 +149,16 @@ class ActivationOrdering(Aliasable, str, Enum):
     # aliases
     STATIC = "static"
 
+    # Deprecated and unused, temporary
+    # fix for ci (2026/09/02)
+    GROUP = "group"
+    DYNAMIC = "dynamic"
+
     @staticmethod
     def get_aliases() -> dict[str, str]:
         return {
             "static": "weight",
+            "dynamic": "group",
         }
 
 
