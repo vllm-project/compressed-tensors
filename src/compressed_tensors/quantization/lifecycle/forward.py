@@ -25,7 +25,6 @@ from compressed_tensors.quantization.utils import (
 from compressed_tensors.utils import patch_attr
 from torch.nn import Module
 
-
 __all__ = [
     "quantize",
     "dequantize",
@@ -168,6 +167,7 @@ def fake_quantize(
     :param zero_point: zero point tensor
     :param args: quantization args dictating how to quantize x
     :param global_scale: optional constant to scale the quantization scale during QDQ
+    :param codebooks: optional precomputed codebooks, only for codebook QDQ
     :return: fake quantized tensor
     """
     if args.type == QuantizationType.CODEBOOK:
