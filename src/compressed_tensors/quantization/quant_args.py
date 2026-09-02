@@ -297,7 +297,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         # commenting for linting, what should we do with this?
         # actorder = model.actorder
         dynamic = model.dynamic
-        observer = model.observer
         zp_dtype = model.zp_dtype
 
         # infer strategy
