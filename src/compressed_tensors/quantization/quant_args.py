@@ -158,30 +158,26 @@ class ActivationOrdering(Aliasable, str, Enum):
 
 class QuantizationArgs(BaseModel, use_enum_values=True):
     """
-        User facing arguments used to define a quantization config for weights or
-        activations
+    User facing arguments used to define a quantization config for weights or
+    activations
 
-        :param num_bits: quantization bit depth
-    <<<<<<< HEAD
-        :param type: representation to quantize to: int, float, or codebook
-    =======
-        :param type: dtype to quantize to, either int or float
-    >>>>>>> main
-        :param symmetric: whether or not quantization scale is symmetric about zero-point
-        :param strategy: string id determining the scope of scale/zero-point to apply
-        :param group_size: group length to use for the group strategy
-        :param block_structure: 2d block structure to use for the block strategy; must be
-            a list of two ints [rows, cols] like [128, 128].
-        :param dynamic: set True to perform dynamic quantization - values will not be
-            calibrated during calibration phase, instead during inference new quantization
-            ranges will be observed with every sample. Defaults to False for static
-            quantization. Note that enabling dynamic quantization will change the default
-            observer to a memoryless one
-        :param actorder: activation ordering strategy for GPTQ calibration. Options are
-            GROUP (reorder by activation with g_idx mapping, higher accuracy but higher
-            latency -- removed 2026/08/27), WEIGHT (reorder columns by activation
-            magnitude during calibration only, normal
-            latency with slight accuracy improvement) or None (no activation ordering).
+    :param num_bits: quantization bit depth
+    :param type: representation to quantize to: int, float, or codebook
+    :param symmetric: whether or not quantization scale is symmetric about zero-point
+    :param strategy: string id determining the scope of scale/zero-point to apply
+    :param group_size: group length to use for the group strategy
+    :param block_structure: 2d block structure to use for the block strategy; must be
+        a list of two ints [rows, cols] like [128, 128].
+    :param dynamic: set True to perform dynamic quantization - values will not be
+        calibrated during calibration phase, instead during inference new quantization
+        ranges will be observed with every sample. Defaults to False for static
+        quantization. Note that enabling dynamic quantization will change the default
+        observer to a memoryless one
+    :param actorder: activation ordering strategy for GPTQ calibration. Options are
+        GROUP (reorder by activation with g_idx mapping, higher accuracy but higher
+        latency -- removed 2026/08/27), WEIGHT (reorder columns by activation
+        magnitude during calibration only, normal
+        latency with slight accuracy improvement) or None (no activation ordering).
     """
 
     num_bits: int = 8
