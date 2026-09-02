@@ -185,6 +185,7 @@ def is_preset_scheme(name: str) -> bool:
 UNQUANTIZED = dict()
 
 # TODO: confirm block structure and scale_dtype (None or e8m0)
+# https://github.com/NVIDIA/Model-Optimizer/issues/2204
 LUTB = dict(
     weights=QuantizationArgs(
         num_bits=3,
