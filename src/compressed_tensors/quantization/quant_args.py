@@ -149,8 +149,7 @@ class ActivationOrdering(Aliasable, str, Enum):
     # aliases
     STATIC = "static"
 
-    # Deprecated and unused, temporary
-    # fix for ci (2026/09/02)
+    # Dynamic activation ordering is deprecated
     GROUP = "group"
     DYNAMIC = "dynamic"
 
