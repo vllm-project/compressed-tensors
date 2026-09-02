@@ -15,30 +15,32 @@ def _round_to_fp4(x):
     Round float values to the nearest E2M1 representable value.
     FP4 values: 0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0 (and their negatives)
 
-    Based on vllm's nvfp4_emulation_utils.py implementation.
     """
-    sign_bit = x.to(tl.int16, bitcast=True) & (-32768)
-    abs_x = tl.abs(x)
+    sign = tl.where(x < 0.0, -32.0, 32.0)
+    x = tl.abs(x)
 
-    result = tl.zeros_like(abs_x)
-    result = tl.where(abs_x > 0.25, 0.5, result)
-    result = tl.where(abs_x >= 0.75, 1.0, result)
-    result = tl.where(abs_x > 1.25, 1.5, result)
-    result = tl.where(abs_x >= 1.75, 2.0, result)
-    result = tl.where(abs_x > 2.5, 3.0, result)
-    result = tl.where(abs_x >= 3.5, 4.0, result)
-    result = tl.where(abs_x > 5.0, 6.0, result)
+    # moves all values from 0 to .25 to 0. We do this first to clear up space
+    # to store the other rounded values temporarily in 0-.25 range.
+    x = tl.where(x <= 0.25, 0.0, x)
 
-    result = (result.to(tl.int16, bitcast=True) | sign_bit).to(
-        tl.bfloat16, bitcast=True
-    )
-    return result
+    # starting with largest bucket, round values to fp4 values divided by 32.
+    # this moves each value temporarily into the 0 to .25 range so it won't be
+    # picked up by subsequent threshold checks.
+    x = tl.where(x > 5.0, 6.0 / 32.0, x)
+    x = tl.where(x >= 3.5, 4.0 / 32.0, x)
+    x = tl.where(x > 2.5, 3.0 / 32.0, x)
+    x = tl.where(x >= 1.75, 2.0 / 32.0, x)
+    x = tl.where(x > 1.25, 1.5 / 32.0, x)
+    x = tl.where(x >= 0.75, 1.0 / 32.0, x)
+    x = tl.where(x > 0.25, 0.5 / 32.0, x)
+
+    #  sign is sign(x_orig)*32 so will rescale everything to exact fp4
+    return x * sign
 
 
 @triton.jit
 def _cast_to_fp4_kernel(
-    input_ptr,
-    output_ptr,
+    x_ptr,
     n,
     BLOCK_SIZE: tl.constexpr,
 ):
@@ -47,14 +49,12 @@ def _cast_to_fp4_kernel(
     offsets = block_start + tl.arange(0, BLOCK_SIZE)
     mask = offsets < n
 
-    x = tl.load(input_ptr + offsets, mask=mask, other=0.0)
-    x = x.to(tl.bfloat16)
-
+    x = tl.load(x_ptr + offsets, mask=mask, other=0.0)
     result = _round_to_fp4(x)
-    tl.store(output_ptr + offsets, result, mask=mask)
+    tl.store(x_ptr + offsets, result, mask=mask)
 
 
-@ImplBackend.register("cast_to_fp4", triton_req, "disable")
+@ImplBackend.register("cast_to_fp4", triton_req, 0)
 def cast_to_fp4_triton(x: torch.Tensor) -> torch.Tensor:
     """
     Triton implementation for FP4 E2M1 quantization
@@ -64,14 +64,13 @@ def cast_to_fp4_triton(x: torch.Tensor) -> torch.Tensor:
     """
     shape = x.shape
     x = x.contiguous().flatten()
-    output = torch.empty_like(x)
     n = x.numel()
     block_size = 1024
 
     grid = lambda meta: (triton.cdiv(n, meta["BLOCK_SIZE"]),)  # noqa: E731
-    _cast_to_fp4_kernel[grid](x, output, n, BLOCK_SIZE=block_size)
+    _cast_to_fp4_kernel[grid](x, n, BLOCK_SIZE=block_size)
 
-    return output.reshape(shape)
+    return x.reshape(shape)
 
 
 @ImplBackend.entrypoint("cast_to_fp4")

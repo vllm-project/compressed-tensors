@@ -125,11 +125,9 @@ def _process_group(
     dtype: torch.dtype | None,
     do_quantize: bool,
     do_dequantize: bool,
-    g_idx: torch.Tensor | None,
     global_scale: torch.Tensor | None,
 ) -> torch.Tensor:
-    """Group/tensor-group quantization: handle activation ordering, reshape
-    into groups, quantize, restore."""
+    """Group/tensor-group quantization: reshape into groups, quantize, restore."""
     group_size = args.group_size
     output_dtype = dtype if dtype is not None else x.dtype
     columns = x.shape[-1]
@@ -143,13 +141,6 @@ def _process_group(
             "tensor column shape must be divisble "
             f"by the given group_size {group_size} but got {columns}"
         )
-
-    # support column-order (default) quantization as well as other orderings
-    # such as activation ordering. Below checks if g_idx has been initialized
-    is_column_order = g_idx is None or g_idx.device.type == "meta" or -1 in g_idx
-    if not is_column_order:
-        perm = torch.argsort(g_idx)
-        x = x.index_select(-1, perm)
 
     # reshape last dim into (num_groups, group_size)
     reshaped_dims = (ceil(x.shape[-1] / group_size), group_size)
@@ -169,10 +160,6 @@ def _process_group(
     )
 
     output = output.flatten(start_dim=-2).to(output_dtype)
-
-    if not is_column_order:
-        inv_perm = torch.argsort(perm)
-        output = output.index_select(-1, inv_perm)
 
     return output
 
