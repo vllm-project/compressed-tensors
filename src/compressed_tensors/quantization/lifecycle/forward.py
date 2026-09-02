@@ -25,6 +25,7 @@ from compressed_tensors.quantization.utils import (
 from compressed_tensors.utils import patch_attr
 from torch.nn import Module
 
+
 __all__ = [
     "quantize",
     "dequantize",
