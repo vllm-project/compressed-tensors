@@ -15,6 +15,7 @@ from compressed_tensors.quantization.quant_args import (
 )
 from pydantic import BaseModel, ConfigDict, model_validator
 
+
 __all__ = [
     "QuantizationScheme",
     "preset_name_to_scheme",
