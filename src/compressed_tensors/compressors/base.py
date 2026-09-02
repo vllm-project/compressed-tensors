@@ -106,6 +106,9 @@ class BaseCompressor(RegistryMixin, ABC):
         scheme = getattr(module, "quantization_scheme")
 
         state_dict = get_direct_state_dict(module)
+        if scheme.weights is not None and state_dict.get("weight") is None:
+            return
+
         compressed_state_dict = cls.compress(state_dict, scheme)
         replace_direct_state_dict(module, compressed_state_dict)
 

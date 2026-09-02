@@ -74,7 +74,10 @@ def initialize_module_for_quantization(
 
     elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
         with disable_onloading():
-            weight = module.weight
+            weight = getattr(module, "weight", None)
+
+        if weight is None:
+            return
 
         if scheme.input_activations is not None:
             initialize_qparams(

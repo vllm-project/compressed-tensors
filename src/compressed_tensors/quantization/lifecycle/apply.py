@@ -162,6 +162,8 @@ def apply_quantization_config(
 
         # linear quantization
         elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            if getattr(module, "weight", None) is None:
+                continue
             module.quantization_scheme = scheme
             initialize_module_for_quantization(
                 module, force_zero_point=force_zero_point
