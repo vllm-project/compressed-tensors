@@ -16,6 +16,7 @@ from pydantic import (
     model_validator,
 )
 
+
 __all__ = [
     "FP8_E4M3_DATA",
     "FP4_E2M1_DATA",
