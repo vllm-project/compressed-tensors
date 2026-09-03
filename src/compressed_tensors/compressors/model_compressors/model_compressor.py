@@ -146,8 +146,8 @@ class ModelCompressor:
         # Collect all quantized modules
         desc = "Compressing model"
         modules = [
-            module
-            for _, module in model.named_modules(remove_duplicate=True)
+            (name, module)
+            for name, module in model.named_modules(remove_duplicate=True)
             if (
                 is_module_quantized(module)
                 and (
@@ -160,11 +160,16 @@ class ModelCompressor:
 
         # Compress modules using distributed or sequential
         if not is_distributed():
-            for module in tqdm(modules, desc=desc):
-                compress_module(module, self.force_compression_format)
+            for name, module in tqdm(modules, desc=desc):
+                try:
+                    compress_module(module, self.force_compression_format)
+                except ValueError as exc:
+                    raise ValueError(f"Error compressing module {name}: {exc}") from exc
         else:
             compress_fn = partial(compress_module, format=self.force_compression_format)
-            replace_module_parallel(modules, compress_fn, desc=desc)
+            replace_module_parallel(
+                [module for _, module in modules], compress_fn, desc=desc
+            )
 
         # update config status to reflect compression
         if self.quantization_config is not None:
