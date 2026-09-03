@@ -8,6 +8,7 @@ import torch
 from compressed_tensors.entrypoints.convert.memory import (
     _free_bytes,
     _pick_device,
+    _run_job_on_device,
     exec_jobs_dynamic,
 )
 
@@ -54,6 +55,47 @@ def test_pick_respects_reservations():
 def test_pick_skips_cpu_devices():
     cpu = torch.device("cpu")
     assert _pick_device([cpu], 1000, {}, {cpu: 0}) is None
+
+
+# ── worker device context ─────────────────────────────────────────────
+
+
+def test_run_job_selects_assigned_accelerator_device():
+    events = []
+
+    class DeviceContext:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append("exit")
+
+    device = torch.device("cuda:3")
+
+    def job(dev):
+        assert events == ["enter"]
+        assert dev == device
+        return "passed"
+
+    with patch(
+        "compressed_tensors.entrypoints.convert.memory.torch.accelerator.device_index",
+        return_value=DeviceContext(),
+    ) as device_index:
+        assert _run_job_on_device(job, device) == "passed"
+
+    device_index.assert_called_once_with(3)
+    assert events == ["enter", "exit"]
+
+
+def test_run_job_does_not_enter_device_context_for_cpu():
+    device = torch.device("cpu")
+
+    with patch(
+        "compressed_tensors.entrypoints.convert.memory.torch.accelerator.device_index"
+    ) as device_index:
+        assert _run_job_on_device(lambda dev: dev, device) == device
+
+    device_index.assert_not_called()
 
 
 # ── exec_jobs_dynamic: CPU path (no GPU required) ──────────────────────
