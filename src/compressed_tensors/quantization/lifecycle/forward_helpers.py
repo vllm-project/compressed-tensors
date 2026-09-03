@@ -471,6 +471,8 @@ def _quantize_triton(
         output_stride_1, output_stride_3 = out_strides
         output_stride_2 = 0
 
+    output_dtype = dtype if dtype is not None else x.dtype
+
     with torch.get_device_module().device(x.device):
         _quantize_kernel[grid](
             quantized_value,
@@ -505,10 +507,7 @@ def _quantize_triton(
 
     quantized_value = quantized_value.reshape(original_shape)
 
-    if dtype is not None:
-        quantized_value = quantized_value.to(dtype)
-
-    return quantized_value
+    return quantized_value.to(output_dtype)
 
 
 @torch.no_grad()
