@@ -1,0 +1,76 @@
+# See https://pre-commit.com for usage.
+# Install the git hooks with: pre-commit install
+# These hooks mirror the checks in `make quality` so issues are caught
+# locally before CI runs them. They run the tools from the active (dev)
+# environment (`pip install -e .[dev]`) so versions and config match CI.
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+default_stages:
+  - pre-commit
+repos:
+  - repo: local
+    hooks:
+      # black/isort/flake8 are scoped to PYCHECKDIRS (src tests) from
+      # `make quality` so pre-commit flags exactly what CI does — e.g. setup.py
+      # is intentionally excluded there and must stay excluded here.
+      #
+      # black from the active (dev) environment; mirrors
+      # `black --target-version py310 --check` from `make quality`.
+      - id: black
+        name: black
+        entry: black --target-version py310
+        language: system
+        types: [python]
+        files: ^(src|tests)/
+      # isort from the active (dev) environment; reads [isort] from setup.cfg.
+      - id: isort
+        name: isort
+        entry: isort
+        language: system
+        types: [python]
+        files: ^(src|tests)/
+      # flake8 from the active (dev) environment; reads [flake8] from setup.cfg.
+      - id: flake8
+        name: flake8
+        entry: flake8
+        language: system
+        types: [python]
+        files: ^(src|tests)/
+      # Mirrors `python utils/copyright.py quality <globs>` from `make quality`
+      # (PYCHECKGLOBS: src, tests, utils, examples, setup.py). The script globs
+      # each argument, so passing changed files works.
+      - id: copyright
+        name: copyright headers
+        entry: python utils/copyright.py quality
+        language: system
+        types: [python]
+        files: ^(src|tests|utils|examples)/|^setup\.py$
+      # Mirrors `python tools/lint_cuda.py <dirs> --fail-on-issues` from
+      # `make quality` (PYCHECKDIRS: src tests). The script accepts files.
+      - id: lint-cuda
+        name: lint cuda
+        entry: python tools/lint_cuda.py --fail-on-issues
+        language: system
+        types: [python]
+        files: ^(src|tests)/
+        require_serial: true
+      # Append a DCO Signed-off-by trailer if the commit message lacks one,
+      # matching the `git commit -s` requirement for vllm-project repos.
+      - id: signoff-commit
+        name: Sign-off commit
+        entry: bash
+        args:
+          - -c
+          - |
+            trailer="Signed-off-by: $(git config user.name) <$(git config user.email)>"
+            msg_file="$(git rev-parse --git-path COMMIT_EDITMSG)"
+            # -F/-x match the trailer as a literal, complete line so names/emails
+            # containing regex metacharacters (or a line with an extra suffix)
+            # can't be mistaken for an existing sign-off.
+            if ! grep -Fqx -- "$trailer" "$msg_file"; then
+              printf "\n%s\n" "$trailer" >> "$msg_file"
+            fi
+        language: system
+        stages: [commit-msg]
+        verbose: true

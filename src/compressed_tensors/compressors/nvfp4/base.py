@@ -15,7 +15,6 @@ from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationScheme,
-    QuantizationStrategy,
     QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
@@ -43,10 +42,7 @@ class NVFP4PackedCompressor(BaseCompressor):
         )
         if not getattr_chain(scheme, "weights.symmetric", True):
             param_names += ("weight_zero_point",)
-        if (
-            getattr_chain(scheme, "input_activations.strategy", None)
-            == QuantizationStrategy.TENSOR_GROUP
-        ):
+        if not getattr_chain(scheme, "input_activations.dynamic", True):
             param_names += ("input_global_scale",)
         return param_names
 

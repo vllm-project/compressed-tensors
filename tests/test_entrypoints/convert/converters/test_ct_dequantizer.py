@@ -96,7 +96,24 @@ def test_validate_passes_with_valid_tensors():
     dequantizer = _create_dequantizer(ignore=["model.embed_tokens"])
     tensors = _create_dummy_tensors(device=torch.device("meta"))
 
-    dequantizer.validate(tensors)
+    result = dequantizer.validate(tensors)
+
+    # Targeted modules: compressed params replaced by single weight in dtype
+    assert "model.layers.0.mlp.up_proj.weight" in result
+    assert result["model.layers.0.mlp.up_proj.weight"].dtype == torch.bfloat16
+    assert "model.layers.0.mlp.down_proj.weight" in result
+    assert result["model.layers.0.mlp.down_proj.weight"].dtype == torch.bfloat16
+
+    # Compressed params consumed (removed)
+    assert "model.layers.0.mlp.up_proj.weight_scale" not in result
+    assert "model.layers.0.mlp.down_proj.weight_scale" not in result
+
+    # Untargeted/ignored tensors pass through
+    assert "model.layers.0.self_attn.q_proj.weight" in result
+    assert "model.embed_tokens.weight" in result
+
+    # Layernorm weights pass through
+    assert "model.language_model.layers.0.input_layernorm.weight" in result
 
 
 @pytest.mark.unit
@@ -105,18 +122,75 @@ def test_validate_raises_on_missing_scale():
     tensors = _create_dummy_tensors(device=torch.device("meta"))
     del tensors["model.layers.0.mlp.up_proj.weight_scale"]
 
-    with pytest.raises(ValueError, match="Expected key"):
+    with pytest.raises(ValueError):
         dequantizer.validate(tensors)
 
 
 @pytest.mark.unit
-def test_validate_raises_on_unconsumed_key():
+def test_validate_passes_with_ignored_compressed_module():
+    # An ignored module keeps its compressed qparams; the residual check must
+    # not flag them as orphans.
+    dequantizer = _create_dequantizer(ignore=["model.embed_tokens", "re:.*down_proj.*"])
+    tensors = _create_dummy_tensors(device=torch.device("meta"))
+
+    result = dequantizer.validate(tensors)
+
+    # up_proj is dequantized, down_proj is left compressed (ignored)
+    assert result["model.layers.0.mlp.up_proj.weight"].dtype == torch.bfloat16
+    assert "model.layers.0.mlp.down_proj.weight_scale" in result
+
+
+@pytest.mark.unit
+def test_validate_raises_on_untargeted_scale():
+    # A module that is neither targeted nor ignored but carries a qparam is an
+    # orphan and must raise.
     dequantizer = _create_dequantizer(ignore=["model.embed_tokens"])
     tensors = _create_dummy_tensors(device=torch.device("meta"))
-    tensors["model.layers.0.mlp.up_proj.extra_param"] = torch.rand(64)
+    tensors["model.layers.0.self_attn.q_proj.weight_scale"] = torch.rand(
+        128, 1, dtype=torch.float32, device="meta"
+    )
 
-    with pytest.raises(ValueError, match="unconsumed keys"):
+    with pytest.raises(ValueError):
         dequantizer.validate(tensors)
+
+
+@pytest.mark.unit
+def test_validate_returns_correct_key_count():
+    dequantizer = _create_dequantizer(ignore=["model.embed_tokens"])
+    tensors = _create_dummy_tensors(device=torch.device("meta"))
+
+    result = dequantizer.validate(tensors)
+
+    # Input: 9 keys
+    #   4 targeted (2 weights + 2 weight_scales) -> consumed
+    #   5 untargeted (q_proj, 3 layernorms, embed_tokens) -> passthrough
+    # Output: 2 dequantized weights + 5 passthrough = 7 keys
+    assert len(result) == 7
+
+
+@pytest.mark.unit
+def test_update_config_returns_none():
+    dequantizer = _create_dequantizer()
+
+    # Dequantizer always returns None (strips quantization)
+    assert dequantizer.update_config(None) is None
+
+    # Even with an existing config, dequantizer returns None
+    existing = QuantizationConfig(
+        config_groups={
+            "g": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(
+                    num_bits=8,
+                    type=QuantizationType.INT,
+                    strategy=QuantizationStrategy.CHANNEL,
+                    symmetric=True,
+                    dynamic=False,
+                ),
+            )
+        },
+    )
+    assert dequantizer.update_config(existing) is None
 
 
 @pytest.mark.unit

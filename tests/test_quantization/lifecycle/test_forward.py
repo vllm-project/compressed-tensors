@@ -36,11 +36,6 @@ def _to_accel(x):
     return x.to(torch.accelerator.current_accelerator()) if x is not None else None
 
 
-def make_dummy_g_idx(columns: int, group_size: int) -> torch.Tensor:
-    perm = torch.randperm(columns)
-    return torch.tensor([index // group_size for index in range(columns)])[perm]
-
-
 def test_set_forward_quantized():
     layer = Linear(4, 4)
     func_forward = layer.forward.__func__
@@ -337,7 +332,7 @@ def test_forward_quantize(
 
 
 @pytest.mark.parametrize(
-    "num_bits,type,strategy,group_size,scale,zero_point,g_idx,global_scale",
+    "num_bits,type,strategy,group_size,scale,zero_point,global_scale",
     [
         (
             4,
@@ -347,7 +342,6 @@ def test_forward_quantize(
             torch.rand((1,)) * 0.01,
             torch.zeros((1,)),
             None,
-            None,
         ),
         (
             4,
@@ -356,17 +350,6 @@ def test_forward_quantize(
             128,
             torch.rand((512, 8)) * 0.01,
             torch.zeros((512, 8)),
-            None,
-            None,
-        ),
-        (
-            4,
-            "int",
-            QuantizationStrategy.GROUP,
-            128,
-            torch.rand((512, 8)) * 0.01,
-            torch.zeros((512, 8)),
-            make_dummy_g_idx(1024, 128),
             None,
         ),
         (
@@ -377,7 +360,6 @@ def test_forward_quantize(
             torch.rand((1,)) * 0.01,
             torch.zeros((1,)),
             None,
-            None,
         ),
         (
             8,
@@ -387,17 +369,6 @@ def test_forward_quantize(
             torch.rand((512, 8)) * 0.01,
             torch.zeros((512, 8)),
             None,
-            None,
-        ),
-        (
-            8,
-            "float",
-            QuantizationStrategy.GROUP,
-            128,
-            torch.rand((512, 8)) * 0.01,
-            torch.zeros((512, 8)),
-            make_dummy_g_idx(1024, 128),
-            None,
         ),
         (
             8,
@@ -406,23 +377,12 @@ def test_forward_quantize(
             128,
             torch.rand((512, 8)) * 0.01,
             torch.zeros((512, 8)),
-            None,
-            None,
-        ),
-        (
-            8,
-            "int",
-            QuantizationStrategy.GROUP,
-            128,
-            torch.rand((512, 8)) * 0.01,
-            torch.zeros((512, 8)),
-            make_dummy_g_idx(1024, 128),
             None,
         ),
     ],
 )
 def test_fake_quantize_2d(
-    num_bits, type, strategy, group_size, scale, zero_point, g_idx, global_scale
+    num_bits, type, strategy, group_size, scale, zero_point, global_scale
 ):
     args = QuantizationArgs(
         num_bits=num_bits, type=type, strategy=strategy, group_size=group_size
@@ -434,7 +394,6 @@ def test_fake_quantize_2d(
         scale=scale,
         zero_point=zero_point,
         args=args,
-        g_idx=g_idx,
         global_scale=global_scale,
     )  # note that reconstruction loss is bad for uncalibrated scales
 
@@ -1155,3 +1114,79 @@ def test_quantize_backends_match(args, x, scale, zero_point, global_scale):
     assert torch.allclose(
         torch_out.float(), triton_out.float(), atol=atol, rtol=rtol
     ), f"Max diff: {(torch_out.float() - triton_out.float()).abs().max().item()}"
+
+
+@requires_gpu(2)
+def test_quantize_triton_multi_gpu_device_context():
+    """
+    Verify that the Triton quantize kernel works correctly when tensors are on
+    a non-default GPU device (e.g., cuda:1 while current device is cuda:0).
+    """
+    from compressed_tensors.quantization.lifecycle.forward_helpers import (
+        _quantize_triton,
+    )
+    from compressed_tensors.quantization.quant_args import (
+        QuantizationArgs,
+        QuantizationStrategy,
+    )
+    from compressed_tensors.quantization.utils.helpers import calculate_range
+
+    # Ensure current device is cuda:0
+    torch.accelerator.set_device_index(0)
+    assert (
+        torch.accelerator.current_device_index() == 0
+    ), "Test requires cuda:0 as current device"
+    # Create all tensors on cuda:1 (NOT the current device)
+    target_device = torch.device("cuda:1")
+    num_rows = 512
+    num_cols = 1024
+    args = QuantizationArgs(
+        num_bits=8,
+        type="int",
+        symmetric=True,
+        strategy=QuantizationStrategy.TENSOR,
+    )
+    x = torch.randn(num_rows, num_cols, device=target_device, dtype=torch.bfloat16)
+    scale = torch.rand(1, device=target_device) * 0.01 + 0.001
+    q_min, q_max = calculate_range(args, target_device)
+    result = _quantize_triton(
+        x=x,
+        scale=scale,
+        zero_point=None,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        dtype=None,
+        global_scale=None,
+    )
+    # Verify the result is on the correct device
+    assert (
+        result.device == target_device
+    ), f"Result should be on {target_device}, got {result.device}"
+    assert result.shape == x.shape, f"Shape mismatch: {result.shape} vs {x.shape}"
+    # Verify current device is still cuda:0 (context manager shouldn't change it)
+    assert (
+        torch.accelerator.current_device_index() == 0
+    ), "Current device should still be cuda:0 after kernel execution"
+
+
+def test_calculate_range_memoized_on_field_values():
+    """calculate_range is memoized on (type, num_bits, device), not on
+    QuantizationArgs identity, so equal args constructed separately share
+    one cached result."""
+    device = torch.device("cpu")
+    args_a = QuantizationArgs(num_bits=4, type="int", symmetric=True)
+    args_b = QuantizationArgs(num_bits=4, type="int", symmetric=True)
+
+    q_min_a, q_max_a = calculate_range(args_a, device)
+    q_min_b, q_max_b = calculate_range(args_b, device)
+
+    assert q_min_a is q_min_b
+    assert q_max_a is q_max_b
+    assert q_min_a.item() == -8.0
+    assert q_max_a.item() == 7.0
+
+    # distinct field values map to distinct cache entries
+    q_min_8, q_max_8 = calculate_range(QuantizationArgs(num_bits=8, type="int"), device)
+    assert q_min_8.item() == -128.0
+    assert q_max_8.item() == 127.0
