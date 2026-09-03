@@ -46,7 +46,21 @@ class OffloadCache(MutableMapping, ABC):
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
 
     # a dict to track tensors to be offloaded, flush this to update all at once
-    to_be_offloaded: ClassVar[dict[torch.Tensor, tuple[cls, torch.Tensor]]] = dict()
+    # I have no idea if there is a better way to typehint this
+    to_be_offloaded: ClassVar[
+        dict[
+            torch.Tensor,
+            tuple[
+                CPUCache
+                | DistributedCPUCache
+                | DeviceCache
+                | DistributedDeviceCache
+                | DiskCache
+                | DistributedDiskCache,
+                torch.Tensor,
+            ],
+        ]
+    ] = dict()
 
     @classmethod
     def cls_from_device(
@@ -221,9 +235,9 @@ class OffloadCache(MutableMapping, ABC):
         # if the key already exists, update with the new value
         offloaded = self.offloaded_values.get(key, None)
         if self.offloading_disabled:
-            # defer offload update until after existing 
+            # defer offload update until after existing
             # disable_offloading context
-            # we need to store the class instance to call the correct `update_offload` 
+            # we need to store the class instance to call the correct `update_offload`
             # later, since the disabling method is a classmethod
             self.to_be_offloaded[offloaded] = (self, value)
         else:
