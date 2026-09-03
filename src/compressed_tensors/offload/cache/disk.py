@@ -92,6 +92,10 @@ class DiskCache(OffloadCache):
         if tensor is None:
             return None
 
+        # tensor needs to be contiguous 
+        # for safetensors to write it correctly
+        tensor = tensor.contiguous()
+
         if tensor.device.type == "meta":
             assert tensor in self.index
             return tensor
