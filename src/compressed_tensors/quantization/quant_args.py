@@ -16,7 +16,6 @@ from pydantic import (
     model_validator,
 )
 
-
 __all__ = [
     "FP8_E4M3_DATA",
     "FP4_E2M1_DATA",
@@ -393,7 +392,10 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             else:
                 return torch.int32
         elif self.type == QuantizationType.CODEBOOK:
-            return torch.uint8
+            if self.num_bits == 3:
+                return torch.uint8
+            else:
+                raise NotImplementedError("Only num_bits in (3) are supported")
         else:
             raise ValueError(f"Invalid quantization type {self.type}")
 
