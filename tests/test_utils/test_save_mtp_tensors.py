@@ -174,8 +174,14 @@ class TestSaveMtpTensorsToCheckpoint:
         """
         Verify that after the call the destination index file contains MTP keys
         pointing to the new shard, existing keys are preserved, and
-        metadata.total_size reflects the sizes of all shards in the weight_map.
+        metadata totals are incremented by the added MTP tensors.
         """
+        # Capture the destination index totals prior to the update
+        with open(dest_dir_with_index / SAFE_WEIGHTS_INDEX_NAME) as f:
+            initial_metadata = json.load(f).get("metadata", {})
+        initial_size = initial_metadata.get("total_size", 0)
+        initial_parameters = initial_metadata.get("total_parameters", 0)
+
         save_mtp_tensors_to_checkpoint(str(source_dir), str(dest_dir_with_index))
 
         with open(dest_dir_with_index / SAFE_WEIGHTS_INDEX_NAME) as f:
@@ -190,11 +196,16 @@ class TestSaveMtpTensorsToCheckpoint:
         # Pre-existing keys must not be removed
         assert "model.layer0.weight" in weight_map
 
-        # total_size must equal the sum of all referenced shard sizes on disk
-        expected_size = sum(
-            os.path.getsize(dest_dir_with_index / s) for s in set(weight_map.values())
+        # metadata totals are incremented by the size/parameters of the MTP tensors
+        mtp_tensors = _read_safetensors(
+            str(dest_dir_with_index / "model_mtp.safetensors")
+        )
+        expected_size = initial_size + sum(t.nbytes for t in mtp_tensors.values())
+        expected_parameters = initial_parameters + sum(
+            t.numel() for t in mtp_tensors.values()
         )
         assert index["metadata"]["total_size"] == expected_size
+        assert index["metadata"]["total_parameters"] == expected_parameters
 
     def test_single_shard_dest_creates_index(self, source_dir, tmp_path):
         """
@@ -233,16 +244,25 @@ class TestSaveMtpTensorsToCheckpoint:
         save_mtp_tensors_to_checkpoint(str(src), str(dest_dir_with_index))
         assert not os.path.exists(str(dest_dir_with_index / "model_mtp.safetensors"))
 
-    def test_missing_dest_files_raises(self, source_dir, tmp_path):
+    def test_empty_dest_creates_index(self, source_dir, tmp_path):
         """
-        Verify that a FileNotFoundError is raised when the destination directory
-        contains neither model.safetensors.index.json nor model.safetensors.
+        Verify that when the destination directory contains neither
+        model.safetensors.index.json nor model.safetensors, a fresh index is
+        synthesised containing only the newly added MTP keys.
         """
         empty_dest = tmp_path / "dest_empty"
         empty_dest.mkdir()
 
-        with pytest.raises(ValueError):
-            save_mtp_tensors_to_checkpoint(str(source_dir), str(empty_dest))
+        save_mtp_tensors_to_checkpoint(str(source_dir), str(empty_dest))
+
+        index_path = empty_dest / SAFE_WEIGHTS_INDEX_NAME
+        assert index_path.exists()
+
+        with open(index_path) as f:
+            index = json.load(f)
+
+        assert index["weight_map"].get("mtp.layer0.weight") == "model_mtp.safetensors"
+        assert index["weight_map"].get("mtp.layer1.weight") == "model_mtp.safetensors"
 
     def test_custom_mtp_prefix(self, dest_dir_with_index, tmp_path):
         """
