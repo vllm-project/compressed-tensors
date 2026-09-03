@@ -148,8 +148,7 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         cache.update_offload(offloaded, data)
 
     else:
-        with torch.no_grad():
-            getattr(module, name).copy_(data)
+        getattr(module, name).copy_(data)
 
 
 def get_execution_device(
