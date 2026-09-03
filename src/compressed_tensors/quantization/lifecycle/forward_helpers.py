@@ -273,11 +273,9 @@ def _process_group(
     dtype: torch.dtype | None,
     do_quantize: bool,
     do_dequantize: bool,
-    g_idx: torch.Tensor | None,
     global_scale: torch.Tensor | None,
 ) -> torch.Tensor:
-    """Group/tensor-group quantization: handle activation ordering, reshape
-    into groups, quantize, restore."""
+    """Group/tensor-group quantization: reshape into groups, quantize, restore."""
     group_size = args.group_size
     output_dtype = dtype if dtype is not None else x.dtype
     columns = x.shape[-1]
@@ -291,13 +289,6 @@ def _process_group(
             "tensor column shape must be divisble "
             f"by the given group_size {group_size} but got {columns}"
         )
-
-    # support column-order (default) quantization as well as other orderings
-    # such as activation ordering. Below checks if g_idx has been initialized
-    is_column_order = g_idx is None or g_idx.device.type == "meta" or -1 in g_idx
-    if not is_column_order:
-        perm = torch.argsort(g_idx)
-        x = x.index_select(-1, perm)
 
     # reshape last dim into (num_groups, group_size)
     reshaped_dims = (ceil(x.shape[-1] / group_size), group_size)
@@ -317,10 +308,6 @@ def _process_group(
     )
 
     output = output.flatten(start_dim=-2).to(output_dtype)
-
-    if not is_column_order:
-        inv_perm = torch.argsort(perm)
-        output = output.index_select(-1, inv_perm)
 
     return output
 
@@ -752,9 +739,9 @@ def _quantize_kernel(
 
     if has_global_scale:
         global_scale = tl.load(global_scale_ptr)
-        scale = scale / global_scale.to(scale.dtype)
+        scale = tl.div_rn(scale.to(tl.float32), global_scale.to(tl.float32))
 
-    output = input / scale
+    output = tl.div_rn(input.to(tl.float32), scale.to(tl.float32))
 
     if has_zero_point:
         zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
@@ -772,8 +759,7 @@ def _quantize_kernel(
     elif quant_type == QUANT_TYPE_FLOAT:
         output = tl.clamp(output, q_min, q_max)
         if num_bits == 4:
-            orig_dtype = output.dtype
-            output = _round_to_fp4(output.to(tl.bfloat16)).to(orig_dtype)
+            output = _round_to_fp4(output)
         elif num_bits == 8:
             output = output.to(tl.float8e4nv).to(output.dtype)
 
@@ -928,15 +914,17 @@ def _quantize_triton(
         output_stride_1, output_stride_3 = out_strides
         output_stride_2 = 0
 
+    output_dtype = dtype if dtype is not None else x.dtype
+
     with torch.get_device_module().device(x.device):
         _quantize_kernel[grid](
             quantized_value,
             x,
             scale,
-            zero_point if zero_point is not None else x,  # dummy pointer
+            zero_point if zero_point is not None else x,  # pass x as dummy
             q_min,
             q_max,
-            global_scale if global_scale is not None else x,  # dummy pointer
+            global_scale if global_scale is not None else x,  # pass x as dummy
             input_stride_0,
             input_stride_1,
             input_stride_2,
@@ -962,10 +950,7 @@ def _quantize_triton(
 
     quantized_value = quantized_value.reshape(original_shape)
 
-    if dtype is not None:
-        quantized_value = quantized_value.to(dtype)
-
-    return quantized_value
+    return quantized_value.to(output_dtype)
 
 
 @torch.no_grad()

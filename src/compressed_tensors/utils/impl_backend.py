@@ -48,7 +48,7 @@ class ImplBackend:
     _fn_registry: dict[str, Callable] = {}  # fn.__name__ -> backend_fn
 
     @classmethod
-    def register(cls, name: str, req: Callable[..., bool], priority: int):
+    def register(cls, name: str, req: Callable[..., bool], priority: int | str):
         """
         Decorator that registers a backend implementation.
 
@@ -59,10 +59,15 @@ class ImplBackend:
         :param req: callable returning True when this backend is usable; receives
             the same positional and keyword arguments as the dispatch wrapper, so
             requirements can inspect actual inputs (e.g. `lambda x: x.is_cuda`)
-        :param priority: lower values are tried first (higher priority)
+        :param priority: lower values are tried first (higher priority).
+            Set to ``"disable"`` to skip registration entirely, treating
+            the backend as if it were never registered.
         """
 
         def decorator(backend_fn: Callable) -> Callable:
+            if priority == "disable":
+                return backend_fn
+
             cls._add_to_registery(backend_fn)
 
             if name not in cls._backends:

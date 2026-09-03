@@ -35,7 +35,6 @@ class QuantizationMetadata:
                 "scale",
                 "shape",
                 "zero_point",
-                "g_idx",
             )
         ]
 

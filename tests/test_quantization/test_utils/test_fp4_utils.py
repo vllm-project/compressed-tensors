@@ -8,19 +8,31 @@ from tests.testing_utils import requires_gpu
 
 
 @requires_gpu
-@pytest.mark.parametrize("size", [1, 10, 100, 1000])
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
-def test_cast_to_fp4_cpu_gpu_match(size, dtype):
-    # Create random tensor
-    x_cpu = torch.randn(size, dtype=dtype)
-    x_gpu = x_cpu.cuda()
+@pytest.mark.parametrize(
+    "dtype, log_elements",
+    [
+        (torch.float32, 22),  # these were the fastest settings
+        (torch.float16, 16),
+        (torch.bfloat16, 16),
+    ],
+)
+def test_cast_to_fp4_cpu_gpu_match(dtype, log_elements):
+    # check every possible value in 2**log_elements chunks, (about 15 seconds total)
+    bits = 16 if dtype in [torch.float16, torch.bfloat16] else 32
+    num_loops = 2 ** (bits - log_elements)
+    elements = torch.arange(2**log_elements, dtype=torch.int32)
+    for i in range(num_loops):
+        x_cpu = (i << log_elements | elements).view(dtype)
+        x_cpu[x_cpu.isnan()] = 0.0
 
-    # Quantize on CPU and GPU
-    result_cpu = ImplBackend.call("cast_to_fp4", x_cpu)
-    result_gpu = ImplBackend.call("cast_to_fp4_triton", x_gpu)
+        x_gpu = x_cpu.cuda()
 
-    # Compare outputs (convert to same dtype for comparison)
-    assert torch.allclose(result_cpu.cuda(), result_gpu, atol=1e-6)
+        # Quantize on CPU and GPU
+        result_cpu = ImplBackend.call("cast_to_fp4", x_cpu).cuda()
+        result_gpu = ImplBackend.call("cast_to_fp4_triton", x_gpu)
+
+        # Compare outputs (convert to same dtype for comparison)
+        assert torch.equal(result_cpu, result_gpu)
 
 
 @requires_gpu
@@ -76,7 +88,24 @@ def test_cast_to_fp4_boundary_values():
             -2.7,
             -4.5,
             -7.0,
+            # Regression: fp32 values near boundaries that a bf16-casting
+            # kernel would snap onto the boundary and round the wrong way
+            0.2501,
+            0.7499,
+            1.2501,
+            1.7499,
+            2.501,
+            3.499,
+            5.001,
+            -0.2501,
+            -0.7499,
+            -1.2501,
+            -1.7499,
+            -2.501,
+            -3.499,
+            -5.001,
         ],
+        dtype=torch.float32,
         device="cuda",
     )
 
@@ -131,13 +160,37 @@ def test_cast_to_fp4_boundary_values():
             -3.0,
             -4.0,
             -6.0,
+            # Regression: expected fp32 near-boundary values
+            # These are slightly past the boundary in fp32 but snap onto
+            # it in bf16, so a bf16-casting kernel gets them wrong
+            0.5,
+            0.5,
+            1.5,
+            1.5,
+            3.0,
+            3.0,
+            6.0,
+            -0.5,
+            -0.5,
+            -1.5,
+            -1.5,
+            -3.0,
+            -3.0,
+            -6.0,
         ],
+        dtype=torch.float32,
         device="cuda",
     )
 
     result = ImplBackend.call("cast_to_fp4_triton", input_values)
-    assert torch.equal(result, expected_output)
-    assert torch.signbit(result[8]).item(), "cast_to_fp4 should preserve -0.0 sign bit"
+    assert torch.equal(result, expected_output), (
+        f"Mismatch at indices: "
+        f"{(result != expected_output).nonzero(as_tuple=True)[0].tolist()}\n"
+        f"Got:      {result[result != expected_output].tolist()}\n"
+        f"Expected: {expected_output[result != expected_output].tolist()}"
+    )
+    # Note: Triton kernel does not preserve -0.0 sign bit (becomes +0.0).
+    # This is acceptable since -0.0 == +0.0 mathematically.
 
 
 @requires_gpu

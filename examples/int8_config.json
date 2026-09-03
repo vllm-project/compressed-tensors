@@ -1,7 +1,4 @@
 {
-	"quant_method": "compressed-tensors",
-	"format": "naive-quantized",
-	"global_compression_ratio": null,
 	"config_groups": {
         "group_1": {
             "weights": {
@@ -18,5 +15,6 @@
             },
             "targets": ["Linear"]
         }
-    }
+    },
+    "ignore": ["lm_head"]
 }
