@@ -10,6 +10,7 @@ from compressed_tensors import (
     patch_attr,
     patch_attrs,
 )
+from compressed_tensors.utils.helpers import get_head_dim
 
 
 def test_patch_attr():
@@ -75,3 +76,30 @@ def test_get_nested_value(key, default, expected_value):
     a = {"b": 1, "c": {"d": 4}}
 
     assert get_nested_value(a, key, default) == expected_value
+
+
+def test_get_head_dim():
+    assert get_head_dim(SimpleNamespace(head_dim=256)) == 256
+    assert get_head_dim(SimpleNamespace(hidden_size=1536, num_attention_heads=8)) == 192
+    with pytest.raises(ValueError, match="Cannot determine head_dim"):
+        get_head_dim(SimpleNamespace())
+
+
+def test_get_head_dim_heterogeneous_config():
+    # transformers>=5 heterogeneous (per-layer) configs raise
+    # AmbiguousGlobalPerLayerAttributeError (a RuntimeError) when a per-layer
+    # attribute such as head_dim is read on the global config, which broke the
+    # previous hasattr-based lookup.
+    transformers = pytest.importorskip("transformers")
+    if not hasattr(transformers.PretrainedConfig, "per_layer_config"):
+        pytest.skip("heterogeneous configs require transformers>=5")
+
+    config = transformers.PretrainedConfig(
+        hidden_size=1536,
+        num_attention_heads=8,
+        head_dim=256,
+        num_hidden_layers=4,
+    )
+    config.per_layer_config = {1: {"head_dim": 128}}
+
+    assert get_head_dim(config) == 256
