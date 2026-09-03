@@ -62,3 +62,43 @@ pull_request_rules:
       label:
         remove:
           - quality-failed
+  
+  - name: auto-rebase if approved, ready, and 5 commits behind main
+    conditions:
+      - base = main
+      - label = ready
+      - label != stale
+      - "#approved-reviews-by >= 1"
+      - "#commits-behind >= 5"
+      - -closed
+      - -draft
+      - -conflict
+    actions:
+      rebase: {}
+
+merge_protections:
+  - name: Require one maintainer review
+    description: >-
+      All PRs must have at least one approving review from a maintainer
+      before merging.
+    if: []
+    success_conditions:
+      - or:
+          - approved-reviews-by=kylesayrs
+          - approved-reviews-by=dsikka
+          - approved-reviews-by=HDCharles
+          - approved-reviews-by=brian-dellabetta
+      - "#changes-requested-reviews-by = 0"
+
+  - name: Require two reviews
+    description: >-
+      PRs labelled "two-reviews" must have at least two approving reviews
+      before merging.
+    if:
+      - label = two-reviews
+    success_conditions:
+      - "#approved-reviews-by >= 2"
+      - "#changes-requested-reviews-by = 0"
+
+merge_protections_settings:
+  reporting_method: check-runs

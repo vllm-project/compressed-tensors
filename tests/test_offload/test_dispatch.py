@@ -8,6 +8,7 @@ import torch
 from compressed_tensors.offload.cache import CPUCache, OffloadCache
 from compressed_tensors.offload.dispatch import (
     dispatch_model,
+    dispatch_with_map,
     get_device_memory,
     set_onload_device,
 )
@@ -15,6 +16,11 @@ from compressed_tensors.offload.utils import module_size
 from tests.test_offload.conftest import skip_if_mps_device
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+
+ACCELERATOR_TYPE = torch.accelerator.current_accelerator().type
+ACCELERATOR_DEVICE_0 = torch.device(ACCELERATOR_TYPE, 0)
+ACCELERATOR_DEVICE_1 = torch.device(ACCELERATOR_TYPE, 1)
 
 
 class Decoder(torch.nn.Module):
@@ -76,16 +82,50 @@ def has_memory_requirements(device_memory: dict[torch.device, int]):
 
 
 @pytest.mark.unit
+def test_dispatch_with_map_skips_missing_local_modules():
+    # Sharded-MoE pattern: a device map is authored from the source rank's
+    # view of the model, then broadcast to every rank (see from_accelerate).
+    # On ranks that do not own a given routed expert, that ModuleList slot is
+    # a None placeholder, so dispatch_with_map must skip the map entry rather
+    # than crash in model.get_submodule (issue #711).
+    class MoEModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.experts = torch.nn.ModuleList(
+                [None, torch.nn.Linear(5, 5), None, torch.nn.Linear(5, 5)]
+            )
+
+    model = MoEModel()
+    cpu = torch.device("cpu")
+    device_map = {
+        "experts.0": (cpu, cpu),  # None placeholder on this rank
+        "experts.1": (cpu, cpu),
+        "experts.2": (cpu, cpu),  # None placeholder on this rank
+        "experts.3": (cpu, cpu),
+    }
+
+    with patch("compressed_tensors.offload.dispatch.offload_module") as mock_offload:
+        # must not raise AttributeError("`0` is not an nn.Module")
+        dispatch_with_map(model, device_map, show_progress=False)
+
+    dispatched = [call.args[0] for call in mock_offload.call_args_list]
+    # only the locally-present experts are dispatched; None slots are skipped
+    assert mock_offload.call_count == 2
+    assert model.experts[1] in dispatched
+    assert model.experts[3] in dispatched
+
+
+@pytest.mark.unit
 @skip_if_mps_device
 @requires_gpu
 def test_dispatch_one_device():
     model = Model()
-    device_memory = {torch.device("cuda:0"): module_size(model)}
+    device_memory = {ACCELERATOR_DEVICE_0: module_size(model)}
     if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform one device dispatch test, not enough device memory")
 
     dispatch_model(model, device_memory=device_memory, extra_memory=0)
-    assert_module_on_device(model, "cuda:0")
+    assert_module_on_device(model, ACCELERATOR_DEVICE_0)
 
 
 @pytest.mark.unit
@@ -94,16 +134,16 @@ def test_dispatch_one_device():
 def test_dispatch_two_devices():
     model = Model()
     device_memory = {
-        torch.device("cuda:0"): module_size(model.decoder0),
-        torch.device("cuda:1"): module_size(model) - module_size(model.decoder0),
+        ACCELERATOR_DEVICE_0: module_size(model.decoder0),
+        ACCELERATOR_DEVICE_1: module_size(model) - module_size(model.decoder0),
     }
     if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
 
     # first decoder on first device, rest on second device
     dispatch_model(model, device_memory=device_memory, extra_memory=0)
-    assert_module_on_device(model.decoder0, "cuda:0")
-    assert_module_on_device(model.decoder1, "cuda:1")
+    assert_module_on_device(model.decoder0, ACCELERATOR_DEVICE_0)
+    assert_module_on_device(model.decoder1, ACCELERATOR_DEVICE_1)
 
 
 @pytest.mark.unit
@@ -112,15 +152,15 @@ def test_dispatch_two_devices():
 def test_dispatch_no_split():
     model = Model()
     device_memory = {
-        torch.device("cuda:0"): module_size(model.decoder0.linear0),
-        torch.device("cuda:1"): module_size(model),
+        ACCELERATOR_DEVICE_0: module_size(model.decoder0.linear0),
+        ACCELERATOR_DEVICE_1: module_size(model),
     }
     if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform split dispatch test: not enough devices or mem")
 
     # first device is skipped: all ends up on second device
     dispatch_model(model, device_memory=device_memory, extra_memory=0)
-    assert_module_on_device(model, "cuda:1")
+    assert_module_on_device(model, ACCELERATOR_DEVICE_1)
 
 
 @pytest.mark.unit
@@ -130,8 +170,8 @@ def test_dispatch_split():
     model = Model()
     first_linear = model.decoder0.linear0
     device_memory = {
-        torch.device("cuda:0"): module_size(first_linear),
-        torch.device("cuda:1"): module_size(model) - module_size(first_linear),
+        ACCELERATOR_DEVICE_0: module_size(first_linear),
+        ACCELERATOR_DEVICE_1: module_size(model) - module_size(first_linear),
     }
     if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform split dispatch test: not enough devices or memory")
@@ -140,9 +180,9 @@ def test_dispatch_split():
     dispatch_model(
         model, device_memory=device_memory, no_split_modules=tuple(), extra_memory=0
     )
-    assert_module_on_device(model.decoder0.linear0, "cuda:0")
-    assert_module_on_device(model.decoder0.linear1, "cuda:1")
-    assert_module_on_device(model.decoder1, "cuda:1")
+    assert_module_on_device(model.decoder0.linear0, ACCELERATOR_DEVICE_0)
+    assert_module_on_device(model.decoder0.linear1, ACCELERATOR_DEVICE_1)
+    assert_module_on_device(model.decoder1, ACCELERATOR_DEVICE_1)
 
 
 @pytest.mark.unit
@@ -151,7 +191,7 @@ def test_dispatch_split():
 def test_dispatch_offloaded():
     model = Model()
     device_memory = {
-        torch.device("cuda:0"): (
+        ACCELERATOR_DEVICE_0: (
             module_size(model.decoder0.linear0) + module_size(model.decoder1)
         ),
     }
@@ -171,9 +211,9 @@ def test_dispatch_offloaded():
         dispatch_model(
             model, device_memory=device_memory, no_split_modules=tuple(), extra_memory=0
         )
-        assert_module_on_device(model.decoder0.linear0, "cuda:0")
-        assert_module_offloaded(model.decoder0.linear1, "cuda:0", "cpu")
-        assert_module_offloaded(model.decoder1, "cuda:0", "cpu")
+        assert_module_on_device(model.decoder0.linear0, ACCELERATOR_DEVICE_0)
+        assert_module_offloaded(model.decoder0.linear1, ACCELERATOR_DEVICE_0, "cpu")
+        assert_module_offloaded(model.decoder1, ACCELERATOR_DEVICE_0, "cpu")
 
 
 @pytest.mark.integration
@@ -186,32 +226,32 @@ def test_offload_and_dispatch_model(model_id):
     tokenizer = AutoTokenizer.from_pretrained(model_id)
 
     tied_tensors_size = model.lm_head.weight.nbytes
-    device_memory = {torch.device("cuda:0"): module_size(model) + tied_tensors_size}
+    device_memory = {ACCELERATOR_DEVICE_0: module_size(model) + tied_tensors_size}
     if not has_memory_requirements(device_memory):
         pytest.skip("Cannot perform split dispatch test: not enough devices or mem")
 
-    model.to("cuda:0")
+    model.to(ACCELERATOR_DEVICE_0)
     sample = tokenizer("Hello my name is", return_tensors="pt")
-    sample = {k: v.to("cuda:0") for k, v in sample.items()}
+    sample = {k: v.to(ACCELERATOR_DEVICE_0) for k, v in sample.items()}
     true_logits = model(**sample).logits
 
     # offload entire model
     model.to("cpu")
-    model = set_onload_device(model, "cuda:0")
+    model = set_onload_device(model, ACCELERATOR_DEVICE_0)
     offloaded_logits = model(**sample).logits
     for module in model.modules():
-        assert_module_offloaded(module, "cuda:0", torch.device("cpu"))
+        assert_module_offloaded(module, ACCELERATOR_DEVICE_0, torch.device("cpu"))
     assert torch.allclose(offloaded_logits, true_logits)
 
     # dispatch model and fits
     model = dispatch_model(model, device_memory=device_memory, extra_memory=0)
     dispatched_logits = model(**sample).logits
     for module in model.modules():
-        assert_module_on_device(module, "cuda:0")
+        assert_module_on_device(module, ACCELERATOR_DEVICE_0)
     assert torch.allclose(dispatched_logits, true_logits)
 
     # dispatch model with offload
-    device_memory[torch.device("cuda:0")] = device_memory[torch.device("cuda:0")] // 2
+    device_memory[ACCELERATOR_DEVICE_0] = device_memory[ACCELERATOR_DEVICE_0] // 2
     model = dispatch_model(model, device_memory=device_memory, extra_memory=0)
     dispatched_logits = model(**sample).logits
     assert torch.allclose(dispatched_logits, true_logits)

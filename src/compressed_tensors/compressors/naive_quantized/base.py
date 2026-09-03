@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import torch
-from compressed_tensors.compressors.base import BaseCompressor
+from compressed_tensors.compressors.base import (
+    COMPRESSIBLE_MODULE_TYPES,
+    BaseCompressor,
+)
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
-    ActivationOrdering,
     QuantizationScheme,
     QuantizationStrategy,
     QuantizationType,
@@ -39,8 +40,6 @@ class NaiveQuantizationCompressor(BaseCompressor):
         )
         if not getattr_chain(scheme, "weights.symmetric", True):
             param_names += ("weight_zero_point",)
-        if getattr_chain(scheme, "weights.actorder", None) == ActivationOrdering.GROUP:
-            param_names += ("weight_g_idx",)
         return param_names
 
     @classmethod
@@ -61,7 +60,6 @@ class NaiveQuantizationCompressor(BaseCompressor):
         weight = state_dict.pop("weight")
         scale = state_dict.get("weight_scale")
         zero_point = state_dict.get("weight_zero_point", None)
-        g_idx = state_dict.get("weight_g_idx", None)
         weights = scheme.weights
 
         original_weight_shape = weight.shape
@@ -78,7 +76,6 @@ class NaiveQuantizationCompressor(BaseCompressor):
             x=weight,
             scale=scale,
             zero_point=zero_point,
-            g_idx=g_idx,
             args=weights,
             dtype=weights.pytorch_dtype(),
         )
@@ -112,13 +109,11 @@ class NaiveQuantizationCompressor(BaseCompressor):
         weight = state_dict.pop("weight")
         scale = state_dict.get("weight_scale")
         zero_point = state_dict.get("weight_zero_point", None)
-        g_idx = state_dict.get("weight_g_idx", None)
 
         state_dict["weight"] = dequantize(
             x_q=weight,
             scale=scale,
             zero_point=zero_point,
-            g_idx=g_idx,
         )
 
         return state_dict
@@ -129,7 +124,7 @@ class NaiveQuantizationCompressor(BaseCompressor):
         Naive quantization is the fallback compressor - it matches any quantized
         scheme that doesn't match a more specific compressor.
         """
-        return module_type == torch.nn.Linear and scheme.weights is not None
+        return module_type in COMPRESSIBLE_MODULE_TYPES and scheme.weights is not None
 
 
 @BaseCompressor.register(name=CompressionFormat.int_quantized.value)
@@ -140,7 +135,7 @@ class IntQuantizationCompressor(NaiveQuantizationCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Int quantized matches w8a8 int quantization."""
         return (
-            module_type == torch.nn.Linear
+            module_type in COMPRESSIBLE_MODULE_TYPES
             and scheme.input_activations is not None
             and scheme.weights is not None
             and scheme.weights.type == QuantizationType.INT.value
@@ -155,7 +150,7 @@ class FloatQuantizationCompressor(NaiveQuantizationCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Float quantized matches w8a8 float quantization."""
         return (
-            module_type == torch.nn.Linear
+            module_type in COMPRESSIBLE_MODULE_TYPES
             and scheme.input_activations is not None
             and scheme.weights is not None
             and scheme.weights.type == QuantizationType.FLOAT.value

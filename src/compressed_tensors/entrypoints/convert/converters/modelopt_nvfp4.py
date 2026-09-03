@@ -36,6 +36,39 @@ class ModelOptNvfp4Converter(Converter):
         if self.kv_cache_scheme is not None:
             self.param_names += ["k_scale", "v_scale"]
 
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """
+        Process, then flag any non-ignored qparam that a full process run would
+        only leave on a converted module. process renames weight to weight_packed
+        on every module it handles, so weight_packed marks a processed module,
+        and it only retypes k/v scales when a kv_cache_scheme is configured.
+        Checking both keys off process's output rather than re-deriving the
+        target matching. Returns the processed tensors so chained converters
+        observe the resulting format.
+        """
+        tensors = self.process(tensors)
+
+        source_qparams = {"input_scale", "weight_scale", "weight_scale_2"}
+        orphans = []
+        for name in tensors:
+            module_name, _, param_name = name.rpartition(".")
+            if any(match_name(module_name, ign) for ign in self.ignore):
+                continue
+            converted = f"{module_name}.weight_packed" in tensors
+            if param_name in source_qparams and not converted:
+                orphans.append(name)
+            elif param_name in {"k_scale", "v_scale"} and (
+                self.kv_cache_scheme is None or not converted
+            ):
+                orphans.append(name)
+        if orphans:
+            raise ValueError(
+                f"Found {len(orphans)} quantization param(s) without a converted "
+                f"weight_packed, indicating untargeted or orphan qparams: {orphans}"
+            )
+
+        return tensors
+
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
         Map the modelopt NVFP4 tensors to the appropriate compressed-tensors
@@ -82,37 +115,6 @@ class ModelOptNvfp4Converter(Converter):
 
         return tensors
 
-    def validate(self, tensors: dict[str, torch.Tensor]):
-        """
-        Ensure all tensor names of targeted layers are expected and no
-        untargeted layers have unexpected tensor names
-        """
-
-        targeted_names = [
-            name
-            for _, name in match_quantizable_tensors(
-                tensors, self.ignore, self.targets, param_targets=self.param_names
-            )
-        ]
-        for name in targeted_names:
-            param_name = name.rpartition(".")[-1]
-
-        disallowed_names = [
-            "input_scale",
-            "weight_scale",
-            "weight_scale_2",
-            "k_scale",
-            "v_scale",
-        ]
-        untargeted_names = [
-            name for name in tensors.keys() if name not in targeted_names
-        ]
-        for name in untargeted_names:
-            param_name = name.rpartition(".")[-1]
-
-            if param_name in disallowed_names:
-                raise ValueError(f"Hit unexpected non-targeted tensor {name}")
-
     def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, _, param_name = weight_name.rpartition(".")
         if (
@@ -136,7 +138,7 @@ class ModelOptNvfp4Converter(Converter):
 
         return set()
 
-    def create_config(self) -> QuantizationConfig:
+    def _build_quant_config(self) -> QuantizationConfig:
         return QuantizationConfig(
             config_groups={
                 "config_group_0": QuantizationScheme(
@@ -150,3 +152,12 @@ class ModelOptNvfp4Converter(Converter):
             format=CompressionFormat.nvfp4_pack_quantized.value,
             quantization_status=QuantizationStatus.COMPRESSED.value,
         )
+
+    def update_config(
+        self, config: QuantizationConfig | None
+    ) -> QuantizationConfig | None:
+        quant_config = self._build_quant_config()
+        if config is not None:
+            config.merge(quant_config)
+            return config
+        return quant_config

@@ -10,6 +10,7 @@ quality:
 	black --target-version py310 --check $(PYCHECKDIRS);
 	isort --check-only $(PYCHECKDIRS);
 	flake8 $(PYCHECKDIRS);
+	python tools/lint_cuda.py $(PYCHECKDIRS) --fail-on-issues;
 
 # style the code according to accepted standards for the repo
 style:
@@ -18,13 +19,18 @@ style:
 	@echo "Running python styling";
 	black --target-version py310 $(PYCHECKDIRS);
 	isort $(PYCHECKDIRS);
+	python tools/lint_cuda.py $(PYCHECKDIRS) --fix
 
 # run tests for the repo
 test:
 	@echo "Running python tests";
-	pytest -ra tests;
-	@echo "Running emulated XPU tests";
-	pytest -ra -c pytest-xpu.ini --emulate-xpu;
+	pytest -ra tests --ignore tests/test_tools;
+
+# run xpu tests for the repo
+test-xpu: 
+	@echo "Running xpu tests"
+	pytest -c pytest-xpu.ini;
+
 
 # creates wheel file
 build:

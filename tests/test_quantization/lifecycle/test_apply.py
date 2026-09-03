@@ -3,6 +3,7 @@
 
 import re
 import shutil
+from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import MagicMock
 
@@ -469,6 +470,68 @@ def test_apply_kv_cache():
         assert hasattr(layer.self_attn, "v_scale")
 
 
+def test_apply_kv_cache_skips_non_cache_attention():
+    class TextAttention(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.k_proj = torch.nn.Linear(4, 4)
+
+        def forward(self, hidden_states, past_key_value=None):
+            return hidden_states
+
+    class VisionAttention(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.k_proj = torch.nn.Linear(4, 4)
+
+        def forward(self, hidden_states, **kwargs):
+            return hidden_states
+
+    class CompositeModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.config = CompositeConfig()
+            self.text_attention = TextAttention()
+            self.vision_attention = VisionAttention()
+
+    class CompositeConfig:
+        def __init__(self):
+            self.text_config = SimpleNamespace(
+                num_attention_heads=2,
+                num_key_value_heads=1,
+                head_dim=2,
+            )
+            self.vision_config = SimpleNamespace(model_type="vision")
+            self.decoder = None
+
+        def get_text_config(self, decoder=False):
+            self.decoder = decoder
+            return self.text_config
+
+    model = CompositeModel()
+    args = QuantizationArgs(
+        num_bits=8,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR,
+        scale_dtype=FP8_E4M3_DATA.dtype,
+        zp_dtype=torch.float,
+    )
+    config = QuantizationConfig(config_groups={}, kv_cache_scheme=args)
+
+    apply_quantization_config(model, config)
+
+    assert model.config.decoder is True
+    assert model.config.vision_config.model_type == "vision"
+    assert hasattr(model.text_attention, "kv_cache")
+    assert model.text_attention.kv_cache.config is model.config.text_config
+    assert hasattr(model.text_attention, "k_scale")
+    assert hasattr(model.text_attention, "v_scale")
+    assert not hasattr(model.vision_attention, "quantization_scheme")
+    assert not hasattr(model.vision_attention, "kv_cache")
+    assert not hasattr(model.vision_attention, "k_scale")
+    assert not hasattr(model.vision_attention, "v_scale")
+
+
 def test_apply_attention():
     model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
 
@@ -491,3 +554,111 @@ def test_apply_attention():
         assert hasattr(layer.self_attn, "q_scale")
         assert hasattr(layer.self_attn, "k_scale")
         assert hasattr(layer.self_attn, "v_scale")
+
+
+linear_scheme = QuantizationScheme(targets=["Linear"])
+attention_scheme = QuantizationScheme(
+    targets=["LlamaAttention"],
+    input_activations=QuantizationArgs(num_bits=8, type="float", strategy="tensor"),
+)
+attention_linears = QuantizationScheme(targets=[r"re:.*self_attn\..*"])
+mlp_linears = QuantizationScheme(targets=[r"re:.*mlp\..*"])
+down_proj_scheme = QuantizationScheme(targets=["re:.*down_proj"])
+
+
+@pytest.mark.parametrize(
+    "config, expected_schemes",
+    [
+        # all linears
+        (
+            QuantizationConfig(config_groups={"group_0": linear_scheme}),
+            {
+                p: linear_scheme
+                for p in [
+                    f"model.layers.{i}.self_attn.{k}_proj"
+                    for i in range(6)
+                    for k in "qkvo"
+                ]
+                + [
+                    f"model.layers.{i}.mlp.{k}_proj"
+                    for i in range(6)
+                    for k in ["gate", "up", "down"]
+                ]
+                + ["lm_head"]
+            },
+        ),
+        # only attention
+        (
+            QuantizationConfig(config_groups={"group_0": attention_scheme}),
+            {f"model.layers.{i}.self_attn": attention_scheme for i in range(6)},
+        ),
+        # linear and attention
+        (
+            QuantizationConfig(
+                config_groups={"attention": attention_scheme, "linear": linear_scheme},
+            ),
+            {
+                **{f"model.layers.{i}.self_attn": attention_scheme for i in range(6)},
+                **{
+                    p: linear_scheme
+                    for p in [
+                        f"model.layers.{i}.self_attn.{k}_proj"
+                        for i in range(6)
+                        for k in "qkvo"
+                    ]
+                    + [
+                        f"model.layers.{i}.mlp.{k}_proj"
+                        for i in range(6)
+                        for k in ["gate", "up", "down"]
+                    ]
+                    + ["lm_head"]
+                },
+            },
+        ),
+        # only down proj
+        (
+            QuantizationConfig(config_groups={"group_0": down_proj_scheme}),
+            {f"model.layers.{i}.mlp.down_proj": down_proj_scheme for i in range(6)},
+        ),
+        # attention linears and mlp linears as separate groups
+        (
+            QuantizationConfig(
+                config_groups={
+                    "attention_linears": attention_linears,
+                    "mlp_linears": mlp_linears,
+                },
+            ),
+            {
+                **{
+                    f"model.layers.{i}.self_attn.{k}_proj": attention_linears
+                    for i in range(6)
+                    for k in "qkvo"
+                },
+                **{
+                    f"model.layers.{i}.mlp.{k}_proj": mlp_linears
+                    for i in range(6)
+                    for k in ["gate", "up", "down"]
+                },
+            },
+        ),
+    ],
+)
+def test_apply_model(config, expected_schemes):
+    model = AutoModelForCausalLM.from_pretrained(
+        "nm-testing/tinysmokellama-3.2",
+        cache_dir="test-apply-model-cache",
+    )
+    apply_quantization_config(model, config)
+
+    for name, module in model.named_modules():
+        if name in expected_schemes:
+            assert hasattr(
+                module, "quantization_scheme"
+            ), f"{name} should have quantization_scheme"
+            assert (
+                module.quantization_scheme == expected_schemes[name]
+            ), f"{name} has wrong scheme"
+        else:
+            assert not hasattr(
+                module, "quantization_scheme"
+            ), f"{name} should not have quantization_scheme"

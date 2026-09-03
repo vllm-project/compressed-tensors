@@ -2,7 +2,10 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
-from compressed_tensors.compressors.base import BaseCompressor
+from compressed_tensors.compressors.base import (
+    COMPRESSIBLE_MODULE_TYPES,
+    BaseCompressor,
+)
 from compressed_tensors.compressors.mx_utils import (
     compress_mx_scale,
     decompress_mx_scale,
@@ -14,6 +17,7 @@ from compressed_tensors.quantization import (
     QuantizationScheme,
     QuantizationType,
 )
+from compressed_tensors.utils import getattr_chain
 
 
 __all__ = ["MXFP4PackedCompressor"]
@@ -26,6 +30,17 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
 
     Overrides scale compression to use log2 encoding (bias-127 exponent).
     """
+
+    @classmethod
+    def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        # MXFP4 uses GROUP strategy (not TENSOR_GROUP), so there is no
+        # weight_global_scale parameter
+        param_names = ("weight_packed", "weight_scale")
+        if not getattr_chain(scheme, "weights.symmetric", True):
+            param_names += ("weight_zero_point",)
+        if not getattr_chain(scheme, "input_activations.dynamic", True):
+            param_names += ("input_global_scale",)
+        return param_names
 
     @classmethod
     def _compress_scale(
@@ -42,7 +57,7 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """MXFP4 matches FP4 with group_size=32."""
         return (
-            module_type == torch.nn.Linear
+            module_type in COMPRESSIBLE_MODULE_TYPES
             and scheme.weights is not None
             and scheme.weights.num_bits == 4
             and scheme.weights.type == QuantizationType.FLOAT.value

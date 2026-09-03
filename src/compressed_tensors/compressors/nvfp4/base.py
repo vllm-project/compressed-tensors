@@ -2,7 +2,10 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import torch
-from compressed_tensors.compressors.base import BaseCompressor
+from compressed_tensors.compressors.base import (
+    COMPRESSIBLE_MODULE_TYPES,
+    BaseCompressor,
+)
 from compressed_tensors.compressors.nvfp4.helpers import (
     pack_fp4_to_uint8,
     unpack_fp4_from_uint8,
@@ -11,7 +14,6 @@ from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationScheme,
-    QuantizationStrategy,
     QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
@@ -39,10 +41,7 @@ class NVFP4PackedCompressor(BaseCompressor):
         )
         if not getattr_chain(scheme, "weights.symmetric", True):
             param_names += ("weight_zero_point",)
-        if (
-            getattr_chain(scheme, "input_activations.strategy", None)
-            == QuantizationStrategy.TENSOR_GROUP
-        ):
+        if not getattr_chain(scheme, "input_activations.dynamic", True):
             param_names += ("input_global_scale",)
         return param_names
 
@@ -132,7 +131,7 @@ class NVFP4PackedCompressor(BaseCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """NVFP4 matches FP4 with group_size != 32 (or None)."""
         return (
-            module_type == torch.nn.Linear
+            module_type in COMPRESSIBLE_MODULE_TYPES
             and scheme.weights is not None
             and scheme.weights.num_bits == 4
             and scheme.weights.type == QuantizationType.FLOAT.value

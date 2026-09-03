@@ -16,7 +16,19 @@ from compressed_tensors.utils import (
 )
 
 
-__all__ = ["BaseCompressor", "compress_module", "decompress_module"]
+__all__ = [
+    "BaseCompressor",
+    "compress_module",
+    "decompress_module",
+    "COMPRESSIBLE_MODULE_TYPES",
+]
+
+
+# Module types whose weights can be compressed/decompressed. Compression operates
+# on a per-module weight state dict and is agnostic to the module's forward, so any
+# module that stores a quantizable 2D `weight` works. Quantization of these types is
+# initialized in `initialize_module_for_quantization`.
+COMPRESSIBLE_MODULE_TYPES = (torch.nn.Linear, torch.nn.Embedding)
 
 
 class BaseCompressor(RegistryMixin, ABC):

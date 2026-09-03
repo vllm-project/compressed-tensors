@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import warnings
 from enum import Enum
 from typing import Any
 
@@ -53,19 +52,18 @@ class FP4_E2M1_DATA(FloatArgs):
     min = -6.0
 
     @staticmethod
-    @torch.compile
-    def cast_to_fp4(x):
-        sign = torch.sign(x)
-        x = torch.abs(x)
-        x[(x >= 0.0) & (x <= 0.25)] = 0.0
-        x[(x > 0.25) & (x < 0.75)] = 0.5
-        x[(x >= 0.75) & (x <= 1.25)] = 1.0
-        x[(x > 1.25) & (x < 1.75)] = 1.5
-        x[(x >= 1.75) & (x <= 2.5)] = 2.0
-        x[(x > 2.5) & (x < 3.5)] = 3.0
-        x[(x >= 3.5) & (x <= 5.0)] = 4.0
-        x[x > 5.0] = 6.0
-        return x * sign
+    def cast_to_fp4(x: torch.Tensor) -> torch.Tensor:
+        """Round float values to the nearest E2M1 representable value.
+
+        Uses Triton for CUDA/XPU tensors when available, falls back to
+        torch.compile for CPU tensors.
+
+        :param x: input tensor to quantize
+        :return: input tensor after rounding to fp4 (maintains same dtype)
+        """
+        from compressed_tensors.quantization.utils.fp4_utils import cast_to_fp4
+
+        return cast_to_fp4(x)
 
 
 class FP8_E4M3_DATA(FloatArgs):
@@ -128,7 +126,8 @@ class DynamicType(str, Enum):
     2. If dynamic is False, all quantization parameters generated are static.
     3. If "local" is provided, only local quantization parameters are dynamic.
 
-    Note: "local" is only currently supported for NVFP4.
+    Note: "local" requires the TENSOR_GROUP strategy, which currently only
+    applies to NVFP4.
 
     """
 
@@ -139,30 +138,26 @@ class ActivationOrdering(Aliasable, str, Enum):
     """
     Enum storing strategies for activation ordering during GPTQ calibration
 
-    Group: Columns are permuted by activation order during calibration. Quantization
-    groups are defined based on this permuted order. Weights are saved in original
-    column order with g_idx mapping columns to groups. Runtime requires reordering
-    columns by g_idx (higher latency but improved accuracy compared to no activation
-    ordering).\n
     Weight: Changes the way calibration occurs but doesn't change the quantization
     format compared to no activation ordering (normal latency). Compared to Group,
     it has lower latency and slightly worse accuracy. Compared to no activation
     ordering during calibration it has slightly better accuracy. \n
-    Dynamic: alias for Group\n
     Static: alias for Weight\n
     """
 
-    GROUP = "group"
     WEIGHT = "weight"
     # aliases
-    DYNAMIC = "dynamic"
     STATIC = "static"
+
+    # Dynamic activation ordering is deprecated
+    GROUP = "group"
+    DYNAMIC = "dynamic"
 
     @staticmethod
     def get_aliases() -> dict[str, str]:
         return {
-            "dynamic": "group",
             "static": "weight",
+            "dynamic": "group",
         }
 
 
@@ -172,7 +167,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     activations
 
     :param num_bits: quantization bit depth
-    :param type: dtype to quantized to, either int or float
+    :param type: dtype to quantize to, either int or float
     :param symmetric: whether or not quantization scale is symmetric about zero-point
     :param strategy: string id determining the scope of scale/zero-point to apply
     :param group_size: group length to use for the group strategy
@@ -185,9 +180,9 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         observer to a memoryless one
     :param actorder: activation ordering strategy for GPTQ calibration. Options are
         GROUP (reorder by activation with g_idx mapping, higher accuracy but higher
-        latency), WEIGHT (reorder during calibration only, normal latency with slight
-        accuracy improvement), or None (no activation ordering). See ActivationOrdering
-        enum for detailed explanations. Defaults to None
+        latency -- removed 2026/08/27), WEIGHT (reorder columns by activation
+        magnitude during calibration only, normal
+        latency with slight accuracy improvement) or None (no activation ordering).
     """
 
     num_bits: int = 8
@@ -245,25 +240,26 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     def validate_block_structure(cls, value) -> list[int] | None:
         if value is None:
             return value
+
+        error = ValueError(
+            f"Invalid block_structure '{value}'. Must be a list of positive ints "
+            "[rows, cols]."
+        )
         # For backward compatibility, allow string format "2x4", "8x16", etc.
         if isinstance(value, str):
             try:
-                return [int(x) for x in value.split("x")]
+                value = [int(x) for x in value.split("x")]
             except Exception:
-                raise ValueError(
-                    f"Invalid block_structure '{value}'. Must be a list of ints "
-                    "[rows, cols]."
-                )
+                raise error
         if isinstance(value, (list, tuple)):
-            if len(value) != 2 or not all(isinstance(v, int) for v in value):
-                raise ValueError(
-                    f"Invalid block_structure '{value}'. Must be a list of ints "
-                    "[rows, cols]."
-                )
+            if (
+                len(value) != 2
+                or not all(isinstance(v, int) for v in value)
+                or not all(v > 0 for v in value)
+            ):
+                raise error
             return list(value)
-        raise ValueError(
-            f"Invalid block_structure '{value}'. Must be a list of ints [rows, cols]."
-        )
+        raise error
 
     @field_validator("strategy", mode="before")
     def validate_strategy(cls, value) -> QuantizationStrategy | None:
@@ -275,10 +271,19 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     @field_validator("actorder", mode="before")
     def validate_actorder(cls, value) -> ActivationOrdering | None:
         if isinstance(value, bool):
-            return ActivationOrdering.GROUP if value else None
+            if value:
+                raise ValueError(
+                    "actorder=True previously mapped to ActivationOrdering.GROUP, "
+                    "which has been removed. Consider using actorder='weight' instead."
+                )
+            return None
 
         if isinstance(value, str):
-            return ActivationOrdering(value.lower())
+            if value.lower() in ("group", "dynamic"):
+                raise ValueError(
+                    f"actorder='{value}' has been removed. "
+                    "Consider using actorder='weight' or actorder=None instead."
+                )
 
         return value
 
@@ -294,9 +299,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         strategy = model.strategy
         group_size = model.group_size
         block_structure = model.block_structure
-        actorder = model.actorder
-        dynamic = model.dynamic
-        observer = model.observer
+        # commenting for linting, what should we do with this?
+        # actorder = model.actorder
         dynamic = model.dynamic
         zp_dtype = model.zp_dtype
 
@@ -343,17 +347,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         if has_block_structure and not has_block_strategy:
             raise ValueError(f"Block structure requires block strategy\n{model}")
 
-        # validate activation ordering and strategy
-        if actorder == ActivationOrdering.GROUP and strategy not in (
-            QuantizationStrategy.GROUP,
-            QuantizationStrategy.TENSOR_GROUP,
-        ):
-            raise ValueError(
-                "Must use group or tensor_group quantization strategy in "
-                "order to apply group activation ordering"
-            )
-
-        # infer observer w.r.t. dynamic
+        # validate dynamic quantization
         if dynamic:
             supported_strategies = (
                 QuantizationStrategy.TOKEN,
@@ -372,23 +366,6 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             ):
                 raise ValueError("local is only supported for strategy tensor_group")
 
-            if observer is not None:
-                if dynamic is True:  # checking if dynamic is True, not "local"
-                    if (
-                        observer != "memoryless"
-                    ):  # avoid annoying users with old configs
-                        warnings.warn(
-                            "No observer is used for dynamic quant., setting to None"
-                        )
-                    observer = None
-            else:
-                if dynamic == DynamicType.LOCAL:
-                    observer = "minmax"
-
-        elif observer is None:
-            # default to minmax for non-dynamic cases
-            observer = "memoryless_minmax"
-
         if zp_dtype is None:
             if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
                 zp_dtype = FP8_E4M3_DATA.dtype
@@ -397,8 +374,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
 
         # write back modified values
         model.strategy = strategy
-        model.observer = observer
         model.zp_dtype = zp_dtype
+
         return model
 
     def pytorch_dtype(self) -> torch.dtype:
@@ -457,7 +434,7 @@ def round_to_quantized_type_args(
 ) -> torch.Tensor:
     """
     Rounds an input tensor to the nearest quantized representation given
-    qunatization args. The original dtype is kept post-rounding.
+    quantization args. The original dtype is kept post-rounding.
 
     :param tensor: tensor to round
     :param args: quantization args to use for rounding

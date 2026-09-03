@@ -10,3 +10,4 @@ from .autoawq import *
 from .humming import *
 from .modelopt_nvfp4 import *
 from .fp8block_dequantizer import *
+from .magnitude_expert_pruner import *

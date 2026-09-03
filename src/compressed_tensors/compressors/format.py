@@ -19,8 +19,8 @@ COMPRESSION_FORMAT_PRIORITY: List[CompressionFormat] = [
     CompressionFormat.mxfp4_pack_quantized,
     CompressionFormat.mxfp8_quantized,
     CompressionFormat.nvfp4_pack_quantized,
-    CompressionFormat.pack_quantized,
     CompressionFormat.int_quantized,
+    CompressionFormat.pack_quantized,
     CompressionFormat.float_quantized,
     CompressionFormat.naive_quantized,
     CompressionFormat.dense,
@@ -34,13 +34,13 @@ def infer_model_format(
     """
     Infers the quantization format for a model based on its modules
 
-    For a summary of the formats, see `docs/guides/compression_formats.md`.
+    For a summary of the formats, see https://docs.vllm.ai/projects/llm-compressor/en/latest/guides/compression_schemes/.
 
     :param model: model to check for quantization
     :param quantization_format: optional global format to override
         the per module formats
     :return: list of formats applied to modules (excluding dense format)
-    """
+    """  # noqa: E501
     formats = set()
 
     for _, module in model.named_modules(remove_duplicate=True):

@@ -24,6 +24,21 @@ from compressed_tensors.quantization.quant_args import ActivationOrdering
 from torch.nn.modules import Linear, Sequential
 
 
+def _old_pack_to_int32(value: torch.Tensor, num_bits: int) -> torch.Tensor:
+    """Element-aligned packing: pack_factor elements per int32, no cross-word splits."""
+    pack_factor = 32 // num_bits
+    offset = 1 << (num_bits - 1)
+    value = (value + offset).to(torch.uint8).to(torch.int32)
+    rows, cols = value.shape
+    padded = math.ceil(cols / pack_factor) * pack_factor
+    if padded > cols:
+        value = torch.nn.functional.pad(value, (0, padded - cols))
+    output = torch.zeros(rows, padded // pack_factor, dtype=torch.int32)
+    for i in range(pack_factor):
+        output |= value[:, i::pack_factor] << (i * num_bits)
+    return output
+
+
 def get_dummy_quant_config(
     num_bits=4, strategy=None, group_size=None, actorder=None, symmetric=True
 ) -> QuantizationConfig:
@@ -40,14 +55,6 @@ def get_dummy_quant_config(
         ),
     }
     return QuantizationConfig(config_groups=config_groups)
-
-
-def make_dummy_g_idx(columns: int, group_size: int) -> torch.Tensor:
-    perm = torch.randperm(columns)
-    return torch.nn.Parameter(
-        (torch.arange(columns, dtype=torch.int) // group_size)[perm],
-        requires_grad=False,
-    )
 
 
 @pytest.mark.parametrize(
@@ -79,7 +86,7 @@ def test_quant_format(shape):
 
     assert compressed["weight_packed"].dtype == torch.int32
     expected_rows = shape[0]
-    expected_columns = math.ceil(shape[1] / 8)
+    expected_columns = math.ceil(shape[1] * 4 / 32)  # 4-bit: 32 elems → 4 int32 words
     assert compressed["weight_packed"].shape == (expected_rows, expected_columns)
     assert torch.equal(compressed["weight_shape"], torch.tensor(shape))
     assert compressed["weight_scale"].dtype == torch.float32
@@ -135,8 +142,8 @@ def test_pack_unpack_roundtrip(num_bits, shape):
     packed = pack_to_int32(value, num_bits)
     assert packed.dtype == torch.int32
 
-    pack_factor = 32 // num_bits
-    assert packed.shape == (shape[0], math.ceil(shape[1] / pack_factor))
+    # Dense packing: 32 elements → num_bits int32 words
+    assert packed.shape == (shape[0], math.ceil(shape[1] * num_bits / 32))
 
     unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
     assert torch.equal(unpacked, value)
@@ -223,7 +230,6 @@ def test_asymmetric_packed_support(strategy):
 @pytest.mark.parametrize(
     "actorder",
     [
-        ActivationOrdering.GROUP,
         ActivationOrdering.WEIGHT,
         None,
     ],
@@ -240,9 +246,6 @@ def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration
     mock_per_group_calibration(
         model.dummy, base_name="weight", value=model.dummy.weight, group_size=group_size
     )
-    if actorder == ActivationOrdering.GROUP:
-        init_g_idx = make_dummy_g_idx(512, group_size)
-        model.dummy.register_parameter("weight_g_idx", init_g_idx)
 
     scheme = quant_config.config_groups["group_1"]
     module_sd = {
@@ -256,157 +259,9 @@ def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration
         model.dummy.weight,
         scale=model.dummy.weight_scale,
         zero_point=model.dummy.weight_zero_point,
-        g_idx=getattr(model.dummy, "weight_g_idx", None),
         args=scheme.weights,
     )
     assert torch.equal(fake_quant, decompressed["weight"])
-
-
-@pytest.mark.parametrize(
-    "num_bits,values,expected_values",
-    [
-        (
-            4,
-            torch.tensor([[1]]),
-            torch.tensor([[9]], dtype=torch.int32),
-        ),
-        (
-            8,
-            torch.tensor([[1]]),
-            torch.tensor([[129]], dtype=torch.int32),
-        ),
-        (4, torch.tensor([[1, 2, 3, 4]]), torch.tensor([[52137]], dtype=torch.int32)),
-        (
-            4,
-            torch.tensor([[-8, -7, -6, -5, -4, -3, -2, -1]]),
-            torch.tensor([[1985229328]], dtype=torch.int32),
-        ),
-        (
-            8,
-            torch.tensor([[1, 2, 3, 4]]),
-            torch.tensor([[-2071756159]], dtype=torch.int32),
-        ),
-        (
-            8,
-            torch.tensor([[-128, -127, -126, -125]]),
-            torch.tensor([[50462976]], dtype=torch.int32),
-        ),
-        (
-            4,
-            torch.tensor([[-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4]]),
-            torch.tensor([[1985229328, 52137]], dtype=torch.int32),
-        ),
-        (
-            4,
-            torch.tensor(
-                [
-                    [-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4, -8, -8, -8, -8],
-                    [1, 2, 3, 4, -8, -8, -8, -8, -8, -7, -6, -5, -4, -3, -2, -1],
-                ]
-            ),
-            torch.tensor([[1985229328, 52137], [52137, 1985229328]], dtype=torch.int32),
-        ),
-        (
-            8,
-            torch.tensor([[1, 2, 3, 4], [-128, -127, -126, -125]]),
-            torch.tensor([[-2071756159], [50462976]], dtype=torch.int32),
-        ),
-        (
-            8,
-            torch.tensor(
-                [
-                    [1, 2, 3, 4, -128, -127, -126, -125],
-                    [-128, -127, -126, -125, 1, 2, 3, 4],
-                ]
-            ),
-            torch.tensor(
-                [[-2071756159, 50462976], [50462976, -2071756159]], dtype=torch.int32
-            ),
-        ),
-    ],
-)
-def test_pack_to_int32(num_bits, values, expected_values):
-    values = values.to(torch.int8)
-    packed_values = pack_to_int32(values, num_bits)
-    assert torch.equal(packed_values, expected_values)
-    assert packed_values.dtype == expected_values.dtype
-
-
-@pytest.mark.parametrize(
-    "num_bits,values,expected_tensor",
-    [
-        (
-            4,
-            torch.tensor([[9]], dtype=torch.int32),
-            torch.tensor([[1]], dtype=torch.int8),
-        ),
-        (
-            8,
-            torch.tensor([[129]], dtype=torch.int32),
-            torch.tensor([[1]], dtype=torch.int8),
-        ),
-        (
-            4,
-            torch.tensor([[52137]], dtype=torch.int32),
-            torch.tensor([[1, 2, 3, 4]], dtype=torch.int8),
-        ),
-        (
-            4,
-            torch.tensor([[1985229328]], dtype=torch.int32),
-            torch.tensor([[-8, -7, -6, -5, -4, -3, -2, -1]], dtype=torch.int8),
-        ),
-        (
-            8,
-            torch.tensor([[-2071756159]], dtype=torch.int32),
-            torch.tensor([[1, 2, 3, 4]], dtype=torch.int8),
-        ),
-        (
-            8,
-            torch.tensor([[50462976]], dtype=torch.int32),
-            torch.tensor([[-128, -127, -126, -125]], dtype=torch.int8),
-        ),
-        (
-            4,
-            torch.tensor([[1985229328, 52137]], dtype=torch.int32),
-            torch.tensor(
-                [[-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4]], dtype=torch.int8
-            ),
-        ),
-        (
-            4,
-            torch.tensor([[1985229328, 52137], [52137, 1985229328]], dtype=torch.int32),
-            torch.tensor(
-                [
-                    [-8, -7, -6, -5, -4, -3, -2, -1, 1, 2, 3, 4, -8, -8, -8, -8],
-                    [1, 2, 3, 4, -8, -8, -8, -8, -8, -7, -6, -5, -4, -3, -2, -1],
-                ],
-                dtype=torch.int8,
-            ),
-        ),
-        (
-            8,
-            torch.tensor([[-2071756159], [50462976]], dtype=torch.int32),
-            torch.tensor([[1, 2, 3, 4], [-128, -127, -126, -125]], dtype=torch.int8),
-        ),
-        (
-            8,
-            torch.tensor(
-                [[-2071756159, 50462976], [50462976, -2071756159]], dtype=torch.int32
-            ),
-            torch.tensor(
-                [
-                    [1, 2, 3, 4, -128, -127, -126, -125],
-                    [-128, -127, -126, -125, 1, 2, 3, 4],
-                ],
-                dtype=torch.int8,
-            ),
-        ),
-    ],
-)
-def test_unpack_from_int32(num_bits, values, expected_tensor):
-    unpacked_tensor = unpack_from_int32(values, num_bits, expected_tensor.shape)
-    assert torch.equal(unpacked_tensor, expected_tensor)
-    assert unpacked_tensor.dtype == expected_tensor.dtype
 
 
 @pytest.mark.parametrize(
@@ -475,23 +330,124 @@ def test_zero_point_pack_unpack_consistency(num_bits, strategy):
     assert unpacked_zp.dtype == torch.int8
 
 
-def test_pack_unpack_3d_round_trip():
+@pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
+def test_pack_unpack_3d_round_trip(num_bits):
     """3D tensors (e.g. MoE expert weights) should pack/unpack correctly."""
-    num_bits = 4
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
     shape = (4, 8, 32)  # (num_experts, rows, cols)
-    value = torch.randint(-8, 7, shape, dtype=torch.int8)
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
     packed = pack_to_int32(value, num_bits)
     unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
     assert torch.equal(value, unpacked)
 
 
-def test_pack_unpack_3d_matches_stacked_2d():
+@pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
+def test_pack_unpack_3d_matches_stacked_2d(num_bits):
     """3D pack/unpack should match stacking individual 2D results."""
-    num_bits = 4
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
     shape = (4, 8, 32)
-    value = torch.randint(-8, 7, shape, dtype=torch.int8)
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
     packed_3d = pack_to_int32(value, num_bits)
     packed_2d = torch.stack(
         [pack_to_int32(value[i], num_bits) for i in range(value.shape[0])]
     )
     assert torch.equal(packed_3d, packed_2d)
+
+
+@pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("k", [33, 64, 100, 1024])
+def test_pack_unpack_round_trip(num_bits, k):
+    """Non-power-of-2 bit widths use cross-word-boundary packing."""
+    shape = (64, k)
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
+
+    packed = pack_to_int32(value, num_bits)
+    assert packed.dtype == torch.int32
+    assert packed.shape == (shape[0], math.ceil(shape[1] * num_bits / 32))
+
+    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
+    assert torch.equal(unpacked, value)
+
+
+@pytest.mark.parametrize("num_bits", [1, 2, 4, 8])
+@pytest.mark.parametrize("k", [33, 64, 100, 1024])
+def test_old_pack_new_unpack_roundtrip(num_bits, k):
+    """
+    Tensors packed with the old element-aligned code unpack correctly with new code,
+    regardless of divisibility.
+
+    Only power-of-2 bit widths are tested: old checkpoints with non-power-of-2
+    bit widths don't exist (CT was only used for 4-bit/8-bit before this change),
+    and the bit layouts differ for non-power-of-2 widths so compatibility is
+    not possible without a full repack.
+    """
+    shape = (64, k)
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
+    old_packed = _old_pack_to_int32(value, num_bits)
+    unpacked = unpack_from_int32(old_packed, num_bits, torch.Size(shape))
+    assert torch.equal(unpacked, value)
+
+
+@pytest.mark.parametrize("num_bits", [1, 2, 4, 8])
+@pytest.mark.parametrize("k", [33, 64, 100, 1024])
+def test_power_of_2_bits_same_packed_output_as_old(num_bits, k):
+    """For power-of-2 bit widths, new and old produce identical
+    packed tensors regardless of divisibility."""
+    shape = (64, k)
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
+    assert torch.equal(
+        pack_to_int32(value, num_bits), _old_pack_to_int32(value, num_bits)
+    )
+
+
+@pytest.mark.parametrize(
+    "strategy,group_size,scale_shape,in_features,expected_width",
+    [
+        (QuantizationStrategy.GROUP, 128, (256, 4), 512, 512),
+        (QuantizationStrategy.CHANNEL, None, (256, 1), 512, 512),
+        # non-aligned channel: 350*4 bits pack to 44 int32 cols, whose upper-bound
+        # placeholder is 44*32//4 = 352 (inexact by design on meta)
+        (QuantizationStrategy.CHANNEL, None, (256, 1), 350, 352),
+    ],
+)
+def test_decompress_on_meta(
+    strategy, group_size, scale_shape, in_features, expected_width
+):
+    """
+    decompress must run on meta tensors: the validate_file convert path loads
+    every param on device="meta", so weight_shape arrives with no data. The
+    original weight shape is rebuilt from the packed/scale shapes rather than
+    read from weight_shape. Regression for the pack-quantized meta crash
+    (NotImplementedError: Cannot copy out of meta tensor; no data!).
+    """
+    out_features = 256
+    module_sd = {
+        "weight": torch.rand((out_features, in_features)),
+        "weight_scale": torch.rand(scale_shape).to(torch.float32),
+    }
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(
+            num_bits=4,
+            strategy=strategy.value,
+            symmetric=True,
+            group_size=group_size,
+        ),
+    )
+    compressed = PackedQuantizationCompressor.compress(module_sd, scheme=scheme)
+
+    # emulate validate_file: every param, including weight_shape, loaded on meta
+    meta_sd = {k: v.to("meta") for k, v in compressed.items()}
+    assert meta_sd["weight_shape"].device.type == "meta"
+
+    decompressed = PackedQuantizationCompressor.decompress(meta_sd, scheme=scheme)
+    weight = decompressed["weight"]
+
+    assert weight.device.type == "meta"
+    assert weight.shape[0] == out_features
+    # group recovers in_features exactly from the scale; channel is a packed-width
+    # upper bound, exact only when in_features packs with no padding
+    assert weight.shape[-1] == expected_width

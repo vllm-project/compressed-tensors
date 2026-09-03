@@ -39,6 +39,24 @@ __all__ = [
 WeightMappingType = dict[str, str]
 NestedWeightMappingType = dict[str, WeightMappingType]
 
+str_to_torch_dtype = {
+    "BOOL": torch.bool,
+    "U8": torch.uint8,
+    "I8": torch.int8,
+    "I16": torch.int16,
+    "U16": torch.uint16,
+    "F16": torch.float16,
+    "BF16": torch.bfloat16,
+    "I32": torch.int32,
+    "U32": torch.uint32,
+    "F32": torch.float32,
+    "F64": torch.float64,
+    "I64": torch.int64,
+    "U64": torch.uint64,
+    "F8_E4M3": torch.float8_e4m3fn,
+    "F8_E5M2": torch.float8_e5m2,
+}
+
 
 def is_weights_file(file_name: str) -> bool:
     """
@@ -478,8 +496,8 @@ def load_tensors_from_inverse_weight_map(
     """
     tensors: dict[str, torch.Tensor] = {}
     for source_file, tensor_names in inverse_weight_map.items():
-        with safe_open(source_file, framework="pt", device=str(device)) as f:
-            keys = f.keys()
+        with safe_open(source_file, framework="pt") as file:
+            keys = file.keys()
             # if tensor_names is empty, pull all tensors
             if tensor_names is None or len(tensor_names) == 0:
                 tensor_names = keys
@@ -489,7 +507,17 @@ def load_tensors_from_inverse_weight_map(
                         f"Expected to find tensor {tensor_name} in "
                         f"{source_file}, but tensor was not found."
                     )
-                tensors[tensor_name] = f.get_tensor(tensor_name)
+                if str(device) == "meta":
+                    _slice = file.get_slice(tensor_name)
+                    dtype = str_to_torch_dtype[_slice.get_dtype()]
+                    size = _slice.get_shape()
+                    tensors[tensor_name] = torch.empty(
+                        size=size, dtype=dtype, device="meta"
+                    )
+                else:
+                    tensors[tensor_name] = file.get_tensor(tensor_name).to(
+                        device=device
+                    )
     return tensors
 
 
@@ -504,15 +532,13 @@ def is_quantization_param(name: str) -> bool:
         return True
     if name.endswith("zero_point"):
         return True
-    if name.endswith("g_idx"):
-        return True
 
     return False
 
 
 def _fetch_and_save_prefix_tensors(
     source_model: str, prefix: str, dest_dir: str, shard_name: str
-) -> dict:
+) -> dict[str, torch.Tensor]:
     """
     Extracts all tensors whose keys start with `prefix` from `source_model`
     and saves them as a new shard in `dest_dir`. This is useful when saving
@@ -525,19 +551,21 @@ def _fetch_and_save_prefix_tensors(
     :param dest_dir: destination directory to write the shard into
     :param shard_name: filename for the new shard
     :return: dict mapping tensor key to tensor
-
     """
-    source_dir = get_safetensors_folder(source_model)
-    weight_mappings = get_weight_mappings(source_dir)
+    model_files = get_checkpoint_files(source_model)
+    weight_map = get_weight_map(model_files)
 
     tensors = {}
-    for key, filepath in weight_mappings.items():
+    for key, weight_shard_name in weight_map.items():
         if key.startswith(prefix):
+            if weight_shard_name not in model_files:
+                raise ValueError(
+                    f"Could not find shard {weight_shard_name} for tensor {key}"
+                )
+            filepath = model_files[weight_shard_name]
             with safe_open(filepath, framework="pt", device="cpu") as f:
                 tensors[key] = f.get_tensor(key)
 
-    if len(tensors) <= 0:
-        raise ValueError(f"No tensors with prefix '{prefix}' found in {source_model}")
-
-    save_file(tensors, os.path.join(dest_dir, shard_name))
+    if len(tensors) > 0:
+        save_file(tensors, os.path.join(dest_dir, shard_name))
     return tensors

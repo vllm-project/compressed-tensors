@@ -49,7 +49,12 @@ def set_source_process(src_rank: int):
         SRC_RANK = restore_rank
 
 
+_force_single_threaded = False
+
+
 def is_distributed() -> bool:
+    if _force_single_threaded:
+        return False
     return dist.is_available() and dist.is_initialized()
 
 
@@ -64,10 +69,19 @@ def init_dist():
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
 
-    device = torch.device(f"cuda:{local_rank}")
-    torch.cuda.set_device(device)
+    accel_type = torch.accelerator.current_accelerator().type
+    device = torch.device(f"{accel_type}:{local_rank}")
+    torch.accelerator.set_device_index(local_rank)
+
+    if accel_type == "cuda":
+        backend = "nccl"
+    elif accel_type == "xpu":
+        backend = "xccl"
+    else:
+        backend = "gloo"
+
     dist.init_process_group(
-        backend="nccl",
+        backend=backend,
         init_method="env://",
         rank=rank,
         world_size=world_size,

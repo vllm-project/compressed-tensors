@@ -1,0 +1,30 @@
+steps:
+  # Test check pipeline
+  - label: ":gear: Compressed-Tensors Smoke, Sanity and Regression"
+    command: |
+      RUNNER=$$(buildkite-agent meta-data get "test-runner" --default "H100duo")
+      echo "╔══════════════════════════════════════════╗"
+      echo "║          BUILD SUMMARY                   ║"
+      echo "╠══════════════════════════════════════════╣"
+      echo "║ Triggered by : $${BUILDKITE_BUILD_CREATOR}"
+      echo "║ Source        : $${BUILDKITE_SOURCE}"
+      echo "║ Branch        : $${BUILDKITE_BRANCH}"
+      echo "║ Commit        : $${BUILDKITE_COMMIT:0:8}"
+      echo "║ PR            : $${BUILDKITE_PULL_REQUEST:-none}"
+      echo "║ GPU Runner    : $${RUNNER}"
+      echo "╚══════════════════════════════════════════╝"
+      buildkite-agent pipeline upload .buildkite/test-check/test-check-$${RUNNER}.yml
+  
+  # Test check pipeline on XPU (only when relevant paths changed)
+  - label: ":gear: Compressed-Tensors Smoke, Sanity and Regression on XPU"
+    command: |
+      git fetch origin main --depth=50
+      CHANGED=$$(git diff --name-only origin/main...HEAD)
+      echo "Changed files:"
+      echo "$$CHANGED"
+      if echo "$$CHANGED" | grep -qE '^(src/compressed_tensors/offload|tests/test_offload)/'; then
+        echo "XPU-relevant changes detected"
+        buildkite-agent pipeline upload .buildkite/test-check/test-check-xpu.yml
+      else
+        echo "No XPU-relevant changes"
+      fi
