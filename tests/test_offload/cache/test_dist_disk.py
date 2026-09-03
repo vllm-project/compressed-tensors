@@ -172,7 +172,9 @@ def test_distributed_files(tmp_path):
     # modify on one rank
     tensor = torch.ones(10)
     if dist.get_rank() == 0:
-        cache["weight"] = tensor
+        with disable_onloading():
+            offloaded = cache["weight"]
+        cache.update_offload(offloaded, tensor)
 
     assert len(DiskCache.index) == 1
     if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
@@ -218,10 +220,14 @@ def test_distributed_async_update(tmp_path):
     rank = dist.get_rank()
     if rank == 0:
         # Rank 0 updates tensor_0
-        cache[f"tensor_{rank}"] = torch.ones(10, device=onload_device) * 1.0
+        with disable_onloading():
+            offloaded = cache[f"tensor_{rank}"]
+        cache.update_offload(offloaded, torch.ones(10, device=onload_device) * 1.0)
     elif rank == 1:
         # Rank 1 updates tensor_1
-        cache[f"tensor_{rank}"] = torch.ones(10, device=onload_device) * 2.0
+        with disable_onloading():
+            offloaded = cache[f"tensor_{rank}"]
+        cache.update_offload(offloaded, torch.ones(10, device=onload_device) * 2.0)
 
     # Synchronize to ensure all updates are complete
     dist.barrier()
