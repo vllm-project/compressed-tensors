@@ -112,7 +112,7 @@ def test_files(tmp_path):
         read_tensor = file.get_tensor("weight")
         assert_tensor_equal(read_tensor, tensor)
 
-    # modify
+    # rewrite
     tensor = torch.ones(10)
     cache["weight"] = tensor
 

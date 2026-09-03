@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 import torch
+import torch.distributed as dist
+from compressed_tensors.distributed.utils import set_source_process
 from compressed_tensors.offload import (
     align_module_device,
     align_modules,
@@ -16,10 +18,17 @@ from compressed_tensors.offload import (
     get_execution_device,
     get_offloaded_device,
     update_offload_parameter,
+    update_onload_parameter,
+    update_parameter,
+    update_parameter_async,
 )
 from compressed_tensors.offload.cache import CPUCache
 from compressed_tensors.offload.module import offload_module
-from tests.test_offload.conftest import assert_device_equal, assert_tensor_equal
+from tests.test_offload.conftest import (
+    assert_device_equal,
+    assert_tensor_equal,
+    torchrun,
+)
 from tests.testing_utils import requires_gpu
 
 
@@ -80,8 +89,6 @@ def test_update_offload_parameter(linear: torch.nn.Linear, cache, offload):
     if offload:
         offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
 
-    assert linear.weight == 0
-
     update_offload_parameter(linear, "weight", torch.tensor(1))
     assert linear.weight == 1
 
@@ -97,6 +104,22 @@ def test_update_offload_parameter(linear: torch.nn.Linear, cache, offload):
 
 
 @pytest.mark.unit
+@requires_gpu
+def test_update_offload_parameter_only(offloaded_linear: torch.nn.Linear):
+    offloaded_linear.weight = torch.nn.Parameter(torch.tensor(0.0))
+
+    with disable_offloading():
+        _ = offloaded_linear.weight
+        update_offload_parameter(offloaded_linear, "weight", torch.tensor(1))
+
+        # updating offload does not update onload
+        with disable_onloading():
+            offload = offloaded_linear.weight
+        assert offload == 1
+        assert offloaded_linear.weight != offload
+
+
+@pytest.mark.unit
 def test_update_offload_parameter_with_grad(linear: torch.nn.Linear):
     zeros = torch.nn.Parameter(torch.zeros(5, 5), requires_grad=True)
     update_offload_parameter(linear, "weight", zeros)
@@ -106,6 +129,145 @@ def test_update_offload_parameter_with_grad(linear: torch.nn.Linear):
     offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
     update_offload_parameter(linear, "weight", ones)
     assert_tensor_equal(linear.weight, ones, ONLOAD_DEVICE)
+
+
+@pytest.mark.unit
+@requires_gpu
+@pytest.mark.parametrize("offload", (True, False))
+def test_update_onload_parameter(linear: torch.nn.Linear, cache, offload):
+    init_data = torch.tensor(0.0, device=OFFLOAD_DEVICE)
+    linear.weight = torch.nn.Parameter(init_data, requires_grad=False)
+    if offload:
+        offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+
+    assert linear.weight == 0
+
+    # when offloading is active, update_onload_parameter is a no-op
+    update_onload_parameter(linear, "weight", torch.tensor(1))
+    if offload:
+        assert linear.weight == 0
+    else:
+        assert linear.weight == 1
+
+    # when offloading is disabled, onloaded values can be updated
+    with disable_offloading():
+        _ = linear.weight
+        update_onload_parameter(linear, "weight", torch.tensor(2))
+        assert linear.weight == 2
+
+    # after exiting disable_offloading, offloaded value is restored
+    if offload:
+        assert linear.weight == 0
+    else:
+        assert linear.weight == 2
+
+
+@pytest.mark.unit
+@requires_gpu
+@pytest.mark.parametrize("offload", (True, False))
+def test_update_parameter(linear: torch.nn.Linear, offload):
+    linear.weight = torch.nn.Parameter(torch.tensor(0.0, device=OFFLOAD_DEVICE))
+    if offload:
+        offload_module(linear, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+
+    # Update both (default behavior)
+    update_parameter(linear, "weight", torch.tensor(1.0))
+    assert linear.weight == 1.0
+
+    # Update only offload
+    update_parameter(linear, "weight", torch.tensor(2.0), update_onload=False)
+    assert linear.weight == 2.0
+
+    # Update only onload - no effect when offloading is active
+    update_parameter(linear, "weight", torch.tensor(3.0), update_offload=False)
+    if offload:
+        assert linear.weight == 2.0  # offload value unchanged
+    else:
+        assert linear.weight == 3.0
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
+def test_update_parameter_distributed():
+    """Test update_parameter synchronizes across ranks in distributed context."""
+    module = torch.nn.Module()
+    module.weight = torch.nn.Parameter(torch.tensor(-1.0))
+    offload_module(module, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+
+    rank_data = torch.tensor(dist.get_rank())
+
+    # only update onload
+    with set_source_process(0):
+        with disable_offloading():
+            _ = module.weight
+
+            update_parameter(
+                module,
+                "weight",
+                rank_data,
+                update_offload=False,
+                update_onload=True,
+            )
+
+            with disable_onloading():
+                assert module.weight == -1
+            assert module.weight == 0
+
+    # only update offload
+    with set_source_process(1):
+        with disable_offloading():
+            _ = module.weight
+
+            update_parameter(
+                module,
+                "weight",
+                rank_data,
+                update_offload=True,
+                update_onload=False,
+            )
+
+            with disable_onloading():
+                assert module.weight == 1  # changed
+            assert module.weight == -1  # unchanged
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
+def test_update_parameter_async_distributed():
+    """Test update_parameter_async updates without barriers or broadcasts."""
+    # Create module with two parameters, both starting at -1
+    module = torch.nn.Module()
+    module.param0 = torch.nn.Parameter(torch.tensor(-1.0))
+    module.param1 = torch.nn.Parameter(torch.tensor(-1.0))
+    offload_module(module, ONLOAD_DEVICE, OFFLOAD_DEVICE)
+
+    rank = dist.get_rank()
+    param_name = f"param{rank}"
+    rank_data = torch.tensor(dist.get_rank())
+    update_onload = rank == 0
+
+    with disable_offloading():
+        _ = getattr(module, param_name)
+
+        update_parameter_async(
+            module,
+            param_name,
+            rank_data,
+            update_offload=True,
+            update_onload=update_onload,
+        )
+
+        if update_onload:
+            # check onload updated
+            assert getattr(module, param_name) == rank_data
+
+    # check offloads updated
+    dist.barrier()
+    with disable_onloading():
+        assert getattr(module, param_name) == rank_data
+        assert getattr(module, param_name) == rank_data
 
 
 @pytest.mark.unit
