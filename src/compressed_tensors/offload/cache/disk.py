@@ -92,7 +92,7 @@ class DiskCache(OffloadCache):
         if tensor is None:
             return None
 
-        # tensor needs to be contiguous 
+        # tensor needs to be contiguous
         # for safetensors to write it correctly
         tensor = tensor.contiguous()
 

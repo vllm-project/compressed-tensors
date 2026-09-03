@@ -46,20 +46,8 @@ class OffloadCache(MutableMapping, ABC):
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
 
     # a dict to track tensors to be offloaded, flush this to update all at once
-    # I have no idea if there is a better way to typehint this
     to_be_offloaded: ClassVar[
-        dict[
-            torch.Tensor,
-            tuple[
-                CPUCache
-                | DistributedCPUCache
-                | DeviceCache
-                | DistributedDeviceCache
-                | DiskCache
-                | DistributedDiskCache,
-                torch.Tensor,
-            ],
-        ]
+        dict[torch.Tensor, tuple["OffloadCache", torch.Tensor, torch.Tensor]]
     ] = dict()
 
     @classmethod
