@@ -82,6 +82,25 @@ class QuantizedKVCache(InternalModule):
         else:
             self.past_key_values = None
 
+    def __getattr__(self, name: str) -> Any:
+        # During calibration this module replaces the model's `past_key_values`
+        # in the attention kwargs (see `_kv_cache_attention_hook`), so the model
+        # interacts with this wrapper as if it were the real Cache. Most models
+        # only call `update()`, which is handled above. However, transformers>=5
+        # models may also read the cache *structurally* -- e.g. DiffusionGemma's
+        # decoder fetches the encoder cache via `past_key_values.layers[i].keys`
+        # instead of calling `update()`. Such reads would raise AttributeError on
+        # this wrapper. Delegate any attribute this module does not define itself
+        # to the wrapped Cache so structural-API models can be calibrated.
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            past_key_values = self.__dict__.get("past_key_values")
+            cache = past_key_values() if past_key_values is not None else None
+            if cache is not None and name != "past_key_values" and hasattr(cache, name):
+                return getattr(cache, name)
+            raise
+
 
 # ----- initialize ----- #
 
@@ -119,7 +138,8 @@ def initialize_hooked_kv_cache(model: PreTrainedModel, module: Module):
     :param module: attention module to initialize with
     """
     if not hasattr(module, KV_CACHE_ATTR):
-        module.register_module(KV_CACHE_ATTR, QuantizedKVCache(model.config, module))
+        config = model.config.get_text_config(decoder=True)
+        module.register_module(KV_CACHE_ATTR, QuantizedKVCache(config, module))
         module.register_forward_pre_hook(_kv_cache_attention_hook, with_kwargs=True)
 
 

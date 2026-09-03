@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import logging
+import inspect
 import math
 
 import torch
@@ -13,7 +13,6 @@ from compressed_tensors.modeling import (
 )
 from compressed_tensors.offload import disable_onloading, unwrap_offload_forward
 from compressed_tensors.quantization import (
-    ActivationOrdering,
     DynamicType,
     QuantizationArgs,
     QuantizationMetadata,
@@ -29,18 +28,18 @@ from compressed_tensors.utils import (
     get_num_attn_heads,
     get_num_kv_heads,
 )
+from compressed_tensors.utils.helpers import deprecated
+from loguru import logger
 from torch.nn import Module, Parameter
 
 
 __all__ = [
     "initialize_module_for_quantization",
     "is_attention_module",
+    "is_cached_attention_module",
     "initialize_qparams",
     "initialize_attn_qparams",
 ]
-
-
-_LOGGER = logging.getLogger(__name__)
 
 
 def initialize_module_for_quantization(
@@ -70,7 +69,7 @@ def initialize_module_for_quantization(
 
     QuantizationMetadata.clear_all_qparams(module)
 
-    if is_attention_module(module):
+    if is_cached_attention_module(module):
         initialize_attn_qparams(module, scheme, force_zero_point)
 
     elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
@@ -120,13 +119,35 @@ def initialize_module_for_quantization(
     module.quantization_status = QuantizationStatus.INITIALIZED
 
 
-def is_attention_module(module: Module):
+def _is_attention_module(module: Module) -> bool:
     return "attention" in module.__class__.__name__.lower() and (
         hasattr(module, "k_proj")
         or hasattr(module, "v_proj")
         or hasattr(module, "qkv_proj")
         or hasattr(module, "kv_b_proj")
     )
+
+
+@deprecated("is_cached_attention_module")
+def is_attention_module(module: Module) -> bool:
+    return _is_attention_module(module)
+
+
+def is_cached_attention_module(module: Module) -> bool:
+    if not _is_attention_module(module):
+        return False
+
+    try:
+        parameters = inspect.signature(module.forward).parameters
+    except (TypeError, ValueError):
+        logger.warning(
+            "Unable to inspect an attention module's forward signature; "
+            "skipping KV cache quantization for uninspectable modules",
+            log_once=True,
+        )
+        return False
+
+    return "past_key_value" in parameters or "past_key_values" in parameters
 
 
 def initialize_qparams(
@@ -154,7 +175,6 @@ def initialize_qparams(
     """
     strategy = quantization_args.strategy
     dynamic = quantization_args.dynamic
-    actorder = quantization_args.actorder
     device = get_execution_device(module)  # avoid performing intialization ops on cpu
 
     # Skip all intialization for fully dynamic quantization
@@ -194,14 +214,6 @@ def initialize_qparams(
         group_size = quantization_args.group_size
         num_groups = strategy_cdiv(observed_shape[-1], group_size, strategy)
         expected_shape = (*observed_shape[:-1], num_groups)
-
-        # initialize activation ordering if applicable
-        if actorder == ActivationOrdering.GROUP:
-            init_g_idx = Parameter(
-                torch.full((observed_shape[-1],), -1, device=device, dtype=torch.int),
-                requires_grad=False,
-            )
-            module.register_parameter(f"{base_name}_g_idx", init_g_idx)
 
     elif strategy == QuantizationStrategy.BLOCK:
         assert quantization_args.block_structure is not None
@@ -271,7 +283,7 @@ def initialize_attn_qparams(
 
     _validate_attention_scheme(scheme)
 
-    # extract shapes from config
+    # extract shapes from decoder config
     config = kv_cache.config
     num_attn_heads = get_num_attn_heads(config)
     num_kv_heads = get_num_kv_heads(config)

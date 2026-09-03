@@ -24,7 +24,6 @@ from compressed_tensors.offload import is_distributed
 from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
-from loguru import logger
 from tqdm import tqdm
 from transformers import CompressedTensorsConfig
 from transformers.file_utils import CONFIG_NAME
@@ -52,7 +51,7 @@ class ModelCompressor:
                 - apply_quantization_config(model, ct_config.quantization_config)
                 - compressor.compress_model(model)
             - CompressedTensorsHfQuantizer._process_model_after_weight_loading
-                - if run_compressed == False: compressor.decompress_model(model)
+                - if dequantize == True: compressor.decompress_model(model)
     """
 
     # these attributes are used by `CompressedTensorsHfQuantizer` to apply configs
@@ -89,7 +88,6 @@ class ModelCompressor:
     def from_pretrained_model(
         cls,
         model: torch.nn.Module,
-        sparsity_config_or_format: Optional[object] = None,
         quantization_format: Optional[str] = None,
     ):
         """
@@ -104,9 +102,6 @@ class ModelCompressor:
             that should be applied to the entire model, overrides inferred formats
             for all quantized modules
         """
-        if sparsity_config_or_format is not None:
-            logger.warning("Passing sparsity config or format is no longer supported")
-
         # reconstruct qconfig from qschemes that are attached to the model
         quantization_config = QuantizationConfig.from_pretrained(model)
         transform_config = getattr(model, TRANSFORM_CONFIG_NAME, None)
@@ -135,18 +130,32 @@ class ModelCompressor:
             else None
         )
 
-    def compress_model(self, model: torch.nn.Module) -> None:
+    def compress_model(
+        self, model: torch.nn.Module, skip_compressed: bool = False
+    ) -> None:
         """
         Compress the model's parameters in memory
 
         :param model: model whose parameters should be compressed in place
+        :param skip_compressed: skip any modules that already have quantization status
+            QuantizationStatus.COMPRESSED. This flag is necessary because compress_model
+            is called both during load-up in transformers and during save_pretrained.
+            During load, all modules need to be compressed, whereas during save modules
+            already compressed should be excluded.
         """
         # Collect all quantized modules
         desc = "Compressing model"
         modules = [
             module
             for _, module in model.named_modules(remove_duplicate=True)
-            if is_module_quantized(module)
+            if (
+                is_module_quantized(module)
+                and (
+                    not (skip_compressed)
+                    or getattr(module, "quantization_status", None)
+                    != QuantizationStatus.COMPRESSED
+                )
+            )
         ]
 
         # Compress modules using distributed or sequential
@@ -226,7 +235,6 @@ class ModelCompressor:
             TRANSFORM_CONFIG_NAME: tconfig_data,
             **qconfig_data,
         }
-
         with open(config_file_path, "w") as config_file:
             json.dump(config_data, config_file, indent=2, sort_keys=True)
 

@@ -25,7 +25,7 @@ __all__ = [
 
 def write_checkpoint_quantization_config(
     save_directory: str | os.PathLike,
-    converter: Converter,
+    converters: list[Converter],
 ):
     """
     Write the quantization config produced by `converter` into the model config
@@ -35,12 +35,16 @@ def write_checkpoint_quantization_config(
     config.
 
     :param save_directory: directory containing the model config file
-    :param converter: Converter instance whose create_config() produces the
-        updated quantization config
+    :param converters: list of converters applied in order; each
+        converter's update_config() output feeds the next
     """
+    config = None
+    for converter in converters:
+        config = converter.update_config(config)
+
     quant_config_data = None
-    if (quant_config := converter.create_config()) is not None:
-        quant_config_data = quant_config.model_dump()
+    if config is not None:
+        quant_config_data = config.model_dump()
         quant_config_data[COMPRESSION_VERSION_NAME] = ct_version
 
     config_file_path = find_config_path(save_directory)
@@ -62,6 +66,10 @@ def write_checkpoint_quantization_config(
             # if new quant config, overwrite checkpoint quant config
             config_data[QUANTIZATION_CONFIG_NAME] = quant_config_data
 
+        # let converters update non-quantization model config fields
+        for converter in converters:
+            config_data = converter.update_model_config(config_data)
+
         with open(config_file_path, "w") as file:
             json.dump(config_data, file, indent=2, sort_keys=True)
 
@@ -74,7 +82,7 @@ def write_checkpoint_quantization_config(
 
 def validate_file(
     inverse_weight_map: InverseWeightMap,
-    converter: Converter,
+    converters: list[Converter],
 ):
     """
     Validate that each quantizable tensor in a safetensors file can be quantized.
@@ -84,18 +92,18 @@ def validate_file(
         build_inverse_weight_map() in the job-building phase.
         Example: {"/path/shard0.safetensors": ["q_proj.weight"],
                   "/path/shard1.safetensors": ["k_proj.weight", "v_proj.weight"]}
-    :param converter: converter we wish to apply to the checkpoint,
-        e.g. conversion of some layers from some format to compressed-tensors
+    :param converters: list of converters to apply in order. Each
+        converter's validate output is fed to the next.
     """
-    tensors = load_tensors_from_inverse_weight_map(inverse_weight_map)
-
-    converter.validate(tensors)
+    tensors = load_tensors_from_inverse_weight_map(inverse_weight_map, device="meta")
+    for converter in converters:
+        tensors = converter.validate(tensors)
 
 
 def convert_file(
     inverse_weight_map: InverseWeightMap,
     save_path: str | os.PathLike,
-    converter: Converter,
+    converters: list[Converter],
 ) -> tuple[int, dict[str, str]]:
     """
     Convert tensors in a given safetensors file
@@ -106,14 +114,14 @@ def convert_file(
         Example: {"/path/shard0.safetensors": ["q_proj.weight"],
                   "/path/shard1.safetensors": ["k_proj.weight", "v_proj.weight"]}
     :param save_path: save path of file with quantized weights
-    :param converter: converter we wish to apply to the checkpoint,
-        e.g. conversion of some layers from some format to compressed-tensors
+    :param converters: list of converters to apply in order. Each
+        converter's process output is fed to the next.
     :returns: tuple of (total_size, weight_map), respectively the total size in bytes
         of the saved file and dictionary of weight name -> save path
     """
     tensors = load_tensors_from_inverse_weight_map(inverse_weight_map)
-
-    tensors = converter.process(tensors)
+    for converter in converters:
+        tensors = converter.process(tensors)
 
     save_file(tensors, save_path)
     total_size = sum(tensor.nbytes for tensor in tensors.values())
