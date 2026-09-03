@@ -46,7 +46,7 @@ class OffloadCache(MutableMapping, ABC):
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
 
     # a dict to track tensors to be offloaded, flush this to update all at once
-    to_be_offloaded: ClassVar[dict[torch.Tensor, tuple[OffloadCache, torch.Tensor]]] = dict()
+    to_be_offloaded: ClassVar[dict[torch.Tensor, tuple[cls, torch.Tensor]]] = dict()
 
     @classmethod
     def cls_from_device(
