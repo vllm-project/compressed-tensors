@@ -135,13 +135,21 @@ def update_offload_parameter(module: torch.nn.Module, name: str, data: torch.Ten
         else:
             raise AttributeError(f"{type(module)} has no attribute {name}")
 
+        # when onloading is disabled, parameters can be access and assigned directly
+        if cache.onloading_disabled:
+            cache.offloaded_values[name] = data
+            return
+
+        # get offloaded value for updating
         offloaded = cache.offloaded_values[name]
         if offloaded is None:
             raise ValueError(f"Cannot update offload value `None` for param {name}")
+
         cache.update_offload(offloaded, data)
 
     else:
-        getattr(module, name).copy_(data)
+        with torch.no_grad():
+            getattr(module, name).copy_(data)
 
 
 def get_execution_device(
