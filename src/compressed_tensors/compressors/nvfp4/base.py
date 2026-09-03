@@ -8,6 +8,7 @@ from compressed_tensors.compressors.base import (
 )
 from compressed_tensors.compressors.nvfp4.helpers import (
     pack_fp4_to_uint8,
+    quantize_and_pack_fp4,
     unpack_fp4_from_uint8,
 )
 from compressed_tensors.config import CompressionFormat
@@ -18,6 +19,7 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 from compressed_tensors.utils import TensorStateDict, getattr_chain
+from compressed_tensors.utils.triton import triton_req
 
 
 __all__ = ["NVFP4PackedCompressor"]
@@ -78,14 +80,27 @@ class NVFP4PackedCompressor(BaseCompressor):
         zero_point = state_dict.get("weight_zero_point", None)
         weights = scheme.weights
 
-        quantized_weight = quantize(
-            x=weight,
-            scale=scale,
-            global_scale=global_scale,
-            zero_point=zero_point,
-            args=weights,
-        )
-        state_dict["weight_packed"] = pack_fp4_to_uint8(quantized_weight)
+        # Use fused quantize+pack kernel for better performance on GPU
+        # (~1-2ms savings by avoiding intermediate FP4 float buffer)
+        if triton_req(weight):
+            state_dict["weight_packed"] = quantize_and_pack_fp4(
+                x=weight,
+                scale=scale,
+                global_scale=global_scale,
+                zero_point=zero_point,
+                group_size=weights.group_size,
+            )
+        else:
+            # CPU fallback: use separate quantize + pack
+            quantized_weight = quantize(
+                x=weight,
+                scale=scale,
+                global_scale=global_scale,
+                zero_point=zero_point,
+                args=weights,
+            )
+            state_dict["weight_packed"] = pack_fp4_to_uint8(quantized_weight)
+
         state_dict["weight_scale"] = cls._compress_scale(scale, weights)
         state_dict = cls._remove_symmetric_zp(state_dict, scheme)
 

@@ -6,9 +6,11 @@ import torch
 from compressed_tensors.compressors.nvfp4.base import NVFP4PackedCompressor
 from compressed_tensors.compressors.nvfp4.helpers import (
     pack_fp4_to_uint8,
+    quantize_and_pack_fp4,
     unpack_fp4_from_uint8,
 )
 from compressed_tensors.quantization import QuantizationArgs, QuantizationType
+from compressed_tensors.quantization.lifecycle.forward import quantize
 from compressed_tensors.utils.impl_backend import ImplBackend
 
 
@@ -94,7 +96,6 @@ _FP4_VALUES = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0])
     ],
 )
 def test_pack_fp4_to_uint8_backends_match(x):
-    pytest.skip("triton kernels are disabled")
     torch_out = pack_fp4_to_uint8(x.cpu())  # CPU → torch fallback
     triton_out = ImplBackend.call(
         "pack_fp4_to_uint8_triton", x.to(torch.bfloat16).cuda()
@@ -104,3 +105,117 @@ def test_pack_fp4_to_uint8_backends_match(x):
     assert torch.equal(
         torch_out, triton_out
     ), f"Packed bytes differ:\ntorch:  {torch_out}\ntriton: {triton_out}"
+
+
+@pytest.mark.parametrize(
+    "m,n",
+    [
+        (4, 16),
+        (32, 64),
+        (64, 128),
+        (256, 512),
+        (1024, 1024),
+    ],
+)
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+@pytest.mark.parametrize("symmetric", [True, False])
+def test_quantize_and_pack_fused(m, n, dtype, symmetric):
+    """Test that fused quantize+pack produces identical results to separate ops."""
+    if not torch.accelerator.is_available():
+        pytest.skip("CUDA not available")
+
+    device = "cuda"
+    group_size = 16
+
+    x = torch.randn(m, n, dtype=dtype, device=device)
+    scale = torch.rand(m, n // group_size, dtype=dtype, device=device) + 0.1
+    global_scale = torch.tensor(1.0, device=device)
+
+    if symmetric:
+        zero_point = None
+    else:
+        zero_point = torch.randn(m, n // group_size, dtype=dtype, device=device) * 0.5
+
+    args = QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        group_size=group_size,
+        symmetric=symmetric,
+    )
+
+    # Separate approach: quantize then pack
+    quantized = quantize(
+        x=x.clone(),
+        scale=scale,
+        global_scale=global_scale,
+        zero_point=zero_point,
+        args=args,
+    )
+    packed_separate = pack_fp4_to_uint8(quantized)
+
+    # Fused approach: single kernel
+    packed_fused = quantize_and_pack_fp4(
+        x=x.clone(),
+        scale=scale,
+        global_scale=global_scale,
+        zero_point=zero_point,
+        group_size=group_size,
+    )
+
+    assert torch.equal(packed_separate, packed_fused)
+
+
+def test_quantize_and_pack_fused_boundary_values():
+    """Test fused kernel handles FP4 boundary values correctly."""
+    if not torch.accelerator.is_available():
+        pytest.skip("CUDA not available")
+
+    device = "cuda"
+    group_size = 16
+
+    # Test exact boundary values for FP4 rounding thresholds
+    # Use multiple rows and groups to avoid edge case with single group
+    boundary_values = torch.tensor(
+        [
+            0.25,
+            0.75,
+            1.25,
+            1.75,
+            2.5,
+            3.5,
+            5.0,
+            6.0,
+            -0.25,
+            -0.75,
+            -1.25,
+            -1.75,
+            -2.5,
+            -3.5,
+            -5.0,
+            -6.0,
+        ],
+        dtype=torch.bfloat16,
+        device=device,
+    )
+    # Create a 4x32 tensor by repeating boundary values
+    x = boundary_values.repeat(8).reshape(4, 32)
+    scale = torch.ones(4, 2, dtype=torch.bfloat16, device=device)
+    global_scale = torch.tensor(1.0, device=device)
+
+    args = QuantizationArgs(
+        num_bits=4, type=QuantizationType.FLOAT, group_size=group_size, symmetric=True
+    )
+
+    quantized = quantize(
+        x=x.clone(), scale=scale, global_scale=global_scale, zero_point=None, args=args
+    )
+    packed_separate = pack_fp4_to_uint8(quantized)
+
+    packed_fused = quantize_and_pack_fp4(
+        x=x.clone(),
+        scale=scale,
+        global_scale=global_scale,
+        group_size=group_size,
+    )
+
+    assert torch.equal(packed_separate, packed_fused)
