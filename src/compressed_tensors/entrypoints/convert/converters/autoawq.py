@@ -127,7 +127,7 @@ class AutoAWQConverter(Converter):
                 tensors[f"{module_name}.weight_zero_point"] = weight_zero_point
         return tensors
 
-    def validate(self, tensors: dict[str, torch.Tensor]):
+    def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         for name in tensors:
             module_name, _, param_name = name.rpartition(".")
 
@@ -144,7 +144,33 @@ class AutoAWQConverter(Converter):
                         f"Found qweight without corresponding {dependency}"
                     )
 
-    def create_config(self) -> QuantizationConfig:
+        # Build output meta tensor dict
+        output: dict[str, torch.Tensor] = {}
+        for name, tensor in tensors.items():
+            if not name.endswith(".qweight"):
+                if not name.endswith((".qzeros", ".scales")):
+                    output[name] = tensor
+                continue
+
+            module_name = name.removesuffix(".qweight")
+            if not self._is_targeted(module_name):
+                output[name] = tensor
+                continue
+
+            # Simulate process output
+            output[f"{module_name}.weight_packed"] = torch.empty(0, dtype=torch.int32)
+            output[f"{module_name}.weight_shape"] = torch.empty(0, dtype=torch.int64)
+            output[f"{module_name}.weight_scale"] = torch.empty(
+                0, dtype=tensors[f"{module_name}.scales"].dtype
+            )
+            if self.zero_point:
+                output[f"{module_name}.weight_zero_point"] = torch.empty(
+                    0, dtype=torch.int32
+                )
+
+        return output
+
+    def _build_quant_config(self) -> QuantizationConfig:
         weights = QuantizationArgs(
             num_bits=self.bits,
             type=QuantizationType.INT,
@@ -164,6 +190,15 @@ class AutoAWQConverter(Converter):
             format=CompressionFormat.pack_quantized.value,
             quantization_status=QuantizationStatus.COMPRESSED.value,
         )
+
+    def update_config(
+        self, config: QuantizationConfig | None
+    ) -> QuantizationConfig | None:
+        quant_config = self._build_quant_config()
+        if config is not None:
+            config.merge(quant_config)
+            return config
+        return quant_config
 
     def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, _, suffix = weight_name.rpartition(".")

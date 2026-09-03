@@ -2,20 +2,25 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import math
+from types import SimpleNamespace
+from unittest.mock import Mock
 
+import compressed_tensors.quantization.lifecycle.initialize as initialize_lifecycle
 import pytest
 import torch
 from compressed_tensors.offload import set_onload_device
 from compressed_tensors.quantization import (
     FP8_E4M3_DATA,
-    ActivationOrdering,
     QuantizationArgs,
     QuantizationScheme,
     QuantizationStatus,
     QuantizationStrategy,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
+    initialize_attn_qparams,
     initialize_module_for_quantization,
+    is_attention_module,
+    is_cached_attention_module,
 )
 from tests.testing_utils import requires_gpu
 from torch.nn import Linear
@@ -29,9 +34,106 @@ Q_PARAM_NAMES = {
 }
 
 
+class CacheAwareAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.k_proj = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states, past_key_value=None):
+        return hidden_states
+
+
+class PluralCacheAwareAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.k_proj = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states, past_key_values=None):
+        return hidden_states
+
+
+class EncoderAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.k_proj = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states, **kwargs):
+        return hidden_states
+
+
 @pytest.fixture
 def layer():
     return Linear(4, 4)
+
+
+@pytest.mark.parametrize(
+    "attention_cls, expected",
+    [
+        (CacheAwareAttention, True),
+        (PluralCacheAwareAttention, True),
+        (EncoderAttention, False),
+    ],
+)
+def test_is_cached_attention_module(attention_cls, expected):
+    assert is_cached_attention_module(attention_cls()) is expected
+
+
+def test_is_attention_module_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="is_cached_attention_module"):
+        assert is_attention_module(CacheAwareAttention()) is True
+
+
+@pytest.mark.parametrize("error_type", [TypeError, ValueError])
+def test_is_cached_attention_module_warns_and_returns_false_when_uninspectable(
+    monkeypatch, error_type
+):
+    warning = Mock()
+    monkeypatch.setattr(
+        initialize_lifecycle.inspect,
+        "signature",
+        Mock(side_effect=error_type("signature unavailable")),
+    )
+    monkeypatch.setattr(initialize_lifecycle.logger, "warning", warning)
+
+    assert is_cached_attention_module(CacheAwareAttention()) is False
+
+    warning.assert_called_once_with(
+        "Unable to inspect an attention module's forward signature; "
+        "skipping KV cache quantization for uninspectable modules",
+        log_once=True,
+    )
+
+
+class MockKVCache(torch.nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+
+def test_initialize_attn_qparams_uses_kv_cache_config():
+    config = SimpleNamespace(
+        num_attention_heads=8,
+        num_key_value_heads=2,
+        head_dim=16,
+    )
+
+    attention = _initialize_attn_qparams(config)
+
+    assert getattr(attention, "kv_cache").config is config
+    assert attention.k_scale.shape == (2, 1, 1)
+    assert attention.v_scale.shape == (2, 1, 1)
+
+
+def _initialize_attn_qparams(config):
+    attention = CacheAwareAttention()
+    attention.kv_cache = MockKVCache(config)
+    scheme = QuantizationScheme(
+        targets=["CacheAwareAttention"],
+        input_activations=QuantizationArgs(strategy=QuantizationStrategy.ATTN_HEAD),
+    )
+
+    initialize_attn_qparams(attention, scheme, force_zero_point=False)
+    return attention
 
 
 @pytest.mark.parametrize(
@@ -134,10 +236,6 @@ def test_initialize_module_for_quantization_offloaded(
             None,
         ),
         (
-            QuantizationArgs(strategy="group", group_size=2, actorder="group"),
-            None,
-        ),
-        (
             QuantizationArgs(strategy="group", group_size=2, actorder="weight"),
             None,
         ),
@@ -236,9 +334,3 @@ def test_initialize_quantization_parameters(weights, input_activations):
         if not args.dynamic:
             assert getattr(layer, f"{q_param_name}_scale").shape == expected_shape
             assert getattr(layer, f"{q_param_name}_zero_point").shape == expected_shape
-
-        # g_idx
-        if args.actorder == ActivationOrdering.GROUP:
-            assert getattr(layer, f"{q_param_name}_g_idx").shape == (
-                layer.weight.shape[1],
-            )

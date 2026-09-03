@@ -234,7 +234,7 @@ class Aliasable:
             return self_value == other_value
 
     def __hash__(self):
-        canonical_value = self.aliases.get(self.value, self.value)
+        canonical_value = self.get_aliases().get(self.value, self.value)
         return hash(canonical_value)
 
 

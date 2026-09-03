@@ -4,7 +4,6 @@
 import warnings
 from collections import defaultdict
 from enum import Enum
-from typing import Annotated, Any
 
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
@@ -143,13 +142,13 @@ class QuantizationConfig(BaseModel):
         the kv_cache_scheme gets converted into a QuantizationScheme that:
             - targets the `q_proj` and `k_proj` modules of the model. The outputs
               of those modules are the keys and values that might be cached
-            - quantizes the outputs of the aformentioned layers, so that
+            - quantizes the outputs of the aforementioned layers, so that
               keys and values are compressed before storing them in the cache
         There is an explicit assumption that the model contains modules with
         `k_proj` and `v_proj` in their names. If this is not the case
         and kv_cache_scheme != None, the quantization of kv cache will fail
     :global_compression_ratio: optional informational config to report the model
-        compression ratio acheived by the quantization config
+        compression ratio achieved by the quantization config
     :ignore: optional list of layers to ignore from config_groups. Layers in this list
         are not quantized even if they match up with a target in config_groups
     """
@@ -161,9 +160,6 @@ class QuantizationConfig(BaseModel):
     quantization_status: QuantizationStatus = QuantizationStatus.INITIALIZED
     global_compression_ratio: float | None = None
     ignore: list[str] | None = Field(default_factory=list)
-    # `run_compressed` is a dummy, unused arg for backwards compatibility
-    # see: https://github.com/huggingface/transformers/pull/39324
-    run_compressed: Annotated[Any, Field(exclude=True)] = None
 
     def model_post_init(self, __context):
         """
@@ -177,16 +173,6 @@ class QuantizationConfig(BaseModel):
                 name=group_name,
                 targets=targets_or_scheme,
             )
-
-        # if unset, populate format on each config group
-        if self.format not in (
-            DEFAULT_QUANTIZATION_FORMAT,
-            CompressionFormat.mixed_precision,
-            CompressionFormat.dense,
-        ):
-            for scheme in self.config_groups.values():
-                if scheme.format is None:
-                    scheme.format = self.format
 
     def to_dict(self):
         # for compatibility with HFQuantizer
@@ -205,7 +191,7 @@ class QuantizationConfig(BaseModel):
         """
         from compressed_tensors.modeling import IMPL_ATTR
         from compressed_tensors.quantization.lifecycle.initialize import (
-            is_attention_module,
+            is_cached_attention_module,
         )
 
         # set of all quantization schemes
@@ -228,15 +214,14 @@ class QuantizationConfig(BaseModel):
 
         for name, submodule in model.named_modules():
             layer_type: str = get_vllm_module_type(type(submodule).__name__)
+            is_cached_attention = is_cached_attention_module(submodule)
 
             # add config group if quantized non-attention or attention quant
             has_config_group = is_module_quantized(submodule) and (
-                not is_attention_module(submodule) or hasattr(submodule, IMPL_ATTR)
+                not is_cached_attention or hasattr(submodule, IMPL_ATTR)
             )
             # only add kvcache if quant attention (which always implies kvcache)
-            has_kv_cache = is_module_quantized(submodule) and is_attention_module(
-                submodule
-            )
+            has_kv_cache = is_module_quantized(submodule) and is_cached_attention
 
             if has_config_group:
                 # add to running set of schemes/layer_type_names
