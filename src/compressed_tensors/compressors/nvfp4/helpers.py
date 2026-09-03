@@ -102,6 +102,8 @@ def _quantize_and_pack_fp4_kernel(
     num_cols,
     group_size,
     BLOCK_SIZE: tl.constexpr,
+    has_zero_point: tl.constexpr,
+    has_global_scale: tl.constexpr,
 ):
     """
     Fused Triton kernel that quantizes input values to FP4 and packs them into uint8
@@ -144,27 +146,27 @@ def _quantize_and_pack_fp4_kernel(
     scale_low = tl.load(scale_ptr + scale_low_idx, mask=mask, other=1.0)
     scale_high = tl.load(scale_ptr + scale_high_idx, mask=mask, other=1.0)
 
-    if global_scale_ptr is not None:
+    if has_global_scale:
         global_scale = tl.load(global_scale_ptr)
-        scale_low = scale_low / global_scale.to(scale_low.dtype)
-        scale_high = scale_high / global_scale.to(scale_high.dtype)
+        scale_low = tl.div_rn(scale_low.to(tl.float32), global_scale.to(tl.float32))
+        scale_high = tl.div_rn(scale_high.to(tl.float32), global_scale.to(tl.float32))
 
-    x_low = x_low / scale_low
-    x_high = x_high / scale_high
+    x_low = tl.div_rn(x_low.to(tl.float32), scale_low.to(tl.float32))
+    x_high = tl.div_rn(x_high.to(tl.float32), scale_high.to(tl.float32))
 
-    if zero_point_ptr is not None:
+    if has_zero_point:
         zp_low = tl.load(zero_point_ptr + scale_low_idx, mask=mask, other=0.0)
         zp_high = tl.load(zero_point_ptr + scale_high_idx, mask=mask, other=0.0)
         x_low = x_low + zp_low
         x_high = x_high + zp_high
 
-    # Clamp to FP4 range and convert to bf16 for consistent rounding
-    x_low = tl.clamp(x_low, -6.0, 6.0).to(tl.bfloat16)
-    x_high = tl.clamp(x_high, -6.0, 6.0).to(tl.bfloat16)
+    # Clamp to FP4 range
+    x_low = tl.clamp(x_low, -6.0, 6.0)
+    x_high = tl.clamp(x_high, -6.0, 6.0)
 
-    # Extract sign bit directly into bit 3 via bitcast (handles -0.0 correctly)
-    sign_low = (x_low.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
-    sign_high = (x_high.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
+    # Extract sign bit into bit 3 position (8 = 0b1000)
+    sign_low = tl.where(x_low < 0.0, 8, 0).to(tl.uint8)
+    sign_high = tl.where(x_high < 0.0, 8, 0).to(tl.uint8)
 
     abs_low = tl.abs(x_low)
     abs_high = tl.abs(x_high)
@@ -231,32 +233,38 @@ def quantize_and_pack_fp4(
         )
 
     # GPU path using fused Triton kernel
-    if x.is_cuda or x.is_xpu:
-        x_flat = x.flatten()
+    if triton_req(x):
+        # FP4 packing requires contiguous input since we pack consecutive pairs
+        x_flat = x.contiguous().flatten()
         n_pairs = x_flat.numel() // 2
         output_shape = (m, n // 2)
 
-        # Flatten scale for kernel access
-        scale_flat = scale.flatten()
+        # Flatten scale for kernel access (must be contiguous)
+        scale_flat = scale.flatten().contiguous()
 
-        # Handle zero_point
-        zp_flat = zero_point.flatten() if zero_point is not None else None
+        # Handle zero_point - pass x_flat as dummy when None
+        zp_flat = (
+            zero_point.flatten().contiguous() if zero_point is not None else x_flat
+        )
 
         packed = torch.empty(n_pairs, dtype=torch.uint8, device=x.device)
 
         BLOCK_SIZE = 1024
         grid = (triton.cdiv(n_pairs, BLOCK_SIZE),)
 
+        # Pass x_flat as dummy for global_scale when None
         _quantize_and_pack_fp4_kernel[grid](
             packed,
             x_flat,
             scale_flat,
             zp_flat,
-            global_scale,
+            global_scale if global_scale is not None else x_flat,
             m,
             n,
             group_size,
             BLOCK_SIZE,
+            has_zero_point=zero_point is not None,
+            has_global_scale=global_scale is not None,
         )
 
         return packed.reshape(output_shape)

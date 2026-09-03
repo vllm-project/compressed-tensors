@@ -19,6 +19,7 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 from compressed_tensors.utils import TensorStateDict, getattr_chain
+from compressed_tensors.utils.triton import triton_req
 
 
 __all__ = ["NVFP4PackedCompressor"]
@@ -81,7 +82,7 @@ class NVFP4PackedCompressor(BaseCompressor):
 
         # Use fused quantize+pack kernel for better performance on GPU
         # (~1-2ms savings by avoiding intermediate FP4 float buffer)
-        if weight.is_cuda or weight.is_xpu:
+        if triton_req(weight):
             state_dict["weight_packed"] = quantize_and_pack_fp4(
                 x=weight,
                 scale=scale,

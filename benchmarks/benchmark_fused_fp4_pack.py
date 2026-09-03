@@ -10,7 +10,6 @@ Compares:
 """
 
 import gc
-import time
 import torch
 
 from compressed_tensors.compressors.nvfp4.helpers import (
@@ -24,7 +23,7 @@ from compressed_tensors.quantization.quant_args import (
 )
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-N_RUNS = 1000
+N_RUNS = 200  # CUDA events are accurate, don't need as many runs
 GROUP_SIZE = 16  # NVFP4 always uses group_size=16
 
 
@@ -88,31 +87,51 @@ def fused_quantize_pack(x, scale, global_scale):
 
 
 def benchmark_kernel(func, *args, name="", warmup=False):
-    """Benchmark a kernel function on CUDA, measuring only kernel time."""
+    """Benchmark a kernel function on CUDA using CUDA events for accurate timing."""
     if warmup:
         print(f"  Warming up {name}...")
-        for _ in range(10):
+        for _ in range(50):
             _ = func(*args)
         torch.cuda.synchronize()
         print("  Warmup complete, starting benchmark...")
 
+    torch.cuda.empty_cache()
+    gc.collect()
+    torch.cuda.synchronize()
+
     times = []
 
     for _ in range(N_RUNS):
-        torch.cuda.synchronize()
-        start = time.perf_counter()
-        result = func(*args)
-        torch.cuda.synchronize()
-        elapsed = time.perf_counter() - start
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
 
-        times.append(elapsed)
+        start_event.record()
+        result = func(*args)
+        end_event.record()
+
+        torch.cuda.synchronize()
+        elapsed_ms = start_event.elapsed_time(end_event)  # milliseconds
+        times.append(elapsed_ms / 1000.0)  # convert to seconds
+
         del result
 
-    avg_time = sum(times) / N_RUNS
-    min_time = min(times)
-    max_time = max(times)
+    # Use median for robustness against outliers
+    times.sort()
+    median_time = times[len(times) // 2]
 
-    return avg_time, min_time, max_time
+    # Variance stats for debugging stability
+    min_time = times[0]
+    max_time = times[-1]
+    p10 = times[int(len(times) * 0.1)]
+    p90 = times[int(len(times) * 0.9)]
+    variance_ratio = max_time / min_time if min_time > 0 else float('inf')
+
+    print(f"    {name}: median={median_time*1000:.3f}ms, "
+          f"min={min_time*1000:.3f}ms, max={max_time*1000:.3f}ms, "
+          f"p10={p10*1000:.3f}ms, p90={p90*1000:.3f}ms, "
+          f"variance_ratio={variance_ratio:.2f}x")
+
+    return median_time
 
 
 def run_benchmark(name, rows, cols):
@@ -132,21 +151,17 @@ def run_benchmark(name, rows, cols):
 
     # Benchmark unfused (quantize + pack)
     print("\nRunning unfused (quantize + pack)...")
-    time_unfused, min_unfused, max_unfused = benchmark_kernel(
+    time_unfused = benchmark_kernel(
         unfused_quantize_pack, x, scale, global_scale, args,
         name="unfused", warmup=True
     )
-    print(f"  Unfused: avg={time_unfused*1000:.3f}ms, "
-          f"min={min_unfused*1000:.3f}ms, max={max_unfused*1000:.3f}ms")
 
     # Benchmark fused
     print("\nRunning fused (quantize_and_pack_fp4)...")
-    time_fused, min_fused, max_fused = benchmark_kernel(
+    time_fused = benchmark_kernel(
         fused_quantize_pack, x, scale, global_scale,
         name="fused", warmup=True
     )
-    print(f"  Fused:   avg={time_fused*1000:.3f}ms, "
-          f"min={min_fused*1000:.3f}ms, max={max_fused*1000:.3f}ms")
 
     # Verify correctness
     packed_unfused = unfused_quantize_pack(x.clone(), scale.clone(), global_scale.clone(), args)
