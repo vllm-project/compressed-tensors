@@ -13,12 +13,14 @@ from compressed_tensors.quantization.quant_args import (
     DynamicType,
     QuantizationArgs,
     QuantizationStrategy,
+    QuantizationType,
 )
 from compressed_tensors.quantization.quant_config import QuantizationStatus
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils import (
     calculate_range,
     compute_dynamic_scales_and_zp,
+    fake_quantize_lut_b,
 )
 from compressed_tensors.utils import patch_attr
 from torch.nn import Module
@@ -57,6 +59,12 @@ def quantize(
     :param global_scale: optional constant to scale the quantization scale during QDQ
     :return: fake quantized tensor
     """
+
+    if args.type == QuantizationType.CODEBOOK:
+        raise ValueError(
+            "Codebook quantization produces indices and a codebook; "
+            "use quantize_lut_b instead"
+        )
 
     return _process_quantization(
         x=x,
@@ -146,6 +154,7 @@ def fake_quantize(
     zero_point: torch.Tensor,
     args: QuantizationArgs,
     global_scale: torch.Tensor | None = None,
+    codebooks: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Fake quantize the input tensor x by quantizing then dequantizing with
@@ -159,8 +168,12 @@ def fake_quantize(
     :param zero_point: zero point tensor
     :param args: quantization args dictating how to quantize x
     :param global_scale: optional constant to scale the quantization scale during QDQ
+    :param codebooks: optional precomputed codebooks, only for codebook QDQ
     :return: fake quantized tensor
     """
+    if args.type == QuantizationType.CODEBOOK:
+        return fake_quantize_lut_b(x, args, codebooks)
+
     return _process_quantization(
         x=x,
         scale=scale,
@@ -294,6 +307,15 @@ def forward_quantize(
         # if the tensor is empty,
         # skip quantization
         return value
+
+    if args.type == QuantizationType.CODEBOOK:
+        if base_name != "weight":
+            raise ValueError("Codebook quantization is only supported for weights")
+        return fake_quantize_lut_b(
+            value,
+            args,
+            getattr(module, "weight_codebook", None),
+        )
 
     global_scale = getattr(module, f"{base_name}_global_scale", None)
 
