@@ -726,7 +726,6 @@ def test_quantize_triton_matches_cpu(
     num_bits, type, symmetric, global_scale, group_size
 ):
     """Verify that the accelerator quantization path matches the CPU path."""
-    pytest.skip("triton kernels are disabled")
 
     num_rows = 512
     num_cols = 1024
@@ -835,7 +834,6 @@ def test_quantize_triton_matches_cpu_non_contiguous(
     num_bits, type, symmetric, global_scale, group_size
 ):
     """Verify that the accelerator path matches CPU on non-contiguous tensors."""
-    pytest.skip("triton kernels are disabled")
 
     num_rows = 512
     num_cols = 1024
@@ -944,7 +942,6 @@ def test_quantize_triton_matches_cpu_block_4d(
     """Verify that the Triton kernel (CUDA) produces identical output
     to the non-Triton (CPU) codepath for _quantize with 4D block quantization.
     """
-    pytest.skip("triton kernels are disabled")
     num_bits = 8
     type_ = "float"
     symmetric = True
@@ -1077,7 +1074,6 @@ def test_quantize_triton_matches_cpu_block_4d(
     ],
 )
 def test_quantize_backends_match(args, x, scale, zero_point, global_scale):
-    pytest.skip("triton kernels are disabled")
     is_fp8 = args.type == QuantizationType.FLOAT and args.num_bits == 8
     if is_fp8 and not _is_fp8_supported(torch.device("cuda")):
         pytest.skip("FP8 Triton kernel requires SM90+ (Hopper)")
@@ -1118,6 +1114,60 @@ def test_quantize_backends_match(args, x, scale, zero_point, global_scale):
     assert torch.allclose(
         torch_out.float(), triton_out.float(), atol=atol, rtol=rtol
     ), f"Max diff: {(torch_out.float() - triton_out.float()).abs().max().item()}"
+
+
+@requires_gpu(2)
+def test_quantize_triton_multi_gpu_device_context():
+    """
+    Verify that the Triton quantize kernel works correctly when tensors are on
+    a non-default GPU device (e.g., cuda:1 while current device is cuda:0).
+    """
+    from compressed_tensors.quantization.lifecycle.forward_helpers import (
+        _quantize_triton,
+    )
+    from compressed_tensors.quantization.quant_args import (
+        QuantizationArgs,
+        QuantizationStrategy,
+    )
+    from compressed_tensors.quantization.utils.helpers import calculate_range
+
+    # Ensure current device is cuda:0
+    torch.accelerator.set_device_index(0)
+    assert (
+        torch.accelerator.current_device_index() == 0
+    ), "Test requires cuda:0 as current device"
+    # Create all tensors on cuda:1 (NOT the current device)
+    target_device = torch.device("cuda:1")
+    num_rows = 512
+    num_cols = 1024
+    args = QuantizationArgs(
+        num_bits=8,
+        type="int",
+        symmetric=True,
+        strategy=QuantizationStrategy.TENSOR,
+    )
+    x = torch.randn(num_rows, num_cols, device=target_device, dtype=torch.bfloat16)
+    scale = torch.rand(1, device=target_device) * 0.01 + 0.001
+    q_min, q_max = calculate_range(args, target_device)
+    result = _quantize_triton(
+        x=x,
+        scale=scale,
+        zero_point=None,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        dtype=None,
+        global_scale=None,
+    )
+    # Verify the result is on the correct device
+    assert (
+        result.device == target_device
+    ), f"Result should be on {target_device}, got {result.device}"
+    assert result.shape == x.shape, f"Shape mismatch: {result.shape} vs {x.shape}"
+    # Verify current device is still cuda:0 (context manager shouldn't change it)
+    assert (
+        torch.accelerator.current_device_index() == 0
+    ), "Current device should still be cuda:0 after kernel execution"
 
 
 def test_calculate_range_memoized_on_field_values():
