@@ -13,6 +13,7 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationStrategy,
     QuantizationType,
 )
+from compressed_tensors.quantization.utils.lut_b import is_lut_b_quantization
 from pydantic import BaseModel, ConfigDict, model_validator
 
 
@@ -56,12 +57,7 @@ class QuantizationScheme(BaseModel, use_enum_values=True):
             raise ValueError("Codebook quantization is only supported for weights")
 
         if weights is not None and weights.type == QuantizationType.CODEBOOK:
-            is_lut_b = (
-                weights.num_bits == 3
-                and weights.strategy == QuantizationStrategy.BLOCK
-                and weights.block_structure == [8, 64]
-            )
-            if not is_lut_b:
+            if not is_lut_b_quantization(weights):
                 raise ValueError(
                     "Codebook weights currently require the LUT-B contract: "
                     "num_bits=3, strategy='block', block_structure=[8, 64]"
