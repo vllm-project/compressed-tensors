@@ -236,6 +236,8 @@ def _quantize_kernel(
     use_intel_libdevice: tl.constexpr,
     BLOCK_SIZE_R: tl.constexpr,
     BLOCK_SIZE_C: tl.constexpr,
+    has_zero_point: tl.constexpr,
+    has_global_scale: tl.constexpr,
 ):
     """General quantize kernel using explicit strides.
 
@@ -292,13 +294,13 @@ def _quantize_kernel(
     input = tl.load(input_ptr + input_offsets, masks, 0.0)
     scale = tl.load(scale_ptr + scale_offsets, scale_masks, 1.0)
 
-    if global_scale_ptr is not None:
+    if has_global_scale:
         global_scale = tl.load(global_scale_ptr)
-        scale = scale / global_scale.to(scale.dtype)
+        scale = tl.div_rn(scale.to(tl.float32), global_scale.to(tl.float32))
 
-    output = input / scale
+    output = tl.div_rn(input.to(tl.float32), scale.to(tl.float32))
 
-    if zero_point_ptr is not None:
+    if has_zero_point:
         zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
         output += zero_point
 
@@ -314,8 +316,7 @@ def _quantize_kernel(
     elif quant_type == QUANT_TYPE_FLOAT:
         output = tl.clamp(output, q_min, q_max)
         if num_bits == 4:
-            orig_dtype = output.dtype
-            output = _round_to_fp4(output.to(tl.bfloat16)).to(orig_dtype)
+            output = _round_to_fp4(output)
         elif num_bits == 8:
             output = output.to(tl.float8e4nv).to(output.dtype)
 
@@ -388,7 +389,7 @@ def _quantize_triton_req(
 
 
 @torch.no_grad()
-@ImplBackend.register("_quantize", _quantize_triton_req, "disable")
+@ImplBackend.register("_quantize", _quantize_triton_req, 0)
 def _quantize_triton(
     x: torch.Tensor,
     scale: torch.Tensor,
@@ -470,41 +471,43 @@ def _quantize_triton(
         output_stride_1, output_stride_3 = out_strides
         output_stride_2 = 0
 
-    _quantize_kernel[grid](
-        quantized_value,
-        x,
-        scale,
-        zero_point,
-        q_min,
-        q_max,
-        global_scale,
-        input_stride_0,
-        input_stride_1,
-        input_stride_2,
-        input_stride_3,
-        output_stride_0,
-        output_stride_1,
-        output_stride_2,
-        output_stride_3,
-        dim_0,
-        dim_1,
-        dim_2,
-        dim_3,
-        group_size,
-        num_scale_cols,
-        quant_type=quant_type,
-        num_bits=num_bits,
-        use_intel_libdevice=x.device.type == "xpu",
-        BLOCK_SIZE_R=block_size_r,
-        BLOCK_SIZE_C=block_size_c,
-    )
+    output_dtype = dtype if dtype is not None else x.dtype
+
+    with torch.get_device_module().device(x.device):
+        _quantize_kernel[grid](
+            quantized_value,
+            x,
+            scale,
+            zero_point if zero_point is not None else x,  # pass x as dummy
+            q_min,
+            q_max,
+            global_scale if global_scale is not None else x,  # pass x as dummy
+            input_stride_0,
+            input_stride_1,
+            input_stride_2,
+            input_stride_3,
+            output_stride_0,
+            output_stride_1,
+            output_stride_2,
+            output_stride_3,
+            dim_0,
+            dim_1,
+            dim_2,
+            dim_3,
+            group_size,
+            num_scale_cols,
+            quant_type=quant_type,
+            num_bits=num_bits,
+            use_intel_libdevice=x.device.type == "xpu",
+            BLOCK_SIZE_R=block_size_r,
+            BLOCK_SIZE_C=block_size_c,
+            has_zero_point=zero_point is not None,
+            has_global_scale=global_scale is not None,
+        )
 
     quantized_value = quantized_value.reshape(original_shape)
 
-    if dtype is not None:
-        quantized_value = quantized_value.to(dtype)
-
-    return quantized_value
+    return quantized_value.to(output_dtype)
 
 
 @torch.no_grad()
