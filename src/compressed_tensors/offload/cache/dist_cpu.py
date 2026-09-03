@@ -6,7 +6,7 @@ import torch.distributed as dist
 from compressed_tensors.distributed import get_source_rank, is_source_process
 from compressed_tensors.offload.cache.cpu import CPUCache
 from compressed_tensors.offload.cache.utils import catch_cpu_mem_error
-from compressed_tensors.offload.utils import send_tensors, to_empty
+from compressed_tensors.offload.utils import send_tensors, to_tensor
 
 
 class DistributedCPUCache(CPUCache):
@@ -18,11 +18,6 @@ class DistributedCPUCache(CPUCache):
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Synchronously create shared cpu memory for offload.
-
-        The dtype of ``tensor`` on non-source ranks cannot be trusted because
-        transformers may initialize buffers (e.g. ``inv_freq``) with a
-        different dtype than the checkpoint value on the source rank. See
-        https://github.com/huggingface/transformers/pull/47486
 
         :param tensor: tensor on any device
         :return: cpu tensor whose data is located in shared memory
@@ -37,18 +32,31 @@ class DistributedCPUCache(CPUCache):
             # create shared memory cpu tensor
             tensor = super().offload(tensor).share_memory_()
             handle, filename, nbytes = tensor.untyped_storage()._share_filename_cpu_()
-            broadcast_obj = [handle, filename, nbytes, tensor.dtype]
+            broadcast_obj = [handle, filename, nbytes, tensor.dtype, tensor.shape]
         else:
-            broadcast_obj = [None, None, None, None]
+            broadcast_obj = [None, None, None, None, None]
 
         # receive shared memory file handle
         dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
         if not is_source_process():
+            src_shape = broadcast_obj.pop(4)
             src_dtype = broadcast_obj.pop(3)
 
-            if tensor.device.type == "meta" or tensor.dtype != src_dtype:
-                tensor = to_empty(tensor, device=self.offload_device, dtype=src_dtype)
+            # transformers may init params/buffers on non-source (meta) ranks with a
+            # different dtype or shape than the checkpoint (e.g. `inv_freq`, or
+            # tied/multimodal weights), so rebuild from the source's dtype and shape
+            # before pointing at the shared storage. See
+            # https://github.com/huggingface/transformers/pull/47486
+            if (
+                tensor.is_meta
+                or tensor.dtype != src_dtype
+                or tensor.shape != src_shape
+            ):
+                empty = torch.empty(
+                    src_shape, dtype=src_dtype, device=self.offload_device
+                )
+                tensor = to_tensor(empty, tensor)
             else:
                 tensor = send_tensors(tensor, device=self.offload_device)
 
