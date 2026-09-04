@@ -45,6 +45,11 @@ class OffloadCache(MutableMapping, ABC):
     # offloaded tensors -> onloaded tensors (only when offloading is disabled)
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
 
+    # a dict to track tensors to be offloaded, flush this to update all at once
+    to_be_offloaded: ClassVar[
+        dict[torch.Tensor, tuple["OffloadCache", torch.Tensor, torch.Tensor]]
+    ] = dict()
+
     @classmethod
     def cls_from_device(
         cls,
@@ -218,16 +223,25 @@ class OffloadCache(MutableMapping, ABC):
         # if the key already exists, update with the new value
         offloaded = self.offloaded_values.get(key, None)
         if offloaded is not None and torch.is_same_size(offloaded, value):
-            self.update_offload(offloaded, value)
+            if self.offloading_disabled:
+                # defer offload update until after exiting
+                # disable_offloading context
+                # we need to store the class instance to call the correct `update_offload`
+                # later, since the disabling method is a classmethod
+                self.to_be_offloaded[offloaded] = (self, value)
+            else:
+                self.offload(offloaded, value)
 
             onloaded = self.keep_onloaded_values.get(offloaded, None)
             if onloaded is not None and onloaded is not offloaded:
                 onloaded.copy_(value)
 
-        # if the key does not exist (or the value is None), offload the new value
+        # key doesn't exist, this is a new offload
+        # no point in defering anyways
         else:
             self.offloaded_values[key] = self.offload(value)
 
+        
     def __delitem__(self, key: Hashable):
         """
         Remove the offloaded tensor associated with `key`. Any references to its
@@ -236,6 +250,10 @@ class OffloadCache(MutableMapping, ABC):
         :param key: name of tensor to invalidate
         """
         offloaded = self.offloaded_values[key]
+
+        if self.offloading_disabled and offloaded in self.to_be_offloaded:
+            del self.to_be_offloaded[offloaded]
+
         del self.offloaded_values[key]
 
         # remove strong ref
@@ -265,6 +283,10 @@ class OffloadCache(MutableMapping, ABC):
             try:
                 yield
             finally:
+                # flush all deferred offload updates
+                for offloaded, (instance, data) in cls.to_be_offloaded.items():
+                    instance.update_offload(offloaded, data)
+                cls.to_be_offloaded.clear()
                 OffloadCache.offloading_disabled = restore_value
                 OffloadCache.keep_onloaded_values.clear()
         else:
