@@ -689,11 +689,7 @@ def test_quantize_dequantize_matches_sequential(
         return
 
     if type == "int":
-        atol, rtol = 1.0, 0  # allow +/-1 due to rounding corner cases
-    elif type == "float" and num_bits == 4:
-        # FP4 has coarse quantization levels (0, 0.5, 1, 1.5, 2, 3, 4, 6)
-        # Fused vs sequential paths may have subtle rounding differences
-        atol, rtol = 0.5, 0.15
+        atol, rtol = 1.0, 0
     else:
         atol, rtol = 1e-5, 0.15
 
@@ -853,7 +849,7 @@ def test_dequantize_triton_matches_cpu(
     )
 
     assert torch.allclose(
-        cpu_out, cuda_out.cpu(), rtol=1e-5, atol=1e-5
+        cpu_out, cuda_out.cpu(), rtol=1e-5, atol=0
     ), f"Mismatch: max diff = {(cpu_out - cuda_out.cpu()).abs().max().item()}"
 
 
@@ -988,31 +984,10 @@ def test_quantize_dequantize_triton_matches_cpu(
             else None,
         )
 
-    # Fixed tolerances per quantization type:
-    #
-    # Error comes from rounding differences (torch.round vs tl.rint) and FP precision.
-    # Error in output = (rounding_diff) × scale, where rounding_diff ≤ 1 step.
-    #
-    # INT4/INT8: uniform spacing, max rounding diff = 0.5 steps
-    #   - With test scales [0.01, 0.11], max error ≈ 0.11
-    #   - atol = 0.15 covers this with buffer
-    #
-    # FP4: non-uniform spacing (gaps: 0.5 to 2.0), max rounding diff = 1.0 step
-    #   - atol = 0.25 for larger potential errors
-    #
-    # FP8: falls back to CPU, should be identical
-    #   - atol = 1e-5
-    #
-    # rtol = 0.01 handles any relative precision issues for larger values
     if type == "int":
-        computed_atol = 0.15
-        computed_rtol = 0.01
-    elif type == "float" and num_bits == 4:
-        computed_atol = 0.25
-        computed_rtol = 0.01
-    else:  # FP8 - CPU fallback
-        computed_atol = 1e-5
-        computed_rtol = 1e-5
+        atol, rtol = 1.0, 0
+    else:
+        atol, rtol = 1e-5, 0.15
 
     print("type: ", type)
     print("num_bits: ", num_bits)
@@ -1021,11 +996,9 @@ def test_quantize_dequantize_triton_matches_cpu(
     print("max diff: ", (cpu_out - cuda_out.cpu()).abs().max().item())
     print("*")
 
-    assert torch.allclose(
-        cpu_out, cuda_out.cpu(), rtol=computed_rtol, atol=computed_atol
-    ), (
+    assert torch.allclose(cpu_out, cuda_out.cpu(), rtol=rtol, atol=atol), (
         f"Mismatch: max diff = {(cpu_out - cuda_out.cpu()).abs().max().item()}, "
-        f"rtol = {computed_rtol}, atol = {computed_atol}"
+        f"rtol = {rtol}, atol = {atol}"
     )
 
 

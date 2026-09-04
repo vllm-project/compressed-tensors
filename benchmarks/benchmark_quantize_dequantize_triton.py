@@ -6,20 +6,19 @@ Benchmark script for fused _quantize_dequantize Triton implementation.
 
 Compares:
 - Fused Triton quantize+dequantize (single kernel)
-- Triton quantize followed by Triton dequantize (two kernels)
-- Triton quantize followed by PyTorch dequantize
+- Unfused Triton quantize + Triton dequantize (two kernels)
 
-All implementations run on CUDA for apples-to-apples comparison.
+All implementations run on CUDA using Triton kernels.
 """
 
 import gc
-import time
 import torch
 
 from compressed_tensors.quantization.lifecycle.forward_helpers import (
-    _dequantize,
-    _quantize,
-    _quantize_dequantize,
+    _dequantize_triton,
+    _quantize_dequantize_triton,
+    _quantize_triton,
+    adapt_scale_and_zp_for_triton,
 )
 from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
@@ -28,284 +27,205 @@ from compressed_tensors.quantization.quant_args import (
 )
 from compressed_tensors.quantization.utils.helpers import calculate_range
 
+SIZE = 4096 * 4096  # ~16.7M elements
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 N_RUNS = 200
 
 
-def create_test_data(
-    rows,
-    cols,
-    quant_type,
-    num_bits,
-    target_device,
-    strategy=QuantizationStrategy.TENSOR,
-    group_size=None,
-    block_structure=None,
-    symmetric=True,
-):
-    """Create test data for quantize+dequantize benchmarks."""
+def create_test_data(rows, cols, quant_type, num_bits, target_device, strategy=QuantizationStrategy.TENSOR, group_size=None):
+    """Create test data and quantization parameters."""
     args = QuantizationArgs(
         num_bits=num_bits,
         type=quant_type,
-        symmetric=symmetric,
+        symmetric=True,
         strategy=strategy,
         group_size=group_size,
-        block_structure=block_structure,
     )
     q_min, q_max = calculate_range(args, torch.device(target_device))
 
-    # Create random float input data
     x = torch.randn(rows, cols, dtype=torch.float32, device=target_device)
-
-    # Create scale and zero_point based on strategy
+    
+    # Create scale based on strategy
     if strategy == QuantizationStrategy.TENSOR:
         scale = (torch.rand(1) * 0.01 + 0.001).to(target_device)
-        if symmetric:
-            zero_point = None
-        else:
-            zero_point = torch.zeros(1, device=target_device)
     elif strategy == QuantizationStrategy.CHANNEL:
         scale = (torch.rand(rows, 1) * 0.01 + 0.001).to(target_device)
-        if symmetric:
-            zero_point = None
-        else:
-            zero_point = torch.zeros(rows, 1, device=target_device)
     elif strategy == QuantizationStrategy.GROUP:
         num_groups = cols // group_size
         scale = (torch.rand(rows, num_groups) * 0.01 + 0.001).to(target_device)
-        if symmetric:
-            zero_point = None
-        else:
-            zero_point = torch.zeros(rows, num_groups, device=target_device)
         x = x.reshape(rows, num_groups, group_size)
-    elif strategy == QuantizationStrategy.BLOCK:
-        block_rows, block_cols = block_structure
-        n_row_blocks = rows // block_rows
-        n_col_blocks = cols // block_cols
-        scale = (torch.rand(n_row_blocks, n_col_blocks) * 0.01 + 0.001).to(target_device)
-        if symmetric:
-            zero_point = None
-        else:
-            zero_point = torch.zeros(n_row_blocks, n_col_blocks, device=target_device)
-        x = x.reshape(n_row_blocks, n_col_blocks, block_rows, block_cols)
     else:
         raise ValueError(f"Unsupported strategy: {strategy}")
+    
+    zero_point = None  # symmetric quantization
 
     return x, scale, zero_point, q_min, q_max, args
 
 
 def fused_triton_quantize_dequantize(x, scale, zero_point, q_min, q_max, args):
-    """Fused Triton quantize+dequantize (single kernel pass)."""
-    return _quantize_dequantize(
+    """Fused Triton quantize+dequantize (single kernel)."""
+    num_rows = x.shape[0]
+    scale_adapted, zp_adapted = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
+    return _quantize_dequantize_triton(
         x=x,
-        scale=scale,
-        zero_point=zero_point,
+        scale=scale_adapted,
+        zero_point=zp_adapted,
         q_min=q_min,
         q_max=q_max,
         args=args,
     )
 
 
-def triton_quantize_triton_dequantize(x, scale, zero_point, q_min, q_max, args):
-    """Triton quantize followed by Triton dequantize (two kernel passes)."""
-    x_q = _quantize(
+def unfused_triton_quantize_dequantize(x, scale, zero_point, q_min, q_max, args):
+    """Unfused Triton: quantize then dequantize (two kernels)."""
+    num_rows = x.shape[0]
+    scale_adapted, zp_adapted = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
+    
+    # Quantize with Triton
+    x_q = _quantize_triton(
         x=x,
-        scale=scale,
-        zero_point=zero_point,
+        scale=scale_adapted,
+        zero_point=zp_adapted,
         q_min=q_min,
         q_max=q_max,
         args=args,
     )
-    return _dequantize(
+    
+    # Dequantize with Triton
+    return _dequantize_triton(
         x_q=x_q,
-        scale=scale,
-        zero_point=zero_point,
+        scale=scale_adapted,
+        zero_point=zp_adapted,
         args=args,
     )
-
-
-def pytorch_dequantize_cuda(x_q, scale, zero_point, dtype=None, global_scale=None):
-    """PyTorch dequantize implementation on CUDA (no Triton).
-
-    Matches the non-Triton fallback path in forward_helpers._dequantize.
-    """
-    if global_scale is not None:
-        scale = scale / global_scale
-
-    dequant_value = x_q.to(scale.dtype)
-
-    # Ensure scale broadcasts correctly to x_q shape
-    while scale.ndim < dequant_value.ndim:
-        scale = scale.unsqueeze(-1)
-    if zero_point is not None:
-        while zero_point.ndim < dequant_value.ndim:
-            zero_point = zero_point.unsqueeze(-1)
-
-    if zero_point is not None:
-        dequant_value = dequant_value - zero_point.to(scale.dtype)
-
-    dequant_value = dequant_value * scale
-
-    if dtype is not None:
-        dequant_value = dequant_value.to(dtype)
-
-    return dequant_value
-
-
-def triton_quantize_pytorch_dequantize(x, scale, zero_point, q_min, q_max, args):
-    """Triton quantize followed by PyTorch dequantize."""
-    x_q = _quantize(
-        x=x,
-        scale=scale,
-        zero_point=zero_point,
-        q_min=q_min,
-        q_max=q_max,
-        args=args,
-    )
-    return pytorch_dequantize_cuda(x_q, scale, zero_point)
 
 
 def benchmark_cuda(func, x, scale, zero_point, q_min, q_max, args, name, warmup=False):
-    """Benchmark a quantize+dequantize function on CUDA."""
+    """Benchmark a quantize+dequantize function on CUDA using CUDA events for accurate timing."""
     x = x.clone()
+
+    # Warmup phase
     if warmup:
         print(f"  Warming up {name}...")
-        for _ in range(10):
+        for _ in range(50):
             _ = func(x, scale, zero_point, q_min, q_max, args)
-        torch.cuda.empty_cache()
-        gc.collect()
         torch.cuda.synchronize()
-        print(f"  Warmup complete, starting benchmark...")
+        print("  Warmup complete, starting benchmark...")
+
+    torch.cuda.empty_cache()
+    gc.collect()
+    torch.cuda.synchronize()
 
     times = []
 
     for _ in range(N_RUNS):
-        torch.cuda.empty_cache()
-        gc.collect()
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
 
-        torch.cuda.synchronize()
-        start = time.time()
+        start_event.record()
         result = func(x, scale, zero_point, q_min, q_max, args)
-        torch.cuda.synchronize()
-        elapsed = time.time() - start
+        end_event.record()
 
-        times.append(elapsed)
+        torch.cuda.synchronize()
+        elapsed_ms = start_event.elapsed_time(end_event)  # milliseconds
+        times.append(elapsed_ms / 1000.0)  # convert to seconds
 
         del result
-        torch.cuda.empty_cache()
-        gc.collect()
 
-    avg_time = sum(times) / N_RUNS
-    return avg_time
+    # Use median for robustness against outliers
+    times.sort()
+    median_time = times[len(times) // 2]
+    
+    # Print variance info for debugging stability
+    min_time = times[0]
+    max_time = times[-1]
+    p10 = times[int(len(times) * 0.1)]
+    p90 = times[int(len(times) * 0.9)]
+    variance_ratio = max_time / min_time if min_time > 0 else float('inf')
+    print(f"    {name}: median={median_time*1000:.2f}ms, "
+          f"min={min_time*1000:.2f}ms, max={max_time*1000:.2f}ms, "
+          f"p10={p10*1000:.2f}ms, p90={p90*1000:.2f}ms, "
+          f"variance_ratio={variance_ratio:.2f}x")
+
+    return median_time
 
 
-def run_config(
-    quant_type,
-    num_bits,
-    rows,
-    cols,
-    strategy=QuantizationStrategy.TENSOR,
-    group_size=None,
-    block_structure=None,
-    symmetric=True,
-):
+def run_config(quant_type, num_bits, rows, cols, strategy=QuantizationStrategy.TENSOR, group_size=None):
     """Run benchmarks for a specific configuration."""
     type_str = "int" if quant_type == QuantizationType.INT else "fp"
-    sym_str = "" if symmetric else "_asym"
-    strategy_str = (
-        strategy.value if hasattr(strategy, "value") else str(strategy).split(".")[-1].lower()
-    )
-
-    if strategy == QuantizationStrategy.GROUP:
-        config_name = f"{type_str}{num_bits}_g{group_size}{sym_str}"
-    elif strategy == QuantizationStrategy.BLOCK:
-        config_name = f"{type_str}{num_bits}_b{block_structure[0]}x{block_structure[1]}{sym_str}"
+    
+    # Create config name based on strategy
+    if strategy == QuantizationStrategy.TENSOR:
+        config_name = f"{type_str}{num_bits}"
+    elif strategy == QuantizationStrategy.CHANNEL:
+        config_name = f"{type_str}{num_bits}_channel"
+    elif strategy == QuantizationStrategy.GROUP:
+        config_name = f"{type_str}{num_bits}_g{group_size}"
     else:
-        config_name = f"{type_str}{num_bits}_{strategy_str}{sym_str}"
+        config_name = f"{type_str}{num_bits}_{strategy.value}"
 
     print(f"\n{'='*80}")
     print(f"Benchmarking {config_name} quantize+dequantize ({rows}x{cols} = {rows*cols/1e6:.1f}M elements)")
     print("=" * 80)
 
     # Create CUDA test data
-    x_cuda, scale_cuda, zp_cuda, q_min, q_max, args = create_test_data(
-        rows, cols, quant_type, num_bits, device, strategy, group_size, block_structure, symmetric
+    x_cuda, scale_cuda, zp_cuda, q_min_cuda, q_max_cuda, args = create_test_data(
+        rows, cols, quant_type, num_bits, device, strategy, group_size
     )
 
-    # Fused Triton quantize+dequantize
-    print("\nRunning fused Triton quantize+dequantize...")
+    # Unfused Triton (two kernels: quantize + dequantize)
+    print("\nRunning Unfused Triton (quantize + dequantize)...")
+    time_unfused = benchmark_cuda(
+        unfused_triton_quantize_dequantize, 
+        x_cuda, scale_cuda, zp_cuda, q_min_cuda, q_max_cuda, args, 
+        "unfused_triton", warmup=True
+    )
+    print("Unfused Triton:")
+    print(f"  Time: {time_unfused*1000:.2f}ms")
+
+    # Fused Triton (single kernel: quantize+dequantize)
+    print("\nRunning Fused Triton (single kernel)...")
     time_fused = benchmark_cuda(
         fused_triton_quantize_dequantize,
-        x_cuda, scale_cuda, zp_cuda, q_min, q_max, args,
+        x_cuda, scale_cuda, zp_cuda, q_min_cuda, q_max_cuda, args,
         "fused_triton", warmup=True
     )
-    print(f"Fused Triton: {time_fused*1000:.2f}ms")
+    print("Fused Triton:")
+    print(f"  Time: {time_fused*1000:.2f}ms")
 
-    # Triton quantize + Triton dequantize
-    print("\nRunning Triton quantize + Triton dequantize...")
-    time_triton_triton = benchmark_cuda(
-        triton_quantize_triton_dequantize,
-        x_cuda, scale_cuda, zp_cuda, q_min, q_max, args,
-        "triton_triton", warmup=True
-    )
-    print(f"Triton + Triton: {time_triton_triton*1000:.2f}ms")
-
-    # Triton quantize + PyTorch dequantize
-    print("\nRunning Triton quantize + PyTorch dequantize...")
-    time_triton_pytorch = benchmark_cuda(
-        triton_quantize_pytorch_dequantize,
-        x_cuda, scale_cuda, zp_cuda, q_min, q_max, args,
-        "triton_pytorch", warmup=True
-    )
-    print(f"Triton + PyTorch: {time_triton_pytorch*1000:.2f}ms")
-
-    # Verify correctness - all three should produce the same output
-    # Use smaller test size for BLOCK strategy to avoid shape issues
-    if strategy == QuantizationStrategy.BLOCK:
-        test_rows = block_structure[0] * 4
-        test_cols = block_structure[1] * 8
-    else:
-        test_rows, test_cols = 512, 1024
+    # Verify correctness
+    print("\nVerifying correctness...")
     x_test, scale_test, zp_test, q_min_test, q_max_test, args_test = create_test_data(
-        test_rows, test_cols, quant_type, num_bits, device, strategy, group_size,
-        block_structure, symmetric
+        512, 1024, quant_type, num_bits, device, strategy, group_size
     )
-
+    
+    unfused_out = unfused_triton_quantize_dequantize(
+        x_test.clone(), scale_test, zp_test, q_min_test, q_max_test, args_test
+    )
     fused_out = fused_triton_quantize_dequantize(
-        x_test.clone(), scale_test.clone(), zp_test, q_min_test, q_max_test, args_test
-    )
-    triton_triton_out = triton_quantize_triton_dequantize(
-        x_test.clone(), scale_test.clone(), zp_test, q_min_test, q_max_test, args_test
-    )
-    triton_pytorch_out = triton_quantize_pytorch_dequantize(
-        x_test.clone(), scale_test.clone(), zp_test, q_min_test, q_max_test, args_test
+        x_test.clone(), scale_test, zp_test, q_min_test, q_max_test, args_test
     )
 
     atol = 1e-5
     rtol = 1e-5
+    correct = torch.allclose(unfused_out, fused_out, atol=atol, rtol=rtol)
+    
+    if correct:
+        print("  ✓ Results match")
+    else:
+        diff = (unfused_out - fused_out).abs()
+        max_diff = diff.max().item()
+        max_idx = diff.argmax()
+        print(f"  ✗ Results differ, max_diff={max_diff:.6e}")
+        print(f"    unfused={unfused_out.flatten()[max_idx].item():.15f}")
+        print(f"    fused={fused_out.flatten()[max_idx].item():.15f}")
 
-    # Compare fused vs triton+triton
-    diff_tt = (fused_out - triton_triton_out).abs()
-    correct_tt = torch.allclose(fused_out, triton_triton_out, atol=atol, rtol=rtol)
-    if not correct_tt:
-        max_diff = diff_tt.max().item()
-        max_idx = diff_tt.argmax()
-        print(f"\nWarning: fused vs triton+triton differ, max_diff={max_diff:.6f}")
-        print(f"  fused={fused_out.flatten()[max_idx].item():.15f}")
-        print(f"  triton+triton={triton_triton_out.flatten()[max_idx].item():.15f}")
-
-    # Compare fused vs triton+pytorch
-    diff_tp = (fused_out - triton_pytorch_out).abs()
-    correct_tp = torch.allclose(fused_out, triton_pytorch_out, atol=atol, rtol=rtol)
-    if not correct_tp:
-        max_diff = diff_tp.max().item()
-        max_idx = diff_tp.argmax()
-        print(f"\nWarning: fused vs triton+pytorch differ, max_diff={max_diff:.6f}")
-        print(f"  fused={fused_out.flatten()[max_idx].item():.15f}")
-        print(f"  triton+pytorch={triton_pytorch_out.flatten()[max_idx].item():.15f}")
+    # Calculate speedup
+    speedup = time_unfused / time_fused if time_fused > 0 else 0
+    print(f"\nSpeedup (unfused/fused): {speedup:.2f}x")
 
     del x_cuda, scale_cuda, x_test, scale_test
-    del fused_out, triton_triton_out, triton_pytorch_out
+    del unfused_out, fused_out
     torch.cuda.empty_cache()
     gc.collect()
 
@@ -313,15 +233,12 @@ def run_config(
         "config": config_name,
         "rows": rows,
         "cols": cols,
-        "strategy": strategy_str,
+        "strategy": strategy.value if hasattr(strategy, 'value') else str(strategy),
         "group_size": group_size,
+        "unfused_ms": time_unfused * 1000,
         "fused_ms": time_fused * 1000,
-        "triton_triton_ms": time_triton_triton * 1000,
-        "triton_pytorch_ms": time_triton_pytorch * 1000,
-        "speedup_vs_tt": time_triton_triton / time_fused if time_fused > 0 else 0,
-        "speedup_vs_tp": time_triton_pytorch / time_fused if time_fused > 0 else 0,
-        "correct_tt": correct_tt,
-        "correct_tp": correct_tp,
+        "speedup": speedup,
+        "correct": correct,
     }
 
 
@@ -330,7 +247,7 @@ def main():
         print("CUDA not available, Triton requires GPU")
         return
 
-    print("Benchmarking fused _quantize_dequantize from forward_helpers.py")
+    print("Benchmarking fused vs unfused Triton quantize+dequantize from forward_helpers.py")
     print(f"Device: {torch.cuda.get_device_name(device)}")
     print(f"N_RUNS: {N_RUNS}")
 
@@ -342,101 +259,72 @@ def main():
 
     results = []
 
-    # Per-tensor (scalar scale) - uses fast scalar kernel path
+    # PER-TENSOR (scalar scale)
     print("\n" + "=" * 80)
-    print("PER-TENSOR (scalar scale) - uses fast scalar kernel path")
+    print("PER-TENSOR QUANTIZATION (scalar scale)")
     print("=" * 80)
-    for quant_type, num_bits in [(QuantizationType.INT, 8), (QuantizationType.INT, 4)]:
+    for quant_type, num_bits in [
+        (QuantizationType.INT, 8),
+        (QuantizationType.INT, 4),
+        (QuantizationType.FLOAT, 4),
+        (QuantizationType.FLOAT, 8),
+    ]:
         for rows, cols in sizes:
             result = run_config(quant_type, num_bits, rows, cols, QuantizationStrategy.TENSOR)
             results.append(result)
 
-    # Per-channel - uses strided kernel path
+    # PER-CHANNEL (one scale per row)
     print("\n" + "=" * 80)
-    print("PER-CHANNEL (one scale per row) - uses strided kernel path")
+    print("PER-CHANNEL QUANTIZATION (one scale per row)")
     print("=" * 80)
-    for quant_type, num_bits in [(QuantizationType.INT, 8), (QuantizationType.INT, 4)]:
+    for quant_type, num_bits in [
+        (QuantizationType.INT, 8),
+        (QuantizationType.INT, 4),
+    ]:
         for rows, cols in sizes:
             result = run_config(quant_type, num_bits, rows, cols, QuantizationStrategy.CHANNEL)
             results.append(result)
 
-    # Per-group INT - uses strided kernel path
+    # PER-GROUP INT (multiple scales per row)
     print("\n" + "=" * 80)
-    print("PER-GROUP INT (multiple scales per row) - uses strided kernel path")
+    print("PER-GROUP INT QUANTIZATION (group_size=128)")
     print("=" * 80)
-    for quant_type, num_bits, group_size in [
-        (QuantizationType.INT, 8, 128),
-        (QuantizationType.INT, 4, 128),
+    for quant_type, num_bits in [
+        (QuantizationType.INT, 8),
+        (QuantizationType.INT, 4),
     ]:
         for rows, cols in sizes:
-            result = run_config(
-                quant_type, num_bits, rows, cols, QuantizationStrategy.GROUP, group_size
-            )
-            results.append(result)
+            if cols % 128 == 0:  # Only test if divisible by group size
+                result = run_config(quant_type, num_bits, rows, cols, QuantizationStrategy.GROUP, group_size=128)
+                results.append(result)
 
-    # Per-group FP4 - NVFP4/MXFP4 style quantization
+    # PER-GROUP FP4 (NVFP4/MXFP4 style)
     print("\n" + "=" * 80)
-    print("PER-GROUP FP4 (NVFP4/MXFP4 style) - uses strided kernel path")
-    print("=" * 80)
-    for group_size in [16, 32]:
-        for rows, cols in sizes:
-            result = run_config(
-                QuantizationType.FLOAT, 4, rows, cols, QuantizationStrategy.GROUP, group_size
-            )
-            results.append(result)
-
-    # Asymmetric INT4 with zero_point - W4A16_ASYM style
-    print("\n" + "=" * 80)
-    print("ASYMMETRIC INT4 (W4A16_ASYM style) - with zero_point")
+    print("PER-GROUP FP4 QUANTIZATION (group_size=32)")
     print("=" * 80)
     for rows, cols in sizes:
-        result = run_config(
-            QuantizationType.INT, 4, rows, cols, QuantizationStrategy.GROUP, 128,
-            symmetric=False
-        )
-        results.append(result)
-
-    # Block strategy - DeepSeek-style (128x128 blocks)
-    # Note: FP8 falls back to PyTorch (not Triton) due to hardware dtype requirements
-    # So we test INT8 BLOCK which uses the Triton kernel
-    print("\n" + "=" * 80)
-    print("BLOCK INT8 (DeepSeek-style 128x128 blocks) - uses Triton kernel")
-    print("=" * 80)
-    block_sizes = [
-        (4096, 4096),
-        (8192, 8192),
-    ]
-    for rows, cols in block_sizes:
-        # Skip if dimensions don't divide evenly by block size
-        if rows % 128 == 0 and cols % 128 == 0:
-            result = run_config(
-                QuantizationType.INT, 8, rows, cols, QuantizationStrategy.BLOCK,
-                block_structure=[128, 128]
-            )
+        if cols % 32 == 0:  # Only test if divisible by group size
+            result = run_config(QuantizationType.FLOAT, 4, rows, cols, QuantizationStrategy.GROUP, group_size=32)
             results.append(result)
 
     # Print summary
-    print("\n" + "=" * 130)
+    print("\n" + "=" * 110)
     print("SUMMARY")
-    print("=" * 130)
+    print("=" * 110)
     print(
-        f"{'Config':<20} {'Size':<15} {'Fused (ms)':<12} "
-        f"{'T+T (ms)':<12} {'T+Py (ms)':<12} "
-        f"{'vs T+T':<10} {'vs T+Py':<10} {'Correct':<10}"
+        f"{'Config':<20} {'Size':<15} {'Unfused (ms)':<15} {'Fused (ms)':<15} "
+        f"{'Speedup':<10} {'Correct':<10}"
     )
-    print("-" * 130)
+    print("-" * 110)
 
     for r in results:
         size_str = f"{r['rows']}x{r['cols']}"
-        correct_str = "Yes" if r["correct_tt"] and r["correct_tp"] else "NO"
+        correct_str = "Yes" if r["correct"] else "NO"
         print(
-            f"{r['config']:<20} {size_str:<15} {r['fused_ms']:>9.2f} ms "
-            f"{r['triton_triton_ms']:>9.2f} ms "
-            f"{r['triton_pytorch_ms']:>9.2f} ms "
-            f"{r['speedup_vs_tt']:>6.2f}x   "
-            f"{r['speedup_vs_tp']:>6.2f}x   {correct_str:<10}"
+            f"{r['config']:<20} {size_str:<15} {r['unfused_ms']:>12.2f} ms "
+            f"{r['fused_ms']:>12.2f} ms "
+            f"{r['speedup']:>6.2f}x    {correct_str:<10}"
         )
-
 
 if __name__ == "__main__":
     main()

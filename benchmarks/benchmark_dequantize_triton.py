@@ -10,7 +10,6 @@ Based on benchmark_quantize_triton.py structure.
 """
 
 import gc
-import time
 import torch
 
 from compressed_tensors.quantization.lifecycle.forward_helpers import _dequantize
@@ -102,37 +101,55 @@ def triton_dequantize_cuda(x_q, scale, zero_point, args):
 
 
 def benchmark_cuda(func, x_q, scale, zero_point, args, name, warmup=False):
-    """Benchmark a dequantization function on CUDA."""
+    """Benchmark a dequantization function on CUDA using CUDA events for accurate timing."""
     x_q = x_q.clone()
+
+    # Warmup phase
     if warmup:
         print(f"  Warming up {name}...")
-        for _ in range(10):
+        for _ in range(50):
             _ = func(x_q, scale, zero_point, args)
-        torch.cuda.empty_cache()
-        gc.collect()
         torch.cuda.synchronize()
-        print(f"  Warmup complete, starting benchmark...")
+        print("  Warmup complete, starting benchmark...")
+
+    torch.cuda.empty_cache()
+    gc.collect()
+    torch.cuda.synchronize()
 
     times = []
 
     for _ in range(N_RUNS):
-        torch.cuda.empty_cache()
-        gc.collect()
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
 
-        torch.cuda.synchronize()
-        start = time.time()
+        start_event.record()
         result = func(x_q, scale, zero_point, args)
-        torch.cuda.synchronize()
-        elapsed = time.time() - start
+        end_event.record()
 
-        times.append(elapsed)
+        torch.cuda.synchronize()
+        elapsed_ms = start_event.elapsed_time(end_event)  # milliseconds
+        times.append(elapsed_ms / 1000.0)  # convert to seconds
 
         del result
-        torch.cuda.empty_cache()
-        gc.collect()
 
-    avg_time = sum(times) / N_RUNS
-    return avg_time
+    # Use median for robustness against outliers
+    times.sort()
+    median_time = times[len(times) // 2]
+
+    # Print variance info for debugging stability
+    min_time = times[0]
+    max_time = times[-1]
+    p10 = times[int(len(times) * 0.1)]
+    p90 = times[int(len(times) * 0.9)]
+    variance_ratio = max_time / min_time if min_time > 0 else float("inf")
+    print(
+        f"    {name}: median={median_time*1000:.2f}ms, "
+        f"min={min_time*1000:.2f}ms, max={max_time*1000:.2f}ms, "
+        f"p10={p10*1000:.2f}ms, p90={p90*1000:.2f}ms, "
+        f"variance_ratio={variance_ratio:.2f}x"
+    )
+
+    return median_time
 
 
 def run_config(
@@ -163,19 +180,21 @@ def run_config(
         rows, cols, quant_type, num_bits, device, strategy, group_size
     )
 
-    # PyTorch reference on CUDA
+    # PyTorch reference on CUDA (no Triton kernel, just PyTorch ops)
     print("\nRunning PyTorch reference (CUDA, no Triton)...")
     time_pytorch = benchmark_cuda(
         pytorch_dequantize_cuda, x_q_cuda, scale_cuda, zp_cuda, args, "pytorch_cuda", warmup=True
     )
-    print(f"PyTorch (CUDA): {time_pytorch*1000:.2f}ms")
+    print("PyTorch (CUDA):")
+    print(f"  Time: {time_pytorch*1000:.2f}ms")
 
-    # Triton kernel
+    # Triton kernel (CUDA path in _dequantize)
     print("\nRunning Triton kernel (CUDA)...")
     time_triton = benchmark_cuda(
         triton_dequantize_cuda, x_q_cuda, scale_cuda, zp_cuda, args, "triton", warmup=True
     )
-    print(f"Triton (CUDA): {time_triton*1000:.2f}ms")
+    print("Triton (CUDA):")
+    print(f"  Time: {time_triton*1000:.2f}ms")
 
     # Verify correctness
     test_rows, test_cols = 512, 1024
