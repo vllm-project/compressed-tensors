@@ -224,7 +224,7 @@ class OffloadCache(MutableMapping, ABC):
         offloaded = self.offloaded_values.get(key, None)
         if offloaded is not None and torch.is_same_size(offloaded, value):
             if self.offloading_disabled:
-                # defer offload update until after existing
+                # defer offload update until after exiting
                 # disable_offloading context
                 # we need to store the class instance to call the correct `update_offload`
                 # later, since the disabling method is a classmethod
@@ -236,9 +236,12 @@ class OffloadCache(MutableMapping, ABC):
             if onloaded is not None and onloaded is not offloaded:
                 onloaded.copy_(value)
 
+        # key doesn't exist, this is a new offload
+        # no point in defering anyways
         else:
             self.offloaded_values[key] = self.offload(value)
 
+        
     def __delitem__(self, key: Hashable):
         """
         Remove the offloaded tensor associated with `key`. Any references to its
@@ -247,6 +250,10 @@ class OffloadCache(MutableMapping, ABC):
         :param key: name of tensor to invalidate
         """
         offloaded = self.offloaded_values[key]
+
+        if self.offloading_disabled and offloaded in self.to_be_offloaded:
+            del self.to_be_offloaded[offloaded]
+
         del self.offloaded_values[key]
 
         # remove strong ref
