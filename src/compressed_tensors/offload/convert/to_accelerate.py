@@ -12,6 +12,8 @@ from compressed_tensors.offload.convert.helpers import (
     norm_device,
 )
 from compressed_tensors.offload.module import remove_module_offload
+from compressed_tensors.offload.utils import to_meta
+from compressed_tensors.distributed import is_source_process
 from compressed_tensors.utils import patch_attr
 from loguru import logger
 
@@ -20,7 +22,61 @@ if TYPE_CHECKING:
     from accelerate.utils import OffloadedWeightsLoader
 
 
-__all__ = ["to_accelerate", "to_accelerate_module"]
+__all__ = ["offload_to_accelerate", "to_accelerate", "to_accelerate_module"]
+
+
+def offload_to_accelerate(model: torch.nn.Module, modules: list[tuple[str, torch.nn.Module]], offload_device = "disk"):
+    from accelerate.hooks import AlignDevicesHook, add_hook_to_module
+    from accelerate.utils import PrefixedDataset, OffloadedWeightsLoader
+
+    # import torch.distributed as dist
+    # dist.breakpoint()
+    # DiskCache.index
+
+    hf_weights_loader = OffloadedWeightsLoader(
+        index={},
+        save_folder="offload_folder",
+    )
+
+    for name, module in modules:
+        if not is_source_process():
+            to_meta(module)
+            return
+
+        # create weights map
+        if offload_device == "disk":
+            if name is None or hf_weights_loader is None:
+                raise ValueError(
+                    "Must provide `name` and `hf_weights_loader` "
+                    f"to convert disk offloaded module {name} {hf_weights_loader}"
+                )
+
+            weights_map = PrefixedDataset(
+                prefix=f"{name}.",
+                dataset=hf_weights_loader,
+            )
+        else:
+            weights_map = dict(get_tensors(module, recurse=False))
+
+        # create hook
+        hook = AlignDevicesHook(
+            execution_device="cuda",
+            offload=True,
+            io_same_device=True,
+            weights_map=weights_map,
+            offload_buffers=True,
+            place_submodules=False,
+        )
+
+        # add hook (skip onloading)
+        with patch_attr(AlignDevicesHook, "init_hook", lambda self, module: module):
+            add_hook_to_module(module, hook)
+
+        # skipping init hook => need to populate `original_devices`
+        hook.original_devices = {
+            name: offload_device if offload_device != "disk" else torch.device("cpu")
+            for name, _ in get_tensors(module, recurse=False)
+        }
 
 
 def to_accelerate(model: torch.nn.Module) -> dict[str, str]:
@@ -131,6 +187,7 @@ def _to_accelerate_weights_loader(
         return None
 
     if not index:
+        print("NO INDEX")
         return None
 
     from compressed_tensors.offload import disable_onloading  # circular dependency
@@ -152,6 +209,7 @@ def _to_accelerate_weights_loader(
             break
 
     if save_folder is None:
+        print("NO SAVE_FOLDER")
         return None
 
     return OffloadedWeightsLoader(

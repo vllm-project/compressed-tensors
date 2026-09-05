@@ -91,7 +91,8 @@ def load_offloaded_model(
 
         with as_single_threaded():
             model = original_from_pretrained(*args, **kwargs)
-        from_accelerate(model)  # rank 0 shares weights with ranks via offload/broadcast
+
+        # from_accelerate(model)  # rank 0 shares weights with ranks via offload/broadcast
 
         return model
 

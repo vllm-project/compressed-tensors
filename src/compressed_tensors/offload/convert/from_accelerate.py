@@ -11,14 +11,15 @@ from compressed_tensors.distributed import (
     is_distributed,
     is_source_process,
 )
-from compressed_tensors.offload.cache import DiskCache, OffloadCache
+from compressed_tensors.offload.cache import DiskCache, OffloadCache, CPUCache
 from compressed_tensors.offload.convert.helpers import (
     DEFAULT_OFFLOAD_DEVICE,
     get_tensors,
     norm_device,
 )
 from compressed_tensors.offload.dispatch import dispatch_with_map
-from compressed_tensors.offload.utils import to_tensor
+from compressed_tensors.offload.utils import to_tensor, send_tensors
+from compressed_tensors.distributed import is_distributed, is_source_process, get_source_rank
 from loguru import logger
 
 
@@ -27,7 +28,41 @@ if TYPE_CHECKING:
     from compressed_tensors.offload.dispatch import DeviceMap
 
 
-__all__ = ["from_accelerate", "remove_accelerate", "remove_accelerate_from_module"]
+__all__ = ["onload_from_accelerate", "from_accelerate", "remove_accelerate", "remove_accelerate_from_module"]
+
+
+def onload_from_accelerate(modules: list[tuple[str, torch.nn.Module]], device: torch.device):
+
+    def onload_and_broadcast(tensor, offload_device, offload_dir):
+        if not isinstance(tensor, torch.Tensor):
+            return tensor
+
+        if is_source_process():
+            # onload tensor
+            if offload_device == "disk":
+                tensor = DiskCache(device, "disk", offload_dir).onload(tensor)
+            elif offload_device == torch.device("cpu"):
+                tensor = tensor.to(device)
+
+        else:
+            # materialize tensor
+            tensor = torch.empty_like(tensor, device=device)
+
+        # broadcast from source
+        dist.broadcast(tensor, src=get_source_rank())
+        return tensor
+
+    for module_name, module in modules:
+        _, offload_device, offload_dir = remove_accelerate_from_module(module)
+
+        module._parameters = {
+            name: onload_and_broadcast(tensor, offload_device, offload_dir)
+            for name, tensor in module._parameters.items()
+        }
+        module._buffers = {
+            name: onload_and_broadcast(tensor, offload_device, offload_dir)
+            for name, tensor in module._buffers.items()
+        }
 
 
 def from_accelerate(model: torch.nn.Module) -> tuple["DeviceMap", str | None]:
