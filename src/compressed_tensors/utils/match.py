@@ -390,6 +390,7 @@ def is_narrow_match(
     """
     Checks if any of the targets narrowly match the module. A target narrowly matches
     a module if the target matches the module, but does not match the module's parent
+    or any of the module's children.
 
     :param model: model containing both module and its parent
     :param targets: target strings, potentially containing "re:" prefixes
@@ -403,8 +404,17 @@ def is_narrow_match(
     parent_name = name.rsplit(".", 1)[0]
     parent = model.get_submodule(parent_name)
 
+    def _matches_any_child(target: str) -> bool:
+        return any(
+            is_match(f"{name}.{child_name}", child_module, target)
+            for child_name, child_module in module.named_modules()
+            if child_name  # skip the module itself (empty string key)
+        )
+
     return any(
-        is_match(name, module, target) and not is_match(parent_name, parent, target)
+        is_match(name, module, target)
+        and not is_match(parent_name, parent, target)
+        and not _matches_any_child(target)
         for target in targets
     )
 
