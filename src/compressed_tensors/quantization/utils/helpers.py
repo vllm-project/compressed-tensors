@@ -3,6 +3,7 @@
 
 import logging
 import math
+from functools import lru_cache
 
 import torch
 from compressed_tensors.quantization.quant_args import (
@@ -195,25 +196,19 @@ def compute_dynamic_scales_and_zp(
     return calculate_qparams(min_val, max_val, args, global_scale=global_scale)
 
 
-def calculate_range(
-    quantization_args: QuantizationArgs, device: str
+@lru_cache(maxsize=None)
+def _calculate_range(
+    quant_type: str, num_bits: int, device: str | torch.device
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Calculated the effective quantization range for the given Quantization Args
-
-    :param quantization_args: quantization args to get range of
-    :param device: device to store the range to
-    :return: tuple endpoints for the given quantization range
-    """
-    if quantization_args.type == QuantizationType.INT:
-        bit_range = 2.0**quantization_args.num_bits
+    if quant_type == QuantizationType.INT:
+        bit_range = 2.0**num_bits
         q_max = torch.tensor(bit_range / 2 - 1, device=device)
         q_min = torch.tensor(-bit_range / 2, device=device)
-    elif quantization_args.type == QuantizationType.FLOAT:
-        if quantization_args.num_bits == 8:
+    elif quant_type == QuantizationType.FLOAT:
+        if num_bits == 8:
             q_max = torch.tensor(FP8_E4M3_DATA.max, device=device)
             q_min = torch.tensor(FP8_E4M3_DATA.min, device=device)
-        elif quantization_args.num_bits == 4:
+        elif num_bits == 4:
             q_max = torch.tensor(FP4_E2M1_DATA.max, device=device)
             q_min = torch.tensor(FP4_E2M1_DATA.min, device=device)
         else:
@@ -221,9 +216,26 @@ def calculate_range(
                 "Range calculation only supported for 4 and 8 bits"
             )
     else:
-        raise ValueError(f"Invalid quantization type {quantization_args.type}")
+        raise ValueError(f"Invalid quantization type {quant_type}")
 
     return q_min, q_max
+
+
+def calculate_range(
+    quantization_args: QuantizationArgs, device: str
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Calculated the effective quantization range for the given Quantization Args
+
+    Results are memoized on (type, num_bits, device), so the scalar tensors are
+    constructed once per unique key instead of on every call. The returned
+    tensors are shared across calls and must not be modified in place.
+
+    :param quantization_args: quantization args to get range of
+    :param device: device to store the range to
+    :return: tuple endpoints for the given quantization range
+    """
+    return _calculate_range(quantization_args.type, quantization_args.num_bits, device)
 
 
 def is_module_quantized(module: Module) -> bool:

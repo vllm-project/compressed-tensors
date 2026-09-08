@@ -13,7 +13,6 @@ from compressed_tensors.modeling import (
 )
 from compressed_tensors.offload import disable_onloading, unwrap_offload_forward
 from compressed_tensors.quantization import (
-    ActivationOrdering,
     DynamicType,
     QuantizationArgs,
     QuantizationMetadata,
@@ -176,7 +175,6 @@ def initialize_qparams(
     """
     strategy = quantization_args.strategy
     dynamic = quantization_args.dynamic
-    actorder = quantization_args.actorder
     device = get_execution_device(module)  # avoid performing intialization ops on cpu
 
     # Skip all intialization for fully dynamic quantization
@@ -216,14 +214,6 @@ def initialize_qparams(
         group_size = quantization_args.group_size
         num_groups = strategy_cdiv(observed_shape[-1], group_size, strategy)
         expected_shape = (*observed_shape[:-1], num_groups)
-
-        # initialize activation ordering if applicable
-        if actorder == ActivationOrdering.GROUP:
-            init_g_idx = Parameter(
-                torch.full((observed_shape[-1],), -1, device=device, dtype=torch.int),
-                requires_grad=False,
-            )
-            module.register_parameter(f"{base_name}_g_idx", init_g_idx)
 
     elif strategy == QuantizationStrategy.BLOCK:
         assert quantization_args.block_structure is not None

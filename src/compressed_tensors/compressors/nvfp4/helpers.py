@@ -10,103 +10,102 @@ packing of two FP4 values into a single uint8 for storage.
 """
 
 import torch
-
-
-try:
-    import triton
-    import triton.language as tl
-
-    _triton_available = True
-except ImportError:
-    _triton_available = False
+from compressed_tensors.utils.impl_backend import ImplBackend
+from compressed_tensors.utils.triton import tl, triton, triton_req
 
 
 __all__ = ["pack_fp4_to_uint8", "unpack_fp4_from_uint8"]
 
-
-FLOAT_TO_E2M1 = [
-    0.0,
-    0.5,
-    1.0,
-    1.5,
-    2.0,
-    3.0,
-    4.0,
-    6.0,
-]
 
 kE2M1ToFloat = torch.tensor(
     [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], dtype=torch.float32
 )
 
 
-if _triton_available:
+@triton.jit
+def _pack_fp4_kernel(
+    x_ptr,
+    packed_ptr,
+    n_pairs,
+    BLOCK_SIZE: tl.constexpr,
+):
+    """
+    Triton kernel for packing FP4 values using sign-based direct computation.
 
-    @triton.jit
-    def _pack_fp4_kernel(
-        x_ptr,
-        packed_ptr,
-        n_pairs,
-        BLOCK_SIZE: tl.constexpr,
-    ):
-        """
-        Triton kernel for packing FP4 values using sign-based direct computation.
+    This kernel extracts the sign bit, converts to absolute values scaled by 2,
+    then uses threshold counting to directly compute indices without cascading
+    conditionals. The sign bit is applied via bitwise OR.
+    """
+    pid = tl.program_id(0)
+    block_start = pid * BLOCK_SIZE
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)
+    mask = offsets < n_pairs
 
-        This kernel extracts the sign bit, converts to absolute values scaled by 2,
-        then uses threshold counting to directly compute indices without cascading
-        conditionals. The sign bit is applied via bitwise OR.
-        """
-        pid = tl.program_id(0)
-        block_start = pid * BLOCK_SIZE
-        offsets = block_start + tl.arange(0, BLOCK_SIZE)
-        mask = offsets < n_pairs
+    # Load pairs of values
+    low_idx = offsets * 2
+    high_idx = offsets * 2 + 1
 
-        # Load pairs of values
-        low_idx = offsets * 2
-        high_idx = offsets * 2 + 1
+    x_low = tl.load(x_ptr + low_idx, mask=mask, other=0.0)
+    x_high = tl.load(x_ptr + high_idx, mask=mask, other=0.0)
 
-        x_low = tl.load(x_ptr + low_idx, mask=mask, other=0.0)
-        x_high = tl.load(x_ptr + high_idx, mask=mask, other=0.0)
+    # Extract sign bit directly into bit 3 via bitcast (handles -0.0 correctly)
+    sign_low = (x_low.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
+    sign_high = (x_high.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
 
-        # Extract sign bit directly into bit 3 via bitcast (handles -0.0 correctly)
-        sign_low = (x_low.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
-        sign_high = (x_high.to(tl.int16, bitcast=True) >> 12 & 8).to(tl.uint8)
+    # Scale and absolute
+    x_low_abs = tl.abs(x_low * 2.0).to(tl.int8)
+    x_high_abs = tl.abs(x_high * 2.0).to(tl.int8)
 
-        # Scale and absolute
-        x_low_abs = tl.abs(x_low * 2.0).to(tl.int8)
-        x_high_abs = tl.abs(x_high * 2.0).to(tl.int8)
+    # Direct index computation via threshold counting
+    # Count how many thresholds each value meets or exceeds
+    # Thresholds: 1, 2, 3, 4, 6, 8, 12 (scaled FP4 values)
+    idx_low = (
+        (x_low_abs >= 1).to(tl.uint8)
+        + (x_low_abs >= 2).to(tl.uint8)
+        + (x_low_abs >= 3).to(tl.uint8)
+        + (x_low_abs >= 4).to(tl.uint8)
+        + (x_low_abs >= 6).to(tl.uint8)
+        + (x_low_abs >= 8).to(tl.uint8)
+        + (x_low_abs >= 12).to(tl.uint8)
+    )
+    idx_low = idx_low | sign_low
 
-        # Direct index computation via threshold counting
-        # Count how many thresholds each value meets or exceeds
-        # Thresholds: 1, 2, 3, 4, 6, 8, 12 (scaled FP4 values)
-        idx_low = (
-            (x_low_abs >= 1).to(tl.uint8)
-            + (x_low_abs >= 2).to(tl.uint8)
-            + (x_low_abs >= 3).to(tl.uint8)
-            + (x_low_abs >= 4).to(tl.uint8)
-            + (x_low_abs >= 6).to(tl.uint8)
-            + (x_low_abs >= 8).to(tl.uint8)
-            + (x_low_abs >= 12).to(tl.uint8)
-        )
-        idx_low = idx_low | sign_low
+    idx_high = (
+        (x_high_abs >= 1).to(tl.uint8)
+        + (x_high_abs >= 2).to(tl.uint8)
+        + (x_high_abs >= 3).to(tl.uint8)
+        + (x_high_abs >= 4).to(tl.uint8)
+        + (x_high_abs >= 6).to(tl.uint8)
+        + (x_high_abs >= 8).to(tl.uint8)
+        + (x_high_abs >= 12).to(tl.uint8)
+    )
+    idx_high = idx_high | sign_high
 
-        idx_high = (
-            (x_high_abs >= 1).to(tl.uint8)
-            + (x_high_abs >= 2).to(tl.uint8)
-            + (x_high_abs >= 3).to(tl.uint8)
-            + (x_high_abs >= 4).to(tl.uint8)
-            + (x_high_abs >= 6).to(tl.uint8)
-            + (x_high_abs >= 8).to(tl.uint8)
-            + (x_high_abs >= 12).to(tl.uint8)
-        )
-        idx_high = idx_high | sign_high
+    # Pack nibbles
+    packed = idx_low | (idx_high << 4)
 
-        # Pack nibbles
-        packed = idx_low | (idx_high << 4)
-
-        tl.store(packed_ptr + offsets, packed, mask=mask)
+    tl.store(packed_ptr + offsets, packed, mask=mask)
 
 
+@ImplBackend.register("pack_fp4_to_uint8", triton_req, 0)
+def pack_fp4_to_uint8_triton(x: torch.Tensor) -> torch.Tensor:
+    m, n = x.shape
+
+    if x.dtype not in (torch.bfloat16, torch.float16):
+        x = x.to(torch.bfloat16)
+    x_flat = x.contiguous().flatten()
+    n_pairs = x_flat.numel() // 2
+
+    packed = torch.empty(n_pairs, dtype=torch.uint8, device=x.device)
+
+    BLOCK_SIZE = 1024
+    grid = (triton.cdiv(n_pairs, BLOCK_SIZE),)
+    _pack_fp4_kernel[grid](x_flat, packed, n_pairs, BLOCK_SIZE)
+
+    return packed.reshape(m, n // 2)
+
+
+@ImplBackend.entrypoint("pack_fp4_to_uint8")
 def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
     """
     Packs a tensor with values in the fp4 range into uint8.
@@ -129,23 +128,6 @@ def pack_fp4_to_uint8(x: torch.Tensor) -> torch.Tensor:
         raise ValueError(
             "tensor must have an even number of columns for nvfp4 compression"
         )
-
-    # Use Triton kernel on GPU (CUDA, ROCm, XPU)
-    if _triton_available and (x.is_cuda or x.is_xpu):
-        # Valid FP4 values are exactly representable in bf16, so this lossless
-        # cast keeps Triton's 16-bit bitcast path working for float32 inputs.
-        if x.dtype not in (torch.bfloat16, torch.float16):
-            x = x.to(torch.bfloat16)
-        x_flat = x.contiguous().flatten()
-        n_pairs = x_flat.numel() // 2
-
-        packed = torch.empty(n_pairs, dtype=torch.uint8, device=x.device)
-
-        BLOCK_SIZE = 1024
-        grid = (triton.cdiv(n_pairs, BLOCK_SIZE),)
-        _pack_fp4_kernel[grid](x_flat, packed, n_pairs, BLOCK_SIZE)
-
-        return packed.reshape(m, n // 2)
 
     # CPU fallback
     # Extract sign before conversion

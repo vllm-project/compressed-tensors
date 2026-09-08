@@ -9,6 +9,7 @@ from compressed_tensors.compressors.nvfp4.helpers import (
     unpack_fp4_from_uint8,
 )
 from compressed_tensors.quantization import QuantizationArgs, QuantizationType
+from compressed_tensors.utils.impl_backend import ImplBackend
 
 
 def test_pack_unpack():
@@ -71,3 +72,35 @@ def test_compress_scale_without_scale_dtype():
 
     # Verify the output dtype is float8_e4m3fn
     assert compressed_scale.dtype == torch.float8_e4m3fn
+
+
+_FP4_VALUES = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0])
+
+
+@pytest.mark.skipif(
+    not torch.accelerator.is_available(), reason="CUDA required for Triton backend"
+)
+@pytest.mark.parametrize(
+    "x",
+    [
+        # minimal 1×2 case
+        torch.tensor([[0.0, 0.5]]),
+        # all positive FP4 values packed in pairs
+        _FP4_VALUES.unsqueeze(0).expand(2, -1).clone(),
+        # negatives
+        (-_FP4_VALUES).unsqueeze(0).expand(2, -1).clone(),
+        # larger 2-D tensor (rows × even cols)
+        _FP4_VALUES.repeat(32).reshape(16, 16),
+    ],
+)
+def test_pack_fp4_to_uint8_backends_match(x):
+    pytest.skip("triton kernels are disabled")
+    torch_out = pack_fp4_to_uint8(x.cpu())  # CPU → torch fallback
+    triton_out = ImplBackend.call(
+        "pack_fp4_to_uint8_triton", x.to(torch.bfloat16).cuda()
+    ).cpu()
+
+    assert torch_out.shape == triton_out.shape
+    assert torch.equal(
+        torch_out, triton_out
+    ), f"Packed bytes differ:\ntorch:  {torch_out}\ntriton: {triton_out}"
