@@ -24,6 +24,7 @@ __all__ = [
     "BaseCompressor",
     "compress_module",
     "decompress_module",
+    "get_compressed_shape_and_dtype",
     "COMPRESSIBLE_MODULE_TYPES",
 ]
 
@@ -95,6 +96,27 @@ class BaseCompressor(RegistryMixin, ABC):
         raise NotImplementedError(
             f"{cls.__name__} does not implement the classmethod decompress interface"
         )
+
+    @classmethod
+    def decompressed_shape_and_dtype(
+        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
+    ) -> tuple[torch.Size, torch.dtype]:
+        """
+        Determine the shape/dtype a module's weight would have once decompressed,
+        without necessarily performing the (potentially very expensive) actual
+        decompression. Used to size scale/zero-point buffers when initializing
+        quantization for a module that is currently compressed.
+
+        The default implementation just runs a full decompression; override this
+        for formats where the shape/dtype can be determined more cheaply from
+        metadata alone (e.g. from a packed tensor's shape).
+
+        :param state_dict: compressed per-module state dict with local parameter names
+        :param scheme: quantization scheme containing quantization parameters
+        :return: `(shape, dtype)` of the decompressed weight
+        """
+        weight = cls.decompress(dict(state_dict), scheme)["weight"]
+        return weight.shape, weight.dtype
 
     @classmethod
     def compress_module(cls, module: torch.nn.Module) -> None:
@@ -239,3 +261,58 @@ def decompress_module(
     )
     compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
     compressor.decompress_module(module, leave_decompressed=leave_decompressed)
+
+
+def get_compressed_shape_and_dtype(
+    module: torch.nn.Module,
+) -> Optional[tuple[torch.Size, torch.dtype]]:
+    """
+    If `module` is currently compressed (its `weight` was replaced by
+    compressor-specific packed parameters, e.g. `weight_packed`), cheaply determine
+    the shape/dtype its weight would have once decompressed, without necessarily
+    performing the actual (potentially very expensive) decompression. Used to size
+    scale/zero-point buffers when initializing quantization for a module that is
+    still compressed under a previously-applied quantization scheme.
+
+    As a side effect, stashes two things needed to correctly decompress this module
+    later, once callers are done using its current (compressed) state to size and
+    attach a *new* quantization scheme:
+
+    - `module._pre_decompress_format`: the resolved compression format.
+      `quantization_scheme` (and its `.format`) is commonly overwritten with the
+      new scheme right after this is called, at which point it no longer reflects
+      the format the module's data is actually packed in; `decompress_module`/
+      `compress_module` should be called with `format=module._pre_decompress_format`
+      to decompress it correctly.
+    - `module._pre_decompress_qparams`: the module's current compressed qparam
+      tensors (e.g. `weight_scale`), keyed by name. Initializing a *new* scheme on
+      this module (`initialize_module_for_quantization`) unconditionally clears and
+      replaces same-named qparams (e.g. a compressed module's `weight_scale` holds
+      real packed-scale data, not a stale calibration placeholder, but gets wiped
+      and replaced with an empty tensor sized for the new scheme regardless).
+      Restore these onto the module (`setattr(module, name, value)`) right before
+      actually decompressing it, since decompression needs the real values back.
+
+    :param module: module to inspect
+    :return: `(shape, dtype)` of the module's decompressed weight if the module is
+        currently compressed, else `None`
+    """
+    if hasattr(module, "weight"):
+        return None
+
+    scheme = getattr(module, "quantization_scheme", None)
+    if not isinstance(scheme, QuantizationScheme):
+        return None
+
+    format = CompressionFormat(scheme.format or infer_module_format(type(module), scheme))
+    module._pre_decompress_format = format
+    compressor = BaseCompressor.get_value_from_registry(format.value)
+    state_dict = get_direct_state_dict(module)
+
+    module._pre_decompress_qparams = {
+        name: value
+        for name in compressor.compression_param_names(scheme)
+        if name != "weight_packed" and (value := getattr(module, name, None)) is not None
+    }
+
+    return compressor.decompressed_shape_and_dtype(state_dict, scheme)

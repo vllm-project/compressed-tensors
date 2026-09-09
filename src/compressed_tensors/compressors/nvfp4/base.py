@@ -128,6 +128,20 @@ class NVFP4PackedCompressor(BaseCompressor):
         return state_dict
 
     @classmethod
+    def decompressed_shape_and_dtype(
+        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
+    ) -> tuple[torch.Size, torch.dtype]:
+        """
+        Cheaply infer shape/dtype from the packed tensor's shape, avoiding the cost
+        of unpacking every fp4 value (see `unpack_fp4_from_uint8`). Two fp4 values
+        are packed per uint8 byte, so the decompressed weight has twice as many
+        columns as `weight_packed`; the unpacked dtype is always bfloat16 by default
+        (see `unpack_fp4_from_uint8`).
+        """
+        m, n = state_dict["weight_packed"].shape
+        return torch.Size((m, n * 2)), torch.bfloat16
+
+    @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """NVFP4 matches FP4 with group_size != 32 (or None)."""
         return (

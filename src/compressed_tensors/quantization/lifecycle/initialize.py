@@ -46,6 +46,7 @@ def initialize_module_for_quantization(
     module: Module,
     scheme: QuantizationScheme | None = None,
     force_zero_point: bool = True,
+    compressed_shape_dtype: tuple[torch.Size, torch.dtype] | None = None,
 ):
     """
     Attaches appropriate scales, zero points, and observers to a layer
@@ -60,6 +61,12 @@ def initialize_module_for_quantization(
         if not provided, the layer will be skipped
     :param force_zero_point: whether to force initialization of a zero point for
         symmetric quantization
+    :param compressed_shape_dtype: if the module is currently compressed under a
+        previously-applied quantization scheme (no real `.weight` present), the
+        `(shape, dtype)` its weight would have once decompressed, as returned by
+        `compressed_tensors.compressors.get_compressed_shape_and_dtype`. Avoids a
+        potentially very expensive full decompression just to size the
+        scale/zero-point buffers below.
     """
     from compressed_tensors.linear.compressed_linear import CompressedLinear  # circ dep
 
@@ -73,16 +80,25 @@ def initialize_module_for_quantization(
         initialize_attn_qparams(module, scheme, force_zero_point)
 
     elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
-        with disable_onloading():
-            weight = module.weight
+        # a module may still be compressed under a previously-applied quantization
+        # scheme (e.g. re-quantizing an already-quantized checkpoint to a new
+        # scheme); only shape/dtype is needed at this stage (real weight values
+        # aren't observed until calibration), so use the caller-provided shape/dtype
+        # instead of a potentially very expensive full decompression
+        if compressed_shape_dtype is not None:
+            weight_shape, weight_dtype = compressed_shape_dtype
+        else:
+            with disable_onloading():
+                weight = module.weight
+            weight_shape, weight_dtype = weight.shape, weight.dtype
 
         if scheme.input_activations is not None:
             initialize_qparams(
                 module,
                 "input",
                 scheme.input_activations,
-                observed_shape=weight.shape[-1:],
-                observed_dtype=weight.dtype,
+                observed_shape=weight_shape[-1:],
+                observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
             )
 
@@ -91,8 +107,8 @@ def initialize_module_for_quantization(
                 module,
                 "weight",
                 scheme.weights,
-                observed_shape=weight.shape,
-                observed_dtype=weight.dtype,
+                observed_shape=weight_shape,
+                observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
             )
 
@@ -101,8 +117,8 @@ def initialize_module_for_quantization(
                 module,
                 "output",
                 scheme.output_activations,
-                observed_shape=weight.shape[:-1],
-                observed_dtype=weight.dtype,
+                observed_shape=weight_shape[:-1],
+                observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
             )
 

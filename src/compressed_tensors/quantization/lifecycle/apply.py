@@ -117,6 +117,8 @@ def apply_quantization_config(
         quantization to; when provided, only matched modules that appear
         in this collection will be quantized
     """
+    from compressed_tensors.compressors import get_compressed_shape_and_dtype  # circ dep
+
     config = deepcopy(config)
     if config is None:  # see PR #180
         return dict()
@@ -166,17 +168,36 @@ def apply_quantization_config(
         ):
             module.quantization_scheme = scheme
             initialize_hooked_attention(model, module)
-            initialize_module_for_quantization(
-                module, force_zero_point=force_zero_point
-            )
+            try:
+                initialize_module_for_quantization(
+                    module, force_zero_point=force_zero_point
+                )
+            except Exception as exception:
+                raise RuntimeError(
+                    f"Failed to initialize quantization for module `{name}` "
+                    f"({type(module).__name__}): {exception}"
+                ) from exception
             module.quantization_status = config.quantization_status
 
         # linear quantization
         elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+            # capture before overwriting quantization_scheme below: a module may
+            # still be compressed under a previously-applied scheme (e.g.
+            # re-quantizing an already-quantized checkpoint), and that old scheme
+            # is what correctly describes its current on-disk packed format
+            compressed_shape_dtype = get_compressed_shape_and_dtype(module)
             module.quantization_scheme = scheme
-            initialize_module_for_quantization(
-                module, force_zero_point=force_zero_point
-            )
+            try:
+                initialize_module_for_quantization(
+                    module,
+                    force_zero_point=force_zero_point,
+                    compressed_shape_dtype=compressed_shape_dtype,
+                )
+            except Exception as exception:
+                raise RuntimeError(
+                    f"Failed to initialize quantization for module `{name}` "
+                    f"({type(module).__name__}): {exception}"
+                ) from exception
             module.quantization_status = config.quantization_status
 
 
