@@ -473,37 +473,77 @@ def _quantize_triton(
 
     output_dtype = dtype if dtype is not None else x.dtype
 
-    with torch.get_device_module().device(x.device):
-        _quantize_kernel[grid](
-            quantized_value,
-            x,
-            scale,
-            zero_point if zero_point is not None else x,  # pass x as dummy
-            q_min,
-            q_max,
-            global_scale if global_scale is not None else x,  # pass x as dummy
-            input_stride_0,
-            input_stride_1,
-            input_stride_2,
-            input_stride_3,
-            output_stride_0,
-            output_stride_1,
-            output_stride_2,
-            output_stride_3,
-            dim_0,
-            dim_1,
-            dim_2,
-            dim_3,
-            group_size,
-            num_scale_cols,
-            quant_type=quant_type,
-            num_bits=num_bits,
-            use_intel_libdevice=x.device.type == "xpu",
-            BLOCK_SIZE_R=block_size_r,
-            BLOCK_SIZE_C=block_size_c,
-            has_zero_point=zero_point is not None,
-            has_global_scale=global_scale is not None,
+    try:
+        with torch.get_device_module().device(x.device):
+            _quantize_kernel[grid](
+                quantized_value,
+                x,
+                scale,
+                zero_point if zero_point is not None else x,  # pass x as dummy
+                q_min,
+                q_max,
+                global_scale if global_scale is not None else x,  # pass x as dummy
+                input_stride_0,
+                input_stride_1,
+                input_stride_2,
+                input_stride_3,
+                output_stride_0,
+                output_stride_1,
+                output_stride_2,
+                output_stride_3,
+                dim_0,
+                dim_1,
+                dim_2,
+                dim_3,
+                group_size,
+                num_scale_cols,
+                quant_type=quant_type,
+                num_bits=num_bits,
+                use_intel_libdevice=x.device.type == "xpu",
+                BLOCK_SIZE_R=block_size_r,
+                BLOCK_SIZE_C=block_size_c,
+                has_zero_point=zero_point is not None,
+                has_global_scale=global_scale is not None,
+            )
+    except Exception:
+        def _info(t):
+            if t is None:
+                return None
+            return dict(
+                shape=tuple(t.shape),
+                stride=tuple(t.stride()),
+                dtype=str(t.dtype),
+                device=str(t.device),
+                numel=t.numel(),
+                is_contiguous=t.is_contiguous(),
+            )
+
+        import sys
+
+        print("=== _quantize_triton kernel launch failure ===", file=sys.stderr)
+        print(f"x: {_info(x)}", file=sys.stderr)
+        print(f"quantized_value (output): {_info(quantized_value)}", file=sys.stderr)
+        print(f"scale: {_info(scale)}", file=sys.stderr)
+        print(f"zero_point: {_info(zero_point)}", file=sys.stderr)
+        print(f"q_min: {_info(q_min)}", file=sys.stderr)
+        print(f"q_max: {_info(q_max)}", file=sys.stderr)
+        print(f"global_scale: {_info(global_scale)}", file=sys.stderr)
+        print(
+            f"dims: dim_0={dim_0} dim_1={dim_1} dim_2={dim_2} dim_3={dim_3} "
+            f"group_size={group_size} num_scale_cols={num_scale_cols} "
+            f"num_rows={num_rows} num_cols={num_cols}",
+            file=sys.stderr,
         )
+        print(
+            f"strides: input=({input_stride_0},{input_stride_1},"
+            f"{input_stride_2},{input_stride_3}) "
+            f"output=({output_stride_0},{output_stride_1},"
+            f"{output_stride_2},{output_stride_3})",
+            file=sys.stderr,
+        )
+        print(f"args: {args}", file=sys.stderr)
+        print(f"grid: {grid({'BLOCK_SIZE_R': block_size_r, 'BLOCK_SIZE_C': block_size_c})}", file=sys.stderr)
+        raise
 
     quantized_value = quantized_value.reshape(original_shape)
 

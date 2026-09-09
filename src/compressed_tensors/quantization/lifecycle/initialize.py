@@ -87,10 +87,15 @@ def initialize_module_for_quantization(
         # instead of a potentially very expensive full decompression
         if compressed_shape_dtype is not None:
             weight_shape, weight_dtype = compressed_shape_dtype
+            weight_device = None
         else:
             with disable_onloading():
                 weight = module.weight
             weight_shape, weight_dtype = weight.shape, weight.dtype
+            # use the weight's actual device rather than the module's execution
+            # device: under the sequential pipeline's per-subgraph onloading, these
+            # can diverge, and qparams must live alongside the weight they quantize
+            weight_device = weight.device
 
         if scheme.input_activations is not None:
             initialize_qparams(
@@ -100,6 +105,7 @@ def initialize_module_for_quantization(
                 observed_shape=weight_shape[-1:],
                 observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
+                device=weight_device,
             )
 
         if scheme.weights is not None:
@@ -110,6 +116,7 @@ def initialize_module_for_quantization(
                 observed_shape=weight_shape,
                 observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
+                device=weight_device,
             )
 
         if scheme.output_activations is not None:
@@ -120,6 +127,7 @@ def initialize_module_for_quantization(
                 observed_shape=weight_shape[:-1],
                 observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
+                device=weight_device,
             )
 
         # CompressedLinear has its own forward method that handles decompression
@@ -173,6 +181,7 @@ def initialize_qparams(
     observed_shape: tuple[int | None, ...],
     observed_dtype: torch.dtype,
     force_zero_point: bool = True,
+    device: torch.device | None = None,
 ):
     """
     Initialize quantization parameters for a given basename according to the passed
@@ -188,10 +197,21 @@ def initialize_qparams(
     :param observed_shape: last (right-most) known dimensions of the observed weight/act
     :param observed_dtype: dtype of the observed weight/actt
     :param force_zero_point: force the zero_point parameter to be initialized
+    :param device: device to allocate qparams on. Defaults to the module's execution
+        device (`get_execution_device`). Callers that already know the actual device
+        of the tensor being observed (e.g. a live `module.weight`) should pass it
+        explicitly: under pipelines that temporarily override a module's onload
+        device (e.g. the sequential pipeline's per-subgraph onloading), the module's
+        execution device can diverge from where its weight actually lives, and
+        allocating qparams on the wrong device causes them to be used alongside the
+        weight in the same kernel launch -- e.g. a CUDA illegal memory access from a
+        Triton kernel reading a pointer from a different physical GPU than the one
+        it's launched on.
     """
     strategy = quantization_args.strategy
     dynamic = quantization_args.dynamic
-    device = get_execution_device(module)  # avoid performing intialization ops on cpu
+    # avoid performing intialization ops on cpu
+    device = device if device is not None else get_execution_device(module)
 
     # Skip all intialization for fully dynamic quantization
     if dynamic is True:
@@ -271,6 +291,19 @@ def initialize_qparams(
         requires_grad=False,
     )
     module.register_parameter(f"{base_name}_scale", init_scale)
+
+    registered_scale = getattr(module, f"{base_name}_scale")
+    if tuple(registered_scale.shape) != tuple(expected_shape):
+        raise RuntimeError(
+            f"initialize_qparams: registered `{base_name}_scale` on "
+            f"{type(module).__name__} with shape {tuple(registered_scale.shape)}, "
+            f"but computed expected_shape={tuple(expected_shape)} from "
+            f"observed_shape={observed_shape}, group_size={quantization_args.group_size}, "
+            f"strategy={strategy}. `register_parameter` did not actually replace the "
+            f"prior `{base_name}_scale` (id(init_scale)={id(init_scale)}, "
+            f"id(registered_scale)={id(registered_scale)}, "
+            f"module._parameters type={type(module._parameters).__name__})."
+        )
 
     if force_zero_point or not quantization_args.symmetric:
         init_zero_point = Parameter(
