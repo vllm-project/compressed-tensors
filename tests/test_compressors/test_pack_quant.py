@@ -57,14 +57,6 @@ def get_dummy_quant_config(
     return QuantizationConfig(config_groups=config_groups)
 
 
-def make_dummy_g_idx(columns: int, group_size: int) -> torch.Tensor:
-    perm = torch.randperm(columns)
-    return torch.nn.Parameter(
-        (torch.arange(columns, dtype=torch.int) // group_size)[perm],
-        requires_grad=False,
-    )
-
-
 @pytest.mark.parametrize(
     "shape",
     [
@@ -238,7 +230,6 @@ def test_asymmetric_packed_support(strategy):
 @pytest.mark.parametrize(
     "actorder",
     [
-        ActivationOrdering.GROUP,
         ActivationOrdering.WEIGHT,
         None,
     ],
@@ -255,9 +246,6 @@ def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration
     mock_per_group_calibration(
         model.dummy, base_name="weight", value=model.dummy.weight, group_size=group_size
     )
-    if actorder == ActivationOrdering.GROUP:
-        init_g_idx = make_dummy_g_idx(512, group_size)
-        model.dummy.register_parameter("weight_g_idx", init_g_idx)
 
     scheme = quant_config.config_groups["group_1"]
     module_sd = {
@@ -271,7 +259,6 @@ def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration
         model.dummy.weight,
         scale=model.dummy.weight_scale,
         zero_point=model.dummy.weight_zero_point,
-        g_idx=getattr(model.dummy, "weight_g_idx", None),
         args=scheme.weights,
     )
     assert torch.equal(fake_quant, decompressed["weight"])

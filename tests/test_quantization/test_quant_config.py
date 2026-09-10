@@ -171,8 +171,9 @@ def test_get_vllm_module_type():
     assert get_vllm_module_type("DeepseekV4TopKRouter") == "Linear"
     assert get_vllm_module_type("DeepseekV4HashRouter") == "Linear"
     assert get_vllm_module_type("JetMoeTopKGating") == "Linear"
-    assert get_vllm_module_type("Qwen3NextGatedDeltaNet") == "Linear"
-    assert get_vllm_module_type("JetMoeTopKGating") == "Linear"
+    assert get_vllm_module_type("DeepseekV4TopKGate") == "Linear"
+    assert get_vllm_module_type("Qwen3NextGatedDeltaNet") == "Qwen3NextGatedDeltaNet"
+    assert get_vllm_module_type("Qwen3NextRMSNormGated") == "Qwen3NextRMSNormGated"
 
 
 def test_quantization_config_merge():

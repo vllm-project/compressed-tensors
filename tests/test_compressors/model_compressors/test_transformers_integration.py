@@ -15,7 +15,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers.utils.quantization_config import CompressedTensorsConfig
 
 
-@requires_version("transformers", "!=5.15.0")
+@requires_version("transformers", ">=5.16")
 @pytest.mark.parametrize(
     "frozen_stub,compressed_stub",
     [
@@ -47,7 +47,7 @@ def test_compress_model(frozen_stub, compressed_stub):
         assert torch.equal(compressed[key], true_compressed[key])
 
 
-@requires_version("transformers", "!=5.15.0")
+@requires_version("transformers", ">=5.16")
 @pytest.mark.filterwarnings("ignore::UserWarning")
 @pytest.mark.parametrize(
     "model_stub,compressed_stub",

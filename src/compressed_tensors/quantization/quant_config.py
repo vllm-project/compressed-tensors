@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import re
 import warnings
 from collections import defaultdict
 from enum import Enum
@@ -371,7 +372,9 @@ def get_vllm_module_type(module_type: str) -> str:
     layers for the purposes of config matching.
     """
     if "ExpertMLP" not in module_type and (
-        "Router" in module_type or "Gate" in module_type or "Gating" in module_type
+        "Router" in module_type
+        or "Gating" in module_type
+        or re.search(r"Gate(?![a-z])", module_type)
     ):
         module_type = "Linear"
 

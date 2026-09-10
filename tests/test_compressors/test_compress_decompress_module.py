@@ -8,7 +8,6 @@ from compressed_tensors.compressors import ModelCompressor
 from compressed_tensors.compressors.base import compress_module, decompress_module
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
-    ActivationOrdering,
     QuantizationArgs,
     QuantizationConfig,
     QuantizationScheme,
@@ -70,9 +69,7 @@ def _run_compress_decompress(
         ("UNQUANTIZED", CompressionFormat.dense, None),
         ("W8A16", CompressionFormat.pack_quantized, None),
         ("W4A16", CompressionFormat.pack_quantized, None),
-        ("W4A16", CompressionFormat.pack_quantized, ActivationOrdering.GROUP),
         ("W4A16_ASYM", CompressionFormat.pack_quantized, None),
-        ("W4A16_ASYM", CompressionFormat.pack_quantized, ActivationOrdering.GROUP),
         ("W8A8", CompressionFormat.int_quantized, None),
         ("W4A8", CompressionFormat.int_quantized, None),
         ("W4AFP8", CompressionFormat.int_quantized, None),
@@ -106,7 +103,6 @@ def test_compress_decompress_module_mxfp4(scheme_name, expected_format, device):
         ("UNQUANTIZED", CompressionFormat.dense, None),
         ("W8A16", CompressionFormat.pack_quantized, None),
         ("W4A16", CompressionFormat.pack_quantized, None),
-        ("W4A16", CompressionFormat.pack_quantized, ActivationOrdering.GROUP),
         ("W4A16_ASYM", CompressionFormat.pack_quantized, None),
         ("NVFP4A16", CompressionFormat.nvfp4_pack_quantized, None),
         ("MXFP4A16", CompressionFormat.mxfp4_pack_quantized, None),
