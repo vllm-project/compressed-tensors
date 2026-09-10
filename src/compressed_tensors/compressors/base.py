@@ -24,7 +24,6 @@ __all__ = [
     "BaseCompressor",
     "compress_module",
     "decompress_module",
-    "get_compressed_shape_and_dtype",
     "COMPRESSIBLE_MODULE_TYPES",
 ]
 
@@ -96,27 +95,6 @@ class BaseCompressor(RegistryMixin, ABC):
         raise NotImplementedError(
             f"{cls.__name__} does not implement the classmethod decompress interface"
         )
-
-    @classmethod
-    def decompressed_shape_and_dtype(
-        cls, state_dict: TensorStateDict, scheme: QuantizationScheme
-    ) -> tuple[torch.Size, torch.dtype]:
-        """
-        Determine the shape/dtype a module's weight would have once decompressed,
-        without necessarily performing the (potentially very expensive) actual
-        decompression. Used to size scale/zero-point buffers when initializing
-        quantization for a module that is currently compressed.
-
-        The default implementation just runs a full decompression; override this
-        for formats where the shape/dtype can be determined more cheaply from
-        metadata alone (e.g. from a packed tensor's shape).
-
-        :param state_dict: compressed per-module state dict with local parameter names
-        :param scheme: quantization scheme containing quantization parameters
-        :return: `(shape, dtype)` of the decompressed weight
-        """
-        weight = cls.decompress(dict(state_dict), scheme)["weight"]
-        return weight.shape, weight.dtype
 
     @classmethod
     def compress_module(cls, module: torch.nn.Module) -> None:
@@ -259,30 +237,3 @@ def decompress_module(
     )
     compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
     compressor.decompress_module(module, leave_decompressed=leave_decompressed)
-
-
-def get_compressed_shape_and_dtype(
-    module: torch.nn.Module,
-) -> Optional[tuple[torch.Size, torch.dtype]]:
-    """
-    If `module` is compressed, infer the shape and dtype of its decompressed
-    weight without requiring callers to materialize the full weight tensor.
-
-    :param module: module to inspect
-    :return: `(shape, dtype)` of the module's decompressed weight if the module is
-        currently compressed, else `None`
-    """
-    if hasattr(module, "weight"):
-        return None
-
-    scheme = getattr(module, "quantization_scheme", None)
-    if not isinstance(scheme, QuantizationScheme):
-        return None
-
-    compression_format = CompressionFormat(
-        scheme.format or infer_module_format(type(module), scheme)
-    )
-    compressor = BaseCompressor.get_value_from_registry(compression_format.value)
-    state_dict = get_direct_state_dict(module)
-
-    return compressor.decompressed_shape_and_dtype(state_dict, scheme)

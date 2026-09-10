@@ -46,7 +46,6 @@ def initialize_module_for_quantization(
     module: Module,
     scheme: QuantizationScheme | None = None,
     force_zero_point: bool = True,
-    compressed_shape_dtype: tuple[torch.Size, torch.dtype] | None = None,
 ):
     """
     Attaches appropriate scales, zero points, and observers to a layer
@@ -61,12 +60,6 @@ def initialize_module_for_quantization(
         if not provided, the layer will be skipped
     :param force_zero_point: whether to force initialization of a zero point for
         symmetric quantization
-    :param compressed_shape_dtype: if the module is currently compressed under a
-        previously-applied quantization scheme (no real `.weight` present), the
-        `(shape, dtype)` its weight would have once decompressed, as returned by
-        `compressed_tensors.compressors.get_compressed_shape_and_dtype`. Avoids a
-        potentially very expensive full decompression just to size the
-        scale/zero-point buffers below.
     """
     from compressed_tensors.linear.compressed_linear import CompressedLinear  # circ dep
 
@@ -80,17 +73,11 @@ def initialize_module_for_quantization(
         initialize_attn_qparams(module, scheme, force_zero_point)
 
     elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
-        # Compressed modules may not have a materialized `.weight`; shape/dtype is
-        # enough to initialize qparams before the real calibration pass.
-        if compressed_shape_dtype is not None:
-            weight_shape, weight_dtype = compressed_shape_dtype
-            weight_device = None
-        else:
-            with disable_onloading():
-                weight = module.weight
-            weight_shape, weight_dtype = weight.shape, weight.dtype
-            # Keep qparams on the same device as the weight under per-layer onloading.
-            weight_device = weight.device
+        with disable_onloading():
+            weight = module.weight
+        weight_shape, weight_dtype = weight.shape, weight.dtype
+        # Keep qparams on the same device as the weight under per-layer onloading.
+        weight_device = weight.device
 
         if scheme.input_activations is not None:
             initialize_qparams(

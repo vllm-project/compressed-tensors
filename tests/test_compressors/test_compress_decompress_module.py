@@ -8,7 +8,6 @@ from compressed_tensors.compressors import ModelCompressor
 from compressed_tensors.compressors.base import (
     compress_module,
     decompress_module,
-    get_compressed_shape_and_dtype,
 )
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
@@ -180,10 +179,6 @@ def test_decompress_module_can_clear_quantization_metadata():
 
     compress_module(module)
 
-    assert get_compressed_shape_and_dtype(module) == (
-        torch.Size((256, 256)),
-        torch.float32,
-    )
     assert "weight_packed" in get_direct_state_dict(module)
     assert is_module_quantized(module)
 
