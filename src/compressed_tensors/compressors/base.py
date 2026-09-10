@@ -166,8 +166,6 @@ class BaseCompressor(RegistryMixin, ABC):
             QuantizationMetadata.clear_quantization(module)
             if hasattr(module, "quantization_status"):
                 delattr(module, "quantization_status")
-            if hasattr(module, "quantization_scheme"):
-                delattr(module, "quantization_scheme")
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
@@ -267,31 +265,8 @@ def get_compressed_shape_and_dtype(
     module: torch.nn.Module,
 ) -> Optional[tuple[torch.Size, torch.dtype]]:
     """
-    If `module` is currently compressed (its `weight` was replaced by
-    compressor-specific packed parameters, e.g. `weight_packed`), cheaply determine
-    the shape/dtype its weight would have once decompressed, without necessarily
-    performing the actual (potentially very expensive) decompression. Used to size
-    scale/zero-point buffers when initializing quantization for a module that is
-    still compressed under a previously-applied quantization scheme.
-
-    As a side effect, stashes two things needed to correctly decompress this module
-    later, once callers are done using its current (compressed) state to size and
-    attach a *new* quantization scheme:
-
-    - `module._pre_decompress_format`: the resolved compression format.
-      `quantization_scheme` (and its `.format`) is commonly overwritten with the
-      new scheme right after this is called, at which point it no longer reflects
-      the format the module's data is actually packed in; `decompress_module`/
-      `compress_module` should be called with `format=module._pre_decompress_format`
-      to decompress it correctly.
-    - `module._pre_decompress_qparams`: the module's current compressed qparam
-      tensors (e.g. `weight_scale`), keyed by name. Initializing a *new* scheme on
-      this module (`initialize_module_for_quantization`) unconditionally clears and
-      replaces same-named qparams (e.g. a compressed module's `weight_scale` holds
-      real packed-scale data, not a stale calibration placeholder, but gets wiped
-      and replaced with an empty tensor sized for the new scheme regardless).
-      Restore these onto the module (`setattr(module, name, value)`) right before
-      actually decompressing it, since decompression needs the real values back.
+    If `module` is compressed, infer the shape and dtype of its decompressed
+    weight without requiring callers to materialize the full weight tensor.
 
     :param module: module to inspect
     :return: `(shape, dtype)` of the module's decompressed weight if the module is
@@ -304,15 +279,10 @@ def get_compressed_shape_and_dtype(
     if not isinstance(scheme, QuantizationScheme):
         return None
 
-    format = CompressionFormat(scheme.format or infer_module_format(type(module), scheme))
-    module._pre_decompress_format = format
-    compressor = BaseCompressor.get_value_from_registry(format.value)
+    compression_format = CompressionFormat(
+        scheme.format or infer_module_format(type(module), scheme)
+    )
+    compressor = BaseCompressor.get_value_from_registry(compression_format.value)
     state_dict = get_direct_state_dict(module)
-
-    module._pre_decompress_qparams = {
-        name: value
-        for name in compressor.compression_param_names(scheme)
-        if name != "weight_packed" and (value := getattr(module, name, None)) is not None
-    }
 
     return compressor.decompressed_shape_and_dtype(state_dict, scheme)

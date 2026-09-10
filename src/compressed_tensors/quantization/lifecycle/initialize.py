@@ -80,11 +80,8 @@ def initialize_module_for_quantization(
         initialize_attn_qparams(module, scheme, force_zero_point)
 
     elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
-        # a module may still be compressed under a previously-applied quantization
-        # scheme (e.g. re-quantizing an already-quantized checkpoint to a new
-        # scheme); only shape/dtype is needed at this stage (real weight values
-        # aren't observed until calibration), so use the caller-provided shape/dtype
-        # instead of a potentially very expensive full decompression
+        # Compressed modules may not have a materialized `.weight`; shape/dtype is
+        # enough to initialize qparams before the real calibration pass.
         if compressed_shape_dtype is not None:
             weight_shape, weight_dtype = compressed_shape_dtype
             weight_device = None
@@ -92,9 +89,7 @@ def initialize_module_for_quantization(
             with disable_onloading():
                 weight = module.weight
             weight_shape, weight_dtype = weight.shape, weight.dtype
-            # use the weight's actual device rather than the module's execution
-            # device: under the sequential pipeline's per-subgraph onloading, these
-            # can diverge, and qparams must live alongside the weight they quantize
+            # Keep qparams on the same device as the weight under per-layer onloading.
             weight_device = weight.device
 
         if scheme.input_activations is not None:
@@ -198,15 +193,7 @@ def initialize_qparams(
     :param observed_dtype: dtype of the observed weight/actt
     :param force_zero_point: force the zero_point parameter to be initialized
     :param device: device to allocate qparams on. Defaults to the module's execution
-        device (`get_execution_device`). Callers that already know the actual device
-        of the tensor being observed (e.g. a live `module.weight`) should pass it
-        explicitly: under pipelines that temporarily override a module's onload
-        device (e.g. the sequential pipeline's per-subgraph onloading), the module's
-        execution device can diverge from where its weight actually lives, and
-        allocating qparams on the wrong device causes them to be used alongside the
-        weight in the same kernel launch -- e.g. a CUDA illegal memory access from a
-        Triton kernel reading a pointer from a different physical GPU than the one
-        it's launched on.
+        device (`get_execution_device`).
     """
     strategy = quantization_args.strategy
     dynamic = quantization_args.dynamic
@@ -291,19 +278,6 @@ def initialize_qparams(
         requires_grad=False,
     )
     module.register_parameter(f"{base_name}_scale", init_scale)
-
-    registered_scale = getattr(module, f"{base_name}_scale")
-    if tuple(registered_scale.shape) != tuple(expected_shape):
-        raise RuntimeError(
-            f"initialize_qparams: registered `{base_name}_scale` on "
-            f"{type(module).__name__} with shape {tuple(registered_scale.shape)}, "
-            f"but computed expected_shape={tuple(expected_shape)} from "
-            f"observed_shape={observed_shape}, group_size={quantization_args.group_size}, "
-            f"strategy={strategy}. `register_parameter` did not actually replace the "
-            f"prior `{base_name}_scale` (id(init_scale)={id(init_scale)}, "
-            f"id(registered_scale)={id(registered_scale)}, "
-            f"module._parameters type={type(module._parameters).__name__})."
-        )
 
     if force_zero_point or not quantization_args.symmetric:
         init_zero_point = Parameter(

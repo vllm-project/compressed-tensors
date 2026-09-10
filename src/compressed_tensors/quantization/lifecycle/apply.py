@@ -168,15 +168,9 @@ def apply_quantization_config(
         ):
             module.quantization_scheme = scheme
             initialize_hooked_attention(model, module)
-            try:
-                initialize_module_for_quantization(
-                    module, force_zero_point=force_zero_point
-                )
-            except Exception as exception:
-                raise RuntimeError(
-                    f"Failed to initialize quantization for module `{name}` "
-                    f"({type(module).__name__}): {exception}"
-                ) from exception
+            initialize_module_for_quantization(
+                module, force_zero_point=force_zero_point
+            )
             module.quantization_status = config.quantization_status
 
         # linear quantization
@@ -187,17 +181,11 @@ def apply_quantization_config(
             # is what correctly describes its current on-disk packed format
             compressed_shape_dtype = get_compressed_shape_and_dtype(module)
             module.quantization_scheme = scheme
-            try:
-                initialize_module_for_quantization(
-                    module,
-                    force_zero_point=force_zero_point,
-                    compressed_shape_dtype=compressed_shape_dtype,
-                )
-            except Exception as exception:
-                raise RuntimeError(
-                    f"Failed to initialize quantization for module `{name}` "
-                    f"({type(module).__name__}): {exception}"
-                ) from exception
+            initialize_module_for_quantization(
+                module,
+                force_zero_point=force_zero_point,
+                compressed_shape_dtype=compressed_shape_dtype,
+            )
             module.quantization_status = config.quantization_status
 
 
