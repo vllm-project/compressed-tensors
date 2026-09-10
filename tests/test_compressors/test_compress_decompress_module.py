@@ -5,7 +5,11 @@ import pytest
 import torch
 import torch.nn as nn
 from compressed_tensors.compressors import ModelCompressor
-from compressed_tensors.compressors.base import compress_module, decompress_module
+from compressed_tensors.compressors.base import (
+    compress_module,
+    decompress_module,
+    get_compressed_shape_and_dtype,
+)
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     QuantizationArgs,
@@ -164,3 +168,30 @@ def test_linear_only_config_leaves_embedding_untouched():
     assert embed_keys == {"weight"}
     assert not hasattr(model.embed, "quantization_status")
     assert torch.equal(model.embed.weight, embed_weight_before)
+
+
+def test_decompress_module_can_clear_quantization_metadata():
+    module = nn.Linear(256, 256, bias=False)
+    scheme = preset_name_to_scheme("W8A16", ["Linear"])
+
+    initialize_module_for_quantization(module, scheme)
+    module.weight_scale.data.fill_(1)
+    module.weight_zero_point.data.zero_()
+
+    compress_module(module)
+
+    assert get_compressed_shape_and_dtype(module) == (
+        torch.Size((256, 256)),
+        torch.float32,
+    )
+    assert "weight_packed" in get_direct_state_dict(module)
+    assert is_module_quantized(module)
+
+    decompress_module(module, leave_decompressed=False)
+
+    state_dict = get_direct_state_dict(module)
+    assert "weight" in state_dict
+    assert "weight_packed" not in state_dict
+    assert not hasattr(module, "quantization_scheme")
+    assert not hasattr(module, "quantization_status")
+    assert not hasattr(module.forward, "__wrapped__")
