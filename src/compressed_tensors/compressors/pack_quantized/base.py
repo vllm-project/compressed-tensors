@@ -174,6 +174,7 @@ class PackedQuantizationCompressor(BaseCompressor):
             x_q=unpacked,
             scale=scale,
             zero_point=zero_point,
+            args=scheme.weights,
         )
 
         return state_dict
