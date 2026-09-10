@@ -18,6 +18,20 @@ from compressed_tensors.quantization.utils import (
 )
 
 
+@pytest.mark.parametrize("symmetric", [True, False])
+def test_calculate_qparams_meta_device(symmetric):
+    # ensure qparams can be computed for tensors on the meta device
+    # (e.g. no python float conversions that would fail on meta tensors)
+    min_val = torch.zeros(1, device="meta")
+    max_val = torch.zeros(1, device="meta")
+    args = QuantizationArgs(strategy="tensor", symmetric=symmetric)
+
+    scale, zp = calculate_qparams(min_val, max_val, args)
+
+    assert scale.device.type == "meta"
+    assert zp.device.type == "meta"
+
+
 @pytest.mark.parametrize(
     "keepdims,strategy,exp_shape",
     [
