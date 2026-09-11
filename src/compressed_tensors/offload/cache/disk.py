@@ -113,7 +113,7 @@ class DiskCache(OffloadCache):
         }
 
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
-        save_file({"weight": tensor}, file_path)
+        save_file({"weight": tensor.contiguous()}, file_path)
         return offloaded
 
     def __delitem__(self, key: str):
@@ -154,7 +154,8 @@ class DiskCache(OffloadCache):
 
         # save with data using original weight_name
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
-        save_file({weight_name: data.reshape_as(offloaded).to(dtype=dtype)}, file_path)
+        data = data.reshape_as(offloaded).to(dtype=dtype).contiguous()
+        save_file({weight_name: data}, file_path)
 
     @classmethod
     def create_checkpoint_symlink(

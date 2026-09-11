@@ -175,6 +175,39 @@ def test_distributed_compression_with_offload():
 @pytest.mark.unit
 @requires_gpu(2)
 @torchrun(world_size=2, init_dist=True)
+def test_distributed_compression_with_disk_offload(offload_folder):
+    """Test distributed compression with offloaded modules."""
+    model = TwoLayerModel()
+    setup_quantized_model(model)
+
+    # Offload model to CPU
+    offload_module(
+        model.layer1,
+        onload_device="cuda",
+        offload_device="disk",
+        offload_dir=offload_folder,
+    )
+    offload_module(
+        model.layer2,
+        onload_device="cuda",
+        offload_device="disk",
+        offload_dir=offload_folder,
+    )
+
+    q_config = create_quantization_config(bits=4, format="pack-quantized")
+    compressor = ModelCompressor(quantization_config=q_config)
+
+    # Compress the model
+    compressor.compress_model(model)
+
+    # Verify compression happened even with offloading
+    assert hasattr(model.layer1, "weight_packed")
+    assert hasattr(model.layer2, "weight_packed")
+
+
+@pytest.mark.unit
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
 def test_distributed_compression_decompress_roundtrip():
     """Test that distributed compression + decompression preserves values."""
     model = TwoLayerModel()
