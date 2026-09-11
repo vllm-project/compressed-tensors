@@ -5,10 +5,7 @@ import pytest
 import torch
 import torch.nn as nn
 from compressed_tensors.compressors import ModelCompressor
-from compressed_tensors.compressors.base import (
-    compress_module,
-    decompress_module,
-)
+from compressed_tensors.compressors.base import compress_module, decompress_module
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     QuantizationArgs,

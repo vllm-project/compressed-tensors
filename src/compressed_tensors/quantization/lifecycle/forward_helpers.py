@@ -356,6 +356,7 @@ def adapt_scale_and_zp_for_triton(
     Note: We keep scale/zp contiguous because they are small tensors
     (one value per row/group), so contiguous() is cheap
     """
+
     def _adapt_param(param: torch.Tensor) -> torch.Tensor:
         target_numel = num_rows * num_scale_cols
         if param.numel() == target_numel:
