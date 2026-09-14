@@ -5,8 +5,10 @@ import os
 import shutil
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
 from pathlib import Path
 
+import torch
 import tqdm
 from compressed_tensors.entrypoints.convert.convert_file import (
     convert_file,
@@ -17,7 +19,9 @@ from compressed_tensors.entrypoints.convert.converters import (
     Converter,
     build_inverse_weight_maps,
 )
+from compressed_tensors.entrypoints.convert.memory import exec_jobs_dynamic
 from compressed_tensors.utils.safetensors_load import (
+    InverseWeightMap,
     get_checkpoint_files,
     get_weight_map,
     is_weights_file,
@@ -34,6 +38,8 @@ def convert_checkpoint(
     save_directory: str | os.PathLike,
     converter: Converter | list[Converter],
     max_workers: int = 1,
+    device: str | torch.device | list[str | torch.device] | None = None,
+    job_memory_estimator: Callable[[InverseWeightMap], int] | None = None,
 ):
     """
     Convert a model checkpoint to either:
@@ -48,11 +54,27 @@ def convert_checkpoint(
     :param model_stub: huggingface model hub or path to local weights files
     :param save_directory: new checkpoint will be saved in this directory.
     :param max_workers: number of worker threads to process files with
-    :param device: gpu device to accelerate quantization with
+    :param device: device or devices on which to run conversion. When omitted,
+        all available accelerator devices are used when a job memory estimator
+        is provided; otherwise, conversion falls back to CPU.
+    :param job_memory_estimator: callable returning the estimated memory in bytes
+        for each conversion job. Required when explicitly using an accelerator
+        device.
     :param converter: single converter or list of converters to apply
         in order, e.g. a dequantizer followed by a re-quantizer
     """
     converters = converter if isinstance(converter, list) else [converter]
+    devices = _resolve_devices(device)
+    if any(dev.type != "cpu" for dev in devices) and job_memory_estimator is None:
+        if device is None:
+            logger.warning("No job memory estimator was provided; falling back to CPU.")
+            devices = [torch.device("cpu")]
+        else:
+            raise ValueError(
+                "job_memory_estimator is required when converting on "
+                "accelerator devices."
+            )
+
     # get all model_files for checkpoint
     model_files = get_checkpoint_files(model_stub)
 
@@ -65,12 +87,14 @@ def convert_checkpoint(
         model_files=model_files,
         converters=converters,
     )
+    Path(save_directory).mkdir(parents=True, exist_ok=True)
 
     # Build validation/conversion jobs, copy over any other file
     validate_jobs = []
     convert_jobs = []
     for shard_name, resolved_path in model_files.items():
         save_path = Path(save_directory) / shard_name
+        save_path.parent.mkdir(parents=True, exist_ok=True)
 
         if shard_name.endswith("safetensors"):
             if shard_name not in inverse_weight_maps:
@@ -88,7 +112,6 @@ def convert_checkpoint(
             if is_weights_file(shard_name):
                 logger.warning(f"Skip processing for weights file {shard_name}")
             if str(resolved_path) != str(save_path):
-                save_path.parent.mkdir(parents=True, exist_ok=True)
                 logger.info(f"Copying {shard_name} {save_path}")
                 shutil.copyfile(resolved_path, save_path)
 
@@ -98,7 +121,19 @@ def convert_checkpoint(
     # Process weights, accumulating total bytes used and the new weight_map
     total_size = 0
     weight_map = dict()
-    convert_results = exec_jobs(convert_jobs, max_workers, desc="Converting")
+    if all(dev.type == "cpu" for dev in devices):
+        convert_results = exec_jobs(convert_jobs, max_workers, desc="Converting")
+    else:
+        assert job_memory_estimator is not None
+        callable_jobs = [partial(job[0], *job[1:]) for job in convert_jobs]
+        memory_estimates = [job_memory_estimator(job[1]) for job in convert_jobs]
+        convert_results = exec_jobs_dynamic(
+            jobs=callable_jobs,
+            devices=devices,
+            max_workers=max_workers,
+            memory_estimates=memory_estimates,
+            desc="Converting",
+        )
     for _total_size, _weight_map in convert_results:
         total_size += _total_size
         weight_map.update(_weight_map)
@@ -106,6 +141,27 @@ def convert_checkpoint(
     # Update config and safetensors index
     write_checkpoint_quantization_config(save_directory, converters)
     update_safetensors_index(save_directory, total_size, weight_map)
+
+
+def _resolve_devices(
+    device: str | torch.device | list[str | torch.device] | None,
+) -> list[torch.device]:
+    """Resolve explicit devices or auto-detect all available accelerators."""
+    if device is None:
+        accelerator = torch.accelerator.current_accelerator(check_available=True)
+        if accelerator is None:
+            devices = [torch.device("cpu")]
+        else:
+            devices = [
+                torch.device(accelerator.type, index)
+                for index in range(torch.accelerator.device_count())
+            ]
+    else:
+        devices = device if isinstance(device, list) else [device]
+        if not devices:
+            raise ValueError("The device list cannot be empty.")
+        devices = [torch.device(dev) for dev in devices]
+    return devices
 
 
 def exec_jobs(
