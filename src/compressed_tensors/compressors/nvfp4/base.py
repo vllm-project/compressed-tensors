@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import functools
-
 import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
@@ -20,39 +18,110 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 from compressed_tensors.utils import TensorStateDict, getattr_chain
+from compressed_tensors.utils.impl_backend import ImplBackend
 
 
-__all__ = ["NVFP4PackedCompressor"]
+__all__ = ["NVFP4PackedCompressor", "compress_nvfp4"]
 
 
-def _skip_meta_device(fn):
+def _compress_nvfp4_meta_req(*args, **kwargs) -> bool:
+    """Requirement for using the meta device NVFP4 compression backend."""
+    state_dict = kwargs.get("state_dict")
+    if state_dict is None:
+        for arg in args:
+            if isinstance(arg, dict):
+                state_dict = arg
+                break
+
+    if state_dict is None:
+        return False
+
+    weight = state_dict.get("weight", None)
+    return (
+        weight is not None
+        and hasattr(weight, "device")
+        and weight.device.type == "meta"
+    )
+
+
+def _resolve_compress_args(*args, **kwargs):
+    if len(args) == 3:
+        return args[0], args[1], args[2]
+    if len(args) == 2:
+        if isinstance(args[0], type):
+            return args[0], args[1], kwargs.get("scheme")
+        return NVFP4PackedCompressor, args[0], args[1]
+    cls = kwargs.get("cls", NVFP4PackedCompressor)
+    state_dict = kwargs.get("state_dict")
+    scheme = kwargs.get("scheme")
+    if len(args) == 1:
+        if isinstance(args[0], type):
+            cls = args[0]
+        elif isinstance(args[0], dict):
+            state_dict = args[0]
+    return cls, state_dict, scheme
+
+
+@ImplBackend.register("compress_nvfp4", _compress_nvfp4_meta_req, 0)
+def compress_nvfp4_meta(*args, **kwargs) -> TensorStateDict:
     """
-    Classmethod decorator that bypasses compress computation on the meta device.
-
-    When a weight tensor lives on the meta device (shape/dtype only, no data),
-    running quantize + pack would fail or waste time doing meaningless FLOPs.
-    Instead, this decorator directly constructs meta tensors of the correct
-    shape and dtype for weight_packed and weight_scale and returns early.
+    Construct meta tensors for weight_packed and weight_scale without computing FLOPs.
     """
+    cls, state_dict, scheme = _resolve_compress_args(*args, **kwargs)
+    state_dict = state_dict.copy()
+    weight = state_dict.pop("weight")
+    scale = state_dict.pop("weight_scale")
+    m, n = weight.shape
+    if n % 2 != 0:
+        raise ValueError(
+            "tensor must have an even number of columns for nvfp4 compression"
+        )
+    state_dict["weight_packed"] = torch.empty(
+        m, n // 2, dtype=torch.uint8, device="meta"
+    )
+    state_dict["weight_scale"] = cls._compress_scale(scale, scheme.weights)
+    state_dict = cls._remove_symmetric_zp(state_dict, scheme)
+    return state_dict
 
-    @functools.wraps(fn)
-    def wrapper(cls, state_dict, scheme):
-        weight = state_dict.get("weight", None)
-        if weight is not None and weight.device.type == "meta":
-            state_dict = state_dict.copy()
-            weight = state_dict.pop("weight")
-            scale = state_dict.pop("weight_scale")
-            m, n = weight.shape
-            scale_dtype = scheme.weights.scale_dtype or torch.float8_e4m3fn
-            state_dict["weight_packed"] = torch.empty(
-                m, n // 2, dtype=torch.uint8, device="meta"
-            )
-            state_dict["weight_scale"] = scale.to(scale_dtype)
-            state_dict = cls._remove_symmetric_zp(state_dict, scheme)
-            return state_dict
-        return fn(cls, state_dict, scheme)
 
-    return wrapper
+@ImplBackend.entrypoint("compress_nvfp4")
+def compress_nvfp4(*args, **kwargs) -> TensorStateDict:
+    """
+    Compress a per-module state dict using NVFP4 format.
+
+    Quantizes the weight and packs into uint8 as ``weight_packed``.
+    Compresses the scale according to ``scheme.weights.scale_dtype``.
+    Removes the raw ``weight``.
+
+    :param state_dict: local-name state dict (weight, weight_scale, …)
+    :param scheme: quantization scheme for the weight
+    :return: compressed state dict
+    """
+    cls, state_dict, scheme = _resolve_compress_args(*args, **kwargs)
+    state_dict = state_dict.copy()
+    weight = state_dict.pop("weight")
+    scale = state_dict.pop("weight_scale")
+    global_scale = state_dict.get("weight_global_scale", None)
+    zero_point = state_dict.get("weight_zero_point", None)
+    weights = scheme.weights
+
+    quantized_weight = quantize(
+        x=weight,
+        scale=scale,
+        global_scale=global_scale,
+        zero_point=zero_point,
+        args=weights,
+    )
+    state_dict["weight_packed"] = pack_fp4_to_uint8(quantized_weight)
+    state_dict["weight_scale"] = cls._compress_scale(scale, weights)
+    state_dict = cls._remove_symmetric_zp(state_dict, scheme)
+
+    return state_dict
+
+
+# Backwards compatibility alias for _skip_meta_device
+_skip_meta_device = compress_nvfp4_meta
+ImplBackend._fn_registry["_skip_meta_device"] = compress_nvfp4_meta
 
 
 @BaseCompressor.register(name=CompressionFormat.nvfp4_pack_quantized.value)
@@ -89,7 +158,6 @@ class NVFP4PackedCompressor(BaseCompressor):
         return scale.to(dtype)
 
     @classmethod
-    @_skip_meta_device
     def compress(
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
@@ -104,25 +172,7 @@ class NVFP4PackedCompressor(BaseCompressor):
         :param scheme: quantization scheme for the weight
         :return: compressed state dict
         """
-        state_dict = state_dict.copy()
-        weight = state_dict.pop("weight")
-        scale = state_dict.pop("weight_scale")
-        global_scale = state_dict.get("weight_global_scale", None)
-        zero_point = state_dict.get("weight_zero_point", None)
-        weights = scheme.weights
-
-        quantized_weight = quantize(
-            x=weight,
-            scale=scale,
-            global_scale=global_scale,
-            zero_point=zero_point,
-            args=weights,
-        )
-        state_dict["weight_packed"] = pack_fp4_to_uint8(quantized_weight)
-        state_dict["weight_scale"] = cls._compress_scale(scale, weights)
-        state_dict = cls._remove_symmetric_zp(state_dict, scheme)
-
-        return state_dict
+        return compress_nvfp4(cls, state_dict, scheme)
 
     @classmethod
     def decompress(
