@@ -5,6 +5,7 @@ import contextlib
 from collections.abc import Container
 from dataclasses import fields, is_dataclass
 from itertools import chain
+from types import EllipsisType
 from typing import TypeVar
 
 import torch
@@ -207,6 +208,52 @@ def to_meta(module: torch.nn.Module) -> None:
             for name, tensor in state_dict.items()
         }
         replace_direct_state_dict(module, meta_state_dict)
+
+
+def index_from_view(
+    tensor: torch.Tensor,
+) -> tuple[torch.Tensor, tuple[int | slice, ...] | EllipsisType]:
+    """
+    Get the slice indexing used to reconstruct the tensor view
+
+    ```python
+    a = torch.rand(10, 10, 10)
+    b = a[0, ::2, :5]
+    base, index = index_from_view(b)
+
+    assert torch.equal(base, a)
+    assert torch.equal(base[index], b)
+    ```
+
+    :param tensor: tensor which is a view
+    :return: base tensor and slice indexing used to get `tensor` from base tensor
+    """
+    base = tensor._base
+    if base is None:
+        return tensor, ...
+
+    assert base.is_contiguous()
+    assert base.ndim == len(base.size()) == len(base.stride())
+    assert tensor.ndim == len(tensor.size()) == len(tensor.stride())
+    assert base.storage_offset() == 0
+
+    offset = tensor.storage_offset()
+    n_index_dims = base.ndim - tensor.ndim
+
+    result: list[int | slice] = []
+
+    for dim, base_stride in enumerate(base.stride()):
+        start, offset = divmod(offset, base_stride)
+
+        if dim < n_index_dims:
+            result.append(start)
+        else:
+            tensor_dim = dim - n_index_dims
+            size = tensor.size(tensor_dim)
+            step = tensor.stride(tensor_dim) // base_stride
+            result.append(slice(start, start + size * step, step))
+
+    return base, tuple(result)
 
 
 @contextlib.contextmanager
