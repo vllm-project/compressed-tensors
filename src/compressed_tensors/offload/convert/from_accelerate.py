@@ -161,6 +161,15 @@ def remove_accelerate_from_module(
 
         # Not offloaded, likely a buffer
         else:
+            if tensor.device.type == "meta":
+                raise RuntimeError(
+                    f"Parameter/buffer `{full_name}` is on the meta device and has "
+                    "no corresponding entry in accelerate's offload map, meaning it "
+                    "was never populated with data during `from_pretrained` (no "
+                    "matching checkpoint key and no offload record). This usually "
+                    "means the model class defines a submodule with no corresponding "
+                    "weights in this checkpoint."
+                )
             offload = tensor
 
         # Replace meta tensor with offloaded value (no ptr rematerialization occurs)

@@ -343,7 +343,10 @@ def _is_fp8_supported(device: torch.device) -> bool:
 
 
 def adapt_scale_and_zp_for_triton(
-    scale: torch.Tensor, zero_point: torch.Tensor | None, num_rows: int
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    num_rows: int,
+    num_scale_cols: int,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """
     Adapt scale and zero point for Triton kernel.
@@ -353,22 +356,28 @@ def adapt_scale_and_zp_for_triton(
     Note: We keep scale/zp contiguous because they are small tensors
     (one value per row/group), so contiguous() is cheap
     """
-    if scale.ndim == 0:
-        scale = scale.expand(num_rows, 1)
-    elif scale.ndim == 1:
-        scale = scale.unsqueeze(1).expand(num_rows, 1)
-    elif scale.shape[0] == 1:
-        scale = scale.expand(num_rows, -1)
-    scale = scale.contiguous()
 
+    def _adapt_param(param: torch.Tensor) -> torch.Tensor:
+        target_numel = num_rows * num_scale_cols
+        if param.numel() == target_numel:
+            param = param.reshape(num_rows, num_scale_cols)
+        elif param.numel() == num_scale_cols:
+            param = param.reshape(1, num_scale_cols).expand(num_rows, num_scale_cols)
+        elif param.numel() == num_rows:
+            param = param.reshape(num_rows, 1).expand(num_rows, num_scale_cols)
+        elif param.numel() == 1:
+            param = param.reshape(1, 1).expand(num_rows, num_scale_cols)
+        else:
+            raise ValueError(
+                "Scale/zero-point shape is incompatible with Triton quantization: "
+                f"got shape={tuple(param.shape)}, num_rows={num_rows}, "
+                f"num_scale_cols={num_scale_cols}"
+            )
+        return param.contiguous()
+
+    scale = _adapt_param(scale)
     if zero_point is not None:
-        if zero_point.ndim == 0:
-            zero_point = zero_point.expand(num_rows, 1)
-        elif zero_point.ndim == 1:
-            zero_point = zero_point.unsqueeze(1).expand(num_rows, 1)
-        elif zero_point.shape[0] == 1:
-            zero_point = zero_point.expand(num_rows, -1)
-        zero_point = zero_point.contiguous()
+        zero_point = _adapt_param(zero_point)
     return scale, zero_point
 
 
@@ -400,9 +409,6 @@ def _quantize_triton(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    num_rows = x.shape[0]
-    scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
-
     original_shape = x.shape
 
     quant_type = (
@@ -433,6 +439,9 @@ def _quantize_triton(
 
     num_rows = dim_0 * dim_1
     num_cols = dim_2 * dim_3
+    scale, zero_point = adapt_scale_and_zp_for_triton(
+        scale, zero_point, num_rows, num_scale_cols
+    )
     block_size_r: int = 32
     block_size_c: int = 32
 

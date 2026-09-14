@@ -135,6 +135,29 @@ def test_apply_quantization_config_tinyllama():
             )
 
 
+def test_apply_quantization_config_respects_allowed_modules():
+    model = torch.nn.Sequential(
+        torch.nn.Linear(4, 4),
+        torch.nn.Linear(4, 4),
+    )
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                weights=QuantizationArgs(num_bits=8, symmetric=True),
+            )
+        },
+        quantization_status=QuantizationStatus.INITIALIZED,
+    )
+
+    apply_quantization_config(model, config, allowed_modules=[model[1]])
+
+    assert not hasattr(model[0], "quantization_scheme")
+    assert not hasattr(model[0], "quantization_status")
+    assert hasattr(model[1], "weight_scale")
+    assert model[1].quantization_status == QuantizationStatus.INITIALIZED
+
+
 @pytest.mark.parametrize(
     "config",
     [

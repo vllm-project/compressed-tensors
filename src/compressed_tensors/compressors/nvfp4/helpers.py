@@ -100,7 +100,8 @@ def pack_fp4_to_uint8_triton(x: torch.Tensor) -> torch.Tensor:
 
     BLOCK_SIZE = 1024
     grid = (triton.cdiv(n_pairs, BLOCK_SIZE),)
-    _pack_fp4_kernel[grid](x_flat, packed, n_pairs, BLOCK_SIZE)
+    with torch.get_device_module().device(x.device):
+        _pack_fp4_kernel[grid](x_flat, packed, n_pairs, BLOCK_SIZE)
 
     return packed.reshape(m, n // 2)
 
