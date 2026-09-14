@@ -136,7 +136,8 @@ def test_fp8_block_converter_process():
 @pytest.mark.unit
 def test_fp8_block_converter_validate_with_meta_tensors():
     """
-    Test that the converter's validate method works correctly with meta tensors.
+    Test that the converter's validate method works correctly with meta tensors
+    and returns the correct output dict.
     """
     converter = FP8BlockDequantizer(
         targets=[r"re:.*layer\d+\.mlp\..*proj$"], weight_block_size=(128, 128)
@@ -163,8 +164,59 @@ def test_fp8_block_converter_validate_with_meta_tensors():
             "model.embed_tokens.weight": torch.empty(128, 128, dtype=torch.bfloat16),
         }
 
-    # Should not raise any errors
-    converter.validate(tensors)
+    result = converter.validate(tensors)
+
+    # Targeted weights present with dequantized dtype
+    assert "model.layer0.mlp.up_proj.weight" in result
+    assert result["model.layer0.mlp.up_proj.weight"].dtype == torch.bfloat16
+    assert "model.layer1.mlp.down_proj.weight" in result
+    assert result["model.layer1.mlp.down_proj.weight"].dtype == torch.bfloat16
+
+    # weight_scale_inv removed (consumed by dequantization)
+    assert "model.layer0.mlp.up_proj.weight_scale_inv" not in result
+    assert "model.layer1.mlp.down_proj.weight_scale_inv" not in result
+
+    # Untargeted tensors pass through
+    assert "model.embed_tokens.weight" in result
+
+
+@pytest.mark.unit
+def test_fp8_block_validate_returns_correct_key_count():
+    converter = FP8BlockDequantizer(
+        targets=[r"re:.*layer\d+\.mlp\..*proj$"], weight_block_size=(128, 128)
+    )
+
+    with torch.device("meta"):
+        tensors = {
+            "model.layer0.mlp.up_proj.weight": torch.empty(
+                256, 256, dtype=torch.float8_e4m3fn
+            ),
+            "model.layer0.mlp.up_proj.weight_scale_inv": torch.empty(
+                2, 2, dtype=torch.float32
+            ),
+            "model.embed_tokens.weight": torch.empty(128, 128, dtype=torch.bfloat16),
+        }
+
+    result = converter.validate(tensors)
+
+    # Input: 3 keys (weight, weight_scale_inv, embed_tokens)
+    # Output: 2 keys (weight in bfloat16, embed_tokens passthrough)
+    assert len(result) == 2
+
+
+@pytest.mark.unit
+def test_fp8_block_update_config_returns_none():
+    converter = FP8BlockDequantizer(targets=["Linear"])
+
+    assert converter.update_config(None) is None
+
+    # With existing config, still returns None
+    from compressed_tensors.quantization import QuantizationConfig, QuantizationScheme
+
+    existing = QuantizationConfig(
+        config_groups={"g": QuantizationScheme(targets=["Linear"])},
+    )
+    assert converter.update_config(existing) is None
 
 
 def _verify_block_conversion(
@@ -209,3 +261,51 @@ def _verify_block_conversion(
                 rtol=1e-2,
                 atol=1e-3,
             ), f"Block ({row_block}, {col_block}) conversion mismatch"
+
+
+@pytest.mark.unit
+def test_fp8_block_validate_raises_on_missing_scale_inv():
+    """
+    A targeted weight without its matching weight_scale_inv must raise ValueError.
+    Regression for validation dropped in the multi-converter refactor (#805).
+    """
+    converter = FP8BlockDequantizer(
+        targets=[r"re:.*proj$"], weight_block_size=(128, 128)
+    )
+
+    with torch.device("meta"):
+        tensors = {
+            "model.layer0.mlp.up_proj.weight": torch.empty(
+                256, 256, dtype=torch.float8_e4m3fn
+            ),
+        }
+
+    with pytest.raises(ValueError):
+        converter.validate(tensors)
+
+
+@pytest.mark.unit
+def test_fp8_block_validate_raises_on_untargeted_scale_inv():
+    """
+    An untargeted module carrying a stray weight_scale_inv must raise ValueError.
+    """
+    converter = FP8BlockDequantizer(
+        targets=[r"re:.*up_proj$"], weight_block_size=(128, 128)
+    )
+
+    with torch.device("meta"):
+        tensors = {
+            "model.layer0.mlp.up_proj.weight": torch.empty(
+                256, 256, dtype=torch.float8_e4m3fn
+            ),
+            "model.layer0.mlp.up_proj.weight_scale_inv": torch.empty(
+                2, 2, dtype=torch.float32
+            ),
+            # untargeted module carrying a stray weight_scale_inv
+            "model.layer0.mlp.down_proj.weight_scale_inv": torch.empty(
+                2, 2, dtype=torch.float32
+            ),
+        }
+
+    with pytest.raises(ValueError):
+        converter.validate(tensors)

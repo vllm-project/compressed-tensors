@@ -57,14 +57,6 @@ def get_dummy_quant_config(
     return QuantizationConfig(config_groups=config_groups)
 
 
-def make_dummy_g_idx(columns: int, group_size: int) -> torch.Tensor:
-    perm = torch.randperm(columns)
-    return torch.nn.Parameter(
-        (torch.arange(columns, dtype=torch.int) // group_size)[perm],
-        requires_grad=False,
-    )
-
-
 @pytest.mark.parametrize(
     "shape",
     [
@@ -238,7 +230,6 @@ def test_asymmetric_packed_support(strategy):
 @pytest.mark.parametrize(
     "actorder",
     [
-        ActivationOrdering.GROUP,
         ActivationOrdering.WEIGHT,
         None,
     ],
@@ -255,9 +246,6 @@ def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration
     mock_per_group_calibration(
         model.dummy, base_name="weight", value=model.dummy.weight, group_size=group_size
     )
-    if actorder == ActivationOrdering.GROUP:
-        init_g_idx = make_dummy_g_idx(512, group_size)
-        model.dummy.register_parameter("weight_g_idx", init_g_idx)
 
     scheme = quant_config.config_groups["group_1"]
     module_sd = {
@@ -271,7 +259,6 @@ def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration
         model.dummy.weight,
         scale=model.dummy.weight_scale,
         zero_point=model.dummy.weight_zero_point,
-        g_idx=getattr(model.dummy, "weight_g_idx", None),
         args=scheme.weights,
     )
     assert torch.equal(fake_quant, decompressed["weight"])
@@ -414,3 +401,53 @@ def test_power_of_2_bits_same_packed_output_as_old(num_bits, k):
     assert torch.equal(
         pack_to_int32(value, num_bits), _old_pack_to_int32(value, num_bits)
     )
+
+
+@pytest.mark.parametrize(
+    "strategy,group_size,scale_shape,in_features,expected_width",
+    [
+        (QuantizationStrategy.GROUP, 128, (256, 4), 512, 512),
+        (QuantizationStrategy.CHANNEL, None, (256, 1), 512, 512),
+        # non-aligned channel: 350*4 bits pack to 44 int32 cols, whose upper-bound
+        # placeholder is 44*32//4 = 352 (inexact by design on meta)
+        (QuantizationStrategy.CHANNEL, None, (256, 1), 350, 352),
+    ],
+)
+def test_decompress_on_meta(
+    strategy, group_size, scale_shape, in_features, expected_width
+):
+    """
+    decompress must run on meta tensors: the validate_file convert path loads
+    every param on device="meta", so weight_shape arrives with no data. The
+    original weight shape is rebuilt from the packed/scale shapes rather than
+    read from weight_shape. Regression for the pack-quantized meta crash
+    (NotImplementedError: Cannot copy out of meta tensor; no data!).
+    """
+    out_features = 256
+    module_sd = {
+        "weight": torch.rand((out_features, in_features)),
+        "weight_scale": torch.rand(scale_shape).to(torch.float32),
+    }
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(
+            num_bits=4,
+            strategy=strategy.value,
+            symmetric=True,
+            group_size=group_size,
+        ),
+    )
+    compressed = PackedQuantizationCompressor.compress(module_sd, scheme=scheme)
+
+    # emulate validate_file: every param, including weight_shape, loaded on meta
+    meta_sd = {k: v.to("meta") for k, v in compressed.items()}
+    assert meta_sd["weight_shape"].device.type == "meta"
+
+    decompressed = PackedQuantizationCompressor.decompress(meta_sd, scheme=scheme)
+    weight = decompressed["weight"]
+
+    assert weight.device.type == "meta"
+    assert weight.shape[0] == out_features
+    # group recovers in_features exactly from the scale; channel is a packed-width
+    # upper bound, exact only when in_features packs with no padding
+    assert weight.shape[-1] == expected_width
