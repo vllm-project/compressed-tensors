@@ -59,8 +59,8 @@ def triton_quantize_cuda(x, scale, zero_point, q_min, q_max, args):
     num_rows = x.shape[0]
     scale_adapted, zp_adapted = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
     return _quantize(
-        x=x,
-        scale=scale_adapted,
+        x,
+        scale_adapted,
         zero_point=zp_adapted,
         q_min=q_min,
         q_max=q_max,
@@ -214,6 +214,12 @@ def run_config(quant_type, num_bits, rows, cols):
 def main():
     if not torch.cuda.is_available():
         print("CUDA not available, Triton requires GPU")
+        return
+
+    from compressed_tensors.utils.triton import HAS_TRITON
+
+    if not HAS_TRITON:
+        print("Triton is not available, skipping benchmark")
         return
 
     print("Benchmarking _quantize from forward_helpers.py")
