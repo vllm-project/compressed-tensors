@@ -21,42 +21,7 @@ from compressed_tensors.utils import TensorStateDict, getattr_chain
 from compressed_tensors.utils.impl_backend import ImplBackend
 
 
-__all__ = ["NVFP4PackedCompressor", "compress_nvfp4"]
-
-
-@ImplBackend.entrypoint("compress_nvfp4")
-def compress_nvfp4(*args, **kwargs) -> TensorStateDict:
-    """
-    Compress a per-module state dict using NVFP4 format.
-
-    Quantizes the weight and packs into uint8 as ``weight_packed``.
-    Compresses the scale according to ``scheme.weights.scale_dtype``.
-    Removes the raw ``weight``.
-
-    :param state_dict: local-name state dict (weight, weight_scale, …)
-    :param scheme: quantization scheme for the weight
-    :return: compressed state dict
-    """
-    cls, state_dict, scheme = _resolve_compress_args(*args, **kwargs)
-    state_dict = state_dict.copy()
-    weight = state_dict.pop("weight")
-    scale = state_dict.pop("weight_scale")
-    global_scale = state_dict.get("weight_global_scale", None)
-    zero_point = state_dict.get("weight_zero_point", None)
-    weights = scheme.weights
-
-    quantized_weight = quantize(
-        x=weight,
-        scale=scale,
-        global_scale=global_scale,
-        zero_point=zero_point,
-        args=weights,
-    )
-    state_dict["weight_packed"] = pack_fp4_to_uint8(quantized_weight)
-    state_dict["weight_scale"] = cls._compress_scale(scale, weights)
-    state_dict = cls._remove_symmetric_zp(state_dict, scheme)
-
-    return state_dict
+__all__ = ["NVFP4PackedCompressor"]
 
 
 @BaseCompressor.register(name=CompressionFormat.nvfp4_pack_quantized.value)
