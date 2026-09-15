@@ -9,6 +9,7 @@ import torch
 from compressed_tensors import PackedQuantizationCompressor
 from compressed_tensors.compressors.pack_quantized.helpers import (
     pack_to_int32,
+    pack_to_int32_accelerated,
     unpack_from_int32,
 )
 from compressed_tensors.quantization import (
@@ -21,7 +22,18 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle.forward import fake_quantize
 from compressed_tensors.quantization.quant_args import ActivationOrdering
+from tests.testing_utils import requires_gpu
 from torch.nn.modules import Linear, Sequential
+
+
+def _has_triton():
+    """Check if Triton is available."""
+    try:
+        from compressed_tensors.utils.triton import HAS_TRITON
+
+        return HAS_TRITON
+    except ImportError:
+        return False
 
 
 def _old_pack_to_int32(value: torch.Tensor, num_bits: int) -> torch.Tensor:
@@ -451,3 +463,170 @@ def test_decompress_on_meta(
     # group recovers in_features exactly from the scale; channel is a packed-width
     # upper bound, exact only when in_features packs with no padding
     assert weight.shape[-1] == expected_width
+
+
+requires_triton = pytest.mark.skipif(
+    not _has_triton(),
+    reason="Triton is not available",
+)
+
+
+@requires_gpu
+@requires_triton
+@pytest.mark.parametrize("num_bits", [4, 8])
+@pytest.mark.parametrize(
+    "shape",
+    [
+        (4096, 4096),  # LLaMA-7B q/k/v/o_proj
+        (11008, 4096),  # LLaMA-7B gate/up_proj
+        (4096, 11008),  # LLaMA-7B down_proj
+        (5120, 5120),  # LLaMA-13B
+        (8192, 8192),  # LLaMA-70B
+        (1024, 1024),  # Small square
+        (4544, 4544),  # Falcon (non-power-of-2)
+        (256, 100),  # Small non-aligned
+    ],
+)
+def test_triton_vs_pytorch_pack_dim1(num_bits, shape):
+    """
+    Test that Triton row-parallel kernel produces same results as PyTorch
+    for packed_dim=1 (packing along columns).
+
+    This tests the _pack_to_int32_row_parallel_kernel path.
+    """
+    device = torch.device("cuda:0")
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8, device=device)
+
+    # PyTorch reference (pure CPU implementation)
+    packed_pytorch = pack_to_int32(value.cpu(), num_bits, packed_dim=1).to(device)
+
+    # Triton accelerated (should use row-parallel kernel on CUDA)
+    packed_triton = pack_to_int32_accelerated(value, num_bits, packed_dim=1)
+
+    assert packed_triton.dtype == torch.int32
+    assert packed_triton.shape == packed_pytorch.shape
+    assert torch.equal(packed_triton, packed_pytorch), (
+        f"Triton vs PyTorch mismatch for shape={shape}, num_bits={num_bits}, "
+        f"packed_dim=1"
+    )
+
+    # Verify round-trip
+    unpacked = unpack_from_int32(
+        packed_triton, num_bits, torch.Size(shape), packed_dim=1
+    )
+    assert torch.equal(unpacked, value)
+
+
+@requires_gpu
+@requires_triton
+@pytest.mark.parametrize("num_bits", [4, 8])
+@pytest.mark.parametrize(
+    "shape",
+    [
+        (4096, 4096),  # LLaMA-7B q/k/v/o_proj
+        (11008, 4096),  # LLaMA-7B gate/up_proj
+        (4096, 11008),  # LLaMA-7B down_proj
+        (5120, 5120),  # LLaMA-13B
+        (1024, 1024),  # Small square
+        (4544, 4544),  # Falcon (non-power-of-2)
+        (512, 8),  # Zero-point shape (group strategy)
+        (1024, 4),  # Zero-point shape (group-256 on 1024 cols)
+        (512, 1),  # Zero-point shape (per-tensor)
+    ],
+)
+def test_triton_vs_pytorch_pack_dim0(num_bits, shape):
+    """
+    Test that Triton col-parallel kernel produces same results as PyTorch
+    for packed_dim=0 (packing along rows).
+
+    This tests the _pack_to_int32_col_parallel_kernel path.
+    """
+    device = torch.device("cuda:0")
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8, device=device)
+
+    # PyTorch reference (pure CPU implementation)
+    packed_pytorch = pack_to_int32(value.cpu(), num_bits, packed_dim=0).to(device)
+
+    # Triton accelerated (should use col-parallel kernel on CUDA)
+    packed_triton = pack_to_int32_accelerated(value, num_bits, packed_dim=0)
+
+    assert packed_triton.dtype == torch.int32
+    assert packed_triton.shape == packed_pytorch.shape
+    assert torch.equal(packed_triton, packed_pytorch), (
+        f"Triton vs PyTorch mismatch for shape={shape}, num_bits={num_bits}, "
+        f"packed_dim=0"
+    )
+
+    # Verify round-trip
+    unpacked = unpack_from_int32(
+        packed_triton, num_bits, torch.Size(shape), packed_dim=0
+    )
+    assert torch.equal(unpacked, value)
+
+
+@requires_gpu
+@requires_triton
+@pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
+@pytest.mark.parametrize("packed_dim", [0, 1])
+def test_triton_vs_pytorch_all_bit_widths(num_bits, packed_dim):
+    """
+    Test that Triton kernels produce same results as PyTorch for all bit widths.
+    """
+    device = torch.device("cuda:0")
+    shape = (256, 512)
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8, device=device)
+
+    # PyTorch reference
+    packed_pytorch = pack_to_int32(value.cpu(), num_bits, packed_dim).to(device)
+
+    # Triton accelerated
+    packed_triton = pack_to_int32_accelerated(value, num_bits, packed_dim)
+
+    assert torch.equal(
+        packed_triton, packed_pytorch
+    ), f"Triton vs PyTorch mismatch for num_bits={num_bits}, packed_dim={packed_dim}"
+
+
+@requires_gpu
+@requires_triton
+@pytest.mark.parametrize("num_bits", [4, 8])
+def test_triton_vs_pytorch_3d_tensor(num_bits):
+    """
+    Test that Triton produces same results as PyTorch for 3D tensors (MoE weights).
+    """
+    device = torch.device("cuda:0")
+    shape = (8, 1024, 2048)  # (num_experts, out_features, in_features)
+    lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8, device=device)
+
+    for packed_dim in [0, 1]:
+        # PyTorch reference
+        packed_pytorch = pack_to_int32(value.cpu(), num_bits, packed_dim).to(device)
+
+        # Triton accelerated
+        packed_triton = pack_to_int32_accelerated(value, num_bits, packed_dim)
+
+        assert torch.equal(packed_triton, packed_pytorch), (
+            f"Triton vs PyTorch mismatch for 3D tensor, num_bits={num_bits}, "
+            f"packed_dim={packed_dim}"
+        )
+
+
+@requires_gpu
+@requires_triton
+def test_triton_accelerated_on_cpu_fallback():
+    """
+    Test that pack_to_int32_accelerated falls back to PyTorch on CPU tensors.
+    """
+    shape = (256, 512)
+    value = torch.randint(-8, 8, shape, dtype=torch.int8)  # CPU tensor
+
+    # Should work without error (falls back to PyTorch)
+    packed = pack_to_int32_accelerated(value, num_bits=4, packed_dim=1)
+
+    # Verify correctness
+    packed_reference = pack_to_int32(value, num_bits=4, packed_dim=1)
+    assert torch.equal(packed, packed_reference)
