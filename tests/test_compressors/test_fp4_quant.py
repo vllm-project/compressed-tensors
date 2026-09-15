@@ -8,7 +8,11 @@ from compressed_tensors.compressors.nvfp4.helpers import (
     pack_fp4_to_uint8,
     unpack_fp4_from_uint8,
 )
-from compressed_tensors.quantization import QuantizationArgs, QuantizationType
+from compressed_tensors.quantization import (
+    QuantizationArgs,
+    QuantizationScheme,
+    QuantizationType,
+)
 from compressed_tensors.utils.impl_backend import ImplBackend
 
 
@@ -104,3 +108,29 @@ def test_pack_fp4_to_uint8_backends_match(x):
     assert torch.equal(
         torch_out, triton_out
     ), f"Packed bytes differ:\ntorch:  {torch_out}\ntriton: {triton_out}"
+
+
+def test_nvfp4_compress_meta_device():
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(
+            num_bits=4, type=QuantizationType.FLOAT, group_size=16
+        ),
+    )
+    m, n = 128, 64
+    state_dict = {
+        "weight": torch.empty(m, n, device="meta"),
+        "weight_scale": torch.empty(m, n // 16, device="meta"),
+    }
+
+    compressed = NVFP4PackedCompressor.compress(state_dict, scheme)
+
+    assert "weight" not in compressed
+    assert "weight_packed" in compressed
+    assert "weight_scale" in compressed
+    assert compressed["weight_packed"].device.type == "meta"
+    assert compressed["weight_packed"].shape == (m, n // 2)
+    assert compressed["weight_packed"].dtype == torch.uint8
+    assert compressed["weight_scale"].device.type == "meta"
+    assert compressed["weight_scale"].shape == (m, n // 16)
+    assert compressed["weight_scale"].dtype == torch.float8_e4m3fn

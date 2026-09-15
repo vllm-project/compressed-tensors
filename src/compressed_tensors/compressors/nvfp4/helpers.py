@@ -9,9 +9,17 @@ supporting 8 positive and 8 negative values. This module provides efficient
 packing of two FP4 values into a single uint8 for storage.
 """
 
+from typing import TYPE_CHECKING
+
 import torch
+from compressed_tensors.quantization import QuantizationScheme
+from compressed_tensors.utils import TensorStateDict
 from compressed_tensors.utils.impl_backend import ImplBackend
 from compressed_tensors.utils.triton import tl, triton, triton_req
+
+
+if TYPE_CHECKING:
+    from compressed_tensors.compressors.nvfp4 import NVFP4PackedCompressor
 
 
 __all__ = ["pack_fp4_to_uint8", "unpack_fp4_from_uint8"]
@@ -191,3 +199,28 @@ def unpack_fp4_from_uint8(
 
     # Reshape to final form
     return values.reshape(m, n).to(dtype=dtype)
+
+
+@ImplBackend.register("compress_nvfp4", lambda _, sd, s: sd["weight"].is_meta, 0)
+def compress_nvfp4_meta(
+    cls: "NVFP4PackedCompressor",
+    state_dict: TensorStateDict,
+    scheme: QuantizationScheme,
+) -> TensorStateDict:
+    """
+    Construct meta tensors for weight_packed and weight_scale without computing FLOPs.
+    """
+    state_dict = state_dict.copy()
+    weight = state_dict.pop("weight")
+    scale = state_dict.pop("weight_scale")
+    m, n = weight.shape
+    if n % 2 != 0:
+        raise ValueError(
+            "tensor must have an even number of columns for nvfp4 compression"
+        )
+    state_dict["weight_packed"] = torch.empty(
+        m, n // 2, dtype=torch.uint8, device="meta"
+    )
+    state_dict["weight_scale"] = cls._compress_scale(scale, scheme.weights)
+    state_dict = cls._remove_symmetric_zp(state_dict, scheme)
+    return state_dict

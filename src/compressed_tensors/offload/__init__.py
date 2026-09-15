@@ -2,12 +2,13 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
+import os
 from collections.abc import Iterable
 from typing import Literal
 
 import torch
 from compressed_tensors.distributed.utils import set_source_process
-from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.cache import DiskCache, OffloadCache
 from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.dispatch import (  # noqa: F401
     dispatch_model,
@@ -72,6 +73,7 @@ __all__ = [
     "set_source_process",
     "to_meta",
     "get_cache_init_kwargs",
+    "print_offload_folder",
 ]
 
 
@@ -294,3 +296,39 @@ def align_module_device(
             for name, param in module.named_parameters(recurse=False):
                 device = original_device[name]
                 move_module_tensor(module, name, device)
+
+
+def print_offload_folder(model: torch.nn.Module, offload_folder: str):
+    """
+    Print a formatted table showing all parameters stored in a disk offload folder,
+    mapping each file to its corresponding model parameter path, shape, and dtype.
+
+    :param model: model whose parameters are offloaded to disk
+    :param offload_folder: directory containing the offloaded safetensors files
+    """
+    with disable_onloading():
+        file_path_to_param_info = {}
+        for param_path, param in model.named_parameters():
+            file_path = DiskCache._get_ct_file_path(offload_folder, param)
+            file_path_to_param_info[file_path] = {
+                "path": param_path,
+                "shape": tuple(param.shape),
+                "dtype": str(param.dtype).removeprefix("torch."),
+            }
+
+    print(f"\n{'Parameter Path':<60} {'Shape':<25} {'Dtype':<10}")
+    print("-" * 95)
+
+    unknown_paths = []
+    for file_name in os.listdir(offload_folder):
+        file_path = os.path.join(offload_folder, file_name)
+        if file_path in file_path_to_param_info:
+            info = file_path_to_param_info[file_path]
+            print(f"{info['path']:<60} {str(info['shape']):<25} {info['dtype']:<10}")
+        else:
+            unknown_paths.append(file_path)
+
+    if unknown_paths:
+        print("\nUnknown files in offload folder:")
+        for path in unknown_paths:
+            print(f"  {path}")

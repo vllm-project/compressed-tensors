@@ -92,37 +92,7 @@ def dequantize(
     :return: dequantized float tensor
     """
     if args is None:
-        if scale.ndim == 0 or scale.ndim == 1:
-            args = QuantizationArgs(strategy=QuantizationStrategy.TENSOR)
-        elif scale.ndim == 2:
-            if scale.shape[1] == 1:
-                args = QuantizationArgs(strategy=QuantizationStrategy.CHANNEL)
-            # Scale height matches input or is 1 -> group quantization across columns
-            #
-            # Example 1: scale.shape[0] == 1
-            # x_q: (4, 8), scale: (1, 4) -> 2 columns per group
-            #
-            # Example 2: scale.shape[0] == x_q.shape[0]
-            # x_q: (4, 8), scale: (4, 4) -> 2 elements per group (per row)
-            elif (scale.shape[0] == 1) or (scale.shape[0] == x_q.shape[0]):
-                group_size = int(x_q.shape[1] / scale.shape[1])
-                args = QuantizationArgs(
-                    strategy=QuantizationStrategy.GROUP, group_size=group_size
-                )
-            else:
-                rows, cols = x_q.shape[-2], x_q.shape[-1]
-                block_height = rows // scale.shape[0]  # Rows per block
-                block_width = cols // scale.shape[1]  # Columns per block
-
-                args = QuantizationArgs(
-                    strategy=QuantizationStrategy.BLOCK,
-                    block_structure=[block_height, block_width],
-                )
-        else:
-            raise ValueError(
-                f"Could not infer a quantization strategy from scale with {scale.ndim} "
-                "dimmensions. Expected 0 or 2 dimmensions."
-            )
+        raise ValueError("Infering qargs from shape is no longer supported")
 
     if dtype is None:
         dtype = scale.dtype

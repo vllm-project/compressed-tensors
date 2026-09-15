@@ -343,7 +343,10 @@ def _is_fp8_supported(device: torch.device) -> bool:
 
 
 def adapt_scale_and_zp_for_triton(
-    scale: torch.Tensor, zero_point: torch.Tensor | None, num_rows: int
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    num_rows: int,
+    strategy: QuantizationStrategy,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """
     Adapt scale and zero point for Triton kernel.
@@ -353,21 +356,19 @@ def adapt_scale_and_zp_for_triton(
     Note: We keep scale/zp contiguous because they are small tensors
     (one value per row/group), so contiguous() is cheap
     """
-    if scale.ndim == 0:
-        scale = scale.expand(num_rows, 1)
-    elif scale.ndim == 1:
-        scale = scale.unsqueeze(1).expand(num_rows, 1)
-    elif scale.shape[0] == 1:
-        scale = scale.expand(num_rows, -1)
-    scale = scale.contiguous()
+    match strategy:
+        case QuantizationStrategy.CHANNEL:
+            scale = scale.unflatten(0, (num_rows, -1))
+            if zero_point is not None:
+                zero_point = zero_point.unflatten(0, (num_rows, -1))
 
+        case QuantizationStrategy.TENSOR:
+            scale = scale.expand(num_rows, -1)
+            if zero_point is not None:
+                zero_point = zero_point.expand(num_rows, -1)
+
+    scale = scale.contiguous()
     if zero_point is not None:
-        if zero_point.ndim == 0:
-            zero_point = zero_point.expand(num_rows, 1)
-        elif zero_point.ndim == 1:
-            zero_point = zero_point.unsqueeze(1).expand(num_rows, 1)
-        elif zero_point.shape[0] == 1:
-            zero_point = zero_point.expand(num_rows, -1)
         zero_point = zero_point.contiguous()
     return scale, zero_point
 
@@ -401,8 +402,9 @@ def _quantize_triton(
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     num_rows = x.shape[0]
-    scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
-
+    scale, zero_point = adapt_scale_and_zp_for_triton(
+        scale, zero_point, num_rows, args.strategy
+    )
     original_shape = x.shape
 
     quant_type = (

@@ -18,6 +18,7 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
 from compressed_tensors.utils import TensorStateDict, getattr_chain
+from compressed_tensors.utils.impl_backend import ImplBackend
 
 
 __all__ = ["NVFP4PackedCompressor"]
@@ -57,6 +58,7 @@ class NVFP4PackedCompressor(BaseCompressor):
         return scale.to(dtype)
 
     @classmethod
+    @ImplBackend.entrypoint("compress_nvfp4")
     def compress(
         cls, state_dict: TensorStateDict, scheme: QuantizationScheme
     ) -> TensorStateDict:
@@ -118,6 +120,7 @@ class NVFP4PackedCompressor(BaseCompressor):
         state_dict["weight"] = dequantize(
             x_q=unpacked,
             scale=scale_float,
+            args=scheme.weights,
             global_scale=global_scale,
             dtype=unpacked.dtype,
         )
