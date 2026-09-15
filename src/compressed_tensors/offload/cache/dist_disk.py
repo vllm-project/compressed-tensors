@@ -5,7 +5,7 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import get_source_rank, is_source_process
 from compressed_tensors.offload.cache.disk import DiskCache
-from compressed_tensors.offload.utils import send_tensors, to_empty
+from compressed_tensors.offload.utils import send_tensors, to_tensor
 
 
 class DistributedDiskCache(DiskCache):
@@ -17,11 +17,6 @@ class DistributedDiskCache(DiskCache):
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
         Synchronously write tensor data to disk.
-
-        The dtype of ``tensor`` on non-source ranks cannot be trusted because
-        transformers may initialize buffers (e.g. ``inv_freq``) with a
-        different dtype than the checkpoint value on the source rank. See
-        https://github.com/huggingface/transformers/pull/47486
 
         :param tensor: tensor on any device
         :return: meta tensor representing disk offloaded parameter
@@ -36,17 +31,26 @@ class DistributedDiskCache(DiskCache):
                 self.index[offloaded]["safetensors_file"],
                 self.index[offloaded]["weight_name"],
                 self.index[offloaded]["dtype"],
+                offloaded.shape,
             ]
         else:
             offloaded = send_tensors(tensor, device="meta")
-            broadcast_obj = [None, None, None]
+            broadcast_obj = [None, None, None, None]
 
         dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
         if not is_source_process():
             src_dtype = getattr(torch, broadcast_obj[2])
-            if offloaded.dtype != src_dtype:
-                offloaded = to_empty(offloaded, device="meta", dtype=src_dtype)
+            src_shape = broadcast_obj[3]
+
+            # transformers may init params/buffers on non-source (meta) ranks with a
+            # different dtype or shape than the checkpoint (e.g. `inv_freq`, or
+            # tied/multimodal weights), so rebuild the meta tensor to match the
+            # source. See https://github.com/huggingface/transformers/pull/47486
+            if offloaded.dtype != src_dtype or offloaded.shape != src_shape:
+                empty = torch.empty(src_shape, dtype=src_dtype, device="meta")
+                offloaded = to_tensor(empty, offloaded)
+
             self.index[offloaded] = {
                 "safetensors_file": broadcast_obj[0],
                 "weight_name": broadcast_obj[1],

@@ -239,6 +239,14 @@ def test_load_no_missing_keys(model_id, model_class):
 @pytest.mark.integration
 @requires_gpu(2)
 @torchrun(world_size=2, init_dist=True)
+def test_load_dist_no_missing_keys():
+    for model_id, model_class in LOAD_NO_MISSING_KEYS_PARAMETERS:
+        _assert_load_no_missing_keys(model_id, model_class, device_map="cpu")
+
+
+@pytest.mark.integration
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
 def test_load_dist_estimate_tensor_count(tmp_path):
     """Loading with default max_memory triggers _estimate_tensor_count without hang."""
     with load_offloaded_model(AutoModelForCausalLM):
