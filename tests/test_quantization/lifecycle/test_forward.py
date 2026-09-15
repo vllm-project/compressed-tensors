@@ -16,6 +16,7 @@ from compressed_tensors.quantization.lifecycle.forward_helpers import (
     _is_fp8_supported,
     _quantize,
     _quantize_dequantize,
+    adapt_scale_and_zp_for_triton,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
     initialize_module_for_quantization,
@@ -34,6 +35,34 @@ from torch.nn import Embedding, Linear
 
 def _to_accel(x):
     return x.to(torch.accelerator.current_accelerator()) if x is not None else None
+
+
+def test_adapt_scale_and_zp_for_triton_flattens_block_scales():
+    scale = torch.arange(8, dtype=torch.float32).reshape(1, 8, 1, 1)
+    zero_point = torch.zeros_like(scale)
+
+    scale, zero_point = adapt_scale_and_zp_for_triton(
+        scale, zero_point, num_rows=8, num_scale_cols=1
+    )
+
+    assert scale.shape == (8, 1)
+    assert zero_point.shape == (8, 1)
+    assert torch.equal(scale, torch.arange(8, dtype=torch.float32).reshape(8, 1))
+
+
+def test_adapt_scale_and_zp_for_triton_broadcasts_group_scales():
+    scale = torch.arange(4, dtype=torch.float32).reshape(1, 4, 1)
+
+    scale, zero_point = adapt_scale_and_zp_for_triton(
+        scale, None, num_rows=3, num_scale_cols=4
+    )
+
+    assert zero_point is None
+    assert scale.shape == (3, 4)
+    assert torch.equal(
+        scale,
+        torch.arange(4, dtype=torch.float32).reshape(1, 4).expand(3, 4),
+    )
 
 
 def test_set_forward_quantized():

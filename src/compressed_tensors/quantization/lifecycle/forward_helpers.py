@@ -435,6 +435,9 @@ def _quantize_triton(
 
     num_rows = dim_0 * dim_1
     num_cols = dim_2 * dim_3
+    scale, zero_point = adapt_scale_and_zp_for_triton(
+        scale, zero_point, num_rows, num_scale_cols
+    )
     block_size_r: int = 32
     block_size_c: int = 32
 
