@@ -5,10 +5,8 @@
 
 import pytest
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 from compressed_tensors.compressors.model_compressors import ModelCompressor
-from compressed_tensors.offload import offload_module
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationConfig,
