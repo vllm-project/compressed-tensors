@@ -343,7 +343,10 @@ def _is_fp8_supported(device: torch.device) -> bool:
 
 
 def adapt_scale_and_zp_for_triton(
-    scale: torch.Tensor, zero_point: torch.Tensor | None, num_rows: int
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    num_rows: int,
+    strategy: QuantizationStrategy,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """
     Adapt scale and zero point for Triton kernel.
@@ -353,21 +356,35 @@ def adapt_scale_and_zp_for_triton(
     Note: We keep scale/zp contiguous because they are small tensors
     (one value per row/group), so contiguous() is cheap
     """
-    if scale.ndim == 0:
-        scale = scale.expand(num_rows, 1)
-    elif scale.ndim == 1:
-        scale = scale.unsqueeze(1).expand(num_rows, 1)
-    elif scale.shape[0] == 1:
-        scale = scale.expand(num_rows, -1)
+    match strategy:
+        case QuantizationStrategy.BLOCK:
+            pass
+
+        case QuantizationStrategy.GROUP | QuantizationStrategy.TENSOR_GROUP:
+            pass
+
+        case QuantizationStrategy.CHANNEL:
+            scale = scale.unflatten(0, (num_rows, -1))
+            if zero_point is not None:
+                zero_point = zero_point.unflatten(0, (num_rows, -1))
+
+        case QuantizationStrategy.TENSOR:
+            scale = scale.expand(num_rows, -1)
+            if zero_point is not None:
+                zero_point = zero_point.expand(num_rows, -1)
+
+        case _:
+            assert False, f"Unknown strategy {strategy}"
+
     scale = scale.contiguous()
+    if zero_point is not None:
+        zero_point = zero_point.contiguous()
+    return scale, zero_point
+
+    assert scale.ndim == 2
 
     if zero_point is not None:
-        if zero_point.ndim == 0:
-            zero_point = zero_point.expand(num_rows, 1)
-        elif zero_point.ndim == 1:
-            zero_point = zero_point.unsqueeze(1).expand(num_rows, 1)
-        elif zero_point.shape[0] == 1:
-            zero_point = zero_point.expand(num_rows, -1)
+        zero_point = zero_point.expand(num_rows, -1)
         zero_point = zero_point.contiguous()
     return scale, zero_point
 
@@ -401,6 +418,9 @@ def _quantize_triton(
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     original_shape = x.shape
+    scale, zero_point = adapt_scale_and_zp_for_triton(
+        scale, zero_point, x.shape[0], args.strategy
+    )
 
     quant_type = (
         QUANT_TYPE_INT if args.type == QuantizationType.INT else QUANT_TYPE_FLOAT
@@ -415,13 +435,17 @@ def _quantize_triton(
         QuantizationStrategy.GROUP,
         QuantizationStrategy.TENSOR_GROUP,
     ):
-        scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, x.shape[0])
         dim_0 = 1
         dim_1, dim_2, dim_3 = x.shape
         group_size = dim_3
         num_scale_cols = dim_2  # num_groups
     elif args.strategy in (QuantizationStrategy.TENSOR, QuantizationStrategy.CHANNEL):
-        scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, x.shape[0])
+        dim_0 = 1
+        dim_1, dim_3 = x.shape
+        dim_2 = 1
+        group_size = dim_3  # all cols share same scale
+        num_scale_cols = 1  # one scale per row
+    elif args.strategy in QuantizationStrategy.TENSOR:
         dim_0 = 1
         dim_1, dim_3 = x.shape
         dim_2 = 1

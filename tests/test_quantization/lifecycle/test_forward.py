@@ -1031,6 +1031,14 @@ def test_quantize_triton_matches_cpu_block_4d(
             None,
             None,
         ),
+        # int8, channel strategy with just one row and column
+        (
+            QuantizationArgs(num_bits=8, type="int", strategy="channel"),
+            torch.randn(1, 1),
+            torch.rand(1, 1) * 0.01 + 0.001,
+            None,
+            None,
+        ),
         # int4, group strategy
         (
             QuantizationArgs(num_bits=4, type="int", strategy="group", group_size=128),
@@ -1039,10 +1047,26 @@ def test_quantize_triton_matches_cpu_block_4d(
             None,
             None,
         ),
+        # int4, group strategy with just one column and one group
+        (
+            QuantizationArgs(num_bits=4, type="int", strategy="group", group_size=128),
+            torch.randn(1, 1, 128),
+            torch.rand(1, 1, 1) * 0.01 + 0.001,
+            None,
+            None,
+        ),
         # fp8, tensor strategy with global_scale (requires SM90+)
         (
             QuantizationArgs(num_bits=8, type="float", strategy="tensor"),
             torch.randn(128, 256),
+            torch.tensor([0.01]),
+            None,
+            torch.tensor([2.0]),
+        ),
+        # fp8, tensor strategy with just one row and column
+        (
+            QuantizationArgs(num_bits=8, type="float", strategy="tensor"),
+            torch.randn(1, 1),
             torch.tensor([0.01]),
             None,
             torch.tensor([2.0]),
