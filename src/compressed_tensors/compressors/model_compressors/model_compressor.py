@@ -20,7 +20,7 @@ from compressed_tensors.compressors.base import compress_module, decompress_modu
 from compressed_tensors.compressors.format import infer_model_format
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.distributed import replace_module_parallel
-from compressed_tensors.offload import is_distributed
+from compressed_tensors.offload import from_accelerate, is_distributed
 from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
@@ -181,6 +181,11 @@ class ModelCompressor:
 
         :param model: model whose parameters should be decompressed in place
         """
+        # when decompressing on load, must use ct offloading
+        # because hf offloading does not support resaving.
+        # note that `from_accelerate` is idempotent
+        from_accelerate(model)
+
         desc = "Decompressing model"
         modules = [
             module
@@ -188,9 +193,15 @@ class ModelCompressor:
             if is_module_quantized(module)
         ]
 
-        # TODO: support distributed decompression
-        for module in tqdm(modules, desc=desc):
-            decompress_module(module, self.force_compression_format)
+        # Decompress modules using distributed or sequential
+        if not is_distributed():
+            for module in tqdm(modules, desc=desc):
+                decompress_module(module, self.force_compression_format)
+        else:
+            compress_fn = partial(
+                decompress_module, format=self.force_compression_format
+            )
+            replace_module_parallel(modules, compress_fn, desc=desc)
 
         # update config status to reflect decompression
         if self.quantization_config is not None:

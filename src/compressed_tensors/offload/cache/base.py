@@ -83,10 +83,7 @@ class OffloadCache(MutableMapping, ABC):
             case ("meta", True):
                 raise ValueError(
                     f"Attempted to create OffloadCache of type {device_type} and "
-                    f"distributed={distributed}. This may be a downstream result of "
-                    "attempting to offload a model to disk without having at least one "
-                    "module on CPU. Please increase the amount of CPU memory available "
-                    "via `from_pretrained(..., max_memory=...)` and try again."
+                    f"distributed={distributed}."
                 )
             case _:
                 raise NotImplementedError(
