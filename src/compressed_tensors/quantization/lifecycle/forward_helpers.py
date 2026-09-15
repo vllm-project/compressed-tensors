@@ -357,12 +357,6 @@ def adapt_scale_and_zp_for_triton(
     (one value per row/group), so contiguous() is cheap
     """
     match strategy:
-        case QuantizationStrategy.BLOCK:
-            pass
-
-        case QuantizationStrategy.GROUP | QuantizationStrategy.TENSOR_GROUP:
-            pass
-
         case QuantizationStrategy.CHANNEL:
             scale = scale.unflatten(0, (num_rows, -1))
             if zero_point is not None:
@@ -373,18 +367,8 @@ def adapt_scale_and_zp_for_triton(
             if zero_point is not None:
                 zero_point = zero_point.expand(num_rows, -1)
 
-        case _:
-            assert False, f"Unknown strategy {strategy}"
-
     scale = scale.contiguous()
     if zero_point is not None:
-        zero_point = zero_point.contiguous()
-    return scale, zero_point
-
-    assert scale.ndim == 2
-
-    if zero_point is not None:
-        zero_point = zero_point.expand(num_rows, -1)
         zero_point = zero_point.contiguous()
     return scale, zero_point
 
@@ -417,10 +401,11 @@ def _quantize_triton(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    original_shape = x.shape
+    num_rows = x.shape[0]
     scale, zero_point = adapt_scale_and_zp_for_triton(
-        scale, zero_point, x.shape[0], args.strategy
+        scale, zero_point, num_rows, args.strategy
     )
+    original_shape = x.shape
 
     quant_type = (
         QUANT_TYPE_INT if args.type == QuantizationType.INT else QUANT_TYPE_FLOAT
@@ -440,12 +425,6 @@ def _quantize_triton(
         group_size = dim_3
         num_scale_cols = dim_2  # num_groups
     elif args.strategy in (QuantizationStrategy.TENSOR, QuantizationStrategy.CHANNEL):
-        dim_0 = 1
-        dim_1, dim_3 = x.shape
-        dim_2 = 1
-        group_size = dim_3  # all cols share same scale
-        num_scale_cols = 1  # one scale per row
-    elif args.strategy in QuantizationStrategy.TENSOR:
         dim_0 = 1
         dim_1, dim_3 = x.shape
         dim_2 = 1
