@@ -180,8 +180,7 @@ class DiskCache(OffloadCache):
             logger.bind(log_once=True).warning(
                 f"Dtype mismatch during create_checkpoint_symlink: offloaded meta "
                 f"tensor dtype {offloaded.dtype} does not match weight_info dtype "
-                f"{weight_info_dtype}. Please upgrade transformers to include "
-                "transformers#46849"
+                f"{weight_info_dtype}."
             )
 
         # Resolve relative paths to absolute paths for symlink creation
