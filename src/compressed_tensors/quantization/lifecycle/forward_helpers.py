@@ -400,9 +400,6 @@ def _quantize_triton(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    num_rows = x.shape[0]
-    scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
-
     original_shape = x.shape
 
     quant_type = (
@@ -418,11 +415,13 @@ def _quantize_triton(
         QuantizationStrategy.GROUP,
         QuantizationStrategy.TENSOR_GROUP,
     ):
+        scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, x.shape[0])
         dim_0 = 1
         dim_1, dim_2, dim_3 = x.shape
         group_size = dim_3
         num_scale_cols = dim_2  # num_groups
     elif args.strategy in (QuantizationStrategy.TENSOR, QuantizationStrategy.CHANNEL):
+        scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, x.shape[0])
         dim_0 = 1
         dim_1, dim_3 = x.shape
         dim_2 = 1

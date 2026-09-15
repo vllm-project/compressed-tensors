@@ -1071,6 +1071,19 @@ def test_quantize_triton_matches_cpu_block_4d(
             None,
             None,
         ),
+        # int8, block strategy, weight shape is same as block shape
+        # there used to be a bug where block quant with one column block failed
+        (
+            QuantizationArgs(
+                num_bits=8, type="int", strategy="block", block_structure=[32, 64]
+            ),
+            torch.randn(32, 64)
+            .reshape(1, 32, 1, 64)
+            .transpose(1, 2),  # (1,1,32,64), non-contiguous
+            torch.rand(1, 1, 1, 1) * 0.01 + 0.001,
+            None,
+            None,
+        ),
     ],
 )
 def test_quantize_backends_match(args, x, scale, zero_point, global_scale):
