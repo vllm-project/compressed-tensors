@@ -17,6 +17,7 @@ from compressed_tensors.offload.dispatch import (  # noqa: F401
     remove_dispatch,
     set_onload_device,
 )
+from compressed_tensors.offload.module import remove_module_offload
 from compressed_tensors.offload.dist_utils import (
     as_broadcastable,
     init_dist,
@@ -53,6 +54,7 @@ __all__ = [
     # control movement
     "disable_onloading",
     "disable_offloading",
+    "disable_offloading_controlled",
     # manipulate parameters
     "update_offload_parameter",
     "get_execution_device",
@@ -73,6 +75,35 @@ __all__ = [
     "to_meta",
     "get_cache_init_kwargs",
 ]
+
+@contextlib.contextmanager
+def disable_offloading_controlled(
+    model: torch.nn.Module,
+    subgraph: Iterable[torch.nn.Module] | None = None,
+):
+    """
+    Intended for sequential pipeline. Onload the entire subgraph, then offload it.
+
+    :param model: the full model
+    :param subgraph: iterable of modules in the subgraph to onload
+    """
+    offloading_info = {}
+    modules_list = list(subgraph) if subgraph is not None else list(model.modules())
+
+    for module in modules_list:
+        if not isinstance(module._parameters, OffloadCache):
+            continue
+        offloading_info[id(module)] = get_cache_init_kwargs(module)
+        remove_module_offload(module, onload_tensors=True)
+
+    try:
+        yield
+    finally:
+        for module in modules_list:
+            if id(module) not in offloading_info:
+                continue
+            offload_module(module, **offloading_info[id(module)])
+
 
 
 @contextlib.contextmanager
