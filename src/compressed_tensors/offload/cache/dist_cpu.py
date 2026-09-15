@@ -48,11 +48,7 @@ class DistributedCPUCache(CPUCache):
             # tied/multimodal weights), so rebuild from the source's dtype and shape
             # before pointing at the shared storage. See
             # https://github.com/huggingface/transformers/pull/47486
-            if (
-                tensor.is_meta
-                or tensor.dtype != src_dtype
-                or tensor.shape != src_shape
-            ):
+            if tensor.is_meta or tensor.dtype != src_dtype or tensor.shape != src_shape:
                 empty = torch.empty(
                     src_shape, dtype=src_dtype, device=self.offload_device
                 )
