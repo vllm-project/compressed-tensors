@@ -43,6 +43,23 @@ def offload_module(
         module._buffers, onload_device, offload_device, **kwargs
     )
 
+    install_offload_forward(module)
+
+    return module
+
+
+def install_offload_forward(module: torch.nn.Module):
+    """
+    Wrap a module's forward so that inputs are moved to the onload device before
+    execution. Assumes `module._parameters`/`module._buffers` have already been
+    replaced with `OffloadCache` instances.
+
+    This is factored out of `offload_module` so that callers which populate the
+    offload caches themselves (e.g. batched distributed dispatch) can reuse the
+    same forward wrapper.
+
+    :param module: module whose forward should be wrapped
+    """
     original_forward_func = module.forward.__func__
     module._original_forward_func = original_forward_func
 
@@ -58,8 +75,6 @@ def offload_module(
         return self._original_forward_func(self, *args, **kwargs)
 
     module.forward = forward.__get__(module)
-
-    return module
 
 
 def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False):
