@@ -52,13 +52,16 @@ def set_onload_device(
     :param onload_device: device to move weights to during forward pass
     :return: dispatched model
     """
-    for module in model.modules():
+    from compressed_tensors.utils.module import get_direct_state_dict
+
+    for name, module in model.named_modules():
         if isinstance(module._parameters, OffloadCache):
             module._parameters.onload_device = onload_device
             module._buffers.onload_device = onload_device
         else:
-            offload_device = get_module_device(module, torch.device("cpu"))
-            offload_module(module, onload_device, offload_device)
+            #tensor = next(get_direct_state_dict(module).values(), None)
+            offload_device = "disk"# tensor.device if tensor is not None else torch.device("cpu")
+            offload_module(module, onload_device, offload_device, offload_dir="/data/kylesayrs/hub/offload_folder")
 
     return model
 
@@ -90,6 +93,26 @@ def dispatch_with_map(
     :param offload_dir: optional directory for disk offloading
     :param show_progress: show tqdm progress
     """
+    # from compressed_tensors.offload import DiskCache, disable_onloading
+    # from compressed_tensors.distributed import is_source_process, get_source_rank
+    # from compressed_tensors.utils.module import get_direct_state_dict
+
+    # broadcast_obj = [DiskCache.index] if is_source_process() else [None]
+    # dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
+    # with disable_onloading():
+    #     for name, (onload_device, offload_device) in tqdm(
+    #         list(device_map.items()),
+    #         desc="PreDispatching model",
+    #         disable=(not show_progress),
+    #         position=(dist.get_rank() if is_distributed() else 0),
+    #     ):
+    #         module = model.get_submodule(name)
+    #         if isinstance(module._parameters, DiskCache):
+    #             for pname, tensor in get_direct_state_dict(module).items():
+    #                 DiskCache.index
+
+    # DiskCache.index
+
     for name, (onload_device, offload_device) in tqdm(
         list(device_map.items()),
         desc="Dispatching model",
