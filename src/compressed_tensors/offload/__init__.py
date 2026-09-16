@@ -7,6 +7,7 @@ from typing import Literal
 
 import torch
 from compressed_tensors.distributed.utils import set_source_process
+from compressed_tensors.logger import logger
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.dispatch import (  # noqa: F401
@@ -76,6 +77,50 @@ __all__ = [
     "get_cache_init_kwargs",
 ]
 
+class OnloadWrapper():
+    """
+    Class for wrapping onloaded modules. This is the only way for
+    the disable_offloading_controlled context manager to work, since 
+    it needs to keep track of modules after linearization/packing,
+    which creates new module instances. 
+    """
+
+    def __init__(
+        self,
+        module: torch.nn.Module,
+    ):
+        self.module = module
+        self.module._onload_wrapper = self
+
+        # Must be captured while the module is still offloaded: after onloading,
+        # get_offloaded_device would return the execution device instead
+        self.offloading_info = (
+            get_cache_init_kwargs(module)
+            if isinstance(module._parameters, OffloadCache)
+            else None
+        )
+
+    def onload(self):
+        """
+        Onload the module's parameters and buffers to the specified onload device.
+        """
+        remove_module_offload(self.module, onload_tensors=True)
+
+    def offload(self):
+        """
+        Offload the module's parameters and buffers to the specified offload device.
+        """
+        offload_module(self.module, **self.offloading_info)
+        del self.module._onload_wrapper
+
+    def replace_with(self, new_module: torch.nn.Module):
+        """
+        Replace the wrapped module with a new module. This is useful for linearization/packing,
+        which creates new module instances.
+        """
+        self.module = new_module
+        self.module._onload_wrapper = self
+
 @contextlib.contextmanager
 def disable_offloading_controlled(
     model: torch.nn.Module,
@@ -87,24 +132,35 @@ def disable_offloading_controlled(
     :param model: the full model
     :param subgraph: iterable of modules in the subgraph to onload
     """
-    offloading_info = {}
-    modules_list = list(subgraph) if subgraph is not None else list(model.modules())
-
-    for module in modules_list:
-        if not isinstance(module._parameters, OffloadCache):
-            continue
-        offloading_info[id(module)] = get_cache_init_kwargs(module)
-        remove_module_offload(module, onload_tensors=True)
+    # deduplicate in case the subgraph contains nested modules, since each unique
+    # module can only be offloaded once
+    modules = subgraph if subgraph is not None else model.modules()
+    modules_list = list(dict.fromkeys(modules))
+    wrapper_list = [OnloadWrapper(module) for module in modules_list]
 
     try:
-        yield
-    finally:
-        for module in modules_list:
-            if id(module) not in offloading_info:
+        for wrapper in wrapper_list:
+            if wrapper.offloading_info is None:
                 continue
-            offload_module(module, **offloading_info[id(module)])
+            wrapper.onload()
+            print(f"Onloaded module {id(wrapper.module)} to {get_execution_device(wrapper.module)}")
 
+        yield
 
+    finally:
+        for wrapper in wrapper_list:
+            if wrapper.offloading_info is None:
+                continue
+            try:
+                wrapper.offload()
+                print(f"Offloaded module {id(wrapper.module)} to {get_offloaded_device(wrapper.module)}")
+            except Exception as e:
+                logger.error(f"Failed to offload module {wrapper.module}: {e}")
+
+        # The caching allocator does not return its reserved pool
+        # to the driver on its own. We need to manually release
+        if torch.accelerator.is_available():
+            torch.accelerator.empty_cache()
 
 @contextlib.contextmanager
 def disable_offloading():
