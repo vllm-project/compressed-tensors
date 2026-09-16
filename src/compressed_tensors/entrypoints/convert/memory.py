@@ -3,6 +3,7 @@
 
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import nullcontext
 from typing import Any
 
 import torch
@@ -54,6 +55,24 @@ def _pick_device(
     return best
 
 
+def _run_job_on_device(job: Callable[[torch.device], Any], device: torch.device) -> Any:
+    """Run a job with the worker thread's assigned accelerator device selected.
+
+    Accelerator current-device state is thread-local. Passing ``cuda:N`` to a
+    job is not enough for kernels that validate pointers against the current
+    device. Keep allocation and kernel launch in the same device context for
+    the full job. CPU jobs run without a device context.
+    """
+
+    context = (
+        torch.accelerator.device_index(device.index)
+        if device.type != "cpu"
+        else nullcontext()
+    )
+    with context:
+        return job(device)
+
+
 def exec_jobs_dynamic(
     jobs: list[Callable[[torch.device], Any]],
     devices: list[torch.device],
@@ -101,7 +120,7 @@ def exec_jobs_dynamic(
     if all(d.type == "cpu" for d in devices):
         out = []
         for job in tqdm.tqdm(jobs, desc=desc):
-            out.append(job(devices[0]))
+            out.append(_run_job_on_device(job, devices[0]))
         return out
 
     # Snapshot free VRAM once; all later decisions use accounting only
@@ -122,7 +141,7 @@ def exec_jobs_dynamic(
                     f"Job {i} (~{memory_estimates[i] / 1e9:.2f} GB) "
                     f"exceeds estimated capacity of {device}"
                 )
-            out.append(job(device))
+            out.append(_run_job_on_device(job, device))
         return out
 
     # Multi-worker: main thread schedules, workers execute
@@ -150,7 +169,7 @@ def exec_jobs_dynamic(
                 if dev is None:
                     continue
 
-                fut = pool.submit(jobs[idx], dev)
+                fut = pool.submit(_run_job_on_device, jobs[idx], dev)
                 inflight[fut] = idx
                 fut_device[fut] = dev
                 reserved[dev] += memory_estimates[idx]
