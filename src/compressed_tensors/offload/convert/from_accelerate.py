@@ -123,20 +123,8 @@ def remove_accelerate_from_module(
     if not hook.offload or not direct_tensors:
         hook.offload = False
         remove_hook_from_module(module, recurse=False)
-        # Accelerate attaches an `AlignDevicesHook` to every module -- including
-        # container modules with no direct tensors (e.g. a decoder layer or an
-        # attention block) -- in order to align IO to the module's execution device
-        # at each level. Preserve that execution device so `dispatch_with_map` also
-        # wraps these param-less modules; otherwise activations flowing through them
-        # (e.g. position embeddings consumed inside attention) are never moved and
-        # end up on a different device than the block's weights.
-        #
-        # The whole-model root hook uses `io_same_device=True` to return outputs to
-        # the input device rather than to align inputs to a block; it is not a
-        # dispatch unit, so leave it unmapped (matching `dispatch_model`, which never
-        # offloads the root module).
         device = _infer_device_from_tensors(direct_tensors)
-        if device is None and not hook.io_same_device:
+        if device is None:
             device = norm_device(hook.execution_device)
         return device, device, None
 
