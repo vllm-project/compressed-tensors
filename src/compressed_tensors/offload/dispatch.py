@@ -11,10 +11,7 @@ import torch.distributed as dist
 from compressed_tensors.distributed import is_distributed
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.module import offload_module, remove_module_offload
-from compressed_tensors.offload.utils import (
-    get_module_sizes,
-    module_size,
-)
+from compressed_tensors.offload.utils import get_module_sizes, module_size
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
 from compressed_tensors.utils.helpers import deprecated
@@ -99,9 +96,11 @@ def _set_onload_device_recursively(
     offloaded_module = None
     found_offloaded = False
     for child in module.children():
-        child_offload_device, child_offloaded_module, child_found = (
-            _set_onload_device_recursively(child, onload_device)
-        )
+        (
+            child_offload_device,
+            child_offloaded_module,
+            child_found,
+        ) = _set_onload_device_recursively(child, onload_device)
         if not found_offloaded and child_found:
             offload_device = child_offload_device
             offloaded_module = child_offloaded_module
