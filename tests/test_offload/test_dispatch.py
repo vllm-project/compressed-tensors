@@ -5,15 +5,16 @@ from unittest.mock import patch
 
 import pytest
 import torch
-from compressed_tensors.offload.cache import CPUCache, OffloadCache
+from compressed_tensors.offload.cache import CPUCache, DiskCache, OffloadCache
 from compressed_tensors.offload.dispatch import (
     dispatch_model,
     dispatch_with_map,
     get_device_memory,
     set_onload_device,
 )
+from compressed_tensors.offload.module import offload_module
 from compressed_tensors.offload.utils import module_size
-from tests.test_offload.conftest import skip_if_mps_device
+from tests.test_offload.conftest import assert_device_equal, skip_if_mps_device
 from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -289,3 +290,65 @@ def test_dispatch_cpu_only_via_fallback():
         dispatch_model(model, extra_memory=0)
 
     assert_module_on_device(model, "cpu")
+
+
+@pytest.mark.unit
+@skip_if_mps_device
+@requires_gpu
+def test_set_onload_device_does_not_onload_offloaded_children():
+    linear = torch.nn.Linear(5, 5)
+    container = torch.nn.Module()
+    container.register_module("linear", linear)
+
+    offload_module(linear, ACCELERATOR_DEVICE_0, torch.device("cpu"))
+
+    onloaded_keys = []
+    original_getitem = OffloadCache.__getitem__
+
+    def spy_getitem(self, key):
+        onloaded_keys.append(key)
+        return original_getitem(self, key)
+
+    with patch.object(OffloadCache, "__getitem__", spy_getitem):
+        set_onload_device(container, ACCELERATOR_DEVICE_0)
+
+    # resolving the container's offload device must not onload the child's weights
+    assert onloaded_keys == []
+    # container is offloaded to the offload device of its offloaded child
+    assert_module_offloaded(container, ACCELERATOR_DEVICE_0, torch.device("cpu"))
+
+
+@pytest.mark.unit
+@skip_if_mps_device
+@requires_gpu
+def test_set_onload_device_resolves_default_when_no_child_offloaded():
+    linear = torch.nn.Linear(5, 5)
+    container = torch.nn.Module()
+    container.register_module("linear", linear)
+
+    set_onload_device(container, ACCELERATOR_DEVICE_0)
+
+    # with no offloaded children, both fall back to the default (cpu) offload device
+    assert_module_offloaded(container, ACCELERATOR_DEVICE_0, torch.device("cpu"))
+
+
+@pytest.mark.unit
+@skip_if_mps_device
+@requires_gpu
+def test_set_onload_device_disk_offload_dir(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    offload_dir.mkdir()
+
+    linear = torch.nn.Linear(5, 5)
+    offload_module(linear, ACCELERATOR_DEVICE_0, "disk", offload_dir=str(offload_dir))
+
+    container = torch.nn.Module()
+    container.register_module("linear", linear)
+
+    set_onload_device(container, ACCELERATOR_DEVICE_0)
+
+    # container inherits the disk offload device and offload directory from the child
+    assert isinstance(container._parameters, DiskCache)
+    assert container._parameters.offload_device == "disk"
+    assert container._parameters.offload_dir == offload_dir.resolve()
+    assert_device_equal(container._parameters.onload_device, ACCELERATOR_DEVICE_0)
