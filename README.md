@@ -1,7 +1,5 @@
 # compressed-tensors
 
-[Documentation](https://docs.vllm.ai/projects/compressed-tensors/en/latest/)
-
 The `compressed-tensors` library extends the [safetensors](https://github.com/huggingface/safetensors) format, providing a versatile and efficient way to store and manage compressed tensor data. This library supports various compression schemes, making it a unified format for handling models compressed with algorithms like GPTQ, AWQ, SmoothQuant, and SparseGPT, across formats like INT8, FP8, NVFP4, MXFP4, MXFP8, and more.
 
 ## Why `compressed-tensors`?
@@ -195,3 +193,15 @@ Once done, the config.json will have the following quantization_config:
 ```
 
 See `examples/` for more examples including quantization with calibration and checkpoint conversion (`examples/convert_checkpoint/`).
+
+## Citation 
+
+If you find compressed-tensors useful in your research or projects, please consider citing it:
+
+@software{compressedtensors2024,
+    title={{compressed-tensors}},
+    author={Red Hat AI and vLLM Project},
+    year={2024},
+    month={4},
+    url={https://github.com/vllm-project/compressed-tensors},
+}
