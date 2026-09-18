@@ -4,6 +4,7 @@
 from enum import Enum
 
 from compressed_tensors.offload.module import unwrap_offload_forward
+from compressed_tensors.offload import disable_onloading
 from torch.nn import Module
 
 
@@ -48,7 +49,10 @@ class QuantizationMetadata:
         :param module: Module to clear
         """
         for key in cls.all_qparam_names():
-            if hasattr(module, key):
+            with disable_onloading():
+                has_key = hasattr(module, key)
+
+            if has_key:
                 delattr(module, key)
 
     @classmethod
