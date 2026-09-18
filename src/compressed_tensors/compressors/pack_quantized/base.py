@@ -90,6 +90,18 @@ class PackedQuantizationCompressor(BaseCompressor):
             state_dict = cls._remove_symmetric_zp(state_dict, scheme)
             return state_dict
 
+        for name, value in (("weight_scale", scale), ("weight_zero_point", zero_point)):
+            if value is not None and value.is_floating_point():
+                num_nonfinite = (~value.isfinite()).sum().item()
+                if num_nonfinite > 0:
+                    raise ValueError(
+                        f"{name} contains {num_nonfinite}/{value.numel()} "
+                        "non-finite values and cannot be compressed. This usually "
+                        "means the module was targeted for quantization but never "
+                        "calibrated, leaving its quantization parameters "
+                        "uninitialized"
+                    )
+
         quantized_weight = quantize(
             x=weight,
             scale=scale,
