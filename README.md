@@ -198,6 +198,7 @@ See `examples/` for more examples including quantization with calibration and ch
 
 If you find compressed-tensors useful in your research or projects, please consider citing it:
 
+```
 @software{compressedtensors2024,
     title={{compressed-tensors}},
     author={Red Hat AI and vLLM Project},
@@ -205,3 +206,4 @@ If you find compressed-tensors useful in your research or projects, please consi
     month={4},
     url={https://github.com/vllm-project/compressed-tensors},
 }
+```
