@@ -1,11 +1,20 @@
 """
 Pre-build script for Zensical documentation.
 
+Zensical (the static site generator this site is built with) ships a
+`mkdocstrings` compatibility plugin, but it does not bundle the
+`api-autonav` or `gen-files` MkDocs plugins. `mkdocstrings` renders
+`:::` directives in existing pages, but nothing auto-creates one page per
+module, and there is no virtual-file mechanism either. So the API reference
+pages are generated here, as a pre-build step, and must be real files.
+
 Performs two steps in order:
-1. Generate API documentation pages with mkdocstrings ::: directives —
-   replaces mkdocs-api-autonav.
+1. Generate API documentation pages with `:::` mkdocstrings directives, one
+   per public `compressed_tensors` module — replaces `mkdocs-api-autonav`.
+   Output goes to git-ignored `docs/api/<module>/index.md` pages.
 2. Read docs/.nav.yml, expand glob patterns, and write the TOML nav array
-   into zensical.toml — replaces mkdocs-awesome-nav.
+   into zensical.toml — replaces MkDocs `nav` globbing (which is static in
+   zensical.toml).
 """
 
 import re
@@ -65,7 +74,11 @@ def _write_api_page(doc_file: Path, module_path: str, title: str):
 
 
 def generate_api_pages(project_root: Path) -> int:
-    """Generate API markdown files. Returns number of modules processed."""
+    """Generate one API markdown page per module. Returns count processed.
+
+    Writes real files (not virtual, à la mkdocs-gen-files) because Zensical
+    has no virtual-file plugin; the generated `docs/api/` tree is git-ignored.
+    """
     src_root = project_root / SRC_ROOT
     api_dir = project_root / API_DOCS_DIR
     top_module_dir = src_root / TOP_MODULE
