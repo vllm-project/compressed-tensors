@@ -1,15 +1,40 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
 from compressed_tensors.entrypoints.convert.memory import (
+    _MEMORY_MULTIPLIER,
     _free_bytes,
     _pick_device,
+    estimate_job_memory,
     exec_jobs_dynamic,
 )
+
+
+# ── estimate_job_memory ────────────────────────────────────────────────
+
+
+def test_estimate_job_memory_profiles_on_meta():
+    inverse_weight_map = {"/source/model.safetensors": ["weight"]}
+    loaded = {"weight": torch.empty(1024, dtype=torch.float32, device="meta")}
+    converted = {"weight_packed": torch.empty(1024, dtype=torch.int8, device="meta")}
+    converter = Mock()
+    converter.validate.return_value = converted
+
+    with patch(
+        "compressed_tensors.entrypoints.convert.memory."
+        "load_tensors_from_inverse_weight_map",
+        return_value=loaded,
+    ) as load_tensors:
+        estimate = estimate_job_memory(inverse_weight_map, [converter])
+
+    load_tensors.assert_called_once_with(inverse_weight_map, device="meta")
+    converter.validate.assert_called_once_with(loaded)
+    footprint = 1024 * 4 + 1024 * 1
+    assert estimate == int(footprint * _MEMORY_MULTIPLIER)
 
 
 # ── _free_bytes ────────────────────────────────────────────────────────

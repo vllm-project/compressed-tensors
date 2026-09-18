@@ -76,8 +76,8 @@ class Converter(Protocol):
         Converters that need to update non-quantization fields in config.json
         (e.g. expert count after pruning) should override `update_model_config`.
 
-        :param config: config from the previous converter, or None if this
-            is the first converter (or if a previous dequantizer cleared it)
+        :param config: config from the existing checkpoint or previous converter,
+            or None if neither provided one (or a previous dequantizer cleared it)
         :returns: updated QuantizationConfig, or None to remove it
         """
         raise NotImplementedError()

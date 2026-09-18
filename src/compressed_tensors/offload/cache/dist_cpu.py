@@ -21,12 +21,6 @@ class DistributedCPUCache(CPUCache):
         """
         Create a shared-memory cpu tensor *without* synchronizing across ranks.
 
-        This is only meaningful on the source rank. The resulting storage can be
-        mapped by other ranks using the metadata returned by `get_offload_meta`.
-        Separating this step from the rank synchronization allows many tensors to
-        be offloaded before performing a single, batched metadata exchange (see
-        `compressed_tensors.offload.dispatch::dispatch_with_map`).
-
         :param tensor: tensor on any device
         :return: cpu tensor whose data is located in shared memory
         """
@@ -113,15 +107,32 @@ class DistributedCPUCache(CPUCache):
 
         if is_source_process():
             # create shared memory cpu tensor
-            offloaded = self.offload_local(tensor)
-            broadcast_obj = [self.get_offload_meta(offloaded)]
+            tensor = super().offload(tensor).share_memory_()
+            handle, filename, nbytes = tensor.untyped_storage()._share_filename_cpu_()
+            broadcast_obj = [handle, filename, nbytes, tensor.dtype, tensor.shape]
         else:
-            broadcast_obj = [None]
+            broadcast_obj = [None, None, None, None, None]
 
         # receive shared memory file handle
         dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
         if not is_source_process():
+            src_shape = broadcast_obj.pop(4)
+            src_dtype = broadcast_obj.pop(3)
+
+            # transformers may init params/buffers on non-source (meta) ranks with a
+            # different dtype or shape than the checkpoint (e.g. `inv_freq`, or
+            # tied/multimodal weights), so rebuild from the source's dtype and shape
+            # before pointing at the shared storage. See
+            # https://github.com/huggingface/transformers/pull/47486
+            if tensor.is_meta or tensor.dtype != src_dtype or tensor.shape != src_shape:
+                empty = torch.empty(
+                    src_shape, dtype=src_dtype, device=self.offload_device
+                )
+                tensor = to_tensor(empty, tensor)
+            else:
+                tensor = send_tensors(tensor, device=self.offload_device)
+
             # reconstruct tensor from shared memory file handle
             offloaded = self.recv_offload(tensor, broadcast_obj[0])
 

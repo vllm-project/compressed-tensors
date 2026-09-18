@@ -3,14 +3,56 @@
 
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 import tqdm
+from compressed_tensors.utils.safetensors_load import (
+    InverseWeightMap,
+    load_tensors_from_inverse_weight_map,
+)
 from loguru import logger
 
 
-__all__ = ["exec_jobs_dynamic"]
+if TYPE_CHECKING:
+    from compressed_tensors.entrypoints.convert.converters import Converter
+
+
+__all__ = ["exec_jobs_dynamic", "estimate_job_memory"]
+
+
+# 3x covers the weight tensors themselves plus conversion intermediates (scales,
+# zero-points, packed/compressed output buffers) that briefly coexist on the
+# device. Conservative on purpose: a slight overestimate just serializes a few
+# more jobs, while an underestimate risks OOM.
+_MEMORY_MULTIPLIER = 3.0
+
+
+def estimate_job_memory(
+    inverse_weight_map: InverseWeightMap,
+    converters: list["Converter"],
+) -> int:
+    """
+    Estimate the peak device memory (in bytes) for a single conversion job by
+    simulating it on meta tensors.
+
+    Loads the job's tensors on the meta device and runs each converter's
+    meta-safe ``validate`` to discover the converted output footprint, then sums
+    the input and output tensor sizes and applies a conservative multiplier to
+    cover transient conversion buffers. No real device memory is allocated.
+
+    :param inverse_weight_map: mapping of source file path -> tensor names,
+        identifying every weight (and cross-shard dependency) the job loads
+    :param converters: converters applied in order; used to simulate the
+        converted output size on meta tensors
+    :returns: estimated peak memory in bytes
+    """
+    tensors = load_tensors_from_inverse_weight_map(inverse_weight_map, device="meta")
+    footprint = sum(tensor.nbytes for tensor in tensors.values())
+    for converter in converters:
+        tensors = converter.validate(tensors)
+    footprint += sum(tensor.nbytes for tensor in tensors.values())
+    return int(footprint * _MEMORY_MULTIPLIER)
 
 
 def _snapshot_free(devices: list[torch.device]) -> dict[torch.device, int]:
