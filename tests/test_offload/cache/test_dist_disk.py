@@ -8,8 +8,10 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.offload import disable_onloading
 from compressed_tensors.offload.cache.disk import DiskCache
+from compressed_tensors.offload.cache.disk_utils import disk_load_context
 from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 from safetensors import safe_open
+from safetensors.torch import save_file
 from tests.test_offload.cache.helpers import (
     _test_delete,
     _test_disable_offloading,
@@ -23,6 +25,12 @@ from tests.test_offload.cache.helpers import (
 )
 from tests.test_offload.conftest import assert_tensor_equal, torchrun
 from tests.testing_utils import requires_gpu
+
+
+def _init_gloo():
+    """Initialize a CPU-only gloo process group for tests that need no accelerator."""
+    if not dist.is_initialized():
+        dist.init_process_group(backend="gloo")
 
 
 @pytest.fixture()
@@ -239,3 +247,71 @@ def test_distributed_async_update(tmp_path):
         offloaded_1 = cache["tensor_1"]
         assert_tensor_equal(offloaded_0, torch.ones(10) * 1.0, "disk")
         assert_tensor_equal(offloaded_1, torch.ones(10) * 2.0, "disk")
+
+
+@pytest.mark.unit
+@torchrun(world_size=2)
+def test_disk_load_context_is_per_rank(tmp_path_factory):
+    """Each rank keeps its own handle cache and does not disturb the other's.
+
+    The cache is thread local, so it is also process local. Two ranks reading
+    the same shard must each open it once, and one rank leaving the context
+    must not close a handle the other rank is still holding.
+    """
+    from compressed_tensors.offload.cache import disk_utils
+    from compressed_tensors.offload.cache.disk_utils import _opened
+
+    # A plain gloo group on CPU, rather than `init_dist`, which derives
+    # `{accelerator}:{local_rank}` and so needs one accelerator device per rank.
+    # Nothing here touches an accelerator, so this runs on a single-GPU or
+    # CPU-only host.
+    _init_gloo()
+    rank = dist.get_rank()
+    # every rank writes its own shard so the test does not depend on a shared FS
+    directory = tmp_path_factory.mktemp(f"shard{rank}")
+    shard = directory / "shard.safetensors"
+    save_file({f"w{i}": torch.full((4,), float(i)) for i in range(4)}, shard)
+
+    with disk_load_context():
+        for i in range(4):
+            with _opened(str(shard), "cpu") as file:
+                assert_tensor_equal(
+                    file.get_tensor(f"w{i}"), torch.full((4,), float(i))
+                )
+        held = list(disk_utils._open_files.cache.values())
+        assert len(held) == 1, f"rank {rank} expected one cached handle"
+        dist.barrier()
+        # the other rank has also entered and is holding its own handle
+        assert disk_utils._open_files.cache is not None
+
+    dist.barrier()
+    assert disk_utils._open_files.cache is None, f"rank {rank} leaked its cache"
+    for handle in held:
+        with pytest.raises(Exception, match="closed"):
+            handle.get_tensor("w0")
+
+
+@pytest.mark.unit
+@torchrun(world_size=2)
+def test_disk_load_context_with_distributed_disk_cache(tmp_path_factory):
+    """`DistributedDiskCache` onload still returns correct data inside the context."""
+    _init_gloo()
+    directory = tmp_path_factory.mktemp(f"dist{dist.get_rank()}")
+    offload_dir = directory / "offload"
+    os.mkdir(offload_dir)
+
+    DistributedDiskCache.index = {}
+    cache = DistributedDiskCache("cpu", offload_dir=str(offload_dir))
+    expected = {
+        name: torch.full((8,), float(i)) for i, name in enumerate(["a", "b", "c"])
+    }
+    for name, tensor in expected.items():
+        cache[name] = tensor
+
+    with disk_load_context():
+        for name, tensor in expected.items():
+            assert_tensor_equal(cache[name], tensor)
+
+    # and identically outside the context
+    for name, tensor in expected.items():
+        assert_tensor_equal(cache[name], tensor)

@@ -10,9 +10,9 @@ import torch.distributed as dist
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.logger import logger
 from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.cache.disk_utils import _evict, _opened
 from compressed_tensors.offload.utils import send_tensors, to_tensor
 from compressed_tensors.utils import is_accelerator_type
-from safetensors import safe_open
 from safetensors.torch import save_file
 
 
@@ -71,9 +71,7 @@ class DiskCache(OffloadCache):
         weight_info = self.index[offloaded]
         device = _get_safe_open_device(self.onload_device)
 
-        with safe_open(
-            weight_info["safetensors_file"], framework="pt", device=device
-        ) as file:
+        with _opened(weight_info["safetensors_file"], device) as file:
             onloaded = file.get_tensor(weight_info["weight_name"])
             onloaded = to_tensor(onloaded, offloaded)
             onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
@@ -153,6 +151,9 @@ class DiskCache(OffloadCache):
         if os.path.islink(file_path):
             assert self._is_ct_file_path(file_path), f"Attempted to remove {file_path}"
             os.unlink(file_path)
+        else:
+            # rewriting in place, so drop any handle still reading the old contents
+            _evict(file_path)
 
         # save with data using original weight_name
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
