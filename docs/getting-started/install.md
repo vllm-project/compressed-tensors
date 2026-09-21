@@ -28,7 +28,7 @@ pip install -e .
 
 ## Compressing a Model to MXFP4
 
-The following example loads Llama 3 8B, applies round-to-nearest (RTN) MXFP4 weight quantization, compresses the weights, and saves the result. No calibration data is needed — scales are computed directly from the weights.
+The following example loads Llama 3 8B, applies round-to-nearest (RTN) MXFP4 weight quantization, compresses the weights, and saves the result. No calibration data is needed as scales are computed directly from the weights.
 
 ```python
 model_name = "meta-llama/Meta-Llama-3-8B"
