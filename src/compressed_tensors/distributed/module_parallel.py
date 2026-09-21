@@ -46,6 +46,11 @@ def replace_module_parallel(
     :param desc: optional description for the progress bar (shown on each rank)
     """
     from compressed_tensors.offload import OffloadCache, disable_onloading, to_meta
+    from compressed_tensors.offload.cache import DistributedDiskCache
+
+    # A rank may finish a forward pass and enter the next replacement round while
+    # another rank is still reading files from the previous round.
+    dist.barrier()
 
     _, _, assigned_rank = greedy_bin_packing(modules, dist.get_world_size(), weight_fn)
 
@@ -56,19 +61,27 @@ def replace_module_parallel(
         total=num_assigned, desc=desc, position=rank, disable=(desc is None)
     )
 
-    # Step 1 & 2: Decouple and compress on meta for non-processing ranks
-    with disable_onloading():
-        for module in modules:
-            if assigned_rank[module] != dist.get_rank():
-                to_meta(module)  # 1. remove non-processing rank pointers
-                apply_fn(module)  # 2. compress on meta to match state dict for step 4
+    # Disk-backed tensors are shared by all ranks. Defer physical deletion until
+    # every rank has completed the transformations that may still read old files.
+    with DistributedDiskCache.defer_file_deletions():
+        # Step 1 & 2: Decouple and compress on meta for non-processing ranks
+        with disable_onloading():
+            for module in modules:
+                if assigned_rank[module] != dist.get_rank():
+                    to_meta(module)  # 1. remove non-processing rank pointers
+                    apply_fn(module)  # 2. compress on meta to match state dict for step 4
 
-    # Step 3: Apply on device for processing rank
-    with as_single_threaded():
-        for module in modules:
-            if assigned_rank[module] == dist.get_rank():
-                apply_fn(module)  # 3. compress without triggering sync
-                progress.update(1)
+        # Step 3: Apply on device for processing rank
+        with as_single_threaded():
+            for module in modules:
+                if assigned_rank[module] == dist.get_rank():
+                    apply_fn(module)  # 3. compress without triggering sync
+                    progress.update(1)
+
+    # All ranks have finished reading old cache files before stale files are removed.
+    dist.barrier()
+    DistributedDiskCache.flush_deferred_file_deletions()
+    dist.barrier()
 
     # Step 4: Recouple - broadcast source offload across ranks
     for module in modules:
