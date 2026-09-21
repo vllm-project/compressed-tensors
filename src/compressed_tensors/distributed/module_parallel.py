@@ -69,7 +69,9 @@ def replace_module_parallel(
             for module in modules:
                 if assigned_rank[module] != dist.get_rank():
                     to_meta(module)  # 1. remove non-processing rank pointers
-                    apply_fn(module)  # 2. compress on meta to match state dict for step 4
+                    apply_fn(
+                        module
+                    )  # 2. compress on meta to match state dict for step 4
 
         # Step 3: Apply on device for processing rank
         with as_single_threaded():
