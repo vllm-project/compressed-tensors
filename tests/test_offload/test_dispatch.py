@@ -18,7 +18,7 @@ from tests.testing_utils import requires_gpu
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-ACCELERATOR_TYPE = torch.accelerator.current_accelerator().type
+ACCELERATOR_TYPE = (torch.accelerator.current_accelerator() or torch.device("cpu")).type
 ACCELERATOR_DEVICE_0 = torch.device(ACCELERATOR_TYPE, 0)
 ACCELERATOR_DEVICE_1 = torch.device(ACCELERATOR_TYPE, 1)
 

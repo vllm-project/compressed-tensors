@@ -13,7 +13,7 @@ import torch
 from compressed_tensors.offload.utils import send_tensors
 
 
-accelerator_device = torch.accelerator.current_accelerator()
+accelerator_device = torch.accelerator.current_accelerator() or torch.device("cpu")
 
 skip_if_mps_device = pytest.mark.skipif(
     accelerator_device.type == "mps",

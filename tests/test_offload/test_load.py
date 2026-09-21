@@ -30,7 +30,7 @@ from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 acclerate = pytest.importorskip("accelerate")
 
 
-accelerator_device = torch.accelerator.current_accelerator()
+accelerator_device = torch.accelerator.current_accelerator() or torch.device("cpu")
 TEST_PARAMETERS = [
     (
         "auto",
