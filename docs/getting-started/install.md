@@ -18,6 +18,7 @@ Nightly release:
 pip install --pre compressed-tensors
 ```
 
+
 ### From Source
 
 ```bash
