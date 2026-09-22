@@ -7,6 +7,7 @@ from typing import Optional
 import torch
 from compressed_tensors.compressors.format import infer_module_format
 from compressed_tensors.config import CompressionFormat
+from compressed_tensors.offload import unwrap_offload_forward
 from compressed_tensors.quantization import (
     QuantizationMetadata,
     QuantizationScheme,
@@ -96,6 +97,28 @@ class BaseCompressor(RegistryMixin, ABC):
             f"{cls.__name__} does not implement the classmethod decompress interface"
         )
 
+    def compressed_forward(
+        module: torch.nn.Module, input: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Run a forward pass directly on the module's compressed weights.
+
+        This is not a classmethod: ``compress_module`` binds it as the module's
+        ``forward`` (``module`` plays the role of ``self``), replacing the
+        fake-quantized forward that ``set_forward_quantized`` installs at
+        initialization. Subclasses must override it with a forward that consumes
+        the compressed parameters directly.
+
+        :param module: compressed module carrying the compressed parameters and
+            ``quantization_scheme``
+        :param input: input activations
+        :return: output activations
+        """
+        raise NotImplementedError(
+            f"The compressor for {type(module).__name__} does not implement the "
+            "compressed_forward interface"
+        )
+
     @classmethod
     def compress_module(cls, module: torch.nn.Module) -> None:
         """
@@ -103,7 +126,9 @@ class BaseCompressor(RegistryMixin, ABC):
 
         Extracts the module's parameters and buffers, compresses them using the
         compress classmethod, and replaces the module's state with the compressed
-        version.
+        version. If the compressor implements ``compressed_forward`` (runs directly
+        on the compressed weights), the module's ``forward`` is overwritten with it,
+        replacing the fake-quantized forward installed by ``set_forward_quantized``.
 
         :param module: the module to compress in-place
         """
@@ -114,6 +139,15 @@ class BaseCompressor(RegistryMixin, ABC):
         replace_direct_state_dict(module, compressed_state_dict)
 
         module.quantization_status = QuantizationStatus.COMPRESSED
+
+        # Only compressors that implement `compressed_forward` can run directly on
+        # the compressed weights; install it as the module's forward, replacing the
+        # fake-quantized forward from `set_forward_quantized`. Compressors that do
+        # not (legacy quantized/sparse formats) keep their original forward and rely
+        # on a decompress-on-forward hook instead.
+        if cls.compressed_forward is not BaseCompressor.compressed_forward:
+            with unwrap_offload_forward(module):
+                module.forward = cls.compressed_forward.__get__(module)
 
     @classmethod
     def decompress_module(

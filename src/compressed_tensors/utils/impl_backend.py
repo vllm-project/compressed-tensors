@@ -122,6 +122,12 @@ class ImplBackend:
 
         return decorator
 
+    # @classmethod
+    # def get_backend(cls, name: str, *args, **kwargs) -> Callable:
+    #     for backend_fn, req, _ in cls._backends.get(name, []):
+    #         if req(*args, **kwargs):
+    #             return backend_fn
+
     @classmethod
     def _add_to_registery(cls, fn: Callable):
         fn_name = fn.__name__
