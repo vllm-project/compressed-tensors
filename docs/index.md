@@ -28,7 +28,7 @@ Each method often comes with its own storage format and loading procedures, maki
 
 This allows developers and researchers to easily experiment with composing different quantization methods, simplify model deployment pipelines, and reduce the overhead of supporting multiple compression formats in inference engines.
 
-## Next steps
+## Next Steps
 
 * [Getting Started](getting-started/install.md) — install `compressed-tensors` and compress your first model
 * [API Reference](api/index.md) — auto-generated reference for every public module
