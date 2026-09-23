@@ -1,40 +1,68 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from unittest.mock import Mock, patch
+import functools
+import inspect
+from unittest.mock import patch
 
 import pytest
 import torch
 from compressed_tensors.entrypoints.convert.memory import (
-    _MEMORY_MULTIPLIER,
+    _FALLBACK_MULTIPLIER,
+    TensorProfiler,
     _free_bytes,
     _pick_device,
     estimate_job_memory,
     exec_jobs_dynamic,
+)
+from tests.testing_utils import requires_gpu
+
+
+_LOAD_TARGET = (
+    "compressed_tensors.entrypoints.convert.memory."
+    "load_tensors_from_inverse_weight_map"
 )
 
 
 # ── estimate_job_memory ────────────────────────────────────────────────
 
 
+class _MetaConverter:
+    def validate(self, tensors):
+        weight = tensors["weight"]
+        return {"weight_packed": torch.empty(weight.shape, dtype=torch.int8)}
+
+
+class _RaisingConverter:
+    def validate(self, tensors):
+        raise ValueError("incompatible")
+
+
 def test_estimate_job_memory_profiles_on_meta():
     inverse_weight_map = {"/source/model.safetensors": ["weight"]}
-    loaded = {"weight": torch.empty(1024, dtype=torch.float32, device="meta")}
-    converted = {"weight_packed": torch.empty(1024, dtype=torch.int8, device="meta")}
-    converter = Mock()
-    converter.validate.return_value = converted
 
-    with patch(
-        "compressed_tensors.entrypoints.convert.memory."
-        "load_tensors_from_inverse_weight_map",
-        return_value=loaded,
-    ) as load_tensors:
-        estimate = estimate_job_memory(inverse_weight_map, [converter])
+    def fake_load(*args, **kwargs):
+        return {"weight": torch.empty(1024, dtype=torch.float32)}
+
+    with torch.device("meta"):
+        with patch(_LOAD_TARGET, side_effect=fake_load) as load_tensors:
+            estimate = estimate_job_memory(inverse_weight_map, [_MetaConverter()])
 
     load_tensors.assert_called_once_with(inverse_weight_map, device="meta")
-    converter.validate.assert_called_once_with(loaded)
-    footprint = 1024 * 4 + 1024 * 1
-    assert estimate == int(footprint * _MEMORY_MULTIPLIER)
+    assert estimate == 1024 * 4 + 1024 * 1
+
+
+def test_estimate_job_memory_falls_back_on_profiler_failure():
+    inverse_weight_map = {"/source/model.safetensors": ["weight"]}
+
+    def fake_load(*args, **kwargs):
+        return {"weight": torch.empty(1024, dtype=torch.float32)}
+
+    with torch.device("meta"):
+        with patch(_LOAD_TARGET, side_effect=fake_load):
+            estimate = estimate_job_memory(inverse_weight_map, [_RaisingConverter()])
+
+    assert estimate == int(1024 * 4 * _FALLBACK_MULTIPLIER)
 
 
 # ── _free_bytes ────────────────────────────────────────────────────────
@@ -159,3 +187,170 @@ def test_single_worker_raises_when_job_exceeds_capacity(mock_mem_info):
             max_workers=1,
             memory_estimates=[10_000_000_000],
         )
+
+
+# ── TensorProfiler ─────────────────────────────────────────────────────
+
+
+def _n_bytes(*tensors: torch.Tensor) -> int:
+    return sum(tensor.nbytes for tensor in tensors)
+
+
+def device_parametrize(test):
+    signature = inspect.signature(test)
+
+    @functools.wraps(test)
+    def wrapper(*args, _device, **kwargs):
+        if _device == "cuda" and not torch.accelerator.is_available():
+            pytest.skip("CUDA unavailable")
+
+        with torch.device(_device):
+            return test(*args, **kwargs)
+
+    wrapper.__signature__ = signature.replace(
+        parameters=[
+            *signature.parameters.values(),
+            inspect.Parameter("_device", inspect.Parameter.KEYWORD_ONLY),
+        ]
+    )
+
+    return pytest.mark.parametrize("_device", ["meta", "cpu", "cuda"])(wrapper)
+
+
+@device_parametrize
+def test_profiler_constructor():
+    with TensorProfiler() as prof:
+        a = torch.Tensor([0 for _ in range(16)])
+
+    assert prof.memory["total"] == _n_bytes(a)
+
+
+@device_parametrize
+def test_profiler_constructor_functions():
+    with TensorProfiler() as prof:
+        a = torch.empty(16)
+        b = torch.zeros(16)
+        c = torch.ones(16)
+        d = torch.full((16,), 0)
+
+    assert prof.memory["total"] == _n_bytes(a, b, c, d)
+
+
+@device_parametrize
+def test_profiler_operations():
+    with TensorProfiler() as prof:
+        a = torch.Tensor([1 for _ in range(16)])
+        b = a + a
+
+    assert prof.memory["total"] == _n_bytes(a, b)
+
+
+@device_parametrize
+def test_profiler_views():
+    with TensorProfiler() as prof:
+        a = torch.empty(16)
+        a_storage_bytes = _n_bytes(a)
+
+        b = a[:8]
+        c = a[8:]
+        d = a[4:12]  # noqa: F841
+
+        del a
+        assert prof.memory["total"] == a_storage_bytes
+
+        del b, c
+        assert prof.memory["total"] == a_storage_bytes
+
+
+@requires_gpu
+def test_profiler_device_movement():
+    cpu_device = torch.device("cpu")
+    gpu_device = torch.device("cuda:0")
+    meta_device = torch.device("meta")
+
+    with TensorProfiler() as prof:
+        a = torch.empty(16, device=cpu_device)
+        b = a.to(device=gpu_device)
+        c = a.to(device=meta_device)
+
+    assert prof.memory["total"] == _n_bytes(a, b, c)
+    assert prof.memory[cpu_device] == _n_bytes(a)
+    assert prof.memory[gpu_device] == _n_bytes(b)
+    assert prof.memory[meta_device] == _n_bytes(c)
+
+
+@device_parametrize
+def test_profiler_dtype_movement():
+    with TensorProfiler() as prof:
+        a = torch.empty(16, dtype=torch.float32)
+        b = a.to(dtype=torch.bfloat16)
+        c = a.to(dtype=torch.float8_e4m3fn)
+
+    assert prof.memory["total"] == _n_bytes(a, b, c)
+
+
+@device_parametrize
+def test_profiler_complex_operations():
+    with TensorProfiler() as prof:
+        a = torch.randn(32)
+        b = torch.randn(32)
+        c = a * b
+        d = torch.sin(c)
+        e = torch.cat([a, b, c, d])
+
+    assert prof.memory["total"] == _n_bytes(a, b, c, d, e)
+
+
+@device_parametrize
+def test_profiler_deletion_tracking():
+    with TensorProfiler() as prof:
+        a = torch.randn(64)
+        b = torch.randn(64)
+        c = a + b
+        del a
+        d = c * 2
+        del c
+        e = torch.zeros_like(b)
+        del b
+
+    assert prof.memory["total"] == _n_bytes(d, e)
+
+
+@device_parametrize
+def test_profiler_view_operations():
+    with TensorProfiler() as prof:
+        a = torch.randn(4, 4)
+        b = a.view(16)  # noqa: F841
+        c = a.reshape(2, 8)  # noqa: F841
+        d = a.t()  # noqa: F841
+
+    assert prof.memory["total"] == _n_bytes(a)
+
+
+@device_parametrize
+def test_profiler_different_dtypes():
+    with TensorProfiler() as prof:
+        a = torch.ones(16, dtype=torch.float32)
+        b = torch.ones(16, dtype=torch.float64)
+        c = torch.ones(16, dtype=torch.int32)
+        d = torch.ones(16, dtype=torch.bool)
+
+    assert prof.memory["total"] == _n_bytes(a, b, c, d)
+
+
+@device_parametrize
+def test_profiler_inplace_operations():
+    with TensorProfiler() as prof:
+        a = torch.randn(16)
+        b = torch.randn(16)
+        a.add_(b)
+        b.mul_(2)
+
+    assert prof.memory["total"] == _n_bytes(a, b)
+
+
+def test_profiler_catches_exception():
+    with TensorProfiler() as prof:
+        raise ValueError("boom")
+
+    assert isinstance(prof.exception, ValueError)

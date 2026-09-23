@@ -124,6 +124,8 @@ def remove_accelerate_from_module(
         hook.offload = False
         remove_hook_from_module(module, recurse=False)
         device = _infer_device_from_tensors(direct_tensors)
+        if device is None:
+            device = norm_device(hook.execution_device)
         return device, device, None
 
     # Unwrap PrefixedDataset chain so we can look up real tensor keys

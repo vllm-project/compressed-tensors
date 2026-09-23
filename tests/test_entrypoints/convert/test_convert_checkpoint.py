@@ -3,6 +3,7 @@
 
 import inspect
 import json
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -23,7 +24,9 @@ from compressed_tensors.quantization import (
 from safetensors.torch import load_file, save_file
 
 
-_CHECKPOINT_MODULE = "compressed_tensors.entrypoints.convert.convert_checkpoint"
+_CHECKPOINT_MODULE = sys.modules[
+    "compressed_tensors.entrypoints.convert.convert_checkpoint"
+]
 _CONVERT_FILE_MODULE = "compressed_tensors.entrypoints.convert.convert_file"
 
 
@@ -65,13 +68,13 @@ class ConfigAppendingConverter(NoOpConverter):
         return config
 
 
-@patch(f"{_CHECKPOINT_MODULE}.update_safetensors_index")
-@patch(f"{_CHECKPOINT_MODULE}.write_checkpoint_quantization_config")
-@patch(f"{_CHECKPOINT_MODULE}.exec_jobs_dynamic")
-@patch(f"{_CHECKPOINT_MODULE}.exec_jobs")
-@patch(f"{_CHECKPOINT_MODULE}.build_inverse_weight_maps")
-@patch(f"{_CHECKPOINT_MODULE}.get_weight_map")
-@patch(f"{_CHECKPOINT_MODULE}.get_checkpoint_files")
+@patch.object(_CHECKPOINT_MODULE, "update_safetensors_index")
+@patch.object(_CHECKPOINT_MODULE, "write_checkpoint_quantization_config")
+@patch.object(_CHECKPOINT_MODULE, "exec_jobs_dynamic")
+@patch.object(_CHECKPOINT_MODULE, "exec_jobs")
+@patch.object(_CHECKPOINT_MODULE, "build_inverse_weight_maps")
+@patch.object(_CHECKPOINT_MODULE, "get_weight_map")
+@patch.object(_CHECKPOINT_MODULE, "get_checkpoint_files")
 @pytest.mark.parametrize(
     ("device", "resolved_devices"),
     (
@@ -101,7 +104,9 @@ def test_convert_checkpoint_cpu_uses_dynamic_scheduler(
     converter = Mock()
     job_memory_estimator = Mock()
 
-    with patch(f"{_CHECKPOINT_MODULE}._resolve_devices", return_value=resolved_devices):
+    with patch.object(
+        _CHECKPOINT_MODULE, "_resolve_devices", return_value=resolved_devices
+    ):
         convert_checkpoint(
             "source",
             tmp_path,
@@ -131,14 +136,14 @@ def test_convert_checkpoint_cpu_uses_dynamic_scheduler(
     )
 
 
-@patch(f"{_CHECKPOINT_MODULE}.update_safetensors_index")
-@patch(f"{_CHECKPOINT_MODULE}.write_checkpoint_quantization_config")
-@patch(f"{_CHECKPOINT_MODULE}.exec_jobs_dynamic")
-@patch(f"{_CHECKPOINT_MODULE}.exec_jobs", return_value=[])
-@patch(f"{_CHECKPOINT_MODULE}.convert_file")
-@patch(f"{_CHECKPOINT_MODULE}.build_inverse_weight_maps")
-@patch(f"{_CHECKPOINT_MODULE}.get_weight_map")
-@patch(f"{_CHECKPOINT_MODULE}.get_checkpoint_files")
+@patch.object(_CHECKPOINT_MODULE, "update_safetensors_index")
+@patch.object(_CHECKPOINT_MODULE, "write_checkpoint_quantization_config")
+@patch.object(_CHECKPOINT_MODULE, "exec_jobs_dynamic")
+@patch.object(_CHECKPOINT_MODULE, "exec_jobs", return_value=[])
+@patch.object(_CHECKPOINT_MODULE, "convert_file")
+@patch.object(_CHECKPOINT_MODULE, "build_inverse_weight_maps")
+@patch.object(_CHECKPOINT_MODULE, "get_weight_map")
+@patch.object(_CHECKPOINT_MODULE, "get_checkpoint_files")
 def test_convert_checkpoint_schedules_accelerator_jobs(
     get_checkpoint_files,
     get_weight_map,
@@ -217,7 +222,7 @@ def test_convert_file_loads_tensors_on_requested_device(load_tensors, save_file)
     assert weight_map == {"weight": "model.safetensors"}
 
 
-@patch(f"{_CHECKPOINT_MODULE}.get_checkpoint_files")
+@patch.object(_CHECKPOINT_MODULE, "get_checkpoint_files")
 def test_convert_checkpoint_rejects_empty_device_list(get_checkpoint_files, tmp_path):
     with pytest.raises(ValueError, match="device list cannot be empty"):
         convert_checkpoint("source", tmp_path, Mock(), device=[])
@@ -235,10 +240,10 @@ def test_convert_checkpoint_defaults_to_meta_estimator():
 def test_resolve_devices_uses_all_accelerators_by_default():
     with (
         patch(
-            f"{_CHECKPOINT_MODULE}.torch.accelerator.current_accelerator",
+            "torch.accelerator.current_accelerator",
             return_value=torch.device("cuda"),
         ),
-        patch(f"{_CHECKPOINT_MODULE}.torch.accelerator.device_count", return_value=2),
+        patch("torch.accelerator.device_count", return_value=2),
     ):
         devices = _resolve_devices(None)
 
@@ -247,7 +252,7 @@ def test_resolve_devices_uses_all_accelerators_by_default():
 
 def test_resolve_devices_falls_back_to_cpu():
     with patch(
-        f"{_CHECKPOINT_MODULE}.torch.accelerator.current_accelerator",
+        "torch.accelerator.current_accelerator",
         return_value=None,
     ):
         devices = _resolve_devices(None)
