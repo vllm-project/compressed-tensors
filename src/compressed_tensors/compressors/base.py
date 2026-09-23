@@ -145,9 +145,24 @@ class BaseCompressor(RegistryMixin, ABC):
         # fake-quantized forward from `set_forward_quantized`. Compressors that do
         # not (legacy quantized/sparse formats) keep their original forward and rely
         # on a decompress-on-forward hook instead.
-        if cls.compressed_forward is not BaseCompressor.compressed_forward:
+        if cls._binds_compressed_forward(module):
             with unwrap_offload_forward(module):
                 module.forward = cls.compressed_forward.__get__(module)
+
+    @classmethod
+    def _binds_compressed_forward(cls, module: torch.nn.Module) -> bool:
+        """
+        Whether ``compress_module`` should install ``compressed_forward`` as the
+        module's forward. True when the compressor overrides ``compressed_forward``.
+
+        Subclasses may further restrict this per-module (e.g. only for certain
+        quantization strategies); a False result leaves the module's original
+        forward in place, relying on a decompress-on-forward hook instead.
+
+        :param module: the module about to be compressed
+        :return: True if the compressed forward should be bound
+        """
+        return cls.compressed_forward is not BaseCompressor.compressed_forward
 
     @classmethod
     def decompress_module(

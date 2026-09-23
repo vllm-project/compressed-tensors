@@ -1,9 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
     BaseCompressor,
+)
+from compressed_tensors.compressors.naive_quantized.fp8_block import (  # noqa: F401
+    dequantize_fp8_block_weight,
+    fp8_block_forward_emulation,
 )
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
@@ -11,9 +16,14 @@ from compressed_tensors.quantization import (
     QuantizationStrategy,
     QuantizationType,
 )
-from compressed_tensors.quantization.lifecycle.forward import dequantize, quantize
+from compressed_tensors.quantization.lifecycle.forward import (
+    dequantize,
+    forward_quantize,
+    quantize,
+)
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
 from compressed_tensors.utils import TensorStateDict, getattr_chain
+from compressed_tensors.utils.impl_backend import ImplBackend
 
 
 __all__ = [
@@ -146,6 +156,56 @@ class IntQuantizationCompressor(NaiveQuantizationCompressor):
 @BaseCompressor.register(name=CompressionFormat.float_quantized.value)
 class FloatQuantizationCompressor(NaiveQuantizationCompressor):
     """Alias for fp quantized models."""
+
+    @ImplBackend.entrypoint("fp8_block_forward")
+    def fp8_block_compressed_forward(
+        module: torch.nn.Linear, input: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Run a linear forward pass directly on block-quantized FP8 weights.
+
+        This is bound as the module's ``forward`` (``module`` plays the role of
+        ``self``) by ``compress_module`` for BLOCK-strategy FP8 weights only, and
+        serves as the eager fallback dispatched by ``ImplBackend`` when no
+        accelerated backend applies. Activations are fake-quantized via
+        ``forward_quantize`` and the weight is dequantized block-wise (via
+        ``dequantize_fp8_block_weight``) before a dense ``F.linear``.
+
+        The Triton ``fp8_block_forward_emulation`` backend (fused dequant matmul)
+        takes priority on GPU.
+
+        :param module: compressed linear module carrying ``weight``,
+            ``weight_scale``, ``quantization_scheme`` and (optionally) ``bias``
+        :param input: input activations of shape ``[*, in_features]``
+        :return: output activations of shape ``[*, out_features]``
+        """
+        scheme: QuantizationScheme = module.quantization_scheme
+
+        if scheme.input_activations is not None:
+            input = forward_quantize(module, input, "input", scheme.input_activations)
+
+        weight = dequantize_fp8_block_weight(
+            module.weight,
+            module.weight_scale,
+            tuple(scheme.weights.block_structure),
+            input.dtype,
+        )
+        return torch.nn.functional.linear(input, weight, getattr(module, "bias", None))
+
+    # bound as the module's forward by ``compress_module`` (block strategy only,
+    # see ``_binds_compressed_forward``)
+    compressed_forward = fp8_block_compressed_forward
+
+    @classmethod
+    def _binds_compressed_forward(cls, module: torch.nn.Module) -> bool:
+        """Only block-quantized FP8 has a specialized compressed forward; other
+        FP8 strategies (tensor/channel/token) keep decompress-on-forward."""
+        weights = getattr(module.quantization_scheme, "weights", None)
+        return (
+            super()._binds_compressed_forward(module)
+            and weights is not None
+            and weights.strategy == QuantizationStrategy.BLOCK
+        )
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
