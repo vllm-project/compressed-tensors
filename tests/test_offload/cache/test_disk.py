@@ -6,6 +6,8 @@ import os
 import pytest
 import torch
 from compressed_tensors.offload.cache.disk import DiskCache
+import compressed_tensors.offload.cache.disk as disk_cache
+from loguru import logger as loguru_logger
 from safetensors import safe_open
 from tests.test_offload.cache.helpers import (
     _test_delete,
@@ -159,3 +161,35 @@ def test_stage_pinned_memory(tmp_path):
     assert staged.device.type == "cpu"
     assert staged.is_pinned()
     assert torch.equal(staged, tensor.cpu())
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_stage_pinned_memory_logs_hint(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    offload_dir.mkdir()
+    onload_device = torch.accelerator.current_accelerator()
+    cache = DiskCache(onload_device, offload_dir=str(offload_dir))
+    tensor = torch.arange(10, device=onload_device)
+    offloaded = cache.offload(tensor)
+
+    original_pin_memory = disk_cache._pin_memory
+
+    def raise_memory_error(tensor):
+        raise RuntimeError("CUDA out of memory. Tried to allocate 1 GiB")
+
+    disk_cache._pin_memory = raise_memory_error
+
+    warnings = []
+    handler_id = loguru_logger.add(
+        lambda msg: warnings.append(msg.record["message"]), level="WARNING"
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="Tried to allocate"):
+            cache.stage(offloaded, pin_memory=True)
+    finally:
+        disk_cache._pin_memory = original_pin_memory
+        loguru_logger.remove(handler_id)
+
+    assert any("Pinned-memory staging ran out of host RAM" in w for w in warnings)

@@ -153,3 +153,31 @@ def test_stage_pinned_memory(onload_device):
 
     assert staged.device.type == "cpu"
     assert staged.is_pinned()
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_stage_pinned_memory_logs_hint(onload_device):
+    cache = cpu_cache.CPUCache(onload_device)
+    offloaded = cache.offload(torch.ones(10, device=onload_device))
+
+    original_pin_memory = cpu_cache._pin_memory
+
+    def raise_memory_error(tensor):
+        raise RuntimeError("CUDA out of memory. Tried to allocate 1 GiB")
+
+    cpu_cache._pin_memory = raise_memory_error
+
+    warnings = []
+    handler_id = loguru_logger.add(
+        lambda msg: warnings.append(msg.record["message"]), level="WARNING"
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="Tried to allocate"):
+            cache.stage(offloaded, pin_memory=True)
+    finally:
+        cpu_cache._pin_memory = original_pin_memory
+        loguru_logger.remove(handler_id)
+
+    assert any("Pinned-memory staging ran out of host RAM" in w for w in warnings)

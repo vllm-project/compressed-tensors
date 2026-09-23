@@ -45,8 +45,6 @@ class OffloadCache(MutableMapping, ABC):
     # offloaded tensors -> onloaded tensors (only when offloading is disabled)
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
 
-    is_staged: bool = False
-
     @classmethod
     def cls_from_device(
         cls,

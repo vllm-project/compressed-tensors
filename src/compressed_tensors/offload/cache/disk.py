@@ -10,6 +10,7 @@ import torch.distributed as dist
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.logger import logger
 from compressed_tensors.offload.cache.base import OffloadCache
+from compressed_tensors.offload.cache.utils import catch_pinned_mem_error
 from compressed_tensors.offload.utils import _pin_memory, send_tensors, to_tensor
 from compressed_tensors.utils import is_accelerator_type
 from safetensors import safe_open
@@ -58,6 +59,7 @@ class DiskCache(OffloadCache):
         # Resolve relative paths to absolute paths for symlink creation
         self.offload_dir = Path(offload_dir).resolve()
 
+    @catch_pinned_mem_error
     def stage(
         self,
         offloaded: torch.Tensor | None,
@@ -74,16 +76,15 @@ class DiskCache(OffloadCache):
             return None
 
         weight_info = self.index[offloaded]
-        device = _get_safe_open_device(self.onload_device)
 
+        # Stage into host RAM so the staged tensor can be reused for onload.
         with safe_open(
-            weight_info["safetensors_file"], framework="pt", device=device
+            weight_info["safetensors_file"], framework="pt", device="cpu"
         ) as file:
             staged = file.get_tensor(weight_info["weight_name"])
             staged = to_tensor(staged, offloaded)
             staged = staged.to(getattr(torch, weight_info["dtype"]))
-            staged = _pin_memory(staged) if pin_memory else staged
-            return staged
+            return _pin_memory(staged) if pin_memory else staged
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
