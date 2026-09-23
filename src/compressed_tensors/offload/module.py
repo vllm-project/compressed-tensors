@@ -62,6 +62,27 @@ def offload_module(
     return module
 
 
+def stage_module_offload(module: torch.nn.Module, pin_memory: bool = False):
+    """
+    Stage all offloaded tensors in a module for a later onload.
+
+    :param module: module whose offloaded tensors should be staged
+    :param pin_memory: whether to use page-locked CPU memory
+    """
+    if isinstance(module._parameters, OffloadCache):
+        assert isinstance(module._buffers, OffloadCache)
+        module._parameters.offloaded_values = {
+            name: module._parameters.stage(tensor, pin_memory=pin_memory)
+            for name, tensor in module._parameters.offloaded_values.items()
+        }
+        module._buffers.offloaded_values = {
+            name: module._buffers.stage(tensor, pin_memory=pin_memory)
+            for name, tensor in module._buffers.offloaded_values.items()
+        }
+        module._parameters.is_staged = True
+        module._buffers.is_staged = True
+
+
 def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False):
     """
     Remove any offloading applied to the module

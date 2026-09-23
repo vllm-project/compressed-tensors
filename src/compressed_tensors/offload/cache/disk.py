@@ -58,24 +58,32 @@ class DiskCache(OffloadCache):
         # Resolve relative paths to absolute paths for symlink creation
         self.offload_dir = Path(offload_dir).resolve()
 
-    def stage(self, pin_memory: bool = False) -> torch.Tensor | None:
+    def stage(
+        self,
+        offloaded: torch.Tensor | None,
+        pin_memory: bool = False,
+    ) -> torch.Tensor | None:
         """
-        Stage
+        Stage a disk-backed tensor for a later onload.
+
         :param offloaded: meta tensor to stage
         :param pin_memory: whether to use page-locked CPU memory
+        :return: staged tensor
         """
-        for offloaded in self.offloaded_values.values():
-            weight_info = self.index[offloaded]
-            device = _get_safe_open_device(self.onload_device)
+        if offloaded is None:
+            return None
 
-            with safe_open(
-                weight_info["safetensors_file"], framework="pt", device=device
-            ) as file:
-                staged = file.get_tensor(weight_info["weight_name"])
-                staged = to_tensor(staged, offloaded)
-                staged = staged.to(getattr(torch, weight_info["dtype"]))
-                _pin_memory(staged) if pin_memory else staged
-        self.is_staged = True
+        weight_info = self.index[offloaded]
+        device = _get_safe_open_device(self.onload_device)
+
+        with safe_open(
+            weight_info["safetensors_file"], framework="pt", device=device
+        ) as file:
+            staged = file.get_tensor(weight_info["weight_name"])
+            staged = to_tensor(staged, offloaded)
+            staged = staged.to(getattr(torch, weight_info["dtype"]))
+            staged = _pin_memory(staged) if pin_memory else staged
+            return staged
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
