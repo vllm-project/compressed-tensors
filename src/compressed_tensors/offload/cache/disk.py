@@ -85,7 +85,7 @@ class DiskCache(OffloadCache):
             staged = to_tensor(staged, offloaded)
             staged = staged.to(getattr(torch, weight_info["dtype"]))
             # unfortunately doesn't look like we can directly load
-            # into pinned memory, so we have make a copy. 
+            # into pinned memory, so we have make a copy.
             return _pin_memory(staged) if pin_memory else staged
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:

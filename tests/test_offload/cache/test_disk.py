@@ -3,10 +3,10 @@
 
 import os
 
+import compressed_tensors.offload.cache.disk as disk_cache
 import pytest
 import torch
 from compressed_tensors.offload.cache.disk import DiskCache
-import compressed_tensors.offload.cache.disk as disk_cache
 from loguru import logger as loguru_logger
 from safetensors import safe_open
 from tests.test_offload.cache.helpers import (
