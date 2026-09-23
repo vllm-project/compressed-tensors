@@ -128,3 +128,34 @@ def test_files(tmp_path):
     files = os.listdir(offload_dir)
     assert len(DiskCache.index) == 0
     assert len(files) == 0
+
+
+@pytest.mark.unit
+def test_stage(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    offload_dir.mkdir()
+    cache = DiskCache("cpu", offload_dir=str(offload_dir))
+    tensor = torch.arange(10)
+    offloaded = cache.offload(tensor)
+
+    staged = cache.stage(offloaded)
+
+    assert staged.device.type == "cpu"
+    assert torch.equal(staged, tensor)
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_stage_pinned_memory(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    offload_dir.mkdir()
+    onload_device = torch.accelerator.current_accelerator()
+    cache = DiskCache(onload_device, offload_dir=str(offload_dir))
+    tensor = torch.arange(10, device=onload_device)
+    offloaded = cache.offload(tensor)
+
+    staged = cache.stage(offloaded, pin_memory=True)
+
+    assert staged.device.type == "cpu"
+    assert staged.is_pinned()
+    assert torch.equal(staged, tensor.cpu())

@@ -45,6 +45,8 @@ class OffloadCache(MutableMapping, ABC):
     # offloaded tensors -> onloaded tensors (only when offloading is disabled)
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
 
+    is_staged: bool = False
+
     @classmethod
     def cls_from_device(
         cls,
@@ -134,6 +136,19 @@ class OffloadCache(MutableMapping, ABC):
         # so this check only applies when offload_device is a class attribute.
         if offload_device is not None and hasattr(type(self), "offload_device"):
             assert str(offload_device) == str(self.offload_device)
+
+    def stage(
+        self, pin_memory: bool = False
+    ) -> torch.Tensor | None:
+        """
+        Materialize an offloaded tensor in CPU memory for a later onload.
+
+        Cache implementations with a non-CPU offload source should override this
+        method to avoid first materializing directly on the execution device.
+
+        :param pin_memory: whether to use page-locked CPU memory
+        """
+        raise NotImplementedError()
 
     @abstractmethod
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:

@@ -141,3 +141,15 @@ def test_offload_logs_memory_hint_oserror(onload_device):
     assert any(
         "CPU offloading ran out of host RAM or mmap descriptors." in w for w in warnings
     )
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_stage_pinned_memory(onload_device):
+    cache = cpu_cache.CPUCache(onload_device)
+    offloaded = cache.offload(torch.ones(10, device=onload_device))
+
+    staged = cache.stage(offloaded, pin_memory=True)
+
+    assert staged.device.type == "cpu"
+    assert staged.is_pinned()

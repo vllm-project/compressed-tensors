@@ -9,8 +9,8 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.logger import logger
-from compressed_tensors.offload.cache import OffloadCache
-from compressed_tensors.offload.utils import send_tensors, to_tensor
+from compressed_tensors.offload.cache.base import OffloadCache
+from compressed_tensors.offload.utils import send_tensors, to_tensor, _pin_memory
 from compressed_tensors.utils import is_accelerator_type
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -57,6 +57,27 @@ class DiskCache(OffloadCache):
             )
         # Resolve relative paths to absolute paths for symlink creation
         self.offload_dir = Path(offload_dir).resolve()
+
+    def stage(
+        self, pin_memory: bool = False
+    ) -> torch.Tensor | None:
+        """
+        Stage 
+        :param offloaded: meta tensor to stage
+        :param pin_memory: whether to use page-locked CPU memory
+        """
+        for offloaded in self.offloaded_values.values():
+            weight_info = self.index[offloaded]
+            device = _get_safe_open_device(self.onload_device)
+
+            with safe_open(
+                weight_info["safetensors_file"], framework="pt", device=device
+            ) as file:
+                staged = file.get_tensor(weight_info["weight_name"])
+                staged = to_tensor(staged, offloaded)
+                staged = staged.to(getattr(torch, weight_info["dtype"]))
+                _pin_memory(staged) if pin_memory else staged
+        self.is_staged = True
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """

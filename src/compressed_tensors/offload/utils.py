@@ -240,3 +240,15 @@ def as_single_threaded():
         patch_attr(DistributedDiskCache, "offload", DiskCache.offload),
     ):
         yield
+
+def _pin_memory(tensor: torch.Tensor) -> torch.Tensor:
+    if tensor.device.type != "cpu" or tensor.is_pinned():
+        return tensor
+    if not torch.accelerator.is_available():
+        return tensor
+
+    pinned = to_empty(tensor, device="cpu", pin_memory=True)
+    with torch.no_grad():
+        pinned.copy_(tensor)
+    return pinned
+
