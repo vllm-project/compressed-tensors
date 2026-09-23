@@ -10,7 +10,7 @@ import torch.distributed as dist
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.logger import logger
 from compressed_tensors.offload.cache.base import OffloadCache
-from compressed_tensors.offload.utils import send_tensors, to_tensor, _pin_memory
+from compressed_tensors.offload.utils import _pin_memory, send_tensors, to_tensor
 from compressed_tensors.utils import is_accelerator_type
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -58,11 +58,9 @@ class DiskCache(OffloadCache):
         # Resolve relative paths to absolute paths for symlink creation
         self.offload_dir = Path(offload_dir).resolve()
 
-    def stage(
-        self, pin_memory: bool = False
-    ) -> torch.Tensor | None:
+    def stage(self, pin_memory: bool = False) -> torch.Tensor | None:
         """
-        Stage 
+        Stage
         :param offloaded: meta tensor to stage
         :param pin_memory: whether to use page-locked CPU memory
         """

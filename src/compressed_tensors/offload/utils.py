@@ -241,6 +241,7 @@ def as_single_threaded():
     ):
         yield
 
+
 def _pin_memory(tensor: torch.Tensor) -> torch.Tensor:
     if tensor.device.type != "cpu" or tensor.is_pinned():
         return tensor
@@ -251,4 +252,3 @@ def _pin_memory(tensor: torch.Tensor) -> torch.Tensor:
     with torch.no_grad():
         pinned.copy_(tensor)
     return pinned
-

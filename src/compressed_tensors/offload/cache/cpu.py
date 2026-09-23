@@ -4,7 +4,7 @@
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.cache.utils import catch_cpu_mem_error
-from compressed_tensors.offload.utils import send_tensors, _pin_memory
+from compressed_tensors.offload.utils import _pin_memory, send_tensors
 
 
 class CPUCache(OffloadCache):
@@ -26,9 +26,7 @@ class CPUCache(OffloadCache):
         """
         return send_tensors(offloaded, device=self.onload_device, copy=False)
 
-    def stage(
-        self, pin_memory: bool = False
-    ):
+    def stage(self, pin_memory: bool = False):
         """
         Stage a CPU tensor for a later onload.
 
@@ -36,7 +34,9 @@ class CPUCache(OffloadCache):
         """
         for offloaded in self.offloaded_values.values():
             if offloaded is not None:
-                self.offloaded_values[offloaded] = _pin_memory(offloaded) if pin_memory else offloaded
+                self.offloaded_values[offloaded] = (
+                    _pin_memory(offloaded) if pin_memory else offloaded
+                )
 
         self.is_staged = True
 

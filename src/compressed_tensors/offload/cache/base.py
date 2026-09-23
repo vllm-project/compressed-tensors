@@ -137,9 +137,7 @@ class OffloadCache(MutableMapping, ABC):
         if offload_device is not None and hasattr(type(self), "offload_device"):
             assert str(offload_device) == str(self.offload_device)
 
-    def stage(
-        self, pin_memory: bool = False
-    ) -> torch.Tensor | None:
+    def stage(self, pin_memory: bool = False) -> torch.Tensor | None:
         """
         Materialize an offloaded tensor in CPU memory for a later onload.
 
