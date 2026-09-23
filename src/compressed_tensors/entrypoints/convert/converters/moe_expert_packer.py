@@ -8,9 +8,6 @@ import re
 
 import torch
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.entrypoints.convert.converters import (
-    moe_expert_packer_helpers as helpers,
-)
 from compressed_tensors.quantization import QuantizationConfig
 from compressed_tensors.utils.moe import find_expert_index
 from compressed_tensors.utils.safetensors_load import (
@@ -18,6 +15,12 @@ from compressed_tensors.utils.safetensors_load import (
     get_weight_map,
 )
 from loguru import logger
+
+from .moe_expert_packer_helpers import (
+    build_output_tensors,
+    repack_ignore,
+    validate_linearized,
+)
 
 
 __all__ = ["MoEExpertPacker"]
@@ -63,7 +66,7 @@ class MoEExpertPacker(Converter):
         self.groups = groups
         self.fuse_gate_up = fuse_gate_up
 
-        self.output_tensors = helpers.build_output_tensors(groups, fuse_gate_up)
+        self.output_tensors = build_output_tensors(groups, fuse_gate_up)
         self._by_anchor = {out.anchor: out for out in self.output_tensors}
         self._members = {name for out in self.output_tensors for name in out.members}
 
@@ -120,7 +123,7 @@ class MoEExpertPacker(Converter):
                 )
             groups[stacked_name] = [name for _, name in members]
 
-        helpers.validate_linearized(groups, weight_map, model_files)
+        validate_linearized(groups, weight_map, model_files)
 
         logger.info(
             f"Found {len(groups)} expert group(s) to repack across "
@@ -172,7 +175,7 @@ class MoEExpertPacker(Converter):
         # entries naming now-removed per-expert modules are collapsed to the
         # packed expert module (e.g. `...experts.0.down_proj` -> `...experts`)
         if config is not None and config.ignore:
-            config.ignore = helpers.repack_ignore(config.ignore)
+            config.ignore = repack_ignore(config.ignore)
         return config
 
     def get_dependencies(self, weight_name: str) -> set[str]:
