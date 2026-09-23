@@ -61,7 +61,11 @@ class DistributedCPUCache(CPUCache):
         if meta is None:
             return None
 
-        handle, filename, nbytes, src_dtype, src_shape = meta
+        try:
+            handle, filename, nbytes, src_dtype, src_shape = meta
+        except Exception as e:
+            print(meta)
+            raise e
 
         # transformers may init params/buffers on non-source (meta) ranks with a
         # different dtype or shape than the checkpoint (e.g. `inv_freq`, or
@@ -117,8 +121,7 @@ class DistributedCPUCache(CPUCache):
         dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
         if not is_source_process():
-            src_shape = broadcast_obj.pop(4)
-            src_dtype = broadcast_obj.pop(3)
+            src_dtype, src_shape = broadcast_obj[3:5]
 
             # transformers may init params/buffers on non-source (meta) ranks with a
             # different dtype or shape than the checkpoint (e.g. `inv_freq`, or
@@ -134,7 +137,10 @@ class DistributedCPUCache(CPUCache):
                 tensor = send_tensors(tensor, device=self.offload_device)
 
             # reconstruct tensor from shared memory file handle
-            offloaded = self.recv_offload(tensor, broadcast_obj[0])
+            offloaded = self.recv_offload(tensor, broadcast_obj)
+
+        else:
+            offloaded = tensor
 
         # ensure that rank 0 does not garbage collect before other ranks reconstruct
         dist.barrier()

@@ -125,7 +125,9 @@ def test_forward_dispatch_matches_emulated(bias):
     expected = _emulated_forward(module, input)
 
     assert actual.shape == (8, out_features)
-    torch.testing.assert_close(actual, expected, rtol=2e-2, atol=2e-2)
+    # dispatch may select the real fp8 tensor-core backend, which is inherently
+    # less precise than the bf16 emulation reference
+    torch.testing.assert_close(actual, expected, rtol=5e-2, atol=5e-2)
 
 
 @requires_gpu
@@ -149,6 +151,26 @@ def test_forward_backends_match_emulated(backend_fn, bias):
 
     assert actual.shape == (8, out_features)
     torch.testing.assert_close(actual, expected, rtol=2e-2, atol=2e-2)
+
+
+@requires_gpu
+@pytest.mark.parametrize("bias", [False, True])
+def test_fp8_tensorcore_backend_matches_emulated(bias):
+    """The real fp8 tensor-core backend matches the emulated reference forward."""
+    if torch.get_device_module().get_device_capability() < (8, 9):
+        pytest.skip("fp8 tensor cores require compute capability >= 8.9")
+
+    torch.manual_seed(0)
+    in_features, out_features = 256, 512
+
+    module = _make_compressed_fp8_block_linear(in_features, out_features, bias)
+    input = torch.randn(8, in_features, dtype=torch.bfloat16, device="cuda")
+
+    actual = ImplBackend.call("fp8_block_forward_fp8", module, input)
+    expected = _emulated_forward(module, input)
+
+    assert actual.shape == (8, out_features)
+    torch.testing.assert_close(actual, expected, rtol=5e-2, atol=5e-2)
 
 
 @requires_gpu
@@ -194,7 +216,9 @@ def test_compress_module_overwrites_quantized_forward():
     expected = _emulated_forward(module, input)
 
     assert actual.shape == (8, out_features)
-    torch.testing.assert_close(actual, expected, rtol=2e-2, atol=2e-2)
+    # dispatch may select the real fp8 tensor-core backend, which is inherently
+    # less precise than the bf16 emulation reference
+    torch.testing.assert_close(actual, expected, rtol=5e-2, atol=5e-2)
 
 
 @requires_gpu
@@ -210,7 +234,9 @@ def test_forward_supports_multidim_input():
     expected = _emulated_forward(module, input)
 
     assert actual.shape == (2, 4, out_features)
-    torch.testing.assert_close(actual, expected, rtol=2e-2, atol=2e-2)
+    # dispatch may select the real fp8 tensor-core backend, which is inherently
+    # less precise than the bf16 emulation reference
+    torch.testing.assert_close(actual, expected, rtol=5e-2, atol=5e-2)
 
 
 @pytest.mark.parametrize("scheme_name", ["FP8", "FP8_DYNAMIC"])
