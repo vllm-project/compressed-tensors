@@ -2,12 +2,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
+import warnings
 from functools import wraps
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.utils import send_tensors
-
 
 def offload_module(
     module: torch.nn.Module,
@@ -97,24 +97,23 @@ def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False)
     if isinstance(module._parameters, OffloadCache):
         assert isinstance(module._buffers, OffloadCache)
 
+        if not module._parameters.is_staged:
+            # for staged modules, the forward is already restored
+            module.forward = module._original_forward_func.__get__(module)
+            del module._original_forward_func
+
         if onload_tensors:
             module._parameters = {
                 name: module._parameters.onload(param)
                 for name, param in module._parameters.offloaded_values.items()
             }
-            module._parameters.is_staged = False
-            
             module._buffers = {
                 name: module._buffers.onload(param)
                 for name, param in module._buffers.offloaded_values.items()
             }
-            module._buffers.is_staged = False
         else:
             module._parameters = module._parameters.offloaded_values
             module._buffers = module._buffers.offloaded_values
-
-        module.forward = module._original_forward_func.__get__(module)
-        del module._original_forward_func
 
 
 @contextlib.contextmanager
@@ -133,3 +132,62 @@ def unwrap_offload_forward(module: torch.nn.Module):
 
     else:
         yield
+
+
+def subgraph_stage_modules(
+    modules: dict[str, torch.nn.Module],
+    pin_memory: bool = False,
+) -> None:
+    """Stage offloaded module tensors in CPU memory for a later onload."""
+    for name, module in modules.items():
+        if not isinstance(module._parameters, OffloadCache):
+            warnings.warn(f"Module {name} is not offloaded. Skipping staging.")
+            continue
+
+        stage_module_offload(module, pin_memory=pin_memory)
+
+
+
+def subgraph_onload_modules(
+    modules: dict[str, torch.nn.Module],
+) -> dict[str, dict]:
+    """Onload modules, consuming tensors staged in CPU memory."""
+    from compressed_tensors.offload import get_cache_init_kwargs
+
+    offload_kwargs = {}
+    for name, module in modules.items():
+        if isinstance(module._parameters, OffloadCache):
+            init_kwargs = get_cache_init_kwargs(module)
+            offload_kwargs[name] = init_kwargs
+
+            remove_module_offload(module, onload_tensors=True)
+        else:
+            if isinstance(module._parameters, OffloadCache):
+                if not module._parameters.is_staged:
+                    warnings.warn(
+                        f"Module {name} is not staged. Onload will be slower."
+                    )
+            else:
+                warnings.warn(f"Module {name} is not offloaded. Skipping onload.")
+    return offload_kwargs
+
+
+
+def subgraph_offload_modules(
+    modules: dict[str, torch.nn.Module],
+    offload_kwargs: dict[str, dict],
+):
+    """
+    Offload a list of modules, using the provided device map and kwargs.
+    """
+    from compressed_tensors.offload import get_cache_init_kwargs
+
+    for name, module in modules.items():
+        if name in offload_kwargs:
+            offload_module(module, **offload_kwargs[name])
+        else:
+            warnings.warn(
+                f"No offload kwargs provided for module {name}. Using defaults."
+            )
+            module_offload_kwargs = get_cache_init_kwargs(module)
+            offload_module(module, **module_offload_kwargs)

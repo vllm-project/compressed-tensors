@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import errno
+import torch
 from functools import wraps
 
 from loguru import logger
@@ -100,3 +101,10 @@ def catch_pinned_mem_error(func):
             raise
 
     return wrapper
+
+def load_disk_tensor_from_offload(offloaded: dict, device: str) -> torch.Tensor:
+    with safe_open(offloaded["safetensors_file"], framework="pt", device=device) as file:
+        onloaded = file.get_tensor(offloaded["weight_name"])
+        onloaded = to_tensor(onloaded)
+        onloaded = onloaded.to(getattr(torch, offloaded["dtype"]))
+        return onloaded

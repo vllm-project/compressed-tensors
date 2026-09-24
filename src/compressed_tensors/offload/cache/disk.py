@@ -77,16 +77,16 @@ class DiskCache(OffloadCache):
 
         weight_info = self.index[offloaded]
 
-        # Stage into host RAM so the staged tensor can be reused for onload.
-        with safe_open(
-            weight_info["safetensors_file"], framework="pt", device="cpu"
-        ) as file:
-            staged = file.get_tensor(weight_info["weight_name"])
-            staged = to_tensor(staged, offloaded)
-            staged = staged.to(getattr(torch, weight_info["dtype"]))
-            # unfortunately doesn't look like we can directly load
-            # into pinned memory, so we have make a copy.
-            return _pin_memory(staged) if pin_memory else staged
+        staged = load_disk_tensor_from_offload(
+            weight_info,
+            device="cpu"
+        )
+        # direct disk --> pinned memory is a bit complicated, 
+        # leave this for a future change. For now, copy to cpu first
+        staged = _pin_memory(staged) if (pin_memory and self.onload_device != "cpu") else staged
+        # don't transfer to pinned if onload_device is cpu
+
+        return staged
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
@@ -101,13 +101,16 @@ class DiskCache(OffloadCache):
         weight_info = self.index[offloaded]
         device = _get_safe_open_device(self.onload_device)
 
-        with safe_open(
-            weight_info["safetensors_file"], framework="pt", device=device
-        ) as file:
-            onloaded = file.get_tensor(weight_info["weight_name"])
-            onloaded = to_tensor(onloaded, offloaded)
-            onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
-            return onloaded
+        if self.is_staged:
+            onloaded = offloaded.to(device=device)
+        else:
+            onloaded = load_disk_tensor_from_offload(
+                weight_info,
+                device=device
+            )
+            onloaded = onloaded.to(device=device)
+        
+        return onloaded
 
     def offload(
         self, tensor: torch.Tensor | None, offloaded: Optional[torch.Tensor] = None
