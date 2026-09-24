@@ -9,6 +9,7 @@ import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.utils import send_tensors
 
+
 def offload_module(
     module: torch.nn.Module,
     onload_device: torch.device | str,
@@ -147,7 +148,6 @@ def subgraph_stage_modules(
         stage_module_offload(module, pin_memory=pin_memory)
 
 
-
 def subgraph_onload_modules(
     modules: dict[str, torch.nn.Module],
 ) -> dict[str, dict]:
@@ -170,7 +170,6 @@ def subgraph_onload_modules(
             else:
                 warnings.warn(f"Module {name} is not offloaded. Skipping onload.")
     return offload_kwargs
-
 
 
 def subgraph_offload_modules(

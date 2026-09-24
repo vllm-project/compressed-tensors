@@ -10,10 +10,12 @@ import torch.distributed as dist
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.logger import logger
 from compressed_tensors.offload.cache.base import OffloadCache
-from compressed_tensors.offload.cache.utils import catch_pinned_mem_error
-from compressed_tensors.offload.utils import _pin_memory, send_tensors, to_tensor
+from compressed_tensors.offload.cache.utils import (
+    catch_pinned_mem_error,
+    load_disk_tensor_from_offload,
+)
+from compressed_tensors.offload.utils import _pin_memory, send_tensors
 from compressed_tensors.utils import is_accelerator_type
-from safetensors import safe_open
 from safetensors.torch import save_file
 
 
@@ -77,13 +79,14 @@ class DiskCache(OffloadCache):
 
         weight_info = self.index[offloaded]
 
-        staged = load_disk_tensor_from_offload(
-            weight_info,
-            device="cpu"
-        )
-        # direct disk --> pinned memory is a bit complicated, 
+        staged = load_disk_tensor_from_offload(weight_info, device="cpu", template=offloaded)
+        # direct disk --> pinned memory is a bit complicated,
         # leave this for a future change. For now, copy to cpu first
-        staged = _pin_memory(staged) if (pin_memory and self.onload_device != "cpu") else staged
+        staged = (
+            _pin_memory(staged)
+            if (pin_memory and self.onload_device != "cpu")
+            else staged
+        )
         # don't transfer to pinned if onload_device is cpu
 
         return staged
@@ -98,18 +101,16 @@ class DiskCache(OffloadCache):
         if offloaded is None:
             return None
 
-        weight_info = self.index[offloaded]
         device = _get_safe_open_device(self.onload_device)
 
         if self.is_staged:
             onloaded = offloaded.to(device=device)
         else:
+            weight_info = self.index[offloaded]
             onloaded = load_disk_tensor_from_offload(
-                weight_info,
-                device=device
+                weight_info, device=device, template=offloaded
             )
-            onloaded = onloaded.to(device=device)
-        
+
         return onloaded
 
     def offload(
