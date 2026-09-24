@@ -2,7 +2,6 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
-import warnings
 from functools import wraps
 
 import torch
@@ -141,15 +140,9 @@ def subgraph_stage_modules(
 ) -> None:
     """Stage offloaded module tensors in CPU memory for a later onload."""
     for name, module in modules.items():
-        cache = module._parameters
-        if not isinstance(cache, OffloadCache):
-            warnings.warn(f"Module {name} is not offloaded. Skipping staging.")
-            continue
-
-        # DeviceCache values already reside on an accelerator and do not have
-        # an intermediate CPU staging location.
-        offload_device = cache.offload_device
-        if offload_device != "disk" and torch.device(offload_device).type != "cpu":
+        if not isinstance(module._parameters, OffloadCache):
+            # we should consider raising warnings, but observers will
+            # clog the output with warnings, so we will skip for now
             continue
 
         stage_module_offload(module, pin_memory=pin_memory)
