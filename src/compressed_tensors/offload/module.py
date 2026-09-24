@@ -58,6 +58,7 @@ def offload_module(
         return self._original_forward_func(self, *args, **kwargs)
 
     module.forward = forward.__get__(module)
+    module.is_staged = False
 
     return module
 
@@ -75,10 +76,15 @@ def stage_module_offload(module: torch.nn.Module, pin_memory: bool = False):
             name: module._parameters.stage(tensor, pin_memory=pin_memory)
             for name, tensor in module._parameters.offloaded_values.items()
         }
+        module._parameters.is_staged = True
         module._buffers.offloaded_values = {
             name: module._buffers.stage(tensor, pin_memory=pin_memory)
             for name, tensor in module._buffers.offloaded_values.items()
         }
+        module._buffers.is_staged = True
+
+        module.forward = module._original_forward_func.__get__(module)
+        del module._original_forward_func
 
 
 def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False):
@@ -96,10 +102,13 @@ def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False)
                 name: module._parameters.onload(param)
                 for name, param in module._parameters.offloaded_values.items()
             }
+            module._parameters.is_staged = False
+            
             module._buffers = {
                 name: module._buffers.onload(param)
                 for name, param in module._buffers.offloaded_values.items()
             }
+            module._buffers.is_staged = False
         else:
             module._parameters = module._parameters.offloaded_values
             module._buffers = module._buffers.offloaded_values
