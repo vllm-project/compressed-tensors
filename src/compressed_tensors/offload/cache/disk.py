@@ -79,7 +79,9 @@ class DiskCache(OffloadCache):
 
         weight_info = self.index[offloaded]
 
-        staged = load_disk_tensor_from_offload(weight_info, device="cpu", template=offloaded)
+        staged = load_disk_tensor_from_offload(
+            weight_info, device="cpu", template=offloaded
+        )
         # direct disk --> pinned memory is a bit complicated,
         # leave this for a future change. For now, copy to cpu first
         staged = (
