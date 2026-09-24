@@ -141,8 +141,15 @@ def subgraph_stage_modules(
 ) -> None:
     """Stage offloaded module tensors in CPU memory for a later onload."""
     for name, module in modules.items():
-        if not isinstance(module._parameters, OffloadCache):
+        cache = module._parameters
+        if not isinstance(cache, OffloadCache):
             warnings.warn(f"Module {name} is not offloaded. Skipping staging.")
+            continue
+
+        # DeviceCache values already reside on an accelerator and do not have
+        # an intermediate CPU staging location.
+        offload_device = cache.offload_device
+        if offload_device != "disk" and torch.device(offload_device).type != "cpu":
             continue
 
         stage_module_offload(module, pin_memory=pin_memory)
