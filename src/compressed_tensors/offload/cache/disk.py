@@ -9,10 +9,13 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.logger import logger
-from compressed_tensors.offload.cache import OffloadCache
-from compressed_tensors.offload.utils import send_tensors, to_tensor
+from compressed_tensors.offload.cache.base import OffloadCache
+from compressed_tensors.offload.cache.utils import (
+    catch_pinned_mem_error,
+    load_disk_tensor_from_offload,
+)
+from compressed_tensors.offload.utils import _pin_memory, send_tensors
 from compressed_tensors.utils import is_accelerator_type
-from safetensors import safe_open
 from safetensors.torch import save_file
 
 
@@ -58,6 +61,38 @@ class DiskCache(OffloadCache):
         # Resolve relative paths to absolute paths for symlink creation
         self.offload_dir = Path(offload_dir).resolve()
 
+    @catch_pinned_mem_error
+    def stage(
+        self,
+        offloaded: torch.Tensor | None,
+        pin_memory: bool = False,
+    ) -> torch.Tensor | None:
+        """
+        Stage a disk-backed tensor for a later onload.
+
+        :param offloaded: meta tensor to stage
+        :param pin_memory: whether to use page-locked CPU memory
+        :return: staged tensor
+        """
+        if offloaded is None:
+            return None
+
+        weight_info = self.index[offloaded]
+
+        staged = load_disk_tensor_from_offload(
+            weight_info, device="cpu", template=offloaded
+        )
+        # direct disk --> pinned memory is a bit complicated,
+        # leave this for a future change. For now, copy to cpu first
+        staged = (
+            _pin_memory(staged)
+            if (pin_memory and self.onload_device != "cpu")
+            else staged
+        )
+        # don't transfer to pinned if onload_device is cpu
+
+        return staged
+
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Onload a tensor from disk/meta to device
@@ -68,16 +103,17 @@ class DiskCache(OffloadCache):
         if offloaded is None:
             return None
 
-        weight_info = self.index[offloaded]
         device = _get_safe_open_device(self.onload_device)
 
-        with safe_open(
-            weight_info["safetensors_file"], framework="pt", device=device
-        ) as file:
-            onloaded = file.get_tensor(weight_info["weight_name"])
-            onloaded = to_tensor(onloaded, offloaded)
-            onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
-            return onloaded
+        if self.is_staged:
+            onloaded = offloaded.to(device=device)
+        else:
+            weight_info = self.index[offloaded]
+            onloaded = load_disk_tensor_from_offload(
+                weight_info, device=device, template=offloaded
+            )
+
+        return onloaded
 
     def offload(
         self, tensor: torch.Tensor | None, offloaded: Optional[torch.Tensor] = None

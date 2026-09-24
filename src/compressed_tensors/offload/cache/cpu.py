@@ -3,8 +3,11 @@
 
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
-from compressed_tensors.offload.cache.utils import catch_cpu_mem_error
-from compressed_tensors.offload.utils import send_tensors
+from compressed_tensors.offload.cache.utils import (
+    catch_cpu_mem_error,
+    catch_pinned_mem_error,
+)
+from compressed_tensors.offload.utils import _pin_memory, send_tensors
 
 
 class CPUCache(OffloadCache):
@@ -25,6 +28,23 @@ class CPUCache(OffloadCache):
         :return: device tensor
         """
         return send_tensors(offloaded, device=self.onload_device, copy=False)
+
+    @catch_pinned_mem_error
+    def stage(
+        self,
+        offloaded: torch.Tensor | None,
+        pin_memory: bool = False,
+    ) -> torch.Tensor | None:
+        """
+        Stage a CPU tensor for a later onload.
+
+        :param offloaded: cpu tensor to stage
+        :param pin_memory: whether to use page-locked CPU memory
+        :return: staged CPU tensor
+        """
+        if offloaded is None:
+            return None
+        return _pin_memory(offloaded) if pin_memory else offloaded
 
     @catch_cpu_mem_error
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
