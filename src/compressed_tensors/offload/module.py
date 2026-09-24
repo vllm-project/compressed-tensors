@@ -162,13 +162,9 @@ def subgraph_onload_modules(
 
             remove_module_offload(module, onload_tensors=True)
         else:
-            if isinstance(module._parameters, OffloadCache):
-                if not module._parameters.is_staged:
-                    warnings.warn(
-                        f"Module {name} is not staged. Onload will be slower."
-                    )
-            else:
-                warnings.warn(f"Module {name} is not offloaded. Skipping onload.")
+            pass
+            # we should consider raising warnings, but observers will
+            # clog the output with warnings, so we will skip for now
     return offload_kwargs
 
 
@@ -185,8 +181,7 @@ def subgraph_offload_modules(
         if name in offload_kwargs:
             offload_module(module, **offload_kwargs[name])
         else:
-            warnings.warn(
-                f"No offload kwargs provided for module {name}. Using defaults."
-            )
+            # we should consider raising warnings, but observers will
+            # clog the output with warnings, so we will skip for now
             module_offload_kwargs = get_cache_init_kwargs(module)
             offload_module(module, **module_offload_kwargs)
