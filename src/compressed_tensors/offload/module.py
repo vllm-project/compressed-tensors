@@ -79,8 +79,6 @@ def stage_module_offload(module: torch.nn.Module, pin_memory: bool = False):
             name: module._buffers.stage(tensor, pin_memory=pin_memory)
             for name, tensor in module._buffers.offloaded_values.items()
         }
-        module._parameters.is_staged = True
-        module._buffers.is_staged = True
 
 
 def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False):
