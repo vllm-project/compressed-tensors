@@ -142,7 +142,8 @@ def subgraph_stage_modules(
     """Stage offloaded module tensors in CPU memory for a later onload."""
     for name, module in modules.items():
         if not isinstance(module._parameters, OffloadCache):
-            warnings.warn(f"Module {name} is not offloaded. Skipping staging.")
+            # we should consider raising warnings, but observers will
+            # clog the output with warnings, so we will skip for now
             continue
 
         stage_module_offload(module, pin_memory=pin_memory)
