@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import torch
-
 import compressed_tensors.offload as offload
 import compressed_tensors.offload.module as module_offload
+import torch
 
 
 class _FakeOffloadCache(dict):
@@ -52,9 +51,7 @@ def test_subgraph_onload_skips_unoffloaded_modules(monkeypatch):
         {"root": root, "root.child": root.child}
     )
 
-    assert result == {
-        "root": {"onload_device": "cpu", "offload_device": "cpu"}
-    }
+    assert result == {"root": {"onload_device": "cpu", "offload_device": "cpu"}}
     assert calls == [("init", root), ("onload", root, True)]
 
 
