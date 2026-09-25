@@ -5,13 +5,14 @@ import functools
 import os
 from typing import Callable
 
+from compressed_tensors.logger import parse_bool_env
 from loguru import logger
 
 
 __all__ = ["ImplBackend"]
 
 
-ENFORCE_EAGER = os.environ.get("CT_ENFORCE_EAGER", False)
+ENFORCE_EAGER = bool(parse_bool_env(os.environ.get("CT_ENFORCE_EAGER")))
 if ENFORCE_EAGER:
     logger.warning(
         "CT_ENFORCE_EAGER is set to True, meaning that compressed-tensors will "
