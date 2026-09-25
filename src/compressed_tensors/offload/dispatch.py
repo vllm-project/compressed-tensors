@@ -4,18 +4,14 @@
 from collections.abc import Container
 from copy import deepcopy
 from functools import partial
-from typing import Any, Optional, TypeVar
+from typing import Any, Literal, Optional, TypeVar
 
 import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import is_distributed
 from compressed_tensors.offload.cache import OffloadCache
 from compressed_tensors.offload.module import offload_module, remove_module_offload
-from compressed_tensors.offload.utils import (
-    get_module_device,
-    get_module_sizes,
-    module_size,
-)
+from compressed_tensors.offload.utils import get_module_sizes, module_size
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
 from compressed_tensors.utils.helpers import deprecated
@@ -46,21 +42,85 @@ def set_onload_device(
     """
     Modify the dispatch of a model to onload to the provided `onload_device`. Existing
     offloaded tensors will not be modified. If a module is not already offloaded, it
-    will be offloaded to its current device.
+    will be offloaded to the offload device of the first offloaded module in its
+    subtree, or to the default offload device (cpu) if none of its modules are
+    offloaded.
 
     :param model: model to dispatch
     :param onload_device: device to move weights to during forward pass
     :return: dispatched model
     """
-    for module in model.modules():
-        if isinstance(module._parameters, OffloadCache):
-            module._parameters.onload_device = onload_device
-            module._buffers.onload_device = onload_device
-        else:
-            offload_device = get_module_device(module, torch.device("cpu"))
-            offload_module(module, onload_device, offload_device)
-
+    _set_onload_device_recursively(model, onload_device)
     return model
+
+
+def _set_onload_device_recursively(
+    module: torch.nn.Module,
+    onload_device: torch.device | str,
+) -> tuple[torch.device | Literal["disk"], torch.nn.Module, bool]:
+    """
+    Recursively set the onload device of `module` and all of its modules to
+    `onload_device`, offloading any module which is not already offloaded.
+
+    The offload device of a module is resolved as follows:
+    1. If the module is offloaded, its onload device is set to `onload_device` and its
+       existing offload device is returned together with the module and `True`.
+    2. Otherwise the module is offloaded to the offload device of the first child which
+       reports an offloaded module (that child's device). If none of the children are
+       offloaded, the default offload device (cpu) is used and `False` is returned.
+
+    When the resolved offload device is ``"disk"``, the offload directory is read from
+    the offloaded module's cache (the same value returned by
+    ``get_cache_init_kwargs``) so the module is offloaded to the same location.
+
+    Resolving devices this way reads an offloaded child's offload device directly from
+    its cache rather than through its tensors, so the child's weights are never
+    onloaded. This keeps the operation free of unnecessary device movement.
+
+    :param module: module to set onload device for
+    :param onload_device: device to move weights to during forward pass
+    :return: `(offload_device, offloaded_module, found_offloaded)`, where
+        `offload_device` is the resolved offload device of `module`,
+        `offloaded_module` is the offloaded module whose device/directory it was
+        resolved from (or `module` itself if already offloaded), and
+        `found_offloaded` is whether that device was resolved from an offloaded
+        module in `module`'s subtree
+    """
+    if isinstance(module._parameters, OffloadCache):
+        offload_device = module._parameters.offload_device
+        module._parameters.onload_device = onload_device
+        module._buffers.onload_device = onload_device
+        return offload_device, module, True
+
+    offload_device: torch.device | Literal["disk"] = torch.device("cpu")
+    offloaded_module = None
+    found_offloaded = False
+    for child in module.children():
+        (
+            child_offload_device,
+            child_offloaded_module,
+            child_found,
+        ) = _set_onload_device_recursively(child, onload_device)
+        if not found_offloaded and child_found:
+            offload_device = child_offload_device
+            offloaded_module = child_offloaded_module
+            found_offloaded = True
+
+    offload_kwargs: dict[str, object] = {
+        "onload_device": onload_device,
+        "offload_device": offload_device,
+    }
+    if offload_device == "disk":
+        # disk offloading requires an offload directory, which is read from the
+        # offloaded module's cache via `get_cache_init_kwargs`
+        from compressed_tensors.offload import get_cache_init_kwargs
+
+        cache_kwargs = get_cache_init_kwargs(offloaded_module)
+        offload_kwargs["offload_device"] = cache_kwargs["offload_device"]
+        offload_kwargs["offload_dir"] = cache_kwargs["offload_dir"]
+
+    offload_module(module, **offload_kwargs)
+    return offload_device, offloaded_module, found_offloaded
 
 
 @deprecated("set_onload_device")
