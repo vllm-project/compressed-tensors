@@ -471,6 +471,17 @@ def get_num_kv_heads(config: PretrainedConfig) -> int:
         )
 
 
+def _safe_getattr(obj: Any, name: str) -> Any:
+    # transformers>=5 heterogeneous (per-layer) configs raise
+    # AmbiguousGlobalPerLayerAttributeError, a RuntimeError, when a per-layer
+    # attribute is read on the global config. getattr's default only covers
+    # AttributeError, so guard RuntimeError as well.
+    try:
+        return getattr(obj, name, None)
+    except RuntimeError:
+        return None
+
+
 def get_head_dim(config: PretrainedConfig) -> int:
     """
     Get the number of dimensions used by the attention heads of a model
@@ -478,18 +489,26 @@ def get_head_dim(config: PretrainedConfig) -> int:
     :param config: model config
     :return: head_dim of model
     """
-    if hasattr(config, "head_dim"):
-        return config.head_dim
+    # Prefer instance attributes read through __dict__: this never triggers the
+    # per-layer attribute guard on heterogeneous configs (see _safe_getattr).
+    config_dict = getattr(config, "__dict__", {})
 
-    elif hasattr(config, "hidden_size") and hasattr(config, "num_attention_heads"):
-        return config.hidden_size // config.num_attention_heads
+    head_dim = config_dict.get("head_dim", _safe_getattr(config, "head_dim"))
+    if head_dim is not None:
+        return head_dim
 
-    else:
-        raise ValueError(
-            "Cannot determine head_dim from config. Config must define "
-            "either `head_dim` or both `hidden_size` and `num_attention_heads`. "
-            f"{config}"
-        )
+    hidden_size = config_dict.get("hidden_size", _safe_getattr(config, "hidden_size"))
+    num_attention_heads = config_dict.get(
+        "num_attention_heads", _safe_getattr(config, "num_attention_heads")
+    )
+    if hidden_size is not None and num_attention_heads is not None:
+        return hidden_size // num_attention_heads
+
+    raise ValueError(
+        "Cannot determine head_dim from config. Config must define "
+        "either `head_dim` or both `hidden_size` and `num_attention_heads`. "
+        f"{config}"
+    )
 
 
 def is_accelerator_type(device_type: str) -> bool:
