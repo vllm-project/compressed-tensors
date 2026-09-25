@@ -13,7 +13,7 @@ import torch
 from compressed_tensors.offload.utils import send_tensors
 
 
-accelerator_device = torch.accelerator.current_accelerator()
+accelerator_device = torch.accelerator.current_accelerator() or torch.device("cpu")
 
 skip_if_mps_device = pytest.mark.skipif(
     accelerator_device.type == "mps",
@@ -30,7 +30,13 @@ def assert_device_equal(
     if device_b == "disk":
         device_b = torch.device("meta")
 
-    cur_index = torch.accelerator.current_device_index()
+    # CPU-only test runs have no current accelerator or device index. Treat
+    # CPU as device 0 so the same assertions can cover accelerator-free paths.
+    cur_index = (
+        torch.accelerator.current_device_index()
+        if torch.accelerator.is_available()
+        else 0
+    )
     a_index = cur_index if device_a.index is None else device_a.index
     b_index = cur_index if device_b.index is None else device_b.index
 
@@ -38,7 +44,7 @@ def assert_device_equal(
     # on "xpu" actually live on the real accelerator, so their .device reports
     # the real type. Normalize device types: if one matches the fake type and
     # the other matches the real type, treat them as equal.
-    accel = torch.accelerator.current_accelerator()
+    accel = torch.accelerator.current_accelerator() or torch.device("cpu")
     fake_type = accel.type
     real_type = getattr(accel, "_real_type", None)
 
