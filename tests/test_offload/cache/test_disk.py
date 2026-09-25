@@ -8,7 +8,10 @@ import pytest
 import torch
 from compressed_tensors.offload import offload_module
 from compressed_tensors.offload.cache.disk import DiskCache
-from compressed_tensors.offload.module import remove_module_offload, stage_module_offload
+from compressed_tensors.offload.module import (
+    remove_module_offload,
+    stage_module_offload,
+)
 from loguru import logger as loguru_logger
 from safetensors import safe_open
 from tests.test_offload.cache.helpers import (
