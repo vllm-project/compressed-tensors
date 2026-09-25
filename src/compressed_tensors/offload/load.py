@@ -36,6 +36,9 @@ def load_offloaded_model(
     `device_map="auto_offload"`, which means that the model will load as many parameters
     can fit onto the cpu, and any extra parameters will be loaded on disk.
 
+    `device_map="disk"` loads the entire model onto disk (via an empty `max_memory`),
+    and errors if `max_memory` is also provided.
+
     :param model_class: model class to patch
     :param extra_cpu_mem: extra cpu memory to reserve for any operations not related to
         model loading (bytes). Defaults to 5Gb.
@@ -54,6 +57,18 @@ def load_offloaded_model(
         # Rank 0 does loading, other ranks init on meta device
         if not is_source_process():
             kwargs["device_map"] = "meta"
+
+        # Intercept `disk`: load the entire model on disk, error if max_memory is set
+        elif kwargs["device_map"] == "disk":
+            if "max_memory" in kwargs:
+                raise ValueError(
+                    "`max_memory` cannot be used with `device_map='disk'`. "
+                    "The `disk` device map loads the entire model on disk with an "
+                    "empty `max_memory`, so providing one is redundant and "
+                    "ambiguous. Remove `max_memory` to use `device_map='disk'`."
+                )
+            kwargs["device_map"] = "auto"
+            kwargs["max_memory"] = {}
 
         # Intercept `auto_offload`: same as "auto", but only cpu/disk are visible
         elif kwargs["device_map"] == "auto_offload":
