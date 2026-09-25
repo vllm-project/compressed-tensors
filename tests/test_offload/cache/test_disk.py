@@ -6,7 +6,9 @@ import os
 import compressed_tensors.offload.cache.disk as disk_cache
 import pytest
 import torch
+from compressed_tensors.offload import offload_module
 from compressed_tensors.offload.cache.disk import DiskCache
+from compressed_tensors.offload.module import remove_module_offload, stage_module_offload
 from loguru import logger as loguru_logger
 from safetensors import safe_open
 from tests.test_offload.cache.helpers import (
@@ -144,6 +146,24 @@ def test_stage(tmp_path):
 
     assert staged.device.type == "cpu"
     assert torch.equal(staged, tensor)
+
+
+@pytest.mark.unit
+def test_staged_onload_preserves_parameter_type(tmp_path):
+    offload_dir = tmp_path / "offload_dir"
+    offload_dir.mkdir()
+    module = torch.nn.Linear(2, 2)
+    offload_module(
+        module,
+        onload_device="meta",
+        offload_device="disk",
+        offload_dir=str(offload_dir),
+    )
+
+    stage_module_offload(module)
+    remove_module_offload(module, onload_tensors=True)
+
+    assert isinstance(module.weight, torch.nn.Parameter)
 
 
 @pytest.mark.unit
