@@ -106,7 +106,7 @@ class DiskCache(OffloadCache):
         device = _get_safe_open_device(self.onload_device)
 
         if self.is_staged:
-            onloaded = offloaded.to(device=device)
+            onloaded = send_tensors(offloaded, device=device, copy=False)
         else:
             weight_info = self.index[offloaded]
             onloaded = load_disk_tensor_from_offload(
