@@ -19,6 +19,7 @@ from compressed_tensors.quantization import (
     QuantizationScheme,
     QuantizationStatus,
     QuantizationStrategy,
+    QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle.forward import set_forward_quantized
 from compressed_tensors.quantization.utils import strategy_cdiv
@@ -176,6 +177,11 @@ def initialize_qparams(
     strategy = quantization_args.strategy
     dynamic = quantization_args.dynamic
     device = get_execution_device(module)  # avoid performing intialization ops on cpu
+
+    if quantization_args.type == QuantizationType.CODEBOOK:
+        # Codebooks are currently disconnected from observers and produce their named
+        # qparams (weight_codebook, weight_packed) directly during compression.
+        return
 
     # Skip all intialization for fully dynamic quantization
     if dynamic is True:
