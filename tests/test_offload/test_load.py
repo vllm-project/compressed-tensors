@@ -146,6 +146,42 @@ def test_patch_forwards_positional_args(mock_from_accelerate):
 
 
 @pytest.mark.unit
+@patch("compressed_tensors.offload.load.from_accelerate")
+def test_patch_disk_device_map_uses_empty_max_memory(mock_from_accelerate):
+    """`device_map="disk"` must load with `device_map="auto"` and `max_memory={}`."""
+    received = {}
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+            received["kwargs"] = kwargs
+            return MagicMock()
+
+    with load_offloaded_model(FakeModel):
+        FakeModel.from_pretrained("org/model", device_map="disk")
+
+    assert received["kwargs"]["device_map"] == "auto"
+    assert received["kwargs"]["max_memory"] == {}
+
+
+@pytest.mark.unit
+@patch("compressed_tensors.offload.load.from_accelerate")
+def test_patch_disk_device_map_rejects_max_memory(mock_from_accelerate):
+    """`device_map="disk"` must error when the user also passes `max_memory`."""
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+            return MagicMock()
+
+    with pytest.raises(ValueError, match="cannot be used with `device_map='disk'`"):
+        with load_offloaded_model(FakeModel):
+            FakeModel.from_pretrained(
+                "org/model", device_map="disk", max_memory={"cpu": 1}
+            )
+
+
+@pytest.mark.unit
 def test_mmap_cap_reduces_shared_memory():
     """Tight mmap limit reduces _get_shared_memory return value."""
     with (
