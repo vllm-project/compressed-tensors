@@ -134,6 +134,89 @@ def test_fp8_block_converter_process():
 
 
 @pytest.mark.unit
+def test_fp8_block_converter_from_pretrained(monkeypatch):
+    weight_map = {
+        "model.layers.0.mlp.up_proj.weight": "model-00001.safetensors",
+        "model.layers.0.mlp.up_proj.weight_scale_inv": "model-00001.safetensors",
+        "model.layers.10.mlp.up_proj.weight": "model-00002.safetensors",
+        "model.layers.10.mlp.up_proj.weight_scale_inv": "model-00002.safetensors",
+        "model.layers.1.mlp.down_proj.weight_scale": "model-00002.safetensors",
+    }
+    monkeypatch.setattr(
+        "compressed_tensors.entrypoints.convert.converters.fp8block_dequantizer."
+        "get_checkpoint_files",
+        lambda _: {"model.safetensors.index.json": "/model/index.json"},
+    )
+    monkeypatch.setattr(
+        "compressed_tensors.entrypoints.convert.converters.fp8block_dequantizer."
+        "get_weight_map",
+        lambda _: weight_map,
+    )
+
+    converter = FP8BlockDequantizer.from_pretrained(
+        "stub",
+        ignore=["model.layers.10.mlp.up_proj"],
+        weight_block_size=(1, 1),
+        dtype=torch.float16,
+    )
+
+    assert converter.targets == frozenset(
+        {
+            "model.layers.0.mlp.up_proj",
+            "model.layers.10.mlp.up_proj",
+        }
+    )
+    assert converter.dtype == torch.float16
+    assert converter.weight_block_size == (1, 1)
+    assert converter.get_dependencies("model.layers.0.mlp.up_proj.weight") == {
+        "model.layers.0.mlp.up_proj.weight_scale_inv"
+    }
+    assert converter.get_dependencies("model.layers.1.mlp.up_proj.weight") == set()
+    assert converter.get_dependencies("model.layers.10.mlp.up_proj.weight") == set()
+
+    targeted_weight = torch.ones(1, 1, dtype=torch.float8_e4m3fn)
+    untargeted_weight = torch.ones(1, 1, dtype=torch.bfloat16)
+    tensors = {
+        "model.layers.0.mlp.up_proj.weight": targeted_weight,
+        "model.layers.0.mlp.up_proj.weight_scale_inv": torch.full((1, 1), 2.0),
+        "model.layers.1.mlp.up_proj.weight": untargeted_weight,
+    }
+
+    converter.process(tensors)
+
+    assert tensors["model.layers.0.mlp.up_proj.weight"].item() == 2.0
+    assert "model.layers.0.mlp.up_proj.weight_scale_inv" not in tensors
+    assert tensors["model.layers.1.mlp.up_proj.weight"] is untargeted_weight
+
+
+@pytest.mark.unit
+def test_fp8_block_converter_from_pretrained_raises_without_scale_inv(monkeypatch):
+    monkeypatch.setattr(
+        "compressed_tensors.entrypoints.convert.converters.fp8block_dequantizer."
+        "get_checkpoint_files",
+        lambda _: {"model.safetensors": "/model/model.safetensors"},
+    )
+    monkeypatch.setattr(
+        "compressed_tensors.entrypoints.convert.converters.fp8block_dequantizer."
+        "get_weight_map",
+        lambda _: {"model.layers.0.mlp.up_proj.weight": "model.safetensors"},
+    )
+
+    with pytest.raises(ValueError, match="No weight_scale_inv tensors found"):
+        FP8BlockDequantizer.from_pretrained("stub")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("targets", [[], ["Linear"]])
+def test_fp8_block_converter_all_inclusive_targets_have_dependencies(targets):
+    converter = FP8BlockDequantizer(targets=targets)
+
+    assert converter.get_dependencies("model.layers.0.mlp.up_proj.weight") == {
+        "model.layers.0.mlp.up_proj.weight_scale_inv"
+    }
+
+
+@pytest.mark.unit
 def test_fp8_block_converter_validate_with_meta_tensors():
     """
     Test that the converter's validate method works correctly with meta tensors

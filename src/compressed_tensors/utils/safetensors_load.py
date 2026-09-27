@@ -6,6 +6,7 @@ import os
 import re
 import struct
 from collections.abc import Iterable
+from typing import Any
 
 import torch
 from compressed_tensors.base import QUANTIZATION_CONFIG_NAME
@@ -31,6 +32,7 @@ __all__ = [
     "find_safetensors_index_path",
     "find_safetensors_index_file",
     "get_weight_map",
+    "get_tensor_metadata",
     "update_safetensors_index",
     "is_weights_file",
     "get_checkpoint_files",
@@ -225,6 +227,41 @@ def get_weight_map(model_files: dict[str, str]) -> dict[str, str]:
     # create from model.safetensors
     with safe_open(model_files[SAFE_WEIGHTS_NAME], framework="pt") as file:
         return {tensor: SAFE_WEIGHTS_NAME for tensor in file.keys()}
+
+
+def get_tensor_metadata(model_stub: str | os.PathLike) -> dict[str, dict[str, Any]]:
+    """
+    Given a local path or HuggingFace model stub, return a mapping from each
+    tensor name to its metadata (dtype and shape).
+
+    The model is expected to contain either a single safetensors file or
+    multiple files described by a safetensors index file. Metadata is read
+    from each shard's header without loading the tensor data itself.
+
+    :param model_stub: local path to a model directory or HuggingFace model stub
+    :return: dict mapping tensor name to a dict with keys
+        "dtype" (safetensors dtype string, e.g. "F16") and
+        "shape" (list of int dimensions)
+    """
+    model_files = get_checkpoint_files(model_stub)
+    weight_map = get_weight_map(model_files)
+
+    metadata = {}
+    for shard_name in set(weight_map.values()):
+        if shard_name not in model_files:
+            raise ValueError(f"Could not find shard {shard_name} in model files")
+        header = get_safetensors_header(model_files[shard_name])
+        for tensor_name, tensor_meta in header.items():
+            if tensor_name == "__metadata__":
+                continue
+            if tensor_name not in weight_map:
+                continue
+            metadata[tensor_name] = {
+                "dtype": tensor_meta["dtype"],
+                "shape": tensor_meta["shape"],
+            }
+
+    return metadata
 
 
 def update_safetensors_index(
