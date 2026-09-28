@@ -145,6 +145,7 @@ def test_forward_call(linear: torch.nn.Linear, cache):
 
 
 @pytest.mark.unit
+@requires_gpu
 @pytest.mark.parametrize("param_device", (ONLOAD_DEVICE, OFFLOAD_DEVICE))
 @pytest.mark.parametrize("use_register_parameter", (True, False))
 @pytest.mark.parametrize("requires_grad", (True, False))
@@ -168,6 +169,7 @@ def test_register_parameter(
 
 
 @pytest.mark.unit
+@requires_gpu
 @pytest.mark.parametrize("param_device", (ONLOAD_DEVICE, OFFLOAD_DEVICE))
 @pytest.mark.parametrize("use_register_parameter", (True, False))
 @pytest.mark.parametrize("requires_grad", (True, False))
