@@ -238,7 +238,7 @@ def test_offload_and_dispatch_model(model_id):
 
     # offload entire model
     model.to("cpu")
-    model = set_onload_device(model, ACCELERATOR_DEVICE_0)
+    set_onload_device(model, ACCELERATOR_DEVICE_0)
     offloaded_logits = model(**sample).logits
     for module in model.modules():
         assert_module_offloaded(module, ACCELERATOR_DEVICE_0, torch.device("cpu"))
