@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import contextlib
+import os
+import weakref
+from typing import ClassVar
+
 import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import get_source_rank, is_source_process
@@ -13,6 +18,66 @@ class DistributedDiskCache(DiskCache):
     Handles offloading and onloading tensors from/to disk. For more information, see
     `compressed_tensors.offload.cache.disk_cache::DiskCache`.
     """
+
+    _defer_file_deletion_depth = 0
+    _deferred_file_deletions: set[str] = set()
+    # MutableMapping instances are unhashable, so use weak values keyed by id.
+    _instances: ClassVar[
+        weakref.WeakValueDictionary[int, "DistributedDiskCache"]
+    ] = weakref.WeakValueDictionary()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._instances[id(self)] = self
+
+    @classmethod
+    @contextlib.contextmanager
+    def defer_file_deletions(cls):
+        """Delay shared-file deletion until distributed workers synchronize."""
+        cls._defer_file_deletion_depth += 1
+        try:
+            yield
+        finally:
+            cls._defer_file_deletion_depth -= 1
+
+    @classmethod
+    def flush_deferred_file_deletions(cls) -> None:
+        """Delete queued files that no distributed rank still references."""
+        pending = set(cls._deferred_file_deletions)
+        live_paths = set()
+        for cache in cls._instances.values():
+            for offloaded in cache.offloaded_values.values():
+                weight_info = cache.index.get(offloaded)
+                if weight_info is not None:
+                    file_path = weight_info["safetensors_file"]
+                    if file_path in pending:
+                        live_paths.add(file_path)
+
+        if dist.is_available() and dist.is_initialized():
+            gathered_live_paths = [None] * dist.get_world_size()
+            dist.all_gather_object(gathered_live_paths, live_paths)
+            protected_paths = set().union(
+                *(paths for paths in gathered_live_paths if paths is not None)
+            )
+        else:
+            protected_paths = live_paths
+
+        for file_path in pending - protected_paths:
+            if os.path.lexists(file_path):
+                try:
+                    os.remove(file_path)
+                except FileNotFoundError:
+                    # Another rank may have reclaimed the same stale path first.
+                    pass
+
+        # Retry protected files during a later round after references disappear.
+        cls._deferred_file_deletions.intersection_update(protected_paths)
+
+    def _remove_file(self, file_path: str) -> None:
+        if self._defer_file_deletion_depth > 0:
+            self._deferred_file_deletions.add(file_path)
+        else:
+            super()._remove_file(file_path)
 
     def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
         """
