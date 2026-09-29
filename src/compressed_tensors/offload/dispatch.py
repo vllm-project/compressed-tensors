@@ -73,7 +73,11 @@ def set_onload_device(
 
     # if not offloaded, need to determine how to offload
     else:
-        tensors = get_direct_state_dict(module)
+        tensors = {
+            name: tensor
+            for name, tensor in get_direct_state_dict(module).items()
+            if isinstance(tensor, torch.Tensor)
+        }
 
         # if this module has parameters, offload with params device
         if len(tensors) > 0:

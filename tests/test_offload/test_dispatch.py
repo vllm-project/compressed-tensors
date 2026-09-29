@@ -324,6 +324,7 @@ def test_set_onload_device_does_not_onload_offloaded_children():
 def test_set_onload_device_resolves_default_when_no_child_offloaded():
     linear = torch.nn.Linear(5, 5)
     container = torch.nn.Module()
+    container.register_buffer("bias", None)
     container.register_module("linear", linear)
 
     set_onload_device(container, ACCELERATOR_DEVICE_0)
