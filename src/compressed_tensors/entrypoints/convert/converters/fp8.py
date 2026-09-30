@@ -64,13 +64,11 @@ class FP8Converter(Converter):
         fp4_targets: Iterable[str] = tuple(),
         ignore: Iterable[str] = ("lm_head",),
         weight_block_size: tuple[int, int] = (128, 128),
-        fp4_group_size: int = 32,
     ):
         self.fp8_targets = list(fp8_targets)
         self.fp4_targets = list(fp4_targets)
         self.ignore = list(ignore)
         self.weight_block_size = tuple(weight_block_size)
-        self.fp4_group_size = fp4_group_size
 
     @classmethod
     def from_pretrained(
@@ -211,19 +209,17 @@ class FP8Converter(Converter):
                     strategy=QuantizationStrategy.GROUP,
                     symmetric=True,
                     dynamic=False,
-                    group_size=self.fp4_group_size,
+                    group_size=32,
                     scale_dtype=torch.uint8,
                     zp_dtype=torch.uint8,
                 ),
                 input_activations=QuantizationArgs(
-                    num_bits=4,
+                    num_bits=8,
                     type=QuantizationType.FLOAT,
                     strategy=QuantizationStrategy.GROUP,
                     symmetric=True,
                     dynamic=True,
-                    group_size=self.fp4_group_size,
-                    scale_dtype=torch.uint8,
-                    zp_dtype=torch.uint8,
+                    group_size=128,
                 ),
                 format=CompressionFormat.mxfp4_pack_quantized.value,
             )
