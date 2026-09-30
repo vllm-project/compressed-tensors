@@ -167,7 +167,18 @@ def remove_accelerate_from_module(
 
         # Replace meta tensor with offloaded value (no ptr rematerialization occurs)
         # In the disk case, the tensor remains as the meta tensor
-        if not isinstance(offload, (torch.nn.Parameter, torch.nn.Buffer)):
+        # Match the registered tensor kind, not just the Accelerate value's kind.
+        # A Buffer can be returned from the weights map for a parameter slot (and
+        # vice versa), which otherwise makes setattr reject the value.
+        offload_kind = (
+            isinstance(offload, torch.nn.Parameter),
+            isinstance(offload, torch.nn.Buffer),
+        )
+        tensor_kind = (
+            isinstance(tensor, torch.nn.Parameter),
+            isinstance(tensor, torch.nn.Buffer),
+        )
+        if offload_kind != tensor_kind:
             to_tensor(offload, tensor)
         setattr(module, local_name, offload)
 

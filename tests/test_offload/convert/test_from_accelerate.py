@@ -66,6 +66,42 @@ def test_remove_accelerate_from_module_cpu(accel_device):
 
 
 @pytest.mark.unit
+def test_remove_accelerate_buffer_value_for_parameter():
+    from accelerate.hooks import AlignDevicesHook, add_hook_to_module
+    from compressed_tensors.utils import patch_attr
+
+    class Scale(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight_global_scale = torch.nn.Parameter(
+                torch.empty(1, device="meta", dtype=torch.float32),
+                requires_grad=False,
+            )
+
+    module = Scale()
+    offload = torch.nn.Buffer(torch.tensor([0.5], dtype=torch.bfloat16))
+    offload_ptr = offload.data_ptr()
+    hook = AlignDevicesHook(
+        execution_device="cpu",
+        offload=True,
+        weights_map={"weight_global_scale": offload},
+    )
+    with patch_attr(AlignDevicesHook, "init_hook", lambda self, module: module):
+        add_hook_to_module(module, hook)
+
+    assert isinstance(hook.weights_map["weight_global_scale"], torch.nn.Buffer)
+
+    onload_device, offload_device, offload_dir = remove_accelerate_from_module(module)
+
+    assert onload_device == torch.device("cpu")
+    assert offload_device == torch.device("cpu")
+    assert offload_dir is None
+    assert isinstance(module.weight_global_scale, torch.nn.Parameter)
+    assert module.weight_global_scale.dtype == torch.bfloat16
+    assert module.weight_global_scale.data_ptr() == offload_ptr
+
+
+@pytest.mark.unit
 @requires_gpu
 @pytest.mark.filterwarnings("ignore::UserWarning")
 def test_remove_accelerate_from_module_disk(accel_device, tmp_path):
