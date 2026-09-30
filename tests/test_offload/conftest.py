@@ -10,6 +10,7 @@ from typing import Any, Callable, Literal, Optional
 
 import pytest
 import torch
+import torch.distributed as dist
 from compressed_tensors.offload.utils import send_tensors
 
 
@@ -83,6 +84,28 @@ def assert_tensor_equal(
         assert torch.equal(tensor_a, tensor_b)
 
 
+def _init_test_dist(world_size: int) -> None:
+    """
+    Initialize the process group for a `torchrun` test.
+
+    With one accelerator per rank this is `init_dist`, which assigns each rank
+    its own device and the matching backend. `init_dist` derives the device as
+    `{accelerator}:{local_rank}`, so with fewer accelerators than ranks, or none,
+    it has nothing valid to assign. In that case fall back to a CPU gloo group,
+    which lets tests that need no accelerator run anywhere. Tests that do need
+    one are gated with `requires_gpu(world_size)` and never reach the fallback.
+    """
+    if (
+        torch.accelerator.is_available()
+        and torch.accelerator.device_count() >= world_size
+    ):
+        from compressed_tensors.distributed import init_dist
+
+        init_dist()
+    elif not dist.is_initialized():
+        dist.init_process_group(backend="gloo")
+
+
 def torchrun(
     world_size: int = 1, init_dist: bool = False
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -119,9 +142,7 @@ def torchrun(
             # We're running in a torchrun subprocess: optionally init then run the test
             if "TORCHELASTIC_RUN_ID" in os.environ:
                 if init_dist:
-                    from compressed_tensors.distributed import init_dist as _init_dist
-
-                    _init_dist()
+                    _init_test_dist(world_size)
                 return func(*args, **kwargs)
 
             # First time calling in the main process:

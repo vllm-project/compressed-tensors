@@ -10,6 +10,7 @@ import torch.distributed as dist
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.logger import logger
 from compressed_tensors.offload.cache.base import OffloadCache
+from compressed_tensors.offload.cache.disk_utils import _evict
 from compressed_tensors.offload.cache.utils import (
     catch_pinned_mem_error,
     load_disk_tensor_from_offload,
@@ -189,6 +190,9 @@ class DiskCache(OffloadCache):
         if os.path.islink(file_path):
             assert self._is_ct_file_path(file_path), f"Attempted to remove {file_path}"
             os.unlink(file_path)
+        else:
+            # rewriting in place, so drop any handle still reading the old contents
+            _evict(file_path)
 
         # save with data using original weight_name
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"

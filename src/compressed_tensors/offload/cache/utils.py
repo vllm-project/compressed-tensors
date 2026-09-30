@@ -5,9 +5,9 @@ import errno
 from functools import wraps
 
 import torch
+from compressed_tensors.offload.cache.disk_utils import _opened
 from compressed_tensors.offload.utils import to_tensor
 from loguru import logger
-from safetensors import safe_open
 
 
 _CPU_MEMORY_KEYWORDS = (
@@ -110,9 +110,7 @@ def load_disk_tensor_from_offload(
     device: str,
     template: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    with safe_open(
-        offloaded["safetensors_file"], framework="pt", device=device
-    ) as file:
+    with _opened(offloaded["safetensors_file"], device) as file:
         onloaded = file.get_tensor(offloaded["weight_name"])
         if template is not None:
             onloaded = to_tensor(onloaded, template)
