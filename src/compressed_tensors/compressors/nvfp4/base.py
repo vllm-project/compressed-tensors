@@ -88,7 +88,7 @@ class NVFP4PackedCompressor(BaseCompressor):
             weight,
             scale,
             global_scale=global_scale,
-            zero_point=zero_point,
+            zero_point=zero_point if not weights.symmetric else None,
             group_size=weights.group_size,
         )
 
