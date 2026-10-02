@@ -109,7 +109,7 @@ def convert_checkpoint(
             if is_weights_file(shard_name):
                 logger.warning(f"Skip processing for weights file {shard_name}")
             if str(resolved_path) != str(save_path):
-                logger.info(f"Copying {shard_name} {save_path}")
+                logger.debug(f"Copying {shard_name} -> {save_path}")
                 shutil.copyfile(resolved_path, save_path)
 
     # Validate before long-running procssing job
