@@ -32,10 +32,11 @@ class DistributedDiskCache(DiskCache):
                 self.index[offloaded]["weight_name"],
                 self.index[offloaded]["dtype"],
                 offloaded.shape,
+                self.index[offloaded].get("checkpoint_file"),
             ]
         else:
             offloaded = send_tensors(tensor, device="meta")
-            broadcast_obj = [None, None, None, None]
+            broadcast_obj = [None, None, None, None, None]
 
         dist.broadcast_object_list(broadcast_obj, src=get_source_rank())
 
@@ -56,6 +57,8 @@ class DistributedDiskCache(DiskCache):
                 "weight_name": broadcast_obj[1],
                 "dtype": broadcast_obj[2],
             }
+            if broadcast_obj[4] is not None:
+                self.index[offloaded]["checkpoint_file"] = broadcast_obj[4]
 
         # wait for write to finish
         dist.barrier()

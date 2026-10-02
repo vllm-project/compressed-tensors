@@ -303,3 +303,58 @@ def test_disk_load_context_with_distributed_disk_cache(tmp_path_factory):
     # and identically outside the context
     for name, tensor in expected.items():
         assert_tensor_equal(cache[name], tensor)
+
+
+@pytest.mark.unit
+@torchrun(world_size=2, init_dist=True)
+def test_checkpoint_symlinks_share_a_handle_on_every_rank(
+    tmp_path_factory, monkeypatch
+):
+    """Every rank reads checkpoint symlinks into one shard through one handle.
+
+    Only the source rank creates the symlinks and records their shard. The
+    other ranks receive the index entry by broadcast, so the shard must come
+    with it, or each of their reads opens the shard again.
+    """
+    from compressed_tensors.offload.cache import disk_utils
+
+    rank = dist.get_rank()
+    paths = [None, None]
+    if rank == 0:
+        directory = tmp_path_factory.mktemp("checkpoint")
+        shard = directory / "model.safetensors"
+        save_file({f"w{i}": torch.full((4,), float(i)) for i in range(4)}, shard)
+        offload_dir = directory / "offload"
+        os.mkdir(offload_dir)
+        paths = [str(shard), str(offload_dir)]
+    dist.broadcast_object_list(paths, src=0)
+    shard, offload_dir = paths
+
+    DiskCache.index = {}
+    cache = DistributedDiskCache("cpu", offload_dir=offload_dir)
+    offloaded = []
+    for i in range(4):
+        meta = torch.empty(4, device="meta")
+        if rank == 0:
+            DistributedDiskCache.create_checkpoint_symlink(
+                meta,
+                {"safetensors_file": shard, "weight_name": f"w{i}", "dtype": "float32"},
+                offload_dir,
+            )
+        offloaded.append(cache.offload(meta))
+
+    opens = []
+    real = disk_utils.safe_open
+
+    def counted(*args, **kwargs):
+        opens.append(args[0])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(disk_utils, "safe_open", counted)
+    with disk_load_context():
+        values = [cache.onload(meta) for meta in offloaded]
+
+    assert len(opens) == 1, f"rank {rank} expected one open, got {len(opens)}"
+    for i, value in enumerate(values):
+        assert_tensor_equal(value, torch.full((4,), float(i)))
+    dist.barrier()
