@@ -89,7 +89,7 @@ class FP8Converter(Converter):
         if fp8_config.get("quant_method") != "fp8":
             raise ValueError("Model config is not an fp8 config")
 
-        weight_block_size = tuple(fp8_config.get("weight_block_size") or (128, 128))
+        weight_block_size = tuple(fp8_config.get("weight_block_size", (128, 128)))
 
         ignore = ["lm_head"]
         for module in fp8_config.get("modules_to_not_convert") or []:

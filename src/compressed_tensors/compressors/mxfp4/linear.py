@@ -22,6 +22,8 @@ the low nibble) with an E8M0 (bias-127) group scale per 32 input columns -- a
 layout that is directly consumable as MX-format operands.
 """
 
+from functools import lru_cache
+
 import torch
 from compressed_tensors.compressors.mx_utils import (
     compress_mx_scale,
@@ -35,7 +37,6 @@ from compressed_tensors.quantization.lifecycle.forward import forward_quantize, 
 from compressed_tensors.quantization.utils.helpers import compute_dynamic_scales_and_zp
 from compressed_tensors.utils.impl_backend import ImplBackend
 from compressed_tensors.utils.triton import HAS_TRITON, tl, triton
-from functools import lru_cache
 
 
 __all__ = ["dequantize_mxfp4_weight"]
@@ -57,7 +58,7 @@ def _is_blackwell(device: torch.device) -> bool:
     """FP4 tensor cores require CUDA compute capability >= 10.0 (Blackwell)."""
     if device.type != "cuda":
         return False
-    major, _ = torch.cuda.get_device_capability(device)
+    major, _ = torch.get_device_module().get_device_capability(device)
     return major >= 10
 
 

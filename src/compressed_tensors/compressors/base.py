@@ -12,6 +12,7 @@ from compressed_tensors.quantization import (
     QuantizationMetadata,
     QuantizationScheme,
     QuantizationStatus,
+    set_forward_quantized,
 )
 from compressed_tensors.registry import RegistryMixin
 from compressed_tensors.utils import (
@@ -187,12 +188,29 @@ class BaseCompressor(RegistryMixin, ABC):
         decompressed_state_dict = cls.decompress(state_dict, scheme)
         replace_direct_state_dict(module, decompressed_state_dict)
 
+        # `compress_module` may have replaced the module's forward with
+        # `compressed_forward` (which consumes `weight_packed`). Now that the
+        # compressed params are gone, that forward would fail, so restore the
+        # appropriate forward. This mirrors the `_binds_compressed_forward` guard
+        # used when the compressed forward was installed.
+        restore_forward = cls._binds_compressed_forward(module)
+
         if leave_decompressed:
             module.quantization_status = QuantizationStatus.DECOMPRESSED
+            # module keeps its quantization scheme, so restore the fake-quantized
+            # forward that operates on the dense `weight`.
+            if restore_forward:
+                with unwrap_offload_forward(module):
+                    set_forward_quantized(module)
         else:
             QuantizationMetadata.clear_quantization(module)
             if hasattr(module, "quantization_status"):
                 delattr(module, "quantization_status")
+            # quantization is fully removed, so restore the module's original
+            # (unquantized) forward.
+            if restore_forward:
+                with unwrap_offload_forward(module):
+                    module.forward = module.__class__.forward.__get__(module)
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:

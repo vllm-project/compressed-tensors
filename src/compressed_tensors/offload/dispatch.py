@@ -48,30 +48,71 @@ DeviceMap = dict[str, tuple[torch.device | None, torch.device | str | None]]
 
 
 def set_onload_device(
-    model: ModelType,
+    module: ModelType,
     onload_device: torch.device | str,
-) -> ModelType:
+) -> tuple[bool, dict]:
     """
-    Modify the dispatch of a model to onload to the provided `onload_device`. Existing
-    offloaded tensors will not be modified. If a module is not already offloaded, it
-    will be offloaded to its current device.
+    Modify the dispatch of a model to onload to the provided `onload_device`. All
+    modules will be offloaded, with offload device set with the following priority:
+
+    1. Offloaded modules retain their existing offloads
+    2. Modules with existing parameters will be offloaded to the parameter device
+    3. Modules without parameters will adopt of the offloading of any offloaded children
+    4. Modules without parameters or children will be offloaded to cpu
 
     :param model: model to dispatch
     :param onload_device: device to move weights to during forward pass
-    :return: dispatched model
     """
+    from compressed_tensors.offload import get_cache_init_kwargs
     from compressed_tensors.utils.module import get_direct_state_dict
 
-    for name, module in model.named_modules():
-        if isinstance(module._parameters, OffloadCache):
-            module._parameters.onload_device = onload_device
-            module._buffers.onload_device = onload_device
-        else:
-            #tensor = next(get_direct_state_dict(module).values(), None)
-            offload_device = "disk"# tensor.device if tensor is not None else torch.device("cpu")
-            offload_module(module, onload_device, offload_device, offload_dir="/data/kylesayrs/hub/offload_folder")
+    # recursively set onload device for children
+    child_offloaded = False
+    child_kwargs = {"onload_device": onload_device}
+    for child in module.children():
+        _offloaded, _kwargs = set_onload_device(child, onload_device)
+        if not child_offloaded and _offloaded:  # first child
+            child_offloaded = _offloaded
+            child_kwargs = _kwargs
 
-    return model
+    # if this module is offloaded, set onload device
+    if isinstance(module._parameters, OffloadCache):
+        assert isinstance(module._buffers, OffloadCache)
+        module._parameters.onload_device = onload_device
+        module._buffers.onload_device = onload_device
+        offload_kwargs = get_cache_init_kwargs(module)
+        return True, offload_kwargs
+
+    # if not offloaded, need to determine how to offload
+    else:
+        tensors = {
+            name: tensor
+            for name, tensor in get_direct_state_dict(module).items()
+            if isinstance(tensor, torch.Tensor)
+        }
+
+        # if this module has parameters, offload with params device
+        if len(tensors) > 0:
+            offload_kwargs = {
+                "onload_device": onload_device,
+                "offload_device": next(iter(tensors.values())).device,
+            }
+            offload_module(module, **offload_kwargs)
+            return False, offload_kwargs
+
+        # if this module does not have parameters, offload with child module
+        elif child_offloaded:
+            offload_module(module, **child_kwargs)
+            return True, child_kwargs
+
+        # if not child was found, offload with cpu
+        else:
+            offload_kwargs = {
+                "onload_device": onload_device,
+                "offload_device": torch.device("cpu"),
+            }
+            offload_module(module, **offload_kwargs)
+            return False, offload_kwargs
 
 
 @deprecated("set_onload_device")
@@ -114,9 +155,7 @@ def dispatch_with_map(
     # objects) are batched into a single exchange, while accelerator offloads
     # (which broadcast raw tensor data) keep their per-tensor path.
     if is_distributed():
-        return _dispatch_with_map_batched(
-            model, device_map, offload_dir, show_progress
-        )
+        return _dispatch_with_map_batched(model, device_map, offload_dir, show_progress)
 
     for name, (onload_device, offload_device) in tqdm(
         list(device_map.items()),
@@ -244,8 +283,14 @@ def _dispatch_with_map_batched(
         # cpu / disk offload: batch the metadata exchange
         if source:
             _offload_module_source(
-                module, onload, offload, offload_dir, name, metadata,
-                aliases, canonical_offloaded,
+                module,
+                onload,
+                offload,
+                offload_dir,
+                name,
+                metadata,
+                aliases,
+                canonical_offloaded,
             )
         else:
             deferred.append((name, module, onload, offload))
@@ -418,9 +463,7 @@ def _offload_module_replica(
 
 
 def _is_alias(meta) -> bool:
-    return (
-        isinstance(meta, tuple) and len(meta) == 2 and meta[0] == _OFFLOAD_ALIAS
-    )
+    return isinstance(meta, tuple) and len(meta) == 2 and meta[0] == _OFFLOAD_ALIAS
 
 
 def get_device_map(

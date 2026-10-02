@@ -48,7 +48,10 @@ def classify_targets(
 
     fp8_patterns: set[str] = set()
     fp4_patterns: set[str] = set()
-    for weight_name, dtype in weight_dtypes.items():
+    import tqdm
+
+    print(ignore)
+    for weight_name, dtype in tqdm.tqdm(weight_dtypes.items()):
         module_name = weight_name[: -len(".weight")]
         if not any(f"{module_name}.{s}" in all_names for s in SCALE_PARAM_NAMES):
             continue  # unquantized weight (e.g. norms), skip

@@ -152,6 +152,9 @@ class QuantizationConfig(BaseModel):
         compression ratio achieved by the quantization config
     :ignore: optional list of layers to ignore from config_groups. Layers in this list
         are not quantized even if they match up with a target in config_groups
+    :layer_overrides: optional dictionary mapping global config keys to the same keys
+        but applied per-layer. For example, this enables non-uniform expert sparsity
+        where different layers have different numbers of experts
     """
 
     config_groups: dict[str, QuantizationScheme | list[str]]
@@ -161,6 +164,7 @@ class QuantizationConfig(BaseModel):
     quantization_status: QuantizationStatus = QuantizationStatus.INITIALIZED
     global_compression_ratio: float | None = None
     ignore: list[str] | None = Field(default_factory=list)
+    layer_overrides: dict[str, list[int]] = Field(default_factory=dict)
 
     def model_post_init(self, __context):
         """

@@ -168,7 +168,7 @@ def test_forward_backends_match_emulated(backend_fn, scheme_name, bias):
     """Each registered backend (eager, triton emulation, fp4 tensor cores)
     matches the emulated reference forward."""
     if backend_fn == "mxfp4_forward_fp4" and (
-        torch.cuda.get_device_capability()[0] < 10
+        torch.get_device_module().get_device_capability()[0] < 10
     ):
         pytest.skip("FP4 tensor cores require Blackwell (SM100+)")
 
