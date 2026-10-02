@@ -237,6 +237,27 @@ MXFP4 = dict(
     ),
 )
 
+MXFP4FP8 = dict(
+    weights=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+    ),
+    input_activations=QuantizationArgs(
+        num_bits=8,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        symmetric=True,
+        dynamic=True,
+        group_size=128,
+    ),
+)
+
 MXFP8A16 = dict(
     weights=QuantizationArgs(
         num_bits=8,
