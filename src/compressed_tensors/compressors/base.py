@@ -7,7 +7,11 @@ from typing import Optional
 import torch
 from compressed_tensors.compressors.format import infer_module_format
 from compressed_tensors.config import CompressionFormat
-from compressed_tensors.quantization import QuantizationScheme, QuantizationStatus
+from compressed_tensors.quantization import (
+    QuantizationMetadata,
+    QuantizationScheme,
+    QuantizationStatus,
+)
 from compressed_tensors.registry import RegistryMixin
 from compressed_tensors.utils import (
     TensorStateDict,
@@ -112,7 +116,9 @@ class BaseCompressor(RegistryMixin, ABC):
         module.quantization_status = QuantizationStatus.COMPRESSED
 
     @classmethod
-    def decompress_module(cls, module: torch.nn.Module) -> None:
+    def decompress_module(
+        cls, module: torch.nn.Module, leave_decompressed: bool = True
+    ) -> None:
         """
         Decompress a module in-place by decompressing its state dict.
 
@@ -121,6 +127,10 @@ class BaseCompressor(RegistryMixin, ABC):
         version.
 
         :param module: the module to decompress in-place
+        :param leave_decompressed: if True, set quantization_status to DECOMPRESSED
+            after decompression. If False, remove all qparams, quantization_scheme,
+            quantization_status, and restore the original forward method, leaving the
+            module as if quantization had never been applied.
         """
         scheme = getattr(module, "quantization_scheme")
 
@@ -128,7 +138,14 @@ class BaseCompressor(RegistryMixin, ABC):
         decompressed_state_dict = cls.decompress(state_dict, scheme)
         replace_direct_state_dict(module, decompressed_state_dict)
 
-        module.quantization_status = QuantizationStatus.DECOMPRESSED
+        if leave_decompressed:
+            module.quantization_status = QuantizationStatus.DECOMPRESSED
+        else:
+            QuantizationMetadata.clear_quantization(module)
+            if hasattr(module, "quantization_status"):
+                delattr(module, "quantization_status")
+            if hasattr(module, "quantization_scheme"):
+                delattr(module, "quantization_scheme")
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
@@ -194,11 +211,12 @@ def compress_module(
 
 
 def decompress_module(
-    module: torch.nn.Module, format: Optional[CompressionFormat] = None
+    module: torch.nn.Module,
+    format: Optional[CompressionFormat] = None,
+    leave_decompressed: bool = True,
 ):
     """
-    Decompress a module which has had quantization applied to it. Sets the
-    module's quantization format attribute to whichever format was used to decompress.
+    Decompress a module which has had quantization applied to it.
 
     The format used to decompress will be found from one of the following locations:
     1. the `format` argument passed to this function
@@ -207,6 +225,10 @@ def decompress_module(
 
     :param module: module to decompress inplace
     :param format: force override for decompression format
+    :param leave_decompressed: if True (default), set quantization_status to
+        DECOMPRESSED after decompression. If False, remove all qparams,
+        quantization_scheme, quantization_status, and restore the original forward
+        method, leaving the module as if quantization had never been applied.
     """
     scheme = getattr(module, "quantization_scheme", None)
     if not isinstance(scheme, QuantizationScheme):
@@ -216,4 +238,4 @@ def decompress_module(
         format or scheme.format or infer_module_format(type(module), scheme)
     )
     compressor = BaseCompressor.get_value_from_registry(scheme.format.value)
-    compressor.decompress_module(module)
+    compressor.decompress_module(module, leave_decompressed=leave_decompressed)
