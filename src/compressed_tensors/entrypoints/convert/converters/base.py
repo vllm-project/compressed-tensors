@@ -174,5 +174,12 @@ def build_inverse_weight_maps(
             resolved_path = model_files[weight_to_add_shard_name]
             current_iwm[resolved_path].append(weight_to_add_name)
 
+    # a shard containing only dependency tensors has no primary weight of its
+    # own: its tensors are loaded and saved by the jobs that own them. Give it
+    # an empty plan so job building can skip it instead of erroring
+    for shard_name in model_files:
+        if shard_name.endswith(".safetensors"):
+            inverse_weight_maps.setdefault(shard_name, {})
+
     # return dicts, not defaultdicts, to avoid silent errors
     return {k: dict(v) for k, v in inverse_weight_maps.items()}

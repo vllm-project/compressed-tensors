@@ -234,6 +234,105 @@ def test_update_config_rewrites_expert_ignore(mock_2d_moe_checkpoint):
 
 
 @pytest.mark.unit
+def test_update_config_remaps_expert_targets():
+    from compressed_tensors.config import CompressionFormat
+    from compressed_tensors.quantization import QuantizationConfig, QuantizationScheme
+    from compressed_tensors.quantization.quant_scheme import NVFP4
+
+    conv = MoEExpertPacker(
+        expert_pattern=r"\.experts\.\d+\.", groups={}, fuse_gate_up=True
+    )
+
+    config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                **NVFP4,
+                targets=[
+                    "Linear",
+                    "model.layers.0.mlp.experts.0.gate_proj",
+                    "model.layers.0.mlp.experts.0.up_proj",
+                    "model.layers.0.mlp.experts.1.down_proj",
+                    "re:.*mlp\\.experts\\.\\d+\\.gate_proj",
+                ],
+                format=CompressionFormat.nvfp4_pack_quantized.value,
+            )
+        }
+    )
+
+    out = conv.update_config(config)
+
+    assert out.config_groups["group_0"].targets == [
+        "Linear",
+        # fused gate/up experts collapse to one packed target
+        "model.layers.0.mlp.experts.gate_up_proj",
+        "model.layers.0.mlp.experts.down_proj",
+        # regex entries are left untouched
+        "re:.*mlp\\.experts\\.\\d+\\.gate_proj",
+    ]
+
+
+@pytest.mark.unit
+def test_convert_checkpoint_shard_of_only_dependencies(mock_2d_moe_checkpoint):
+    """
+    Experts of one layer span multiple shards; a shard holding only non-anchor
+    (dependency) tensors must convert cleanly, its tensors written by the
+    anchor tensors' jobs.
+    """
+    from compressed_tensors.entrypoints.convert import convert_checkpoint
+
+    src = mock_2d_moe_checkpoint
+    with safe_open(str(src / "model.safetensors"), framework="pt") as f:
+        tensors = {name: f.get_tensor(name) for name in f.keys()}
+
+    # anchor tensors (expert 0 + everything non-expert) vs dependency-only tensors
+    anchors = {
+        name: t
+        for name, t in tensors.items()
+        if ".experts." not in name or ".experts.0." in name
+    }
+    dependencies = {name: t for name, t in tensors.items() if name not in anchors}
+    assert dependencies
+
+    (src / "model.safetensors").unlink()
+    save_file(anchors, str(src / "model-00001.safetensors"))
+    save_file(dependencies, str(src / "model-00002.safetensors"))
+    index = {
+        "metadata": {"total_size": 0},
+        "weight_map": {
+            name: "model-00001.safetensors"
+            if name in anchors
+            else "model-00002.safetensors"
+            for name in tensors
+        },
+    }
+    with open(src / "model.safetensors.index.json", "w") as f:
+        json.dump(index, f)
+
+    save_dir = src / "out"
+    conv = MoEExpertPacker.from_pretrained(str(src))
+    convert_checkpoint(src, save_dir, conv)
+
+    with open(save_dir / "model.safetensors.index.json") as f:
+        final_map = json.load(f)["weight_map"]
+
+    # every per-expert tensor is replaced by its packed counterpart
+    for layer in (0, 1):
+        for proj in ("gate_up_proj", "down_proj"):
+            for param in PARAM_SHAPES:
+                assert _stacked_name(layer, proj, param) in final_map
+    assert not any(
+        ".experts." in name and name.rsplit(".experts.", 1)[1][0].isdigit()
+        for name in final_map
+    )
+
+    # each packed tensor lives in the shard the index claims, stacked over experts
+    for name, shard in final_map.items():
+        if ".experts.gate_up_proj." in name or ".experts.down_proj." in name:
+            with safe_open(str(save_dir / shard), framework="pt") as f:
+                assert f.get_slice(name).get_shape()[0] == NUM_EXPERTS
+
+
+@pytest.mark.unit
 def test_already_packed_raises(tmp_path):
     # a 3D weight_packed that still name-matches the per-expert pattern
     tensors = {

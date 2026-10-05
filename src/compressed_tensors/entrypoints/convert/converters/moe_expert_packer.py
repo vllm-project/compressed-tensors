@@ -19,6 +19,7 @@ from loguru import logger
 from .moe_expert_packer_helpers import (
     build_output_tensors,
     repack_ignore,
+    repack_target,
     validate_linearized,
 )
 
@@ -173,9 +174,20 @@ class MoEExpertPacker(Converter):
     ) -> QuantizationConfig | None:
         # weights are only regrouped, so the scheme is preserved; but ignore
         # entries naming now-removed per-expert modules are collapsed to the
-        # packed expert module (e.g. `...experts.0.down_proj` -> `...experts`)
-        if config is not None and config.ignore:
-            config.ignore = repack_ignore(config.ignore)
+        # packed expert module (e.g. `...experts.0.down_proj` -> `...experts`),
+        # and exact per-expert targets are remapped to their packed names
+        # (e.g. `...experts.0.gate_proj` -> `...experts.gate_up_proj`)
+        if config is not None:
+            if config.ignore:
+                config.ignore = repack_ignore(config.ignore)
+            for scheme in config.config_groups.values():
+                targets = getattr(scheme, "targets", None)
+                if isinstance(targets, list):
+                    scheme.targets = list(
+                        dict.fromkeys(
+                            repack_target(t, self.fuse_gate_up) for t in targets
+                        )
+                    )
         return config
 
     def get_dependencies(self, weight_name: str) -> set[str]:

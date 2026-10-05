@@ -14,6 +14,7 @@ __all__ = [
     "build_output_tensors",
     "replace_segment",
     "repack_ignore",
+    "repack_target",
     "validate_linearized",
 ]
 
@@ -104,6 +105,28 @@ def repack_ignore(ignore: list[str]) -> list[str]:
         if entry not in result:
             result.append(entry)
     return result
+
+
+def repack_target(target: str, fuse_gate_up: bool) -> str:
+    """
+    Rewrite an exact per-expert-module target to its packed name: the expert-index
+    segment is dropped and, when fusing, ``gate_proj``/``up_proj`` map to the
+    fused ``gate_up_proj``. Regex (``re:``) and non-expert targets pass through
+    unchanged.
+    """
+    if target.startswith("re:"):
+        return target
+    parts = target.split(".")
+    found = find_expert_index(parts)
+    if found is None:
+        return target
+    del parts[found[0]]
+    if fuse_gate_up:
+        for proj in (GATE_PROJ, UP_PROJ):
+            replaced = replace_segment(".".join(parts), proj, GATE_UP_PROJ)
+            if replaced is not None:
+                return replaced
+    return ".".join(parts)
 
 
 def validate_linearized(groups, weight_map, model_files):
