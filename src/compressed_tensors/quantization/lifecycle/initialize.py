@@ -132,9 +132,11 @@ def initialize_module_for_quantization(
 
 def _is_attention_module(module: Module) -> bool:
     class_name = type(module).__name__.lower()
-    return "attention" in class_name and any(
-        hasattr(module, name) for name in _ATTENTION_PROJECTION_NAMES
-    )
+    if "attention" not in class_name:
+        return False
+
+    with disable_onloading():
+        return any(hasattr(module, name) for name in _ATTENTION_PROJECTION_NAMES)
 
 
 @deprecated("is_cached_attention_module")
@@ -146,8 +148,9 @@ def is_cached_attention_module(module: Module) -> bool:
     if not _is_attention_module(module):
         return False
 
-    if not any(hasattr(module, name) for name in _KV_CACHE_PROJECTION_NAMES):
-        return False
+    with disable_onloading():
+        if not any(hasattr(module, name) for name in _KV_CACHE_PROJECTION_NAMES):
+            return False
 
     try:
         parameters = inspect.signature(module.forward).parameters
