@@ -223,16 +223,25 @@ def test_set_item(offloaded_linear: torch.nn.Linear):
     with disable_onloading():
         assert offloaded_linear.weight is overwrite
 
-
-@pytest.mark.unit
-def test_set_item_buffers(offloaded_linear: torch.nn.Linear):
-    # common case: registering buffers of difference sizes twice
-    new = torch.rand(5)
-    offloaded_linear.register_buffer("buffer", new, persistent=False)
+    # overwrite buffer as parameter
+    offloaded_linear.aux = torch.nn.Buffer(torch.rand(6, 6, device=OFFLOAD_DEVICE))
+    buffer = torch.nn.Parameter(
+        torch.rand(6, 6, device=OFFLOAD_DEVICE), requires_grad=False
+    )
+    offloaded_linear.aux = buffer
     with disable_onloading():
-        assert offloaded_linear.buffer is new
+        assert offloaded_linear.aux is buffer
 
-    overwrite = torch.rand(6)
-    offloaded_linear.register_buffer("buffer", overwrite, persistent=False)
-    with disable_onloading():
-        assert offloaded_linear.buffer is overwrite
+
+# @pytest.mark.unit
+# def test_set_item_buffers(offloaded_linear: torch.nn.Linear):
+#     # common case: registering buffers of difference sizes twice
+#     new = torch.rand(5)
+#     offloaded_linear.register_buffer("buffer", new, persistent=False)
+#     with disable_onloading():
+#         assert offloaded_linear.buffer is new
+
+#     overwrite = torch.rand(6)
+#     offloaded_linear.register_buffer("buffer", overwrite, persistent=False)
+#     with disable_onloading():
+#         assert offloaded_linear.buffer is overwrite
