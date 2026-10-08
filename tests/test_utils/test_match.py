@@ -280,6 +280,15 @@ class TestMatchNamedModules:
         ignored_names = [name for name, _ in matches_with_ignore]
         assert "layer1" not in ignored_names
 
+    def test_module_filter(self):
+        """Test restricting matches to a supplied module collection."""
+        model = DummyModel()
+        matches = list(
+            match_named_modules(model, ["Linear"], modules=[model.layer1])
+        )
+
+        assert matches == [("layer1", model.layer1)]
+
     def test_empty_targets(self):
         """Test with empty targets list"""
         model = DummyModel()
