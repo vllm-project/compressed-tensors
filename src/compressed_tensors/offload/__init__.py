@@ -8,7 +8,7 @@ from typing import Literal
 
 import torch
 from compressed_tensors.distributed.utils import set_source_process
-from compressed_tensors.offload.cache import DiskCache, OffloadCache
+from compressed_tensors.offload.cache import DiskCache, OffloadCache, disk_load_context
 from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.dispatch import (  # noqa: F401
     dispatch_model,
@@ -54,6 +54,7 @@ __all__ = [
     # control movement
     "disable_onloading",
     "disable_offloading",
+    "disk_load_context",
     # manipulate parameters
     "update_offload_parameter",
     "get_execution_device",

@@ -10,7 +10,11 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 from compressed_tensors.entrypoints.convert import convert_checkpoint
-from compressed_tensors.entrypoints.convert.convert_checkpoint import _resolve_devices
+from compressed_tensors.entrypoints.convert.convert_checkpoint import (
+    _auto_max_workers,
+    _max_threads,
+    _resolve_devices,
+)
 from compressed_tensors.entrypoints.convert.convert_file import (
     convert_file,
     write_checkpoint_quantization_config,
@@ -22,12 +26,15 @@ from compressed_tensors.quantization import (
     QuantizationScheme,
 )
 from safetensors.torch import load_file, save_file
+from tests.testing_utils import requires_gpu
 
 
 _CHECKPOINT_MODULE = sys.modules[
     "compressed_tensors.entrypoints.convert.convert_checkpoint"
 ]
+_MEMORY_MODULE = sys.modules["compressed_tensors.entrypoints.convert.memory"]
 _CONVERT_FILE_MODULE = "compressed_tensors.entrypoints.convert.convert_file"
+_GB = 1024**3
 
 
 def _checkpoint_dependencies():
@@ -116,10 +123,11 @@ def test_convert_checkpoint_cpu_uses_dynamic_scheduler(
             job_memory_estimator=job_memory_estimator,
         )
 
-    # validation still runs through exec_jobs
+    # validation still runs through exec_jobs, with one worker per job (one job
+    # here) regardless of max_workers
     exec_jobs.assert_called_once()
     assert exec_jobs.call_args.kwargs == {"desc": "Validating"}
-    assert exec_jobs.call_args.args[1] == 2
+    assert exec_jobs.call_args.args[1] == 1
 
     # conversion is scheduled through exec_jobs_dynamic even on CPU, with zero
     # memory estimates and without invoking the profiler
@@ -230,6 +238,11 @@ def test_convert_checkpoint_rejects_empty_device_list(get_checkpoint_files, tmp_
     get_checkpoint_files.assert_not_called()
 
 
+def test_convert_checkpoint_defaults_to_auto_max_workers():
+    default = inspect.signature(convert_checkpoint).parameters["max_workers"].default
+    assert default == "auto"
+
+
 def test_convert_checkpoint_defaults_to_meta_estimator():
     default = (
         inspect.signature(convert_checkpoint).parameters["job_memory_estimator"].default
@@ -260,7 +273,8 @@ def test_resolve_devices_falls_back_to_cpu():
     assert devices == [torch.device("cpu")]
 
 
-def test_convert_checkpoint_local_checkpoint_end_to_end(tmp_path):
+@pytest.mark.parametrize("max_workers", (2, "auto"))
+def test_convert_checkpoint_local_checkpoint_end_to_end(tmp_path, max_workers):
     source = tmp_path / "source"
     output = tmp_path / "output"
     source.mkdir()
@@ -271,7 +285,9 @@ def test_convert_checkpoint_local_checkpoint_end_to_end(tmp_path):
     save_file(tensors, source / "model.safetensors")
     (source / "config.json").write_text(json.dumps({"model_type": "test"}))
 
-    convert_checkpoint(source, output, NoOpConverter(), max_workers=2, device="cpu")
+    convert_checkpoint(
+        source, output, NoOpConverter(), max_workers=max_workers, device="cpu"
+    )
 
     converted = load_file(output / "model.safetensors")
     assert converted.keys() == tensors.keys()
@@ -398,3 +414,207 @@ def test_config_writer_ignores_non_ct_config(existing_config, tmp_path):
 
     converter.update_config.assert_called_once_with(None)
     assert "quantization_config" not in json.loads(config_path.read_text())
+
+
+# ── max_workers="auto" ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("free_memory", "memory_estimates", "max_threads", "expected"),
+    (
+        # bounded by device memory: 10 // 5 + 25 // 5 copies of the largest job
+        ({"cuda:0": 10 * _GB, "cuda:1": 25 * _GB}, [4 * _GB, 5 * _GB] * 5, 32, 7),
+        # bounded by the number of jobs
+        ({"cuda:0": 80 * _GB}, [1 * _GB] * 3, 32, 3),
+        # bounded by the thread limit
+        ({"cuda:0": 80 * _GB}, [1 * _GB] * 20, 8, 8),
+        # largest job does not fit, so the scheduler is left to raise
+        ({"cuda:0": 10 * _GB}, [20 * _GB] * 4, 32, 1),
+        # zero memory estimates are not bounded by device memory
+        ({"cuda:0": 0}, [0] * 20, 32, 20),
+    ),
+)
+def test_auto_max_workers(free_memory, memory_estimates, max_threads, expected):
+    free_memory = {torch.device(dev): free for dev, free in free_memory.items()}
+    devices = list(free_memory.keys())
+
+    with (
+        patch.object(_CHECKPOINT_MODULE, "_snapshot_free", return_value=free_memory),
+        patch.object(_CHECKPOINT_MODULE, "_max_threads", return_value=max_threads),
+    ):
+        assert _auto_max_workers(devices, memory_estimates) == expected
+
+
+@pytest.mark.parametrize(
+    ("sched_getaffinity", "expected"),
+    (
+        # process is pinned to 8 of the host's 24 CPUs, e.g. in a container
+        ({"return_value": set(range(8))}, 8 + 4),
+        # sched_getaffinity is not available on macOS and Windows
+        ({"side_effect": AttributeError}, 24 + 4),
+        # capped at 32, like ThreadPoolExecutor
+        ({"return_value": set(range(64))}, 32),
+    ),
+)
+def test_max_threads_counts_available_cpus(sched_getaffinity, expected):
+    with (
+        patch("os.cpu_count", return_value=24),
+        patch("os.sched_getaffinity", create=True, **sched_getaffinity),
+    ):
+        assert _max_threads() == expected
+
+
+@pytest.mark.parametrize("memory_estimates", ([0] * 8, [0], []))
+def test_auto_max_workers_cpu_runs_sequentially(memory_estimates):
+    with patch.object(_CHECKPOINT_MODULE, "_snapshot_free") as snapshot_free:
+        assert _auto_max_workers([torch.device("cpu")], memory_estimates) == 1
+
+    snapshot_free.assert_not_called()
+
+
+@patch.object(_CHECKPOINT_MODULE, "update_safetensors_index")
+@patch.object(_CHECKPOINT_MODULE, "write_checkpoint_quantization_config")
+@patch.object(_CHECKPOINT_MODULE, "exec_jobs_dynamic")
+@patch.object(_CHECKPOINT_MODULE, "exec_jobs", return_value=[])
+@patch.object(_CHECKPOINT_MODULE, "_auto_max_workers", return_value=3)
+@patch.object(_CHECKPOINT_MODULE, "build_inverse_weight_maps")
+@patch.object(_CHECKPOINT_MODULE, "get_weight_map")
+@patch.object(_CHECKPOINT_MODULE, "get_checkpoint_files")
+def test_convert_checkpoint_resolves_auto_max_workers(
+    get_checkpoint_files,
+    get_weight_map,
+    build_inverse_weight_maps,
+    auto_max_workers,
+    exec_jobs,
+    exec_jobs_dynamic,
+    write_checkpoint_quantization_config,
+    update_safetensors_index,
+    tmp_path,
+):
+    shard_names = ["model-0.safetensors", "model-1.safetensors"]
+    get_checkpoint_files.return_value = {
+        name: f"/source/{name}" for name in shard_names
+    }
+    get_weight_map.return_value = {"weight": shard_names[0]}
+    build_inverse_weight_maps.return_value = {
+        name: {f"/source/{name}": None} for name in shard_names
+    }
+    exec_jobs_dynamic.return_value = [(4, {"weight": shard_names[0]}), (0, {})]
+    devices = [torch.device("cuda:0"), torch.device("cuda:1")]
+
+    convert_checkpoint(
+        "source",
+        tmp_path,
+        Mock(),
+        max_workers="auto",
+        device=devices,
+        job_memory_estimator=Mock(return_value=123),
+    )
+
+    # validation uses one worker per job, up to the thread limit
+    assert exec_jobs.call_args.args[1] == min(len(shard_names), _max_threads())
+
+    # conversion uses the value resolved from devices and memory estimates
+    auto_max_workers.assert_called_once_with(devices, [123, 123])
+    assert exec_jobs_dynamic.call_args.kwargs["max_workers"] == 3
+
+
+@pytest.mark.parametrize("max_workers", ("fast", 0, -1, 1.5, None))
+@patch.object(_CHECKPOINT_MODULE, "get_checkpoint_files")
+def test_convert_checkpoint_rejects_invalid_max_workers(
+    get_checkpoint_files, max_workers, tmp_path
+):
+    with pytest.raises(ValueError, match="max_workers must be"):
+        convert_checkpoint(
+            "source", tmp_path, Mock(), max_workers=max_workers, device="cpu"
+        )
+
+    get_checkpoint_files.assert_not_called()
+
+
+def _save_tiny_shards(source: Path, num_shards: int) -> dict[str, torch.Tensor]:
+    """Save one small tensor per shard, plus an index, and return all tensors"""
+    source.mkdir()
+    tensors, weight_map = {}, {}
+    for index in range(num_shards):
+        shard_name = f"model-{index}.safetensors"
+        shard = {f"layers.{index}.weight": torch.randn(64, 64)}
+        save_file(shard, source / shard_name)
+        tensors.update(shard)
+        weight_map.update({name: shard_name for name in shard})
+    (source / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": weight_map})
+    )
+    return tensors
+
+
+def _assert_shards_equal(output: Path, tensors: dict[str, torch.Tensor]):
+    converted = {}
+    for index in range(len(tensors)):
+        converted.update(load_file(output / f"model-{index}.safetensors"))
+    assert converted.keys() == tensors.keys()
+    for name, tensor in tensors.items():
+        assert torch.equal(converted[name], tensor)
+
+
+@requires_gpu
+def test_convert_checkpoint_auto_max_workers_on_accelerators(tmp_path):
+    """All available accelerators are passed to the scheduler, and workers are
+    resolved from their real free memory. Shards are tiny, so the number of jobs
+    is the binding limit"""
+    num_shards = 4
+    tensors = _save_tiny_shards(tmp_path / "source", num_shards)
+
+    exec_jobs_dynamic = _CHECKPOINT_MODULE.exec_jobs_dynamic
+    with patch.object(
+        _CHECKPOINT_MODULE, "exec_jobs_dynamic", wraps=exec_jobs_dynamic
+    ) as spy:
+        convert_checkpoint(
+            tmp_path / "source",
+            tmp_path / "output",
+            NoOpConverter(),
+            max_workers="auto",
+        )
+
+    assert spy.call_args.kwargs["max_workers"] == num_shards
+    assert len(spy.call_args.kwargs["devices"]) == torch.accelerator.device_count()
+    _assert_shards_equal(tmp_path / "output", tensors)
+
+
+@requires_gpu(2)
+def test_convert_checkpoint_auto_max_workers_runs_on_each_device(tmp_path):
+    """When two accelerators each only have room for one job at a time, "auto" uses
+    one worker per accelerator and both accelerators run a job. Using two devices
+    keeps the test independent of the CPU-based thread cap, which is at least 5"""
+    accelerator = torch.accelerator.current_accelerator()
+    devices = [torch.device(accelerator.type, index) for index in range(2)]
+    free_memory = [torch.accelerator.memory.get_memory_info(dev)[0] for dev in devices]
+    job_memory = int(0.9 * min(free_memory))
+    if 2 * job_memory <= max(free_memory):
+        pytest.skip("Free memory differs too much between accelerators")
+
+    num_shards = len(devices) + 1
+    tensors = _save_tiny_shards(tmp_path / "source", num_shards)
+
+    exec_jobs_dynamic = _CHECKPOINT_MODULE.exec_jobs_dynamic
+    run_job_on_device = _MEMORY_MODULE._run_job_on_device
+    with (
+        patch.object(
+            _CHECKPOINT_MODULE, "exec_jobs_dynamic", wraps=exec_jobs_dynamic
+        ) as spy,
+        patch.object(
+            _MEMORY_MODULE, "_run_job_on_device", wraps=run_job_on_device
+        ) as run_job,
+    ):
+        convert_checkpoint(
+            tmp_path / "source",
+            tmp_path / "output",
+            NoOpConverter(),
+            max_workers="auto",
+            device=devices,
+            job_memory_estimator=lambda *_: job_memory,
+        )
+
+    assert spy.call_args.kwargs["max_workers"] == len(devices)
+    assert {call.args[1] for call in run_job.call_args_list} == set(devices)
+    _assert_shards_equal(tmp_path / "output", tensors)

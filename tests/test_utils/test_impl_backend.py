@@ -2,6 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import itertools
+import os
+import subprocess
+import sys
 
 import pytest
 import torch
@@ -167,6 +170,26 @@ def test_enforce_eager_skips_registered_backends(monkeypatch):
     assert op(torch.empty(0)) == "backend"
     monkeypatch.setattr(impl_backend, "ENFORCE_EAGER", True)
     assert op(torch.empty(0)) == "fallback"
+
+
+@pytest.mark.parametrize(
+    "value,expected", [("0", False), ("false", False), ("1", True), ("true", True)]
+)
+def test_enforce_eager_env_parses_boolean_strings(value, expected):
+    # Run in a fresh interpreter: ENFORCE_EAGER is read once at import time.
+    code = (
+        "from compressed_tensors.utils import impl_backend; "
+        "print(impl_backend.ENFORCE_EAGER)"
+    )
+    env = {**os.environ, "CT_ENFORCE_EAGER": value}
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip().splitlines()[-1] == str(expected)
 
 
 @pytest.mark.parametrize("reverse", [False, True], ids=["in_order", "reversed"])
