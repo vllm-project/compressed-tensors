@@ -259,6 +259,10 @@ class OffloadCache(MutableMapping, ABC):
         if offloaded in self.keep_onloaded_values:
             del self.keep_onloaded_values[offloaded]
 
+    def discard(self, key: Hashable):
+        # alias for del, see `torch.nn.Module.__setattr__`
+        self.__delitem__(key)
+
     def __contains__(self, key) -> bool:
         return key in self.offloaded_values
 
