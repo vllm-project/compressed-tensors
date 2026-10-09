@@ -37,6 +37,10 @@ from loguru import logger
 
 __all__ = ["convert_checkpoint", "exec_jobs"]
 
+# On cpu, measured host memory use of concurrent conversion jobs exceeded the sum of
+# their meta-tensor estimates by up to ~1.5x, so cpu jobs reserve this much more
+_CPU_MEMORY_MARGIN = 1.5
+
 
 def convert_checkpoint(
     model_stub: str | os.PathLike,
@@ -64,15 +68,18 @@ def convert_checkpoint(
         "auto" (default), the number of workers is chosen from the number of
         safetensors files, the estimated memory of each conversion job, the free
         memory of each accelerator, and the number of CPUs available to this
-        process. Host memory is not taken into account, so pass a smaller number
-        of workers if conversion runs out of host memory
+        process (1 on cpu). For accelerators, host memory is not taken into
+        account, so pass a smaller number of workers if conversion runs out of
+        host memory. On cpu, jobs run concurrently only while their estimated
+        memory fits in the host memory available to this process
     :param device: device or devices on which to run conversion. When omitted,
         all available accelerator devices are used, falling back to CPU when no
         accelerator is available.
     :param job_memory_estimator: callable returning the estimated memory in bytes
         for a conversion job, given its inverse weight map and the converters to
-        apply. Defaults to a meta-tensor profiler; used only for accelerator
-        scheduling.
+        apply. Defaults to a meta-tensor profiler. On cpu, estimates are scaled
+        by a safety margin. Conversion raises before any file is converted if a
+        job's estimate exceeds the free memory of every device
     :param converter: single converter or list of converters to apply
         in order, e.g. a dequantizer followed by a re-quantizer
     """
@@ -130,18 +137,18 @@ def convert_checkpoint(
     exec_jobs(validate_jobs, num_validate_workers, desc="Validating")
 
     # Process weights, accumulating total bytes used and the new weight_map.
-    # exec_jobs_dynamic handles CPU natively (running sequentially), so the same
-    # scheduler drives both CPU and accelerator runs. Memory estimates are only
-    # consulted for accelerator scheduling, so skip the profiler on CPU.
+    # The same scheduler drives cpu and accelerator runs: jobs are admitted while
+    # their memory estimates fit in free device memory (host memory on cpu)
     total_size = 0
     weight_map = dict()
     callable_jobs = [partial(job[0], *job[1:]) for job in convert_jobs]
-    if any(dev.type != "cpu" for dev in devices):
+    memory_estimates = [
+        job_memory_estimator(job[1], converters) for job in convert_jobs
+    ]
+    if all(dev.type == "cpu" for dev in devices):
         memory_estimates = [
-            job_memory_estimator(job[1], converters) for job in convert_jobs
+            int(estimate * _CPU_MEMORY_MARGIN) for estimate in memory_estimates
         ]
-    else:
-        memory_estimates = [0] * len(callable_jobs)
     if max_workers == "auto":
         max_workers = _auto_max_workers(devices, memory_estimates)
     convert_results = exec_jobs_dynamic(
@@ -208,8 +215,10 @@ def _auto_max_workers(
       `_max_threads`), since jobs also spend time on disk reads and host-side
       serialization
 
-    Host memory is not taken into account. Jobs on CPU run sequentially (see
-    `exec_jobs_dynamic`), so 1 is returned.
+    For accelerators, host memory is not taken into account. On cpu, 1 is
+    returned: an explicit max_workers runs cpu jobs concurrently within the host
+    memory budget, but a higher default still needs measurements across more
+    workloads and machines.
 
     :param devices: devices on which jobs will be scheduled
     :param memory_estimates: estimated peak device memory of each job, in bytes

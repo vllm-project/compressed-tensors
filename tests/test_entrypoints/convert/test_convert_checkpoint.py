@@ -109,7 +109,7 @@ def test_convert_checkpoint_cpu_uses_dynamic_scheduler(
     exec_jobs.return_value = []  # validation phase
     exec_jobs_dynamic.return_value = [(4, {"weight": "model.safetensors"})]
     converter = Mock()
-    job_memory_estimator = Mock()
+    job_memory_estimator = Mock(return_value=1000)
 
     with patch.object(
         _CHECKPOINT_MODULE, "_resolve_devices", return_value=resolved_devices
@@ -129,14 +129,16 @@ def test_convert_checkpoint_cpu_uses_dynamic_scheduler(
     assert exec_jobs.call_args.kwargs == {"desc": "Validating"}
     assert exec_jobs.call_args.args[1] == 1
 
-    # conversion is scheduled through exec_jobs_dynamic even on CPU, with zero
-    # memory estimates and without invoking the profiler
+    # conversion is scheduled through exec_jobs_dynamic on CPU too, with memory
+    # estimates widened by the cpu margin for host-memory admission
     dynamic_call = exec_jobs_dynamic.call_args
     assert dynamic_call.kwargs["devices"] == resolved_devices
     assert dynamic_call.kwargs["max_workers"] == 2
-    assert dynamic_call.kwargs["memory_estimates"] == [0]
+    assert dynamic_call.kwargs["memory_estimates"] == [
+        int(1000 * _CHECKPOINT_MODULE._CPU_MEMORY_MARGIN)
+    ]
     assert dynamic_call.kwargs["desc"] == "Converting"
-    job_memory_estimator.assert_not_called()
+    job_memory_estimator.assert_called_once_with(inverse_weight_map, [converter])
 
     write_checkpoint_quantization_config.assert_called_once_with(tmp_path, [converter])
     update_safetensors_index.assert_called_once_with(
