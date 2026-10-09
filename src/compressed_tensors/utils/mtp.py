@@ -3,6 +3,7 @@
 
 import json
 import os
+from collections import defaultdict
 
 from compressed_tensors.base import QUANTIZATION_CONFIG_NAME
 from compressed_tensors.utils.safetensors_load import (
@@ -12,6 +13,8 @@ from compressed_tensors.utils.safetensors_load import (
     update_safetensors_index,
 )
 from loguru import logger
+from safetensors import safe_open
+from safetensors.torch import save_file
 
 
 __all__ = ["save_mtp_tensors_to_checkpoint"]
@@ -22,6 +25,8 @@ def save_mtp_tensors_to_checkpoint(
     dest_dir: str,
     mtp_prefix: str = "mtp",
     shard_name: str = "model_mtp.safetensors",
+    *,
+    source_weight_map: dict[str, str] | None = None,
 ):
     """
     Extracts MTP (Multi-Token Prediction) tensors from a source model checkpoint
@@ -43,13 +48,26 @@ def save_mtp_tensors_to_checkpoint(
         "mtp"
     :param shard_name: filename for the new shard written into dest_dir,
         defaults to "model_mtp.safetensors"
+    :param source_weight_map: optional mapping of selected MTP tensor names to
+        local shard paths. Bypasses source lookup and prefix filtering when provided.
     """
     # Extract MTP tensors from the original checkpoint and save them as a new
     # shard in dest_dir. MTP layers are not part of the quantized model so they
     # must be carried over as-is.
-    mtp_tensors = _fetch_and_save_prefix_tensors(
-        source_model, mtp_prefix, dest_dir, shard_name
-    )
+    if source_weight_map is None:
+        mtp_tensors = _fetch_and_save_prefix_tensors(
+            source_model, mtp_prefix, dest_dir, shard_name
+        )
+    else:
+        by_shard = defaultdict(list)
+        for name, path in source_weight_map.items():
+            by_shard[path].append(name)
+        mtp_tensors = {}
+        for path, names in by_shard.items():
+            with safe_open(path, framework="pt", device="cpu") as handle:
+                mtp_tensors.update({name: handle.get_tensor(name) for name in names})
+        if mtp_tensors:
+            save_file(mtp_tensors, os.path.join(dest_dir, shard_name))
     if len(mtp_tensors) <= 0:
         logger.warning(f"Could not find MTP weights with prefix {mtp_prefix}")
         return
@@ -59,6 +77,16 @@ def save_mtp_tensors_to_checkpoint(
     weight_map = {
         k: os.path.basename(v) for k, v in get_weight_mappings(dest_dir).items()
     }
+    # Loaders prefer model.safetensors over an index when both exist.
+    backbone = os.path.join(dest_dir, "model.safetensors")
+    if os.path.exists(backbone):
+        os.replace(backbone, os.path.join(dest_dir, "model_backbone.safetensors"))
+        weight_map = {
+            name: "model_backbone.safetensors"
+            if shard == "model.safetensors"
+            else shard
+            for name, shard in weight_map.items()
+        }
 
     weight_map.update({key: shard_name for key in mtp_tensors})
     total_size = sum(
@@ -76,11 +104,18 @@ def save_mtp_tensors_to_checkpoint(
         quant_config = config.get(QUANTIZATION_CONFIG_NAME)
         if quant_config is not None:
             ignore_list = quant_config.get("ignore") or []
-            mtp_ignore_pattern = f"re:^{mtp_prefix}.*"
-            if mtp_ignore_pattern not in ignore_list:
-                ignore_list.append(mtp_ignore_pattern)
-                quant_config["ignore"] = ignore_list
-                config[QUANTIZATION_CONFIG_NAME] = quant_config
+            ignores = (
+                [
+                    name.removesuffix(".weight")
+                    for name in mtp_tensors
+                    if name.endswith(".weight")
+                ]
+                if source_weight_map is not None
+                else [f"re:^{mtp_prefix}.*"]
+            )
+            updated_ignores = list(dict.fromkeys([*ignore_list, *ignores]))
+            if updated_ignores != ignore_list:
+                quant_config["ignore"] = updated_ignores
                 with open(config_path, "w") as f:
                     json.dump(config, f, indent=2)
 

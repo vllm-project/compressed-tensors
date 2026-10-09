@@ -17,6 +17,7 @@ from compressed_tensors.quantization.quant_config import (
 )
 from pydantic import ValidationError
 from transformers import AutoModelForImageTextToText
+from transformers.core_model_loading import WeightRenaming
 
 
 def test_basic_config():
@@ -161,6 +162,50 @@ def test_map_to_checkpoint_names(model_id, hf_ignores, checkpoint_ignores):
     result = _map_to_checkpoint_names(model, hf_ignores)
 
     assert result == checkpoint_ignores
+
+
+@pytest.mark.parametrize("targets", [["runtime.0"], [r"re:^runtime\."], ["Linear"]])
+def test_export_targets_uses_checkpoint_names_without_mutating_scheme(targets):
+    model = torch.nn.Module()
+    model.runtime = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.Linear(4, 4))
+    model._weight_conversions = [
+        WeightRenaming("checkpoint.projection.weight", "runtime.0.weight"),
+        WeightRenaming("checkpoint.ignored.weight", "runtime.1.weight"),
+    ]
+    scheme = QuantizationScheme(targets=targets, weights=QuantizationArgs())
+    model.runtime[0].quantization_scheme = scheme
+    model.runtime[0].quantization_status = QuantizationStatus.FROZEN
+
+    first = QuantizationConfig.from_pretrained(model)
+    second = QuantizationConfig.from_pretrained(model)
+
+    assert first == second
+    assert first.config_groups["group_0"].targets == (
+        ["Linear"] if targets == ["Linear"] else ["checkpoint.projection"]
+    )
+    assert first.ignore == ["checkpoint.ignored"]
+    assert model.runtime[0].quantization_scheme.targets == targets
+
+
+def test_export_named_targets_preserves_overlapping_group_assignments():
+    model = torch.nn.Module()
+    model.runtime = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.Linear(4, 4))
+    model._weight_conversions = [WeightRenaming("checkpoint.", "runtime.")]
+    broad = QuantizationScheme(targets=[r"re:^runtime\."], weights=QuantizationArgs())
+    specific = QuantizationScheme(
+        targets=["runtime.1"], weights=QuantizationArgs(num_bits=4)
+    )
+    model.runtime[0].quantization_scheme = broad
+    model.runtime[1].quantization_scheme = specific
+    for module in model.runtime:
+        module.quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+
+    assert exported.config_groups["group_0"].targets == ["checkpoint.0"]
+    assert exported.config_groups["group_1"].targets == ["checkpoint.1"]
+    assert broad.targets == [r"re:^runtime\."]
+    assert specific.targets == ["runtime.1"]
 
 
 def test_get_vllm_module_type():
