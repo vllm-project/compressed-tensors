@@ -414,6 +414,38 @@ def test_disk_load_context_hits_across_checkpoint_symlinks(tmp_path, monkeypatch
 
 
 @pytest.mark.unit
+def test_disk_load_context_does_not_resolve_symlinks_per_read(tmp_path, monkeypatch):
+    """Grouped reads through checkpoint symlinks must not touch the filesystem.
+
+    Resolving a symlink takes several syscalls, and each one releases the GIL.
+    On a background staging thread, every read then waited on whichever thread
+    held the GIL. The shard is recorded when the symlink is created, so a read
+    needs no lookup at all.
+    """
+    cache, offloaded = _symlinked_shard(tmp_path, count=8)
+
+    lookups = []
+    real_lstat, real_stat = os.lstat, os.stat
+
+    def lstat(path, *args, **kwargs):
+        lookups.append(path)
+        return real_lstat(path, *args, **kwargs)
+
+    def stat(path, *args, **kwargs):
+        lookups.append(path)
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", lstat)
+    monkeypatch.setattr(os, "stat", stat)
+    with disk_load_context():
+        values = [cache.onload(meta) for meta in offloaded]
+
+    assert lookups == [], f"expected no filesystem lookups, got {len(lookups)}"
+    for i, value in enumerate(values):
+        assert_tensor_equal(value, torch.full((4,), float(i)))
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("symlinked", [False, True])
 def test_update_offload_is_not_served_stale_in_context(tmp_path, symlinked):
     """A rewrite through `update_offload` must be visible inside the context.
