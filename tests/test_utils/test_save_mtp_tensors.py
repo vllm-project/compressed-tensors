@@ -250,12 +250,25 @@ class TestSaveMtpTensorsToCheckpoint:
                 "selected shards must not trigger source lookup"
             ),
         ):
-            for _ in range(2):
-                save_mtp_tensors_to_checkpoint(
-                    "unused/source",
-                    str(dest_dir_with_index),
-                    source_weight_map=selected,
-                )
+            for iteration in range(2):
+                with patch("builtins.open", wraps=open) as opened:
+                    save_mtp_tensors_to_checkpoint(
+                        "unused/source",
+                        str(dest_dir_with_index),
+                        source_weight_map=selected,
+                    )
+                config_writes = [
+                    call
+                    for call in opened.call_args_list
+                    if os.fspath(call.args[0]) == str(config_path)
+                    and "w"
+                    in (
+                        call.args[1]
+                        if len(call.args) > 1
+                        else call.kwargs.get("mode", "r")
+                    )
+                ]
+                assert len(config_writes) == (1 if iteration == 0 else 0)
 
         saved = _read_safetensors(str(dest_dir_with_index / "model_mtp.safetensors"))
         assert set(saved) == set(selected)
@@ -265,6 +278,20 @@ class TestSaveMtpTensorsToCheckpoint:
             "lm_head",
             *[name.removesuffix(".weight") for name in selected],
         ]
+
+    def test_empty_selection_warns_without_prefix_lookup(self, tmp_path):
+        with (
+            patch("compressed_tensors.utils.mtp.logger.warning") as warning,
+            patch(
+                "compressed_tensors.utils.mtp._fetch_and_save_prefix_tensors"
+            ) as fetch,
+        ):
+            save_mtp_tensors_to_checkpoint(
+                "unused/source", str(tmp_path), source_weight_map={}
+            )
+        fetch.assert_not_called()
+        warning.assert_called_once_with("No MTP weights were explicitly selected")
+        assert not list(tmp_path.iterdir())
 
     def test_no_mtp_tensors_no_op(self, dest_dir_with_index, tmp_path):
         """

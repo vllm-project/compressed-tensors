@@ -275,6 +275,8 @@ class QuantizationConfig(BaseModel):
                 ):
                     # Use assigned schemes so overlapping groups keep their
                     # original module selections when resolving name/regex targets.
+                    # Broad regexes expand to explicit checkpoint names: larger
+                    # configs preserve assignments across overlapping groups.
                     scheme = scheme.model_copy(
                         update={"targets": _map_to_checkpoint_names(model, names)}
                     )

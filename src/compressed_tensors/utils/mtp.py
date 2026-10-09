@@ -69,7 +69,10 @@ def save_mtp_tensors_to_checkpoint(
         if mtp_tensors:
             save_file(mtp_tensors, os.path.join(dest_dir, shard_name))
     if len(mtp_tensors) <= 0:
-        logger.warning(f"Could not find MTP weights with prefix {mtp_prefix}")
+        if source_weight_map is None:
+            logger.warning(f"Could not find MTP weights with prefix {mtp_prefix}")
+        else:
+            logger.warning("No MTP weights were explicitly selected")
         return
 
     # Build weight_map from existing index or single-shard file, then add MTP entries.
