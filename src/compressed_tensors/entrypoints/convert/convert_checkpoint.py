@@ -110,6 +110,14 @@ def convert_checkpoint(
                 raise ValueError(
                     f"Could not find inverse_weight_map for shard {shard_name}"
                 )
+            if not inverse_weight_maps[shard_name]:
+                # shard holds only dependency tensors, which are loaded and saved
+                # as part of the primary tensors' own jobs; nothing to do here
+                logger.debug(
+                    f"Skipping {shard_name}: contains only dependency tensors, "
+                    "which are written by the primary tensors' jobs"
+                )
+                continue
             validate_jobs.append(
                 (validate_file, inverse_weight_maps[shard_name], converters)
             )
