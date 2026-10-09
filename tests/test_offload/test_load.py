@@ -24,13 +24,13 @@ from tests.test_offload.conftest import (
     torchrun,
 )
 from tests.testing_utils import requires_gpu
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 
 
 acclerate = pytest.importorskip("accelerate")
 
 
-accelerator_device = torch.accelerator.current_accelerator()
+accelerator_device = torch.accelerator.current_accelerator() or torch.device("cpu")
 TEST_PARAMETERS = [
     (
         "auto",
@@ -146,6 +146,42 @@ def test_patch_forwards_positional_args(mock_from_accelerate):
 
 
 @pytest.mark.unit
+@patch("compressed_tensors.offload.load.from_accelerate")
+def test_patch_disk_device_map_uses_empty_max_memory(mock_from_accelerate):
+    """`device_map="disk"` must load with `device_map="auto"` and `max_memory={}`."""
+    received = {}
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+            received["kwargs"] = kwargs
+            return MagicMock()
+
+    with load_offloaded_model(FakeModel):
+        FakeModel.from_pretrained("org/model", device_map="disk")
+
+    assert received["kwargs"]["device_map"] == "auto"
+    assert received["kwargs"]["max_memory"] == {}
+
+
+@pytest.mark.unit
+@patch("compressed_tensors.offload.load.from_accelerate")
+def test_patch_disk_device_map_rejects_max_memory(mock_from_accelerate):
+    """`device_map="disk"` must error when the user also passes `max_memory`."""
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+            return MagicMock()
+
+    with pytest.raises(ValueError, match="cannot be used with `device_map='disk'`"):
+        with load_offloaded_model(FakeModel):
+            FakeModel.from_pretrained(
+                "org/model", device_map="disk", max_memory={"cpu": 1}
+            )
+
+
+@pytest.mark.unit
 def test_mmap_cap_reduces_shared_memory():
     """Tight mmap limit reduces _get_shared_memory return value."""
     with (
@@ -197,6 +233,51 @@ def test_mmap_cap_skipped_without_tensor_info():
     result_no_info = load_module._get_shared_memory()
     result_zero = load_module._get_shared_memory(num_tensors=0, total_model_bytes=0)
     assert result_no_info == result_zero
+
+
+LOAD_NO_MISSING_KEYS_PARAMETERS = [
+    # multimodal and tied tensors
+    ("inference-optimization/gemma-4-1B-0.8B-tiny", AutoModelForImageTextToText),
+    # non-tied tensors
+    ("inference-optimization/Qwen3.8-1.0B-A0.6B", AutoModelForCausalLM),
+    # tied word embeddings, only one in the checkpoint
+    ("inference-optimization/Llama-3.2-0.5B-Instruct", AutoModelForCausalLM),
+    # tied word embeddings, both in the checkpoint
+    ("nm-testing/tinysmokellama-3.2", AutoModelForCausalLM),
+]
+
+
+def _assert_load_no_missing_keys(model_id, model_class, **from_pretrained_kwargs):
+    """Load under `load_offloaded_model` and error if any keys are reported missing."""
+
+    def checked_report(*args, loading_info=None, **kwargs):
+        assert (
+            not loading_info.missing_keys
+        ), f"Missing keys when loading {model_id}: {loading_info.missing_keys}"
+
+    with patch(
+        "transformers.modeling_utils.log_state_dict_report", side_effect=checked_report
+    ):
+        with load_offloaded_model(model_class):
+            model = model_class.from_pretrained(
+                model_id, dtype=torch.bfloat16, **from_pretrained_kwargs
+            )
+
+    assert model is not None
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("model_id,model_class", LOAD_NO_MISSING_KEYS_PARAMETERS)
+def test_load_no_missing_keys(model_id, model_class):
+    _assert_load_no_missing_keys(model_id, model_class, device_map="cpu")
+
+
+@pytest.mark.integration
+@requires_gpu(2)
+@torchrun(world_size=2, init_dist=True)
+def test_load_dist_no_missing_keys():
+    for model_id, model_class in LOAD_NO_MISSING_KEYS_PARAMETERS:
+        _assert_load_no_missing_keys(model_id, model_class, device_map="cpu")
 
 
 @pytest.mark.integration

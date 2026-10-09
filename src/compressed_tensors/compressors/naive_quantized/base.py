@@ -114,6 +114,7 @@ class NaiveQuantizationCompressor(BaseCompressor):
             x_q=weight,
             scale=scale,
             zero_point=zero_point,
+            args=scheme.weights,
         )
 
         return state_dict

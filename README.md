@@ -79,6 +79,19 @@ To bypass the hooks for a single commit, use `git commit --no-verify`; to skip o
 The following example loads Llama 3 8B, applies round-to-nearest (RTN) MXFP4 weight quantization, compresses the weights, and saves the result. No calibration data is needed — scales are computed directly from the weights.
 
 ```python
+import math
+
+import torch
+from transformers import AutoModelForCausalLM
+
+from compressed_tensors.compressors import ModelCompressor
+from compressed_tensors.offload import update_offload_parameter
+from compressed_tensors.quantization import (
+    QuantizationConfig,
+    apply_quantization_config,
+)
+from compressed_tensors.quantization.utils import calculate_qparams
+
 model_name = "meta-llama/Meta-Llama-3-8B"
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -193,3 +206,17 @@ Once done, the config.json will have the following quantization_config:
 ```
 
 See `examples/` for more examples including quantization with calibration and checkpoint conversion (`examples/convert_checkpoint/`).
+
+## Citation 
+
+If you find compressed-tensors useful in your research or projects, please consider citing it:
+
+```
+@software{compressedtensors2024,
+    title={{compressed-tensors}},
+    author={Red Hat AI and vLLM Project},
+    year={2024},
+    month={4},
+    url={https://github.com/vllm-project/compressed-tensors},
+}
+```
