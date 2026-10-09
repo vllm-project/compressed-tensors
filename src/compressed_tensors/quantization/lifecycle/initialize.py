@@ -41,6 +41,17 @@ __all__ = [
     "initialize_attn_qparams",
 ]
 
+_ATTENTION_PROJECTION_NAMES = (
+    "k_proj",
+    "v_proj",
+    "qkv_proj",
+    "kv_b_proj",
+    "q_a_proj",
+    "kv_proj",
+    "q",
+)
+_KV_CACHE_PROJECTION_NAMES = ("k_proj", "v_proj", "qkv_proj", "kv_b_proj")
+
 
 def initialize_module_for_quantization(
     module: Module,
@@ -120,12 +131,12 @@ def initialize_module_for_quantization(
 
 
 def _is_attention_module(module: Module) -> bool:
-    return "attention" in module.__class__.__name__.lower() and (
-        hasattr(module, "k_proj")
-        or hasattr(module, "v_proj")
-        or hasattr(module, "qkv_proj")
-        or hasattr(module, "kv_b_proj")
-    )
+    class_name = type(module).__name__.lower()
+    if "attention" not in class_name:
+        return False
+
+    with disable_onloading():
+        return any(hasattr(module, name) for name in _ATTENTION_PROJECTION_NAMES)
 
 
 @deprecated("is_cached_attention_module")
@@ -136,6 +147,10 @@ def is_attention_module(module: Module) -> bool:
 def is_cached_attention_module(module: Module) -> bool:
     if not _is_attention_module(module):
         return False
+
+    with disable_onloading():
+        if not any(hasattr(module, name) for name in _KV_CACHE_PROJECTION_NAMES):
+            return False
 
     try:
         parameters = inspect.signature(module.forward).parameters

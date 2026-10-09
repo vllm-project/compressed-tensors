@@ -22,5 +22,4 @@ convert_checkpoint(
         expert_pattern=r"language_model\..*\.mlp\.experts\.(gate_up_proj|down_proj)$",
         sparsity=0.5,
     ),
-    max_workers=8,
 )
