@@ -28,27 +28,29 @@ __all__ = [
 ]
 
 
-def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]:
-    """Translate ignore list entries from HF module names to checkpoint names.
+def _map_to_checkpoint_names(model: Module, names: list[str]) -> list[str]:
+    """Translate HF module names to checkpoint names for targets and ignores.
 
     Transformers v5 may rename weight keys on load (e.g. vision_embedder ->
-    embed_vision).  The ignore list is built from ``model.named_modules()``
+    embed_vision).  Module names come from ``model.named_modules()``
     which uses HF names, but safetensors keys use checkpoint names.  This
     applies the same reverse mapping that ``save_pretrained`` uses for weights.
     """
     weight_conversions = getattr(model, "_weight_conversions", None)
     if not weight_conversions:
-        return ignore_list
+        return names
 
     inverted = [conv.reverse_transform() for conv in reversed(weight_conversions)]
 
     result = []
-    for name in ignore_list:
+    for name in names:
+        # Some conversions match a complete weight key or a trailing dot.
+        name += ".weight"
         for rev in inverted:
             renamed, matched = rev.rename_source_key(name)
             if matched is not None:
                 name = renamed
-        result.append(name)
+        result.append(name.removesuffix(".weight"))
 
     return result
 
@@ -260,6 +262,24 @@ class QuantizationConfig(BaseModel):
         # create config groups from all unique schemes
         config_groups = {}
         for idx, scheme in enumerate(quantization_schemes):
+            if getattr(model, "_weight_conversions", None):
+                names = [
+                    name
+                    for name, module in model.named_modules()
+                    if getattr(module, "quantization_scheme", None) == scheme
+                ]
+                if any(
+                    match_name(name, target)
+                    for name in names
+                    for target in scheme.targets
+                ):
+                    # Use assigned schemes so overlapping groups keep their
+                    # original module selections when resolving name/regex targets.
+                    # Broad regexes expand to explicit checkpoint names: larger
+                    # configs preserve assignments across overlapping groups.
+                    scheme = scheme.model_copy(
+                        update={"targets": _map_to_checkpoint_names(model, names)}
+                    )
             group_name = "group_" + str(idx)
             config_groups[group_name] = scheme
 
