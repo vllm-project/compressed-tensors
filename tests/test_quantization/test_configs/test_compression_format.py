@@ -102,6 +102,7 @@ def test_compression_format_in_config():
         CompressionFormat.mixed_precision,
         CompressionFormat.nvfp4_pack_quantized,
         CompressionFormat.mxfp4_pack_quantized,
+        CompressionFormat.lut_b,
     ],
 )
 def test_compression_format_round_trip(format_value):
