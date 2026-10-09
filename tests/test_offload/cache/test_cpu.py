@@ -11,6 +11,7 @@ from tests.test_offload.cache.helpers import (
     _test_disable_onloading,
     _test_garbage_collect,
     _test_offload,
+    _test_offload_empty_view,
     _test_onload,
     _test_onloading,
     _test_shared_attributes,
@@ -57,6 +58,12 @@ def test_garbage_collect(offload_device, onload_device, offload_cache):
 @requires_gpu
 def test_offload(offload_device, onload_device, offload_cache):
     _test_offload(offload_device, onload_device, offload_cache)
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_offload_empty_view(offload_device, onload_device, offload_cache):
+    _test_offload_empty_view(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit

@@ -10,6 +10,7 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import is_distributed
 from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.cache.dist_batch import batch_offload_sync
 from compressed_tensors.offload.module import offload_module, remove_module_offload
 from compressed_tensors.offload.utils import get_module_sizes, module_size
 from compressed_tensors.utils import getattr_chain
@@ -125,36 +126,44 @@ def dispatch_with_map(
     """
     Dispatch a model according to the provided device map
 
+    When distributed, the cpu and disk offload metadata of the whole model is
+    exchanged between ranks once, rather than once per tensor. See
+    `compressed_tensors.offload.cache.dist_batch::batch_offload_sync`.
+
     :param model: model to dispatch
     :param device_map: device map specifying the onload and offload of each module
     :param offload_dir: optional directory for disk offloading
     :param show_progress: show tqdm progress
     """
-    for name, (onload_device, offload_device) in tqdm(
-        list(device_map.items()),
-        desc="Dispatching model",
-        disable=(not show_progress),
-        position=(dist.get_rank() if is_distributed() else 0),
-    ):
-        try:
-            module = model.get_submodule(name)
-        except AttributeError:
-            # The device map is authored from the source rank's view of the
-            # module tree. On other ranks, sharded structures -- e.g. an
-            # nn.ModuleList of routed MoE experts where slots the rank does
-            # not own are None placeholders -- legitimately lack some of
-            # these submodules. Skip map entries with no local module rather
-            # than crashing the dispatch.
-            logger.debug(f"Skipping '{name}' from device map: not present locally")
-            continue
+    with batch_offload_sync() as batch:
+        for name, (onload_device, offload_device) in tqdm(
+            list(device_map.items()),
+            desc="Dispatching model",
+            disable=(not show_progress),
+            position=(dist.get_rank() if is_distributed() else 0),
+        ):
+            try:
+                module = model.get_submodule(name)
+            except AttributeError:
+                # The device map is authored from the source rank's view of the
+                # module tree. On other ranks, sharded structures -- e.g. an
+                # nn.ModuleList of routed MoE experts where slots the rank does
+                # not own are None placeholders -- legitimately lack some of
+                # these submodules. Skip map entries with no local module rather
+                # than crashing the dispatch.
+                logger.debug(f"Skipping '{name}' from device map: not present locally")
+                continue
 
-        if offload_device == "disk":
-            offload_module(
-                module, onload_device, offload_device, offload_dir=offload_dir
-            )
+            if batch is not None:
+                batch.module_name = name
 
-        elif offload_device is not None:
-            offload_module(module, onload_device, offload_device)
+            if offload_device == "disk":
+                offload_module(
+                    module, onload_device, offload_device, offload_dir=offload_dir
+                )
+
+            elif offload_device is not None:
+                offload_module(module, onload_device, offload_device)
 
 
 def get_device_map(

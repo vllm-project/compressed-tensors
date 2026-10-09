@@ -34,6 +34,19 @@ def _test_offload(offload_device, onload_device, offload_cache):
     assert_tensor_equal(offloaded, tensor, offload_device)
 
 
+def _test_offload_empty_view(offload_device, onload_device, offload_cache):
+    # tensors without elements have a null data pointer on every device, so an empty
+    # view must still be moved, rather than kept along with its whole allocation
+    tensor = torch.empty(1024, device=onload_device)[:0]
+    offloaded = offload_cache.offload(tensor)
+    assert_device_equal(offloaded.device, offload_device)
+    assert offloaded.shape == (0,)
+
+    onloaded = offload_cache.onload(offloaded)
+    assert_device_equal(onloaded.device, onload_device)
+    assert onloaded.shape == (0,)
+
+
 def _test_onload(offload_device, onload_device, offload_cache):
     tensor = torch.ones(10, device=onload_device)
     onloaded = offload_cache.onload(offload_cache.offload(tensor))
