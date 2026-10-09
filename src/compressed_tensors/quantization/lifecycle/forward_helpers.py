@@ -136,7 +136,7 @@ def _process_group(
         scale = scale.unsqueeze(1)
         zero_point = zero_point.unsqueeze(1) if zero_point is not None else None
 
-    if columns >= group_size and columns % group_size != 0:
+    if columns % group_size != 0:
         raise ValueError(
             "tensor column shape must be divisble "
             f"by the given group_size {group_size} but got {columns}"
