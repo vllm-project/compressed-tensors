@@ -126,6 +126,26 @@ class TestModelCompressorCompression:
         assert model.linear.weight_packed.dtype == torch.int32
         assert hasattr(model, "ct_decompress_hook")
 
+    def test_compress_model_nonfinite_scale_raises(self):
+        """Non-finite scales fail loudly at compress time, naming the module."""
+        model = DummyLinear()
+        scheme = create_quantization_scheme(bits=4, type="int", strategy="channel")
+        model.linear.quantization_scheme = scheme
+        model.linear.quantization_status = QuantizationStatus.FROZEN
+        scale = torch.ones(model.linear.weight.shape[0], 1) * 0.01
+        scale[0] = float("nan")
+        scale[1] = float("inf")
+        model.linear.weight_scale = nn.Parameter(scale)
+        model.linear.weight_zero_point = nn.Parameter(
+            torch.zeros(model.linear.weight.shape[0], 1).int(), requires_grad=False
+        )
+
+        q_config = create_quantization_config(bits=4, format="pack-quantized")
+        compressor = ModelCompressor(quantization_config=q_config)
+
+        with pytest.raises(ValueError, match=r"linear.*weight_scale.*2/10"):
+            compressor.compress_model(model)
+
     def test_compress_model_skips_non_quantized_modules(self):
         """Test that modules without quantization_scheme are skipped."""
         model = TwoLayerModel()
