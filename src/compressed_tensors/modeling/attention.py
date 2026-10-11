@@ -79,10 +79,13 @@ class QuantizedAttentionImpl(InternalModule):
 
 
 def _hooked_attention(module: Module, *args, **kwargs):
-    assert hasattr(module, IMPL_ATTR), (
-        f"Using {HOOKED_ATTENTION_NAME} attention implementation, "
-        f"but attention module does not have {IMPL_ATTR} submodule."
-    )
+    # attention modules without an impl are not quantized, for example layers that
+    # reuse the kv cache of an earlier layer (gemma-4) or layers that the scheme does
+    # not target: they keep the original attention implementation
+    if not hasattr(module, IMPL_ATTR):
+        return ALL_ATTENTION_FUNCTIONS[QuantizedAttentionImpl._original_impl](
+            module, *args, **kwargs
+        )
 
     return getattr(module, IMPL_ATTR)(module, *args, **kwargs)
 

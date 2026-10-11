@@ -13,8 +13,14 @@ from compressed_tensors.modeling import (
     register_query_hook,
     register_value_hook,
 )
+from compressed_tensors.quantization import (
+    QuantizationArgs,
+    QuantizationConfig,
+    QuantizationScheme,
+    apply_quantization_config,
+)
 from tests.testing_utils import requires_gpu
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, LlamaConfig, LlamaForCausalLM
 
 
 @requires_gpu
@@ -95,3 +101,37 @@ def _apply_attention(model, layers, q_called, k_called, v_called):
         register_query_hook(module, q_hook)
         register_key_hook(module, k_hook)
         register_value_hook(module, v_hook)
+
+
+def test_attention_quantization_of_some_layers():
+    # layers whose attention is not quantized keep the original implementation
+    config = LlamaConfig(
+        hidden_size=64,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        vocab_size=128,
+    )
+    model = LlamaForCausalLM(config).eval()
+    model.set_attn_implementation("sdpa")
+    args = QuantizationArgs(
+        num_bits=8, type="float", strategy="tensor", symmetric=True, dynamic=False
+    )
+    scheme = QuantizationScheme(
+        targets=["re:.*layers\\.0\\.self_attn$"], input_activations=args
+    )
+    apply_quantization_config(
+        model, QuantizationConfig(config_groups={"attention": scheme})
+    )
+
+    quantized, unquantized = (layer.self_attn for layer in model.model.layers)
+    assert hasattr(quantized, IMPL_ATTR)
+    assert not hasattr(unquantized, IMPL_ATTR)
+    for name in ("q", "k", "v"):
+        getattr(quantized, f"{name}_scale").data.fill_(1.0)
+
+    input_ids = torch.randint(0, config.vocab_size, (1, 8))
+    with torch.no_grad():
+        logits = model(input_ids=input_ids).logits
+    assert torch.isfinite(logits).all()
