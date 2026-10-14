@@ -78,6 +78,8 @@ def _run_compress_decompress(
         ("FP8_BLOCK", CompressionFormat.float_quantized, None),
         ("NVFP4A16", CompressionFormat.nvfp4_pack_quantized, None),
         ("NVFP4", CompressionFormat.nvfp4_pack_quantized, None),
+        ("MXFP6A16", CompressionFormat.mxfp6_pack_quantized, None),
+        ("MXFP6A8", CompressionFormat.mxfp6_pack_quantized, None),
     ],
 )
 @pytest.mark.parametrize("device", ["cpu", "meta", "cuda"])
@@ -106,6 +108,7 @@ def test_compress_decompress_module_mxfp4(scheme_name, expected_format, device):
         ("W4A16_ASYM", CompressionFormat.pack_quantized, None),
         ("NVFP4A16", CompressionFormat.nvfp4_pack_quantized, None),
         ("MXFP4A16", CompressionFormat.mxfp4_pack_quantized, None),
+        ("MXFP6A16", CompressionFormat.mxfp6_pack_quantized, None),
     ],
 )
 @pytest.mark.parametrize("device", ["cpu", "meta", "cuda"])

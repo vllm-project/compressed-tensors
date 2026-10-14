@@ -237,6 +237,43 @@ MXFP4 = dict(
     ),
 )
 
+MXFP6A16 = dict(
+    weights=QuantizationArgs(
+        num_bits=6,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+    )
+)
+
+# MXFP6 weights with dynamic MXFP8 activations
+MXFP6A8 = dict(
+    weights=QuantizationArgs(
+        num_bits=6,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+    ),
+    input_activations=QuantizationArgs(
+        num_bits=8,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        dynamic=True,
+        symmetric=True,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+    ),
+)
+
 MXFP8A16 = dict(
     weights=QuantizationArgs(
         num_bits=8,
@@ -417,6 +454,8 @@ PRESET_SCHEMES: dict[str, dict] = {
     "NVFP4": NVFP4,
     "MXFP4A16": MXFP4A16,
     "MXFP4": MXFP4,
+    "MXFP6A16": MXFP6A16,
+    "MXFP6A8": MXFP6A8,
     "MXFP8A16": MXFP8A16,
     "MXFP8": MXFP8,
     # Integer WxAy schemes (weight_bits x act_bits, weight_bits <= act_bits)

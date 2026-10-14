@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 """
-Shared utilities for MX-format (MXFP4/MXFP8) scale compression and
+Shared utilities for MX-format (MXFP4/MXFP6/MXFP8) scale compression and
 decompression.
 
 MX scales are stored as E8M0 exponents (uint8), where each value represents
