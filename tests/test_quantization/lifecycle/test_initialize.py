@@ -17,6 +17,7 @@ from compressed_tensors.quantization import (
     QuantizationStrategy,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
+    _is_attention_module,
     initialize_attn_qparams,
     initialize_module_for_quantization,
     is_attention_module,
@@ -61,6 +62,29 @@ class EncoderAttention(torch.nn.Module):
         return hidden_states
 
 
+class T5StyleAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.q = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states, past_key_value=None):
+        return hidden_states
+
+
+class ProjectionOnlyBlock(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.k_proj = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states):
+        return hidden_states
+
+
+class ProjectionAttention(torch.nn.Module):
+    def forward(self, hidden_states):
+        return hidden_states
+
+
 @pytest.fixture
 def layer():
     return Linear(4, 4)
@@ -72,10 +96,24 @@ def layer():
         (CacheAwareAttention, True),
         (PluralCacheAwareAttention, True),
         (EncoderAttention, False),
+        (T5StyleAttention, False),
+        (ProjectionOnlyBlock, False),
     ],
 )
 def test_is_cached_attention_module(attention_cls, expected):
     assert is_cached_attention_module(attention_cls()) is expected
+
+
+@pytest.mark.parametrize(
+    ("attention_cls", "expected"),
+    [
+        (CacheAwareAttention, True),
+        (T5StyleAttention, True),
+        (ProjectionOnlyBlock, False),
+    ],
+)
+def test_is_attention_module_detects_attention_blocks(attention_cls, expected):
+    assert _is_attention_module(attention_cls()) is expected
 
 
 def test_is_attention_module_is_deprecated():

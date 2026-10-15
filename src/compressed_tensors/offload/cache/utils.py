@@ -112,7 +112,7 @@ def load_disk_tensor_from_offload(
 ) -> torch.Tensor:
     with _opened(offloaded["safetensors_file"], device) as file:
         onloaded = file.get_tensor(offloaded["weight_name"])
+        onloaded = onloaded.to(getattr(torch, offloaded["dtype"]))
         if template is not None:
             onloaded = to_tensor(onloaded, template)
-        onloaded = onloaded.to(getattr(torch, offloaded["dtype"]))
         return onloaded

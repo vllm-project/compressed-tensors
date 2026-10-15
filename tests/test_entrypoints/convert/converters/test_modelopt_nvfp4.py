@@ -214,3 +214,129 @@ def test_modelopt_nvfp4_validate_raises_on_untargeted_qparam():
 
     with pytest.raises(ValueError):
         converter.validate(tensors)
+
+
+@pytest.fixture
+def modelopt_nvfp4_tensors():
+    tensors = {
+        "model.embed_tokens.weight": torch.ones(128, 64, dtype=torch.bfloat16),
+        "lm_head.weight": torch.ones(128, 64, dtype=torch.bfloat16),
+        "model.layers.0.input_layernorm.weight": torch.ones(64, dtype=torch.bfloat16),
+        "model.norm.weight": torch.ones(64, dtype=torch.bfloat16),
+    }
+    for module in ("model.layers.0.self_attn.q_proj", "model.layers.0.mlp.up_proj"):
+        tensors.update(
+            {
+                f"{module}.weight": torch.full((64, 32), 0x12, dtype=torch.uint8),
+                f"{module}.weight_scale": torch.ones(64, 4).to(torch.float8_e4m3fn),
+                f"{module}.weight_scale_2": torch.tensor(0.25),
+                f"{module}.input_scale": torch.tensor(0.5),
+            }
+        )
+    return tensors
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({}, id="default"),
+        pytest.param({"targets": ["Linear"]}, id="linear"),
+        pytest.param(
+            {"targets": ["Linear"], "ignore": ["lm_head"]}, id="linear-ignore-lm-head"
+        ),
+        pytest.param(
+            {
+                "targets": [
+                    r"re:.*mlp.*\.(gate_up|gate|up|down)_proj$",
+                    r"re:.*self_attn.*\.(q|k|v|o)_proj$",
+                ],
+                "kv_cache_scheme": QuantizationArgs(
+                    num_bits=8, dynamic=False, type="float"
+                ),
+            },
+            id="qwen3-example",
+        ),
+    ],
+)
+@pytest.mark.parametrize("method", ["process", "validate"])
+@pytest.mark.parametrize("device", ["cpu", "meta"])
+def test_modelopt_nvfp4_preserves_unquantized_weights(
+    modelopt_nvfp4_tensors, kwargs, method, device
+):
+    tensors = {
+        name: tensor.to(device) for name, tensor in modelopt_nvfp4_tensors.items()
+    }
+    converter = ModelOptNvfp4Converter(**kwargs)
+
+    result = getattr(converter, method)(dict(tensors))
+
+    expected_names = set()
+    for name, tensor in tensors.items():
+        module, _, param = name.rpartition(".")
+        if param == "weight" and tensor.dtype == torch.uint8:
+            converted_name = f"{module}.weight_packed"
+        elif param in {"input_scale", "weight_scale_2"}:
+            scale = "input" if param == "input_scale" else "weight"
+            converted_name = f"{module}.{scale}_global_scale"
+            if device == "cpu":
+                torch.testing.assert_close(result[converted_name], 1 / tensor)
+        else:
+            converted_name = name
+
+        expected_names.add(converted_name)
+        if param not in {"input_scale", "weight_scale_2"}:
+            assert result[converted_name] is tensor
+    assert set(result) == expected_names
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("missing_param", "missing_converted_param"),
+    [
+        ("weight_scale", "weight_scale"),
+        ("weight_scale_2", "weight_global_scale"),
+    ],
+)
+@pytest.mark.parametrize("device", ["cpu", "meta"])
+def test_modelopt_nvfp4_validate_requires_weight_scales(
+    modelopt_nvfp4_tensors, missing_param, missing_converted_param, device
+):
+    module = "model.layers.0.self_attn.q_proj"
+    tensors = {
+        name: tensor.to(device) for name, tensor in modelopt_nvfp4_tensors.items()
+    }
+    del tensors[f"{module}.{missing_param}"]
+
+    with pytest.raises(
+        ValueError, match=f"without corresponding {module}.{missing_converted_param}"
+    ):
+        ModelOptNvfp4Converter().validate(tensors)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("device", ["cpu", "meta"])
+def test_modelopt_nvfp4_validate_rejects_non_uint8_packed_weight(device):
+    module = "model.layers.0.self_attn.q_proj"
+    with torch.device(device):
+        tensors = {
+            f"{module}.weight_packed": torch.ones(64, 32, dtype=torch.bfloat16),
+            f"{module}.weight_scale": torch.ones(64, 4).to(torch.float8_e4m3fn),
+            f"{module}.weight_global_scale": torch.tensor(4.0),
+            f"{module}.input_global_scale": torch.tensor(2.0),
+        }
+
+    with pytest.raises(ValueError, match="weight_packed.*torch.uint8"):
+        ModelOptNvfp4Converter().validate(tensors)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "kwargs", [{"ignore": ["lm_head"]}, {"targets": [r"re:.*proj$"]}]
+)
+def test_modelopt_nvfp4_validate_leaves_unselected_packed_weights(kwargs):
+    tensors = {"lm_head.weight_packed": torch.ones(64, 32, dtype=torch.int32)}
+
+    result = ModelOptNvfp4Converter(**kwargs).validate(dict(tensors))
+
+    assert result == tensors
