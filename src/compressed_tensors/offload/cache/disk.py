@@ -15,6 +15,7 @@ from compressed_tensors.offload.cache.utils import (
     catch_pinned_mem_error,
     load_disk_tensor_from_offload,
 )
+from compressed_tensors.offload.cache.writeback import AsyncDiskWriteback
 from compressed_tensors.offload.utils import _pin_memory, send_tensors
 from compressed_tensors.utils import is_accelerator_type
 from safetensors.torch import save_file
@@ -42,6 +43,7 @@ class DiskCache(OffloadCache):
 
     # directory where new tensors are written to
     offload_dir: str
+    async_writer: AsyncDiskWriteback | None
     _ct_file_prefix = "ct_disk_cache"
 
     def __init__(
@@ -49,6 +51,7 @@ class DiskCache(OffloadCache):
         onload_device: torch.device,
         offload_device: Optional["DeviceLikeType | Literal['disk']"] = None,
         offload_dir: Optional[str] = None,
+        async_writer: AsyncDiskWriteback | None = None,
     ):
         super().__init__(onload_device, offload_device=offload_device)
         if offload_device is not None:
@@ -61,6 +64,7 @@ class DiskCache(OffloadCache):
             )
         # Resolve relative paths to absolute paths for symlink creation
         self.offload_dir = Path(offload_dir).resolve()
+        self.async_writer = async_writer
 
     @catch_pinned_mem_error
     def stage(
@@ -79,6 +83,7 @@ class DiskCache(OffloadCache):
             return None
 
         weight_info = self.index[offloaded]
+        self._wait_for_write(weight_info["safetensors_file"])
 
         staged = load_disk_tensor_from_offload(
             weight_info, device="cpu", template=offloaded
@@ -110,6 +115,7 @@ class DiskCache(OffloadCache):
             onloaded = send_tensors(offloaded, device=device, copy=False)
         else:
             weight_info = self.index[offloaded]
+            self._wait_for_write(weight_info["safetensors_file"])
             onloaded = load_disk_tensor_from_offload(
                 weight_info, device=device, template=offloaded
             )
@@ -152,7 +158,19 @@ class DiskCache(OffloadCache):
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
         # safetensors requires contiguous tensors; compressed/packed weights (e.g.
         # NVFP4, FP8 block) may be non-contiguous views after compression.
-        save_file({"weight": tensor.contiguous()}, file_path)
+        if (
+            self.async_writer is not None
+            and self.async_writer.is_batch_active
+            and not (dist.is_available() and dist.is_initialized())
+        ):
+            # Snapshot to pageable CPU memory before returning. This synchronizes
+            # the device-to-host copy and releases the caller's accelerator tensor
+            # when its module mapping is replaced, while disk serialization runs
+            # independently on the writeback worker.
+            cpu_tensor = tensor.detach().contiguous().to(device="cpu", copy=True)
+            self.async_writer.submit(file_path, {"weight": cpu_tensor})
+        else:
+            save_file({"weight": tensor.contiguous()}, file_path)
         return offloaded
 
     def __delitem__(self, key: str):
@@ -168,6 +186,7 @@ class DiskCache(OffloadCache):
         if not self.onloading_disabled:
             file_path = self.index[offloaded]["safetensors_file"]
             if self._is_ct_file_path(file_path):
+                self._wait_for_write(file_path)
                 self._remove_file(file_path)
             del self.index[offloaded]
         super().__delitem__(key)
@@ -187,6 +206,7 @@ class DiskCache(OffloadCache):
         assert offloaded in self.index, "Cannot find offload to update"
         weight_info = self.index[offloaded]
         file_path = weight_info["safetensors_file"]
+        self._wait_for_write(file_path)
         weight_name = weight_info["weight_name"]
         dtype = getattr(torch, weight_info["dtype"])
 
@@ -207,6 +227,10 @@ class DiskCache(OffloadCache):
         finally:
             if os.path.lexists(temporary_path):
                 os.remove(temporary_path)
+
+    def _wait_for_write(self, file_path: str) -> None:
+        if self.async_writer is not None:
+            self.async_writer.wait(file_path)
 
     @classmethod
     def create_checkpoint_symlink(
