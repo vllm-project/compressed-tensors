@@ -14,7 +14,7 @@ from compressed_tensors.quantization.quant_scheme import (
 )
 from compressed_tensors.quantization.utils import is_module_quantized
 from compressed_tensors.utils import find_unique_name
-from compressed_tensors.utils.match import match_name
+from compressed_tensors.utils.match import match_name, match_targets
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
 
@@ -28,27 +28,31 @@ __all__ = [
 ]
 
 
-def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]:
-    """Translate ignore list entries from HF module names to checkpoint names.
+def _map_to_checkpoint_names(model: Module, names: list[str]) -> list[str]:
+    """Translate HF module names to checkpoint names for targets and ignores.
 
     Transformers v5 may rename weight keys on load (e.g. vision_embedder ->
-    embed_vision).  The ignore list is built from ``model.named_modules()``
+    embed_vision).  Module names come from ``model.named_modules()``
     which uses HF names, but safetensors keys use checkpoint names.  This
     applies the same reverse mapping that ``save_pretrained`` uses for weights.
     """
     weight_conversions = getattr(model, "_weight_conversions", None)
     if not weight_conversions:
-        return ignore_list
+        return names
 
     inverted = [conv.reverse_transform() for conv in reversed(weight_conversions)]
 
     result = []
-    for name in ignore_list:
+    for name in names:
+        # Some conversions match a complete weight key or a trailing dot.
+        # This assumes Linear-style `.weight` parameters, which is naive and not great.
+        # Conversions specific to other parameter names are not handled.
+        name += ".weight"
         for rev in inverted:
             renamed, matched = rev.rename_source_key(name)
             if matched is not None:
                 name = renamed
-        result.append(name)
+        result.append(name.removesuffix(".weight"))
 
     return result
 
@@ -198,6 +202,8 @@ class QuantizationConfig(BaseModel):
         # set of all quantization schemes
         # TODO: make quant config/scheme/args frozen/hashable and use a set
         quantization_schemes: list[QuantizationScheme] = list()
+        scheme_indices: dict[int, int] = {}
+        scheme_names: list[list[str]] | None = None
 
         # use any status from modules (in practice, use the last module)
         model_status = None
@@ -213,23 +219,33 @@ class QuantizationConfig(BaseModel):
         # this keeps track of any kvcache schemes
         kv_cache_scheme: QuantizationArgs | None = None
 
+        named_modules = {}
         for name, submodule in model.named_modules():
+            named_modules[name] = submodule
             layer_type: str = get_vllm_module_type(type(submodule).__name__)
             is_cached_attention = is_cached_attention_module(submodule)
+            is_quantized = is_module_quantized(submodule)
 
             # add config group if quantized non-attention or attention quant
-            has_config_group = is_module_quantized(submodule) and (
+            has_config_group = is_quantized and (
                 not is_cached_attention or hasattr(submodule, IMPL_ATTR)
             )
             # only add kvcache if quant attention (which always implies kvcache)
-            has_kv_cache = is_module_quantized(submodule) and is_cached_attention
+            has_kv_cache = is_quantized and is_cached_attention
 
             if has_config_group:
                 # add to running set of schemes/layer_type_names
                 model_status = getattr(submodule, "quantization_status", model_status)
                 quantization_type_names.add(layer_type)
-                if submodule.quantization_scheme not in quantization_schemes:
-                    quantization_schemes.append(submodule.quantization_scheme)
+                scheme = submodule.quantization_scheme
+                # Resolve shared schemes once, but still merge equal copies.
+                if id(scheme) not in scheme_indices:
+                    try:
+                        scheme_index = quantization_schemes.index(scheme)
+                    except ValueError:
+                        scheme_index = len(quantization_schemes)
+                        quantization_schemes.append(scheme)
+                    scheme_indices[id(scheme)] = scheme_index
 
             if has_kv_cache:
                 model_status = getattr(submodule, "quantization_status", model_status)
@@ -255,11 +271,50 @@ class QuantizationConfig(BaseModel):
             # else we leave it off the ignore list, doesn't fall under any of the
             # existing quantization schemes so it won't be quantized
 
-        consolidated_ignore = _map_to_checkpoint_names(model, consolidated_ignore)
+        checkpoint_names = dict(
+            zip(named_modules, _map_to_checkpoint_names(model, list(named_modules)))
+        )
+        consolidated_ignore = [checkpoint_names[name] for name in consolidated_ignore]
+        renamed_modules = {
+            name: module
+            for name, module in named_modules.items()
+            if checkpoint_names[name] != name
+        }
 
         # create config groups from all unique schemes
         config_groups = {}
         for idx, scheme in enumerate(quantization_schemes):
+            # Preserve compact targets unless renaming changes their matches or
+            # specificity. Check other groups' modules too: a rename can bring
+            # them into this scheme's regex. Expand from actual assignments.
+            if any(
+                match_targets(name, module, scheme.targets)
+                != match_targets(checkpoint_names[name], module, scheme.targets)
+                for name, module in renamed_modules.items()
+            ):
+                # Group assignments only when needed, once for all expanded groups.
+                if scheme_names is None:
+                    scheme_names = [[] for _ in quantization_schemes]
+                    for name, module in named_modules.items():
+                        assigned = getattr(module, "quantization_scheme", None)
+                        if assigned is None:
+                            continue
+                        if id(assigned) not in scheme_indices:
+                            try:
+                                assigned_index = quantization_schemes.index(assigned)
+                            except ValueError:
+                                assigned_index = -1
+                            scheme_indices[id(assigned)] = assigned_index
+                        assigned_index = scheme_indices[id(assigned)]
+                        if assigned_index >= 0:
+                            scheme_names[assigned_index].append(name)
+                scheme = scheme.model_copy(
+                    update={
+                        "targets": [
+                            checkpoint_names[name] for name in scheme_names[idx]
+                        ]
+                    }
+                )
             group_name = "group_" + str(idx)
             config_groups[group_name] = scheme
 
