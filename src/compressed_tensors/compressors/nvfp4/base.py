@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from typing import Callable
+
 import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
     BaseCompressor,
 )
+from compressed_tensors.compressors.nvfp4.forward import get_nvfp4_linear_forward
 from compressed_tensors.compressors.nvfp4.helpers import (
     quantize_and_pack_fp4,
     unpack_fp4_from_uint8,
@@ -133,6 +136,13 @@ class NVFP4PackedCompressor(BaseCompressor):
         )
 
         return state_dict
+
+    @classmethod
+    def get_compressed_forward(
+        cls, module: torch.nn.Module
+    ) -> Callable[[torch.nn.Module, torch.Tensor], torch.Tensor] | None:
+        """Linear modules with NVFP4 weights use an NVFP4 kernel"""
+        return get_nvfp4_linear_forward(module)
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
