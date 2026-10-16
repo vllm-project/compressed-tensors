@@ -7,6 +7,7 @@ from functools import wraps
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
+from compressed_tensors.offload.cache.writeback import AsyncDiskWriteback
 from compressed_tensors.offload.utils import send_tensors
 
 
@@ -180,17 +181,30 @@ def subgraph_onload_modules(
 def subgraph_offload_modules(
     modules: dict[str, torch.nn.Module],
     offload_kwargs: dict[str, dict],
+    async_writer: AsyncDiskWriteback | None = None,
 ):
-    """
-    Offload a list of modules, using the provided device map and kwargs.
-    """
+    """Offload modules, optionally handing disk serialization to a worker."""
     from compressed_tensors.offload import get_cache_init_kwargs
 
+    to_offload = []
     for name, module in modules.items():
         if name in offload_kwargs:
-            offload_module(module, **offload_kwargs[name])
+            module_offload_kwargs = offload_kwargs[name].copy()
         else:
             # we should consider raising warnings, but observers will
             # clog the output with warnings, so we will skip for now
             module_offload_kwargs = get_cache_init_kwargs(module)
+        to_offload.append((module, module_offload_kwargs))
+
+    uses_disk = any(
+        str(module_offload_kwargs.get("offload_device")) == "disk"
+        for _, module_offload_kwargs in to_offload
+    )
+    use_async = async_writer is not None and uses_disk
+    batch_context = async_writer.batch() if use_async else contextlib.nullcontext()
+    with batch_context:
+        for module, module_offload_kwargs in to_offload:
+            if use_async and str(module_offload_kwargs.get("offload_device")) == "disk":
+                module_offload_kwargs["async_writer"] = async_writer
+
             offload_module(module, **module_offload_kwargs)
