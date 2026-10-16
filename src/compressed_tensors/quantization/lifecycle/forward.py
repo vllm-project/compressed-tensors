@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from functools import wraps
+from typing import Callable
 
 import torch
 from compressed_tensors.quantization.lifecycle.forward_helpers import (
@@ -29,6 +30,8 @@ __all__ = [
     "dequantize",
     "fake_quantize",
     "set_forward_quantized",
+    "set_forward_compressed",
+    "remove_forward_compressed",
     "forward_quantize",
 ]
 
@@ -246,6 +249,39 @@ def set_forward_quantized(module: torch.nn.Linear | torch.nn.Embedding):
         return output
 
     module.forward = quantized_forward.__get__(module)
+
+
+def set_forward_compressed(
+    module: torch.nn.Module,
+    forward: Callable[[torch.nn.Module, torch.Tensor], torch.Tensor],
+):
+    """
+    Replace a module's forward function with one that runs directly on the module's
+    compressed parameters. The replaced forward can be restored with
+    `remove_forward_compressed`.
+
+    :param module: compressed module whose forward function will be replaced
+    :param forward: unbound forward function which takes the module and its input
+    """
+    decompressed_forward = module.forward.__func__
+
+    @wraps(decompressed_forward)
+    def compressed_forward(self: torch.nn.Module, input: torch.Tensor) -> torch.Tensor:
+        return forward(self, input)
+
+    compressed_forward._is_compressed_forward = True
+    module.forward = compressed_forward.__get__(module)
+
+
+def remove_forward_compressed(module: torch.nn.Module):
+    """
+    Restore the forward function which was replaced by `set_forward_compressed`.
+    Does nothing if the module does not have a compressed forward.
+
+    :param module: module whose compressed forward function will be removed
+    """
+    if getattr(module.forward, "_is_compressed_forward", False):
+        module.forward = module.forward.__wrapped__.__get__(module)
 
 
 def forward_quantize(
