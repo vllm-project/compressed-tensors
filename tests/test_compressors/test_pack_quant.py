@@ -356,17 +356,19 @@ def test_pack_unpack_3d_matches_stacked_2d(num_bits):
 
 @pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
 @pytest.mark.parametrize("k", [33, 64, 100, 1024])
-def test_pack_unpack_round_trip(num_bits, k):
+@pytest.mark.parametrize("packed_dim", [0, 1])
+def test_pack_unpack_round_trip(num_bits, k, packed_dim):
     """Non-power-of-2 bit widths use cross-word-boundary packing."""
-    shape = (64, k)
+    shape = (64, k) if packed_dim == 1 else (k, 64)
     lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
     value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
 
-    packed = pack_to_int32(value, num_bits)
+    packed = pack_to_int32(value, num_bits, packed_dim)
     assert packed.dtype == torch.int32
-    assert packed.shape == (shape[0], math.ceil(shape[1] * num_bits / 32))
+    packed_len = math.ceil(k * num_bits / 32)
+    assert packed.shape == ((64, packed_len) if packed_dim == 1 else (packed_len, 64))
 
-    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
+    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape), packed_dim)
     assert torch.equal(unpacked, value)
 
 
