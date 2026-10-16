@@ -35,6 +35,8 @@ class AsyncDiskWriteback:
     snapshots all of that subgraph's tensors to CPU, then commits the batch so
     the writer can serialize it while later subgraphs run. At most one queued
     batch is retained in addition to the batch currently being written.
+
+    A single batch is the entire subgraph to be written.
     """
 
     def __init__(self, max_queued_batches: int = 1):

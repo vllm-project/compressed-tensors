@@ -83,6 +83,8 @@ class DiskCache(OffloadCache):
             return None
 
         weight_info = self.index[offloaded]
+        # if there is a pending write, we have to wait for it
+        # to finish or else we get stale data
         self._wait_for_write(weight_info["safetensors_file"])
 
         staged = load_disk_tensor_from_offload(
@@ -115,6 +117,8 @@ class DiskCache(OffloadCache):
             onloaded = send_tensors(offloaded, device=device, copy=False)
         else:
             weight_info = self.index[offloaded]
+            # same as in `stage`, need to wait for writes to finish
+            # or else stale data
             self._wait_for_write(weight_info["safetensors_file"])
             onloaded = load_disk_tensor_from_offload(
                 weight_info, device=device, template=offloaded
