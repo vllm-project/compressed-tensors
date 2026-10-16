@@ -1,9 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from typing import Callable
+
+import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
     BaseCompressor,
+)
+from compressed_tensors.compressors.naive_quantized.int8_forward import (
+    get_int8_linear_forward,
 )
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
@@ -131,6 +137,13 @@ class NaiveQuantizationCompressor(BaseCompressor):
 @BaseCompressor.register(name=CompressionFormat.int_quantized.value)
 class IntQuantizationCompressor(NaiveQuantizationCompressor):
     """Alias for integer quantized models."""
+
+    @classmethod
+    def get_compressed_forward(
+        cls, module: torch.nn.Module
+    ) -> Callable[[torch.nn.Module, torch.Tensor], torch.Tensor] | None:
+        """Linear modules with INT weights use an INT8 kernel"""
+        return get_int8_linear_forward(module)
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
