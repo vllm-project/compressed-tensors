@@ -3,6 +3,7 @@
 
 import inspect
 import math
+import numbers
 
 import torch
 from compressed_tensors.modeling import (
@@ -31,6 +32,7 @@ from compressed_tensors.utils import (
 from compressed_tensors.utils.helpers import deprecated
 from loguru import logger
 from torch.nn import Module, Parameter
+from transformers import PretrainedConfig
 
 
 __all__ = [
@@ -298,11 +300,15 @@ def initialize_attn_qparams(
 
     _validate_attention_scheme(scheme)
 
-    # extract shapes from decoder config
-    config = kv_cache.config
+    # extract shapes from the config of this attention module's decoder layer
+    is_heterogeneous = getattr(kv_cache.config, "is_heterogeneous", False)
+    config = _get_layer_config(kv_cache.config, module)
     num_attn_heads = get_num_attn_heads(config)
     num_kv_heads = get_num_kv_heads(config)
     head_dim = get_head_dim(config)
+    _validate_num_kv_heads(
+        module, scheme.input_activations, num_kv_heads, strict=is_heterogeneous
+    )
 
     # (batch_size, num_heads, slen, head_dim)
     q_observed_shape = (num_attn_heads, None, head_dim)
@@ -352,3 +358,91 @@ def _validate_attention_scheme(scheme: QuantizationScheme):
 
     if scheme.output_activations is not None:
         raise ValueError("Cannot apply output quantization to attention")
+
+    args = scheme.input_activations
+    if args.dynamic is False and args.strategy in (
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        strategy = QuantizationStrategy(args.strategy).value
+        raise ValueError(
+            f"Static {strategy} quantization is not supported for attention or the "
+            "kv cache. Use the tensor or attn_head strategy, or dynamic quantization"
+        )
+
+
+def _get_layer_config(config: PretrainedConfig, module: Module) -> PretrainedConfig:
+    """
+    Get the config of the decoder layer which owns an attention module
+
+    Heterogeneous configs (transformers>=5.14, for example gemma-4) vary attributes
+    such as `head_dim` and `num_key_value_heads` per layer, and transformers raises
+    when they are read from the global config. Read them from the config of the
+    module's own layer instead, selected by the module's `layer_idx`.
+
+    :param config: decoder config of the model
+    :param module: attention module
+    :return: config of the module's layer, or `config` if it is homogeneous
+    """
+    if not getattr(config, "is_heterogeneous", False):
+        return config
+
+    layer_idx = getattr(module, "layer_idx", None)
+    num_layers = len(config.per_layer_config)
+    is_index = isinstance(layer_idx, numbers.Integral) and not isinstance(
+        layer_idx, bool
+    )
+    if not is_index or not 0 <= layer_idx < num_layers:
+        raise ValueError(
+            f"Cannot initialize attention quantization for {type(module).__name__}: "
+            f"the model config varies {sorted(config.per_layer_attributes)} per "
+            f"layer, but the module's layer_idx ({layer_idx!r}) does not select one "
+            f"of its {num_layers} layers"
+        )
+
+    return config.per_layer_config[int(layer_idx)]
+
+
+def _validate_num_kv_heads(
+    module: Module, args: QuantizationArgs, num_kv_heads: int, strict: bool
+):
+    """
+    Check that the config's number of key/value heads matches the attention module
+    before shaping per-head kv cache scales by it.
+
+    For per-layer configs a mismatch is an error. For other configs it only logs a
+    warning and keeps the config-shaped scales, as before this check existed: some
+    models initialize today despite a mismatch, for example the Idefics2 perceiver
+    attention, which is hooked with the decoder config, while others fail later when
+    calibrated or run, for example gemma-4 26B/31B on transformers<5.15.
+
+    :param module: attention module
+    :param args: input activation quantization args of the attention module
+    :param num_kv_heads: number of key/value heads read from the config
+    :param strict: raise instead of warning when the counts disagree
+    """
+    if args.strategy != QuantizationStrategy.ATTN_HEAD or args.dynamic is not False:
+        return
+
+    head_dim = getattr(module, "head_dim", None)
+    out_features = getattr(getattr(module, "k_proj", None), "out_features", None)
+    if not isinstance(head_dim, int) or not isinstance(out_features, int):
+        return
+    if head_dim <= 0 or out_features % head_dim != 0:
+        return
+
+    module_kv_heads = out_features // head_dim
+    if module_kv_heads != num_kv_heads:
+        message = (
+            f"attn_head quantization of {type(module).__name__} shapes its kv cache "
+            f"scales for {num_kv_heads} key/value heads from the config, but its "
+            f"k_proj projects to {module_kv_heads} heads of size {head_dim}"
+        )
+        if strict:
+            raise ValueError(message)
+        logger.warning(
+            f"{message}. The scales keep the config's shape, so this module may "
+            "fail to calibrate or run; the tensor strategy does not depend on the "
+            "number of heads",
+            log_once=True,
+        )

@@ -26,6 +26,7 @@ __all__ = [
 
 IMPL_ATTR = "impl"
 HOOKED_ATTENTION_NAME = "ct_hooked_attention"
+_QUANTIZABLE_ATTR = "_ct_quantizable_attention"
 
 
 class QuantizedAttentionImpl(InternalModule):
@@ -79,10 +80,22 @@ class QuantizedAttentionImpl(InternalModule):
 
 
 def _hooked_attention(module: Module, *args, **kwargs):
-    assert hasattr(module, IMPL_ATTR), (
-        f"Using {HOOKED_ATTENTION_NAME} attention implementation, "
-        f"but attention module does not have {IMPL_ATTR} submodule."
-    )
+    if not hasattr(module, IMPL_ATTR):
+        # attention modules which can be quantized are marked by
+        # `initialize_hooked_attention` and need an impl. The others, for example
+        # layers that reuse the kv cache of an earlier layer (gemma-4) or CLIP-style
+        # vision encoders, use the model's original attention implementation
+        if getattr(module, _QUANTIZABLE_ATTR, False):
+            raise ValueError(
+                f"Using {HOOKED_ATTENTION_NAME} attention implementation, but "
+                f"{type(module).__name__} has no {IMPL_ATTR} submodule. Attention "
+                "quantization and attention transforms have to target every attention "
+                "module that can be quantized (attention modules with key/value "
+                "projections and a cache argument)"
+            )
+        return ALL_ATTENTION_FUNCTIONS[QuantizedAttentionImpl._original_impl](
+            module, *args, **kwargs
+        )
 
     return getattr(module, IMPL_ATTR)(module, *args, **kwargs)
 
@@ -106,6 +119,16 @@ def initialize_hooked_attention(model: PreTrainedModel, module: Module):
         ALL_MASK_ATTENTION_FUNCTIONS.register(HOOKED_ATTENTION_NAME, original_mask)
         model.set_attn_implementation(HOOKED_ATTENTION_NAME)
         assert model.config._attn_implementation == HOOKED_ATTENTION_NAME
+
+        # decide once which attention modules can be quantized, since
+        # `is_cached_attention_module` can't be traced by torch.compile
+        from compressed_tensors.quantization.lifecycle.initialize import (  # circ dep
+            is_cached_attention_module,
+        )
+
+        for submodule in model.modules():
+            if is_cached_attention_module(submodule):
+                setattr(submodule, _QUANTIZABLE_ATTR, True)
 
     initialize_hooked_kv_cache(model, module)
 
