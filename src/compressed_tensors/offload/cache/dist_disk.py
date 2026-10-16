@@ -31,6 +31,7 @@ class DistributedDiskCache(BatchedOffloadMixin, DiskCache):
             weight_info["weight_name"],
             weight_info["dtype"],
             offloaded.shape,
+            weight_info.get("checkpoint_file"),
         ]
 
     def recv_offload(
@@ -44,7 +45,7 @@ class DistributedDiskCache(BatchedOffloadMixin, DiskCache):
         :param memo: unused, accepted for interface compatibility
         :return: meta tensor representing the disk offloaded tensor
         """
-        safetensors_file, weight_name, dtype, src_shape = metadata
+        safetensors_file, weight_name, dtype, src_shape, checkpoint_file = metadata
         offloaded = send_tensors(tensor, device="meta")
         src_dtype = getattr(torch, dtype)
 
@@ -61,6 +62,8 @@ class DistributedDiskCache(BatchedOffloadMixin, DiskCache):
             "weight_name": weight_name,
             "dtype": dtype,
         }
+        if checkpoint_file is not None:
+            self.index[offloaded]["checkpoint_file"] = checkpoint_file
         return offloaded
 
     def __delitem__(self, key: str):
