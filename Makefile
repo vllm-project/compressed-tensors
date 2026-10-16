@@ -7,7 +7,7 @@ quality:
 	@echo "Running copyright checks";
 	python utils/copyright.py quality $(PYCHECKGLOBS)
 	@echo "Running python quality checks";
-	black --target-version py310 --check $(PYCHECKDIRS);
+	black --target-version py311 --check $(PYCHECKDIRS);
 	isort --check-only $(PYCHECKDIRS);
 	flake8 $(PYCHECKDIRS);
 	python tools/lint_cuda.py $(PYCHECKDIRS) --fail-on-issues;
@@ -17,7 +17,7 @@ style:
 	@echo "Running copyright checks";
 	python utils/copyright.py style $(PYCHECKGLOBS)
 	@echo "Running python styling";
-	black --target-version py310 $(PYCHECKDIRS);
+	black --target-version py311 $(PYCHECKDIRS);
 	isort $(PYCHECKDIRS);
 	python tools/lint_cuda.py $(PYCHECKDIRS) --fix
 
