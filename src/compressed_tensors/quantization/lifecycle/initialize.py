@@ -86,14 +86,15 @@ def initialize_module_for_quantization(
     elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
         with disable_onloading():
             weight = module.weight
+        weight_shape, weight_dtype = weight.shape, weight.dtype
 
         if scheme.input_activations is not None:
             initialize_qparams(
                 module,
                 "input",
                 scheme.input_activations,
-                observed_shape=weight.shape[-1:],
-                observed_dtype=weight.dtype,
+                observed_shape=weight_shape[-1:],
+                observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
             )
 
@@ -102,8 +103,8 @@ def initialize_module_for_quantization(
                 module,
                 "weight",
                 scheme.weights,
-                observed_shape=weight.shape,
-                observed_dtype=weight.dtype,
+                observed_shape=weight_shape,
+                observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
             )
 
@@ -112,8 +113,8 @@ def initialize_module_for_quantization(
                 module,
                 "output",
                 scheme.output_activations,
-                observed_shape=weight.shape[:-1],
-                observed_dtype=weight.dtype,
+                observed_shape=weight_shape[:-1],
+                observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
             )
 
@@ -190,7 +191,12 @@ def initialize_qparams(
     """
     strategy = quantization_args.strategy
     dynamic = quantization_args.dynamic
-    device = get_execution_device(module)  # avoid performing intialization ops on cpu
+    # avoid performing intialization ops on cpu
+    if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
+        with disable_onloading():
+            device = module.weight.device
+    else:
+        device = get_execution_device(module)
 
     # Skip all intialization for fully dynamic quantization
     if dynamic is True:
