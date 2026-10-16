@@ -37,6 +37,7 @@ def match_named_modules(
     ignore: Iterable[str] | None = None,
     fused: FusedMappping | None = None,
     warn_on_fail: bool = False,
+    modules: Iterable[torch.nn.Module] | None = None,
 ) -> Generator[tuple[str, torch.nn.Module], None, None]:
     """
     Yields names and modules which match `targets` but do not match `ignore`.
@@ -45,17 +46,21 @@ def match_named_modules(
     :param model: model containing submodules to match against
     :param targets: target strings, potentially containing "re:" prefixes
     :param ignore: targets to ignore, potentially containing "re:" prefixes
-    :fused: optional mapping from suffixes of fused modules to the suffixes of their
+    :param fused: optional mapping from suffixes of fused modules to the suffixes of their
         corresponding shards. See `compressed_tensors.utils.match.is_match`
     :param warn_on_fail: if True, warns if any targets do not match any modules in model
+    :param modules: optional modules to restrict matching to
     :return: generator of module names and modules
     """
     targets = targets or []
     ignore = ignore or []
+    module_ids = None if modules is None else {id(module) for module in modules}
 
     unmatched_targets = set(targets)
 
     for name, module in model.named_modules():
+        if module_ids is not None and id(module) not in module_ids:
+            continue
         for target in targets:
             if is_match(name, module, target, fused=fused):
                 unmatched_targets -= {target}

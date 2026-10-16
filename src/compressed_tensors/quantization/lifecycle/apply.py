@@ -3,6 +3,7 @@
 
 from collections import OrderedDict
 from copy import deepcopy
+from collections.abc import Iterable
 
 import torch
 import torch.distributed as dist
@@ -102,6 +103,7 @@ def apply_quantization_config(
     config: QuantizationConfig | None,
     run_compressed: bool = False,
     show_progress: bool = True,
+    modules: Iterable[Module] | None = None,
 ):
     """
     Initializes the model for quantization in-place based on the given config.
@@ -112,6 +114,7 @@ def apply_quantization_config(
     :param run_compressed: Whether the model will be run in compressed mode or
         decompressed fully on load
     :param show_progress: Whether to show progress bar during quantization
+    :param modules: optional modules to restrict quantization to
     """
     config = deepcopy(config)
     if config is None:  # see PR #180
@@ -122,7 +125,7 @@ def apply_quantization_config(
     force_zero_point = config.quantization_status < QuantizationStatus.COMPRESSED
 
     # apply and initialize kv cache quantization
-    if config.kv_cache_scheme is not None:
+    if config.kv_cache_scheme is not None and modules is None:
         _apply_kv_cache_scheme(
             model, config.kv_cache_scheme, config.quantization_status
         )
@@ -136,7 +139,13 @@ def apply_quantization_config(
 
     # mark appropriate layers for quantization by setting their quantization schemes
     matched_modules = list(
-        match_named_modules(model, target_to_scheme, config.ignore, warn_on_fail=True)
+        match_named_modules(
+            model,
+            target_to_scheme,
+            config.ignore,
+            warn_on_fail=modules is None,
+            modules=modules,
+        )
     )
 
     for name, module in tqdm(
