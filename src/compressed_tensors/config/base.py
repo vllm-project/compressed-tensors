@@ -8,7 +8,12 @@ from compressed_tensors.registry import RegistryMixin
 from pydantic import BaseModel
 
 
-__all__ = ["SparsityCompressionConfig", "CompressionFormat", "SparsityStructure"]
+__all__ = [
+    "SparsityCompressionConfig",
+    "CompressionFormat",
+    "SparsityStructure",
+    "MoESparsityMethod",
+]
 
 
 @unique
@@ -25,6 +30,19 @@ class CompressionFormat(str, Enum):
     nvfp4_pack_quantized = "nvfp4-pack-quantized"
     mxfp4_pack_quantized = "mxfp4-pack-quantized"
     mxfp8_quantized = "mxfp8-quantized"
+
+
+@unique
+class MoESparsityMethod(str, Enum):
+    """
+    Methods for inducing MoE expert sparsity.
+
+    :cvar PRUNE: prune experts entirely (e.g. REAP)
+    :cvar NOVICE: replace experts with constant novices (e.g. MoNe)
+    """
+
+    PRUNE = "prune"
+    NOVICE = "novice"
 
 
 @unique
