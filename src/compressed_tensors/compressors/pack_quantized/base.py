@@ -2,11 +2,15 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import math
+from typing import Callable
 
 import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
     BaseCompressor,
+)
+from compressed_tensors.compressors.pack_quantized.forward import (
+    get_pack_quantized_linear_forward,
 )
 from compressed_tensors.compressors.pack_quantized.helpers import (
     pack_to_int32,
@@ -178,6 +182,13 @@ class PackedQuantizationCompressor(BaseCompressor):
         )
 
         return state_dict
+
+    @classmethod
+    def get_compressed_forward(
+        cls, module: torch.nn.Module
+    ) -> Callable[[torch.nn.Module, torch.Tensor], torch.Tensor] | None:
+        """Linear modules with packed INT weights use an unpack-and-GEMM kernel"""
+        return get_pack_quantized_linear_forward(module)
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
