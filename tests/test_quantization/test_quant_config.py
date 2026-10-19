@@ -29,6 +29,25 @@ def test_basic_config():
     assert config.quantization_status == QuantizationStatus.INITIALIZED
     assert config.global_compression_ratio is None
     assert isinstance(config.ignore, list) and len(config.ignore) == 0
+    assert config.moe_sparsity_config is None
+
+
+def test_config_with_moe_sparsity():
+    from compressed_tensors.config import ExpertSparsityConfig, MoESparsityMethod
+
+    config = QuantizationConfig(
+        config_groups={"group_1": QuantizationScheme(targets=[])},
+        moe_sparsity_config=ExpertSparsityConfig(
+            method="prune", num_experts=[None, 129, 253]
+        ),
+    )
+    assert isinstance(config.moe_sparsity_config, ExpertSparsityConfig)
+    assert config.moe_sparsity_config.method == MoESparsityMethod.PRUNE
+
+    # round-trips through dict (de)serialization
+    restored = QuantizationConfig.model_validate(config.model_dump())
+    assert isinstance(restored.moe_sparsity_config, ExpertSparsityConfig)
+    assert restored.moe_sparsity_config.num_experts == [None, 129, 253]
 
 
 def test_full_config():

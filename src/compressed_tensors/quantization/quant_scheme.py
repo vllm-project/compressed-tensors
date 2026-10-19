@@ -241,9 +241,6 @@ MXFP4 = dict(
     ),
 )
 
-# MXFP4 weights with FP8 block-style activations:
-# static MXFP4 weights (group size 32, E8M0 scales) and
-# dynamic per-token-group (128) FP8 activations, as in FP8_BLOCK
 MXFP4xFP8 = dict(
     weights=QuantizationArgs(
         num_bits=4,
@@ -262,6 +259,43 @@ MXFP4xFP8 = dict(
         symmetric=True,
         dynamic=True,
         group_size=128,
+    ),
+)
+
+MXFP6A16 = dict(
+    weights=QuantizationArgs(
+        num_bits=6,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+    )
+)
+
+# MXFP6 weights with dynamic MXFP8 activations
+MXFP6A8 = dict(
+    weights=QuantizationArgs(
+        num_bits=6,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
+    ),
+    input_activations=QuantizationArgs(
+        num_bits=8,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.GROUP,
+        dynamic=True,
+        symmetric=True,
+        group_size=32,
+        scale_dtype=torch.uint8,
+        zp_dtype=torch.uint8,
     ),
 )
 
@@ -446,6 +480,8 @@ PRESET_SCHEMES: dict[str, dict] = {
     "MXFP4A16": MXFP4A16,
     "MXFP4": MXFP4,
     "MXFP4XFP8": MXFP4xFP8,
+    "MXFP6A16": MXFP6A16,
+    "MXFP6A8": MXFP6A8,
     "MXFP8A16": MXFP8A16,
     "MXFP8": MXFP8,
     # Integer WxAy schemes (weight_bits x act_bits, weight_bits <= act_bits)

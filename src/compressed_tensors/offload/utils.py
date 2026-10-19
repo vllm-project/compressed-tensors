@@ -41,8 +41,9 @@ def send_tensors(value: T, *args, **kwargs) -> T:
             with torch.no_grad():
                 tensor = value.to(*args, **kwargs)
 
-            # special case: avoid changing param pointer when possible
-            if tensor.data_ptr() == value.data_ptr():
+            # special case: avoid changing param pointer when possible. Compare devices
+            # too, since tensors without elements have a null data pointer everywhere
+            if tensor.device == value.device and tensor.data_ptr() == value.data_ptr():
                 return value
 
             tensor.__class__ = value.__class__
