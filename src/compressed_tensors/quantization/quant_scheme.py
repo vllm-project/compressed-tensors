@@ -80,7 +80,7 @@ class QuantizationScheme(BaseModel, use_enum_values=True):
             and weights.strategy == QuantizationStrategy.GROUP
             and inputs.strategy == QuantizationStrategy.GROUP
             and weights.group_size != inputs.group_size
-            # mixed-precision schemes (e.g. MXFP4-DSFP8) intentionally use
+            # mixed-precision schemes (e.g. MXFP4xFP8) intentionally use
             # different group sizes for weights and activations
             and weights.num_bits == inputs.num_bits
             and weights.type == inputs.type
@@ -244,7 +244,7 @@ MXFP4 = dict(
 # MXFP4 weights with FP8 block-style activations:
 # static MXFP4 weights (group size 32, E8M0 scales) and
 # dynamic per-token-group (128) FP8 activations, as in FP8_BLOCK
-MXFP4_DSFP8 = dict(
+MXFP4xFP8 = dict(
     weights=QuantizationArgs(
         num_bits=4,
         type=QuantizationType.FLOAT,
@@ -445,7 +445,7 @@ PRESET_SCHEMES: dict[str, dict] = {
     "NVFP4": NVFP4,
     "MXFP4A16": MXFP4A16,
     "MXFP4": MXFP4,
-    "MXFP4-DSFP8": MXFP4_DSFP8,
+    "MXFP4XFP8": MXFP4xFP8,
     "MXFP8A16": MXFP8A16,
     "MXFP8": MXFP8,
     # Integer WxAy schemes (weight_bits x act_bits, weight_bits <= act_bits)

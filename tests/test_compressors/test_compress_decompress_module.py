@@ -90,7 +90,7 @@ def test_compress_decompress_module(scheme_name, expected_format, actorder, devi
     [
         ("MXFP4A16", CompressionFormat.mxfp4_pack_quantized),
         ("MXFP4", CompressionFormat.mxfp4_pack_quantized),
-        ("MXFP4-DSFP8", CompressionFormat.mxfp4_pack_quantized),
+        ("MXFP4xFP8", CompressionFormat.mxfp4_pack_quantized),
     ],
 )
 @pytest.mark.parametrize("device", ["cpu", "meta", "cuda"])
