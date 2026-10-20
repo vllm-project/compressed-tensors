@@ -11,6 +11,9 @@ from compressed_tensors.compressors.base import (
 from compressed_tensors.compressors.naive_quantized.fp8_forward import (
     get_fp8_linear_forward,
 )
+from compressed_tensors.compressors.naive_quantized.int8_forward import (
+    get_int8_linear_forward,
+)
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     QuantizationScheme,
@@ -144,6 +147,13 @@ class NaiveQuantizationCompressor(BaseCompressor):
 @BaseCompressor.register(name=CompressionFormat.int_quantized.value)
 class IntQuantizationCompressor(NaiveQuantizationCompressor):
     """Alias for integer quantized models."""
+
+    @classmethod
+    def get_compressed_forward(
+        cls, module: torch.nn.Module
+    ) -> Callable[[torch.nn.Module, torch.Tensor], torch.Tensor] | None:
+        """Linear modules with INT weights use an INT8 kernel"""
+        return get_int8_linear_forward(module)
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
