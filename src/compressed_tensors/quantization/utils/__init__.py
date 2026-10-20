@@ -3,5 +3,6 @@
 
 # flake8: noqa
 from .fp4_utils import *
+from .fp6_utils import *
 from .helpers import *
 from .mxfp_utils import *

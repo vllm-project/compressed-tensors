@@ -16,6 +16,7 @@ from compressed_tensors.quantization import preset_name_to_scheme
         ["W8A16", "pack-quantized"],
         ["W4A16", "pack-quantized"],
         ["FP8", "float-quantized"],
+        ["MXFP4xFP8", "mxfp4-pack-quantized"],
     ],
 )
 def test_infer_quant_format(preset, expected_format):

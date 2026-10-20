@@ -10,7 +10,7 @@ import numpy
 import pytest
 import torch
 from compressed_tensors.modeling import IMPL_ATTR
-from compressed_tensors.offload import set_onload_device
+from compressed_tensors.offload import offload_module, set_onload_device
 from compressed_tensors.quantization import (
     FP8_E4M3_DATA,
     QuantizationArgs,
@@ -470,6 +470,45 @@ def test_initialize_module_for_quantization_offloaded(
         input_activations,
         layer,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "weights,input_activations",
+    [
+        (
+            QuantizationArgs(num_bits=NUM_BITS, symmetric=True),
+            None,
+        ),
+        (
+            None,
+            QuantizationArgs(num_bits=NUM_BITS, symmetric=True),
+        ),
+        (
+            QuantizationArgs(num_bits=NUM_BITS, symmetric=True),
+            QuantizationArgs(num_bits=NUM_BITS, symmetric=True),
+        ),
+    ],
+)
+def test_initialize_module_for_quantization_disk_offloaded(
+    create_quantization_scheme, weights, input_activations, layer, tmp_path
+):
+    offload_module(layer, "cpu", "disk", offload_dir=str(tmp_path))
+
+    test_initialize_module_for_quantization(
+        create_quantization_scheme,
+        weights,
+        input_activations,
+        layer,
+    )
+
+    # qparams are offloaded to disk along with the weight and bias; accessing them
+    # onloads their values from disk rather than yielding an unpopulated meta tensor
+    for param_name in ("weight_scale", "weight_zero_point", "input_scale"):
+        if param_name in layer._parameters:
+            param = getattr(layer, param_name)
+            assert param.device.type == "cpu"
+            assert param.numel() > 0
 
 
 @pytest.mark.parametrize(

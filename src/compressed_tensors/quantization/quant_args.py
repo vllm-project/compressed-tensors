@@ -21,6 +21,7 @@ from pydantic import (
 __all__ = [
     "FP8_E4M3_DATA",
     "FP4_E2M1_DATA",
+    "FP6_E2M3_DATA",
     "BFLOAT16_DATA",
     "FLOAT16_DATA",
     "FLOAT32_DATA",
@@ -65,6 +66,25 @@ class FP4_E2M1_DATA(FloatArgs):
         from compressed_tensors.quantization.utils.fp4_utils import cast_to_fp4
 
         return cast_to_fp4(x)
+
+
+class FP6_E2M3_DATA(FloatArgs):
+    exponent = 2
+    mantissa = 3
+    bits = 6
+    max = 7.5
+    min = -7.5
+
+    @staticmethod
+    def cast_to_fp6(x: torch.Tensor) -> torch.Tensor:
+        """Round float values to the nearest E2M3 representable value.
+
+        :param x: input tensor to quantize
+        :return: input tensor after rounding to fp6 (maintains same dtype)
+        """
+        from compressed_tensors.quantization.utils.fp6_utils import cast_to_fp6
+
+        return cast_to_fp6(x)
 
 
 class FP8_E4M3_DATA(FloatArgs):
@@ -393,7 +413,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 raise ValueError("local is only supported for strategy tensor_group")
 
         if zp_dtype is None:
-            if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
+            if model.num_bits in (4, 6) and model.type == QuantizationType.FLOAT:
                 zp_dtype = FP8_E4M3_DATA.dtype
             else:
                 zp_dtype = model.pytorch_dtype()
@@ -482,10 +502,12 @@ def round_to_quantized_type_args(
     if args.type == QuantizationType.FLOAT:
         if args.num_bits == 8:
             rounded = tensor.to(FP8_E4M3_DATA.dtype)
+        elif args.num_bits == 6:
+            rounded = FP6_E2M3_DATA.cast_to_fp6(tensor)
         elif args.num_bits == 4:
             rounded = FP4_E2M1_DATA.cast_to_fp4(tensor)
         else:
-            raise NotImplementedError("Only num_bits in (4, 8) are supported")
+            raise NotImplementedError("Only num_bits in (4, 6, 8) are supported")
     elif args.type == QuantizationType.INT:
         rounded = torch.round(tensor)
     else:
