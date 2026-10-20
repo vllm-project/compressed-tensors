@@ -16,6 +16,7 @@ from compressed_tensors.quantization import (
     QuantizationConfig,
     QuantizationScheme,
     QuantizationStatus,
+    apply_quantization_config,
 )
 from compressed_tensors.transform import TransformConfig
 from tests.test_offload.conftest import torchrun
@@ -207,6 +208,42 @@ class TestModelCompressorCompression:
         # After forward, weight should be decompressed
         assert model.linear.weight.dtype == torch.float32
         assert not hasattr(model.linear, "weight_packed")
+
+    @pytest.mark.parametrize("scheme", ["W4A16", "FP8"])
+    def test_compress_model_twice_decompresses_once(self, scheme):
+        """Test that compressing again (e.g. a second save) keeps a single hook."""
+
+        def make_model():
+            torch.manual_seed(0)
+            model = nn.Sequential(nn.Linear(128, 64, bias=False))
+            config = QuantizationConfig(config_groups={scheme: ["Linear"]})
+            apply_quantization_config(model, config)
+            weight = model[0].weight
+            if scheme == "FP8":
+                scale = weight.abs().amax(dim=-1, keepdim=True) / 448.0
+            else:
+                scale = weight.abs().unflatten(-1, (-1, 128)).amax(dim=-1) / 7.0
+            model[0].weight_scale.data = scale
+            return model
+
+        expected = make_model()
+        compressor = ModelCompressor.from_pretrained_model(expected)
+        compressor.compress_model(expected)
+        compressor.decompress_model(expected)
+
+        model = make_model()
+        compressor = ModelCompressor.from_pretrained_model(model)
+        compressor.compress_model(model)
+        compressor.compress_model(model, skip_compressed=True)
+        assert len(model._forward_pre_hooks) == 1
+
+        x = torch.randn(2, 128)
+        for _ in range(3):
+            _ = model(x)
+            assert torch.equal(model[0].weight, expected[0].weight)
+
+        assert len(model._forward_pre_hooks) == 0
+        assert not hasattr(model, "ct_decompress_hook")
 
     def test_compress_model_updates_format_in_config(self):
         """Test that from_pretrained_model infers and sets the format correctly."""
