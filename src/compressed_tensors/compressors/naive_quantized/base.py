@@ -1,9 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from typing import Callable
+
+import torch
 from compressed_tensors.compressors.base import (
     COMPRESSIBLE_MODULE_TYPES,
     BaseCompressor,
+)
+from compressed_tensors.compressors.naive_quantized.fp8_forward import (
+    get_fp8_linear_forward,
 )
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
@@ -118,6 +124,13 @@ class NaiveQuantizationCompressor(BaseCompressor):
         )
 
         return state_dict
+
+    @classmethod
+    def get_compressed_forward(
+        cls, module: torch.nn.Module
+    ) -> Callable[[torch.nn.Module, torch.Tensor], torch.Tensor] | None:
+        """Linear modules with FP8 weights use an FP8 kernel"""
+        return get_fp8_linear_forward(module)
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
