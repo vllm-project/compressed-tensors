@@ -348,23 +348,52 @@ class QuantizationConfig(BaseModel):
             pruned_ignore_list.append(ign)
         self.ignore = pruned_ignore_list
 
+        # a scheme without its own format uses the global format of its config
+        scheme_formats = [
+            (scheme, scheme.format or _scheme_format(self.format))
+            for scheme in self.config_groups.values()
+        ] + [
+            (scheme, scheme.format or _scheme_format(config.format))
+            for scheme in config.config_groups.values()
+        ]
+
         for scheme_name, scheme in config.config_groups.items():
             new_scheme_name = find_unique_name(scheme_name, self.config_groups.keys())
 
             self.config_groups[new_scheme_name] = scheme
 
-        unique_formats = set(scheme.format for scheme in self.config_groups.values())
-        self.format = (
-            next(iter(unique_formats))
-            if len(unique_formats) == 1
-            else CompressionFormat.mixed_precision.value
+        unique_formats = set(
+            CompressionFormat(format).value
+            for _, format in scheme_formats
+            if format is not None
         )
+        if len(unique_formats) == 1:
+            self.format = next(iter(unique_formats))
+        elif len(unique_formats) > 1:
+            self.format = CompressionFormat.mixed_precision.value
+            # the global format no longer applies, so keep each scheme's format
+            for scheme, format in scheme_formats:
+                if scheme.format is None:
+                    scheme.format = format
 
         if config.quantization_status > self.quantization_status:
             self.quantization_status = config.quantization_status
 
     # TODO set `extra="forbid"` when upstream transformers is compatible
     model_config = ConfigDict(extra="ignore")
+
+
+def _scheme_format(format: str | None) -> CompressionFormat | None:
+    """
+    Return the format a scheme inherits from a config's global format, or None if
+    the global format is unset, mixed-precision, or not a compression format
+    """
+    if format is None or format == CompressionFormat.mixed_precision.value:
+        return None
+    try:
+        return CompressionFormat(format)
+    except ValueError:
+        return None
 
 
 def get_vllm_module_type(module_type: str) -> str:

@@ -231,6 +231,44 @@ def test_quantization_config_merge():
     assert config.quantization_status == QuantizationStatus.COMPRESSED
 
 
+def _w4a16_config(target, format, scheme_format=None):
+    return QuantizationConfig(
+        config_groups={
+            "config_group_0": QuantizationScheme(
+                targets=[target],
+                weights=QuantizationArgs(num_bits=4, symmetric=True, group_size=128),
+                format=scheme_format,
+            )
+        },
+        format=format,
+        quantization_status=QuantizationStatus.COMPRESSED,
+    )
+
+
+@pytest.mark.parametrize("new_scheme_format", [None, "pack-quantized"])
+def test_quantization_config_merge_keeps_global_format(new_scheme_format):
+    # schemes without their own format use the config's global format, as in
+    # checkpoints that only record a global format
+    config = _w4a16_config("re:.*q_proj", "pack-quantized")
+    new_config = _w4a16_config("re:.*k_proj", "pack-quantized", new_scheme_format)
+
+    config.merge(new_config)
+
+    assert config.format == "pack-quantized"
+    QuantizationConfig.model_validate(config.model_dump())
+
+
+def test_quantization_config_merge_mixed_keeps_scheme_formats():
+    config = _w4a16_config("re:.*q_proj", "pack-quantized")
+    new_config = _w4a16_config("re:.*k_proj", "naive-quantized", "naive-quantized")
+
+    config.merge(new_config)
+
+    assert config.format == "mixed-precision"
+    formats = [scheme.format for scheme in config.config_groups.values()]
+    assert formats == ["pack-quantized", "naive-quantized"]
+
+
 def test_imatrix_mse_weight_observer_requires_calibration_data():
     from compressed_tensors.quantization import QuantizationArgs
 
