@@ -161,11 +161,11 @@ def test_fp8_forward_unsupported_block_eager():
     assert fp8_forward.get_fp8_linear_forward(module) is fp8_forward._fp8_linear_eager
 
 
-def test_mxfp8_keeps_forward():
+def test_mxfp8_gets_compressed_forward():
     module = torch.nn.Linear(256, 128, bias=False, dtype=torch.bfloat16)
     initialize_module_for_quantization(
         module, preset_name_to_scheme("MXFP8A16", ["Linear"])
     )
     quantized_forward_func = module.forward.__func__
     compress_module(module)
-    assert module.forward.__func__ is quantized_forward_func
+    assert module.forward.__func__ is not quantized_forward_func
