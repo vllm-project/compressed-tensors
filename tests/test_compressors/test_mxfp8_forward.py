@@ -126,11 +126,11 @@ def test_mxfp4_gets_compressed_forward():
     assert module.forward.__func__ is not quantized_forward_func
 
 
-def test_mxfp6_keeps_forward():
+def test_mxfp6_gets_compressed_forward():
     module = torch.nn.Linear(256, 128, bias=False, dtype=torch.bfloat16)
     initialize_module_for_quantization(
         module, preset_name_to_scheme("MXFP6A16", ["Linear"])
     )
     quantized_forward_func = module.forward.__func__
     compress_module(module)
-    assert module.forward.__func__ is quantized_forward_func
+    assert module.forward.__func__ is not quantized_forward_func
