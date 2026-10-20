@@ -99,21 +99,12 @@ def test_mxfp4_forward_cpu_eager(scheme_name):
     assert _relative_error(output, expected) < 1e-2
 
 
-def test_mxfp6_gets_compressed_forward():
+@pytest.mark.parametrize("scheme_name", ["MXFP6A16", "NVFP4A16"])
+def test_other_fp_formats_get_compressed_forward(scheme_name):
     module = torch.nn.Linear(256, 128, bias=False, dtype=torch.bfloat16)
     initialize_module_for_quantization(
-        module, preset_name_to_scheme("MXFP6A16", ["Linear"])
+        module, preset_name_to_scheme(scheme_name, ["Linear"])
     )
     quantized_forward_func = module.forward.__func__
     compress_module(module)
     assert module.forward.__func__ is not quantized_forward_func
-
-
-def test_nvfp4_keeps_forward():
-    module = torch.nn.Linear(256, 128, bias=False, dtype=torch.bfloat16)
-    initialize_module_for_quantization(
-        module, preset_name_to_scheme("NVFP4A16", ["Linear"])
-    )
-    quantized_forward_func = module.forward.__func__
-    compress_module(module)
-    assert module.forward.__func__ is quantized_forward_func
