@@ -26,12 +26,7 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle.forward import set_forward_quantized
 from compressed_tensors.quantization.utils import strategy_cdiv
-from compressed_tensors.utils import (
-    get_execution_device,
-    get_head_dim,
-    get_num_attn_heads,
-    get_num_kv_heads,
-)
+from compressed_tensors.utils import get_head_dim, get_num_attn_heads, get_num_kv_heads
 from compressed_tensors.utils.helpers import deprecated
 from loguru import logger
 from torch.nn import Module, Parameter
@@ -195,16 +190,8 @@ def initialize_qparams(
     """
     strategy = quantization_args.strategy
     dynamic = quantization_args.dynamic
-    if isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
-        with disable_onloading():
-            device = module.weight.device
-    else:
-        device = get_execution_device(module)
-
-    # disk-offloaded weights are stored as meta tensors, which cannot hold the
-    # data of a newly created parameter. Initialize on the cpu instead; the
-    # module's offload cache will then write the new parameter to disk
-    if get_offloaded_device(module) == "disk":
+    device = get_offloaded_device(module)
+    if device == "disk":
         device = torch.device("cpu")
 
     # Skip all intialization for fully dynamic quantization
