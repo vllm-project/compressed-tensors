@@ -83,7 +83,8 @@ def _get_attention_function(module: Module) -> Callable:
         # transformers models call the `eager_attention_forward` defined in their own
         # modeling file rather than a registered "eager" implementation. The class
         # forward is used because offloading hooks wrap the instance forward
-        attn_forward = type(module).forward.__globals__.get(
+        forward = inspect.unwrap(type(module).forward)
+        attn_forward = forward.__globals__.get(
             "eager_attention_forward", _default_eager_attention_forward
         )
         if attn_forward is _default_eager_attention_forward:
