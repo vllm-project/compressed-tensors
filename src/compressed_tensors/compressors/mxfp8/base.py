@@ -95,7 +95,7 @@ class MXFP8QuantizationCompressor(NaiveQuantizationCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """MXFP8 matches FP8 with group_size=32 and uint8 scale_dtype."""
         return (
-            module_type in COMPRESSIBLE_MODULE_TYPES
+            issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
             and scheme.weights is not None
             and scheme.weights.num_bits == 8
             and scheme.weights.type == QuantizationType.FLOAT.value

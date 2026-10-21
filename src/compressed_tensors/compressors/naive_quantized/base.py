@@ -125,7 +125,10 @@ class NaiveQuantizationCompressor(BaseCompressor):
         Naive quantization is the fallback compressor - it matches any quantized
         scheme that doesn't match a more specific compressor.
         """
-        return module_type in COMPRESSIBLE_MODULE_TYPES and scheme.weights is not None
+        return (
+            issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
+            and scheme.weights is not None
+        )
 
 
 @BaseCompressor.register(name=CompressionFormat.int_quantized.value)
@@ -136,7 +139,7 @@ class IntQuantizationCompressor(NaiveQuantizationCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Int quantized matches w8a8 int quantization."""
         return (
-            module_type in COMPRESSIBLE_MODULE_TYPES
+            issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
             and scheme.input_activations is not None
             and scheme.weights is not None
             and scheme.weights.type == QuantizationType.INT.value
@@ -151,7 +154,7 @@ class FloatQuantizationCompressor(NaiveQuantizationCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Float quantized matches w8a8 float quantization."""
         return (
-            module_type in COMPRESSIBLE_MODULE_TYPES
+            issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
             and scheme.input_activations is not None
             and scheme.weights is not None
             and scheme.weights.type == QuantizationType.FLOAT.value
