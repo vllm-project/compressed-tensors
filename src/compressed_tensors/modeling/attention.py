@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import inspect
+import sys
 from typing import Callable, Optional
 
 from compressed_tensors.modeling.kvcache import initialize_hooked_kv_cache
@@ -65,7 +66,7 @@ class QuantizedAttentionImpl(InternalModule):
             query = forward_quantize(module, query, "q", quant_args)
 
         # original attention
-        return ALL_ATTENTION_FUNCTIONS[QuantizedAttentionImpl._original_impl](
+        return _get_attention_function(module)(
             module,
             query,
             key,
@@ -73,6 +74,25 @@ class QuantizedAttentionImpl(InternalModule):
             *args,
             **kwargs,
         )
+
+
+def _get_attention_function(module: Module) -> Callable:
+    impl = QuantizedAttentionImpl._original_impl
+    if impl == "eager":
+        # transformers models call the `eager_attention_forward` defined in their own
+        # modeling file rather than a registered "eager" implementation
+        for cls in type(module).__mro__:
+            modeling = sys.modules.get(cls.__module__)
+            eager_attention_forward = getattr(modeling, "eager_attention_forward", None)
+            if eager_attention_forward is not None:
+                return eager_attention_forward
+
+        raise ValueError(
+            "Cannot find `eager_attention_forward` in the modeling module of "
+            f"{type(module).__name__} or its base classes"
+        )
+
+    return ALL_ATTENTION_FUNCTIONS[impl]
 
 
 # ----- initialize ----- #
