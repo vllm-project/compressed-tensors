@@ -16,7 +16,7 @@ from compressed_tensors.quantization.utils import is_module_quantized
 from compressed_tensors.utils import find_unique_name
 from compressed_tensors.utils.match import match_name
 from pydantic import BaseModel, ConfigDict, Field
-from torch.nn import Module
+from torch.nn import Embedding, Linear, Module
 
 
 __all__ = [
@@ -44,13 +44,103 @@ def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]
 
     result = []
     for name in ignore_list:
+        # Some conversions match a complete weight key or a trailing dot.
+        # This assumes Linear-style `.weight` parameters; conversions specific
+        # to other parameter names are not handled.
+        name += ".weight"
         for rev in inverted:
             renamed, matched = rev.rename_source_key(name)
             if matched is not None:
                 name = renamed
-        result.append(name)
+        result.append(name.removesuffix(".weight"))
 
     return result
+
+
+def _build_mtp_scheme_targets(
+    schemes: list[QuantizationScheme],
+    assignments: dict[str, int],
+    checkpoint_names: dict[str, str],
+) -> list[QuantizationScheme]:
+    """Build compact targets that preserve each module's quantization scheme.
+
+    Targets match both HF module names and saved checkpoint names, so the
+    backbone and MTP keep their assigned schemes after renaming. Modules
+    not selected for quantization stay excluded. Return copies of the schemes
+    with the new targets, leaving the originals unchanged.
+    """
+    aliases = {}
+    for name, checkpoint_name in checkpoint_names.items():
+        owner = assignments.get(name, -1)
+        for alias in (name, checkpoint_name):
+            if alias in aliases and aliases[alias] != owner:
+                raise ValueError(f"Conflicting quantization schemes for {alias}")
+            aliases[alias] = owner
+
+    # Wrapper prefixes differ across consumers. Only remove them when the layer
+    # paths still distinguish every scheme (e.g. retain Inkling's block wrapper).
+    suffixes = {}
+    for name, owner in aliases.items():
+        match = re.search(r"(?:^|\.)layers\.\d+\.", name)
+        suffix = name[match.start() :].lstrip(".") if match else name
+        if suffix in suffixes and suffixes[suffix] != owner:
+            suffixes = aliases
+            break
+        suffixes[suffix] = owner
+    stripped = suffixes is not aliases
+
+    trees = {}
+    for name, owner in sorted(suffixes.items()):
+        node = trees.setdefault(stripped and name.startswith("layers."), {})
+        for char in name:
+            node[None] = node.get(None, 0) | (1 << (owner + 1))
+            node = node.setdefault(char, {})
+        node[None] = node.get(None, 0) | (1 << (owner + 1))
+        node[""] = owner
+
+    def patterns(node: dict, prefix: str = "") -> dict[int, str]:
+        owners = node[None]
+        if (
+            owners > 1
+            and owners.bit_count() == 1
+            and prefix.endswith(".")
+            and re.search(r"(?:^|\.)layers\.\d+\.[^.]+\.", prefix)
+        ):
+            return {owners.bit_length() - 2: ".*"}
+        branches = defaultdict(list)
+        if node.get("", -1) >= 0:
+            branches[node[""]].append(r"\Z")
+        grouped = defaultdict(lambda: defaultdict(list))
+        for char, child in node.items():
+            if char not in (None, ""):
+                for owner, suffix in patterns(child, prefix + char).items():
+                    grouped[owner][suffix].append(char)
+        for owner, suffixes in grouped.items():
+            for suffix, chars in suffixes.items():
+                chars = sorted(chars)
+                escaped = "".join(re.escape(c) for c in chars)
+                if (
+                    len(chars) > 2
+                    and all(c in "0123456789" for c in chars)
+                    and ord(chars[-1]) - ord(chars[0]) + 1 == len(chars)
+                ):
+                    escaped = f"{chars[0]}-{chars[-1]}"
+                head = escaped if len(chars) == 1 else f"[{escaped}]"
+                branches[owner].append(head + suffix)
+        return {
+            owner: parts[0] if len(parts) == 1 else f"(?:{'|'.join(parts)})"
+            for owner, parts in branches.items()
+        }
+
+    targets = defaultdict(list)
+    for stripped, tree in trees.items():
+        prefix = r"re:^(?:.*\.)?" if stripped else "re:^"
+        for owner, pattern in patterns(tree).items():
+            targets[owner].append(prefix + pattern)
+    return [
+        scheme.model_copy(update={"targets": targets[index]})
+        for index, scheme in enumerate(schemes)
+    ]
 
 
 class QuantizationStatus(str, Enum):
@@ -201,6 +291,9 @@ class QuantizationConfig(BaseModel):
         # set of all quantization schemes
         # TODO: make quant config/scheme/args frozen/hashable and use a set
         quantization_schemes: list[QuantizationScheme] = list()
+        scheme_indices = {}
+        assignments = {}
+        excluded = []
 
         # use any status from modules (in practice, use the last module)
         model_status = None
@@ -231,14 +324,20 @@ class QuantizationConfig(BaseModel):
                 # add to running set of schemes/layer_type_names
                 model_status = getattr(submodule, "quantization_status", model_status)
                 quantization_type_names.add(layer_type)
-                if submodule.quantization_scheme not in quantization_schemes:
-                    quantization_schemes.append(submodule.quantization_scheme)
+                scheme = submodule.quantization_scheme
+                if id(scheme) not in scheme_indices:
+                    if scheme not in quantization_schemes:
+                        quantization_schemes.append(scheme)
+                    scheme_indices[id(scheme)] = quantization_schemes.index(scheme)
+                assignments[name] = scheme_indices[id(scheme)]
 
             if has_kv_cache:
                 model_status = getattr(submodule, "quantization_status", model_status)
                 kv_cache_scheme = submodule.quantization_scheme.input_activations
 
             if not has_config_group:
+                if is_cached_attention or isinstance(submodule, (Linear, Embedding)):
+                    excluded.append(name)
                 # add non-quantized layers to the ignore list
                 if layer_type not in ignore:
                     ignore[layer_type] = []
@@ -258,7 +357,19 @@ class QuantizationConfig(BaseModel):
             # else we leave it off the ignore list, doesn't fall under any of the
             # existing quantization schemes so it won't be quantized
 
-        consolidated_ignore = _map_to_checkpoint_names(model, consolidated_ignore)
+        if getattr(model, "_weight_conversions", None) and any(
+            name.startswith("mtp.") for name in assignments
+        ):
+            names = list(dict.fromkeys([*assignments, *excluded, *consolidated_ignore]))
+            checkpoint_names = dict(zip(names, _map_to_checkpoint_names(model, names)))
+            quantization_schemes = _build_mtp_scheme_targets(
+                quantization_schemes, assignments, checkpoint_names
+            )
+            consolidated_ignore = [
+                checkpoint_names[name] for name in consolidated_ignore
+            ]
+        else:
+            consolidated_ignore = _map_to_checkpoint_names(model, consolidated_ignore)
 
         # create config groups from all unique schemes
         config_groups = {}

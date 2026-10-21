@@ -107,12 +107,13 @@ class ModelCompressor:
             for all quantized modules
         """
         # reconstruct qconfig from qschemes that are attached to the model
+        inferred_format = infer_model_format(model, quantization_format)
         quantization_config = QuantizationConfig.from_pretrained(model)
         transform_config = getattr(model, TRANSFORM_CONFIG_NAME, None)
 
         # update quantization config format for better UX when reading config.json
         if quantization_config is not None:
-            quantization_config.format = infer_model_format(model, quantization_format)
+            quantization_config.format = inferred_format
 
         return cls(
             quantization_config=quantization_config,
