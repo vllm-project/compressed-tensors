@@ -121,6 +121,8 @@ def apply_quantization_config(
     if config is None:  # see PR #180
         return dict()
 
+    _restore_online_transforms(model, config)
+
     # force zero points during initialization
     # TODO: remove zero points from initialization
     force_zero_point = config.quantization_status < QuantizationStatus.COMPRESSED
@@ -202,8 +204,32 @@ def _apply_kv_cache_scheme(
         if is_cached_attention_module(submodule):
             submodule.quantization_scheme = scheme
             initialize_hooked_kv_cache(model, submodule)
-            initialize_module_for_quantization(submodule, force_zero_point=False)
+            initialize_module_for_quantization(
+                submodule, force_zero_point=False, quantize_query=False
+            )
             submodule.quantization_status = status
+
+
+def _restore_online_transforms(model: Module, quantization_config: QuantizationConfig):
+    """Restore saved activation transforms before initializing attention qparams."""
+    from compressed_tensors import TRANSFORM_CONFIG_NAME
+    from compressed_tensors.transform import TransformConfig, apply_transform_config
+
+    if hasattr(model, TRANSFORM_CONFIG_NAME):
+        return
+    saved = quantization_config.transform_config
+    if not saved:
+        return
+    config = TransformConfig.model_validate(saved)
+    online = config.model_copy(deep=True)
+    for scheme in online.config_groups.values():
+        # Offline rotations are already fused into the checkpoint weights.
+        scheme.apply = [arg for arg in scheme.apply if arg.is_online()]
+    online.config_groups = {
+        name: scheme for name, scheme in online.config_groups.items() if scheme.apply
+    }
+    apply_transform_config(model, online)
+    setattr(model, TRANSFORM_CONFIG_NAME, config)
 
 
 def _load_quant_args_from_mapping(

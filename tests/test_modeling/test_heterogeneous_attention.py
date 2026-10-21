@@ -94,12 +94,13 @@ def test_kv_cache_scales_follow_each_layer(
     "num_global_key_value_heads,num_kv_shared_layers",
     [(None, 0), (None, 2), (2, 0)],
 )
+@pytest.mark.parametrize("attn_implementation", ["sdpa", "eager"])
 def test_attention_scales_follow_each_layer(
-    num_global_key_value_heads, num_kv_shared_layers
+    num_global_key_value_heads, num_kv_shared_layers, attn_implementation
 ):
     config = _gemma4_config(num_global_key_value_heads, num_kv_shared_layers)
     model = transformers.Gemma4ForCausalLM(config).eval()
-    model.set_attn_implementation("sdpa")
+    model.set_attn_implementation(attn_implementation)
     scheme = QuantizationScheme(
         targets=["Gemma4TextAttention"], input_activations=_kv_cache_scheme("attn_head")
     )

@@ -113,10 +113,14 @@ def _apply_attention(model, layers, q_called, k_called, v_called):
         register_value_hook(module, v_hook)
 
 
-def test_attention_quantization_skips_attention_that_cannot_be_quantized():
+@pytest.mark.parametrize("attn_implementation", ["sdpa", "eager"])
+def test_attention_quantization_skips_attention_that_cannot_be_quantized(
+    attn_implementation,
+):
     # attention modules without a cache argument, like the vision tower of llava,
     # can't be quantized, so they keep the original attention implementation
     model, inputs = _tiny_llava()
+    model.set_attn_implementation(attn_implementation)
     with torch.no_grad():
         true_logits = model(**inputs).logits
 
@@ -174,17 +178,196 @@ def test_attention_quantization_of_some_layers():
             model(input_ids=input_ids)
 
 
+@pytest.mark.parametrize("attn_implementation", ["sdpa", "eager"])
 @pytest.mark.parametrize("dynamic", [False, True])
-def test_attention_quantization_without_impl(dynamic):
+def test_attention_quantization_without_impl(dynamic, attn_implementation):
     # an attention module which can be quantized and lost its impl raises instead of
     # running without quantizing its query
     model, input_ids = _tiny_llama()
+    model.set_attn_implementation(attn_implementation)
     apply_quantization_config(model, _attention_config(["LlamaAttention"], dynamic))
     delattr(model.model.layers[0].self_attn, IMPL_ATTR)
 
     with torch.no_grad():
         with pytest.raises(ValueError, match="has no impl submodule"):
             model(input_ids=input_ids)
+
+
+def test_attention_quantization_replaced_module_without_impl():
+    model, input_ids = _tiny_llama()
+    attention = model.model.layers[0].self_attn
+    replacement = type(attention)(model.config, layer_idx=0)
+    replacement.load_state_dict(attention.state_dict())
+    apply_quantization_config(model, _attention_config(["LlamaAttention"], True))
+    model.model.layers[0].self_attn = replacement
+
+    with torch.no_grad(), pytest.raises(ValueError, match="has no impl submodule"):
+        model(input_ids=input_ids)
+
+
+@pytest.mark.parametrize("attn_implementation", ["eager", "sdpa"])
+def test_value_cache_transform_preserves_attention(attn_implementation):
+    from compressed_tensors.transform import (
+        TransformArgs,
+        TransformConfig,
+        TransformScheme,
+        apply_transform_config,
+    )
+
+    model, input_ids = _tiny_llama()
+    model.set_attn_implementation(attn_implementation)
+    with torch.no_grad():
+        reference = model(input_ids=input_ids).logits
+    scheme = TransformScheme(
+        type="hadamard",
+        head_dim=16,
+        apply=[
+            TransformArgs(targets=["LlamaAttention"], location="v_cache"),
+            TransformArgs(
+                targets=["re:.*o_proj$"], location="weight_input", inverse=True
+            ),
+        ],
+    )
+    config = TransformConfig(config_groups={"R2": scheme})
+    config = TransformConfig.model_validate_json(config.model_dump_json())
+    apply_transform_config(model, config)
+    with torch.no_grad():
+        actual = model(input_ids=input_ids).logits
+    torch.testing.assert_close(actual, reference, rtol=1e-5, atol=1e-6)
+
+
+def test_query_transform_does_not_quantize_query_with_kv_only_scheme():
+    from compressed_tensors.transform import (
+        TransformArgs,
+        TransformConfig,
+        TransformScheme,
+        apply_transform_config,
+    )
+
+    model, input_ids = _tiny_llama()
+    args = QuantizationArgs(num_bits=8, type="float", strategy="tensor")
+    apply_quantization_config(
+        model, QuantizationConfig(config_groups={}, kv_cache_scheme=args)
+    )
+    for layer in model.model.layers:
+        layer.self_attn.k_scale.data.fill_(1.0)
+        layer.self_attn.v_scale.data.fill_(1.0)
+    scheme = TransformScheme(
+        type="hadamard",
+        head_dim=16,
+        apply=[
+            TransformArgs(targets=["LlamaAttention"], location="q_attn"),
+            TransformArgs(targets=["LlamaAttention"], location="k_cache"),
+        ],
+    )
+    apply_transform_config(model, TransformConfig(config_groups={"R3": scheme}))
+    seen = []
+    for layer in model.model.layers:
+        register_query_hook(layer.self_attn, lambda module, query: seen.append(module))
+        assert not hasattr(layer.self_attn, "q_scale")
+    with torch.no_grad():
+        logits = model(input_ids=input_ids).logits
+    assert torch.isfinite(logits).all()
+    assert seen == [layer.self_attn for layer in model.model.layers]
+
+
+def test_kv_query_transform_quantizer_config_roundtrip():
+    from compressed_tensors.transform import (
+        TransformArgs,
+        TransformConfig,
+        TransformScheme,
+        apply_transform_config,
+    )
+    from transformers.utils.quantization_config import CompressedTensorsConfig
+
+    model, input_ids = _tiny_llama()
+    args = QuantizationArgs(num_bits=8, type="float", strategy="tensor")
+    apply_quantization_config(
+        model, QuantizationConfig(config_groups={}, kv_cache_scheme=args)
+    )
+    for layer in model.model.layers:
+        layer.self_attn.k_scale.data.fill_(1.0)
+        layer.self_attn.v_scale.data.fill_(1.0)
+    transforms = TransformConfig(
+        config_groups={
+            "R3": TransformScheme(
+                type="hadamard",
+                head_dim=16,
+                apply=[
+                    TransformArgs(targets=["LlamaAttention"], location="q_attn"),
+                    TransformArgs(targets=["LlamaAttention"], location="k_cache"),
+                ],
+            ),
+        }
+    )
+    apply_transform_config(model, transforms)
+    quantization = QuantizationConfig.from_pretrained(model)
+    assert not quantization.config_groups
+    saved = quantization.model_dump()
+    saved["transform_config"] = transforms.model_dump()
+    wrapper = CompressedTensorsConfig(**saved)
+    restored, _ = _tiny_llama()
+    apply_quantization_config(restored, wrapper.quantization_config)
+    restored.load_state_dict(model.state_dict(), strict=True)
+    for layer in restored.model.layers:
+        assert not hasattr(layer.self_attn, "q_scale")
+    with torch.no_grad():
+        expected = model(input_ids=input_ids).logits
+        actual = restored(input_ids=input_ids).logits
+    assert torch.equal(actual, expected)
+
+
+@pytest.mark.parametrize("location", ["q_attn", "v_cache"])
+def test_online_attention_transform_checkpoint_reload(tmp_path, location):
+    from compressed_tensors.compressors import ModelCompressor
+    from compressed_tensors.transform import (
+        TransformArgs,
+        TransformConfig,
+        TransformScheme,
+        apply_transform_config,
+    )
+
+    model, input_ids = _tiny_llama()
+    if not hasattr(model, "all_tied_weights_keys"):
+        pytest.skip("requires transformers tied-weight mapping support")
+    args = QuantizationArgs(num_bits=8, type="float", strategy="tensor")
+    apply_quantization_config(
+        model, QuantizationConfig(config_groups={}, kv_cache_scheme=args)
+    )
+    for layer in model.model.layers:
+        layer.self_attn.k_scale.data.fill_(1.0)
+        layer.self_attn.v_scale.data.fill_(1.0)
+    apply_transform_config(
+        model,
+        TransformConfig(
+            config_groups={
+                "online": TransformScheme(
+                    type="hadamard",
+                    head_dim=16,
+                    apply=[
+                        TransformArgs(targets=["LlamaAttention"], location=location),
+                    ],
+                ),
+            }
+        ),
+    )
+    with torch.no_grad():
+        reference = model(input_ids=input_ids).logits
+    compressor = ModelCompressor.from_pretrained_model(
+        model, quantization_format="dense"
+    )
+    model.save_pretrained(tmp_path)
+    compressor.update_config(str(tmp_path))
+    restored, info = LlamaForCausalLM.from_pretrained(
+        tmp_path, attn_implementation="sdpa", output_loading_info=True
+    )
+    assert not any(
+        info[key]
+        for key in ("missing_keys", "unexpected_keys", "mismatched_keys", "error_msgs")
+    )
+    with torch.no_grad():
+        actual = restored(input_ids=input_ids).logits
+    assert torch.equal(actual, reference)
 
 
 def _attention_config(targets, dynamic=False):

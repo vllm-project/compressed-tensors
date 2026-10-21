@@ -58,6 +58,7 @@ def initialize_module_for_quantization(
     module: Module,
     scheme: QuantizationScheme | None = None,
     force_zero_point: bool = True,
+    quantize_query: bool | None = None,
 ):
     """
     Attaches appropriate scales, zero points, and observers to a layer
@@ -72,6 +73,9 @@ def initialize_module_for_quantization(
         if not provided, the layer will be skipped
     :param force_zero_point: whether to force initialization of a zero point for
         symmetric quantization
+    :param quantize_query: whether an attention scheme also quantizes the query.
+        False for kv-cache-only schemes, including when a query transform is hooked.
+        None preserves inference from the presence of an attention implementation.
     """
     from compressed_tensors.linear.compressed_linear import CompressedLinear  # circ dep
 
@@ -82,7 +86,9 @@ def initialize_module_for_quantization(
     QuantizationMetadata.clear_all_qparams(module)
 
     if is_cached_attention_module(module):
-        initialize_attn_qparams(module, scheme, force_zero_point)
+        initialize_attn_qparams(
+            module, scheme, force_zero_point, quantize_query=quantize_query
+        )
 
     elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
         with disable_onloading():
@@ -286,9 +292,12 @@ def initialize_qparams(
 
 
 def initialize_attn_qparams(
-    module: Module, scheme: QuantizationScheme, force_zero_point: bool
+    module: Module,
+    scheme: QuantizationScheme,
+    force_zero_point: bool,
+    quantize_query: bool | None = None,
 ):
-    """Initlaize k_scale, v_scale for self_attn"""
+    """Initialize attention scales, optionally including query quantization."""
 
     impl: QuantizedAttentionImpl | None = getattr(module, IMPL_ATTR, None)
     kv_cache: QuantizedKVCache | None = getattr(module, KV_CACHE_ATTR, None)
@@ -317,7 +326,11 @@ def initialize_attn_qparams(
     kv_observed_shape = (num_kv_heads, None, head_dim)
     observed_dtype = next(module.parameters()).dtype
 
+    if quantize_query is None:
+        quantize_query = impl is not None
     if impl is not None:
+        impl._quantize_query = quantize_query
+    if quantize_query:
         initialize_qparams(
             module,
             "q",

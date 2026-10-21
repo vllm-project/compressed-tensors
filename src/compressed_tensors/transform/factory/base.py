@@ -15,6 +15,7 @@ from compressed_tensors.modeling.attention import (
 from compressed_tensors.modeling.kvcache import (
     initialize_hooked_kv_cache,
     register_key_hook,
+    register_value_hook,
 )
 from compressed_tensors.offload import OffloadCache
 from compressed_tensors.registry.registry import RegistryMixin, T
@@ -175,16 +176,21 @@ class TransformFactory(RegistryMixin, ABC):
             initialize_hooked_attention(model, module)
             register_query_hook(module, query_hook)
 
-        # register key hook to kvcache
-        elif args.location == TransformLocation.K_CACHE:
+        # register a key or value hook to the kv cache
+        elif args.location in (TransformLocation.K_CACHE, TransformLocation.V_CACHE):
             if not isinstance(model, PreTrainedModel):
                 raise ValueError(f"Cannot hook attention of model: {model}")
 
-            def key_hook(_, key_states):
-                return transform(key_states)
+            def cache_hook(_, states):
+                return transform(states)
 
             initialize_hooked_kv_cache(model, module)
-            register_key_hook(module, key_hook)
+            register_hook = (
+                register_key_hook
+                if args.location == TransformLocation.K_CACHE
+                else register_value_hook
+            )
+            register_hook(module, cache_hook)
 
         else:
             raise NotImplementedError()

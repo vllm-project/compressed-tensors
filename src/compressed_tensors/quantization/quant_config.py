@@ -164,6 +164,8 @@ class QuantizationConfig(BaseModel):
     global_compression_ratio: float | None = None
     ignore: list[str] | None = Field(default_factory=list)
     moe_sparsity_config: ExpertSparsityConfig | None = None
+    # Retain transform metadata when quantizer wrappers parse the saved config.
+    transform_config: dict | None = None
 
     def model_post_init(self, __context):
         """
@@ -222,7 +224,11 @@ class QuantizationConfig(BaseModel):
 
             # add config group if quantized non-attention or attention quant
             has_config_group = is_module_quantized(submodule) and (
-                not is_cached_attention or hasattr(submodule, IMPL_ATTR)
+                not is_cached_attention
+                or (
+                    hasattr(submodule, IMPL_ATTR)
+                    and getattr(getattr(submodule, IMPL_ATTR), "_quantize_query", True)
+                )
             )
             # only add kvcache if quant attention (which always implies kvcache)
             has_kv_cache = is_module_quantized(submodule) and is_cached_attention
