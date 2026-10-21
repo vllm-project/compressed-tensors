@@ -105,4 +105,5 @@ setup(
     package_dir={"": "src"},
     package_data={"": ["transform/utils/hadamards.safetensors"]},
     packages=_setup_packages(),
+    python_requires=">=3.11",
 )

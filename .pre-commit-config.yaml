@@ -16,10 +16,10 @@ repos:
       # is intentionally excluded there and must stay excluded here.
       #
       # black from the active (dev) environment; mirrors
-      # `black --target-version py310 --check` from `make quality`.
+      # `black --target-version py311 --check` from `make quality`.
       - id: black
         name: black
-        entry: black --target-version py310
+        entry: black --target-version py311
         language: system
         types: [python]
         files: ^(src|tests)/
