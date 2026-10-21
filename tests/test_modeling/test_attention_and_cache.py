@@ -137,14 +137,23 @@ def test_attention_quantization_attn_implementation(attn_implementation):
 
 
 def test_eager_attention_without_eager_function():
-    class Attention(torch.nn.Module):
-        pass
+    from transformers.models.llama.modeling_llama import eager_attention_forward
 
+    class Attention(torch.nn.Module):
+        num_key_value_groups = 2
+
+    module = Attention().eval()
+    query = torch.randn(1, 4, 3, 8)
+    key = value = torch.randn(1, 2, 3, 8)
     impl = QuantizedAttentionImpl(None)
-    query = key = value = torch.zeros(1, 1, 1, 1)
     with patch.object(QuantizedAttentionImpl, "_original_impl", "eager"):
-        with pytest.raises(ValueError, match="eager_attention_forward"):
-            impl(Attention(), query, key, value, None)
+        output, weights = impl(module, query, key, value, None, scaling=0.5)
+
+    expected, expected_weights = eager_attention_forward(
+        module, query, key, value, None, scaling=0.5
+    )
+    assert torch.equal(output, expected)
+    assert torch.equal(weights, expected_weights)
 
 
 def _apply_kv_cache(model, layers, k_called, v_called):

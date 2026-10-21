@@ -2,13 +2,14 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import inspect
-import sys
 from typing import Callable, Optional
 
+import torch
 from compressed_tensors.modeling.kvcache import initialize_hooked_kv_cache
 from compressed_tensors.quantization.lifecycle.forward import forward_quantize
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.internal import InternalModule
+from loguru import logger
 from torch import Tensor
 from torch.nn import Module
 from torch.utils.hooks import RemovableHandle
@@ -80,19 +81,59 @@ def _get_attention_function(module: Module) -> Callable:
     impl = QuantizedAttentionImpl._original_impl
     if impl == "eager":
         # transformers models call the `eager_attention_forward` defined in their own
-        # modeling file rather than a registered "eager" implementation
-        for cls in type(module).__mro__:
-            modeling = sys.modules.get(cls.__module__)
-            eager_attention_forward = getattr(modeling, "eager_attention_forward", None)
-            if eager_attention_forward is not None:
-                return eager_attention_forward
-
-        raise ValueError(
-            "Cannot find `eager_attention_forward` in the modeling module of "
-            f"{type(module).__name__} or its base classes"
+        # modeling file rather than a registered "eager" implementation. The class
+        # forward is used because offloading hooks wrap the instance forward
+        attn_forward = type(module).forward.__globals__.get(
+            "eager_attention_forward", _default_eager_attention_forward
         )
+        if attn_forward is _default_eager_attention_forward:
+            logger.bind(log_once=True).warning(
+                "Cannot find `eager_attention_forward` for "
+                f"{type(module).__name__}, using the default eager attention"
+            )
+        return attn_forward
 
     return ALL_ATTENTION_FUNCTIONS[impl]
+
+
+def _repeat_kv(hidden_states: Tensor, n_rep: int) -> Tensor:
+    batch, num_key_value_heads, slen, head_dim = hidden_states.shape
+    if n_rep == 1:
+        return hidden_states
+    hidden_states = hidden_states[:, :, None, :, :].expand(
+        batch, num_key_value_heads, n_rep, slen, head_dim
+    )
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
+
+
+def _default_eager_attention_forward(
+    module: Module,
+    query: Tensor,
+    key: Tensor,
+    value: Tensor,
+    attention_mask: Optional[Tensor],
+    scaling: float,
+    dropout: float = 0.0,
+    **kwargs,
+):
+    # copy of `eager_attention_forward` from transformers' Llama modeling file
+    key_states = _repeat_kv(key, module.num_key_value_groups)
+    value_states = _repeat_kv(value, module.num_key_value_groups)
+
+    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    if attention_mask is not None:
+        attn_weights = attn_weights + attention_mask
+
+    attn_weights = torch.nn.functional.softmax(
+        attn_weights, dim=-1, dtype=torch.float32
+    ).to(query.dtype)
+    attn_weights = torch.nn.functional.dropout(
+        attn_weights, p=dropout, training=module.training
+    )
+    attn_output = torch.matmul(attn_weights, value_states)
+    attn_output = attn_output.transpose(1, 2).contiguous()
+
+    return attn_output, attn_weights
 
 
 # ----- initialize ----- #
