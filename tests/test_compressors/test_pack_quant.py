@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import math
+import sys
 from collections import OrderedDict
 
 import pytest
@@ -369,6 +370,22 @@ def test_pack_unpack_round_trip(num_bits, k, packed_dim):
     assert packed.shape == ((64, packed_len) if packed_dim == 1 else (packed_len, 64))
 
     unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape), packed_dim)
+    assert torch.equal(unpacked, value)
+
+
+@pytest.mark.parametrize("k", [33, 64, 100, 1024])
+@pytest.mark.parametrize("packed_dim", [0, 1])
+def test_unpack_4bit_big_endian(k, packed_dim, monkeypatch):
+    shape = (64, k) if packed_dim == 1 else (k, 64)
+    value = torch.randint(-8, 8, shape, dtype=torch.int8)
+    packed = pack_to_int32(value, 4, packed_dim)
+
+    # Reversing each word's bytes reproduces the memory a big-endian host holds
+    swapped = packed.contiguous().view(torch.uint8).view(*packed.shape, 4).flip(-1)
+    swapped = swapped.view(torch.int32).view(packed.shape)
+    monkeypatch.setattr(sys, "byteorder", "big")
+
+    unpacked = unpack_from_int32(swapped, 4, torch.Size(shape), packed_dim)
     assert torch.equal(unpacked, value)
 
 

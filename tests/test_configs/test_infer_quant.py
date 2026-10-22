@@ -5,7 +5,11 @@ from collections import OrderedDict
 
 import pytest
 import torch
-from compressed_tensors.compressors.format import infer_model_format
+from compressed_tensors.compressors.format import (
+    infer_model_format,
+    infer_module_format,
+)
+from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import preset_name_to_scheme
 
 
@@ -47,3 +51,31 @@ def test_infer_quant_format(preset, expected_format):
             module.quantization_scheme = quant_scheme
 
     assert infer_model_format(dummy_model).value == expected_format
+
+
+class LinearSubclass(torch.nn.Linear):
+    pass
+
+
+class EmbeddingSubclass(torch.nn.Embedding):
+    pass
+
+
+@pytest.mark.parametrize(
+    "preset",
+    ["W8A8", "W4A16", "FP8", "NVFP4", "MXFP4", "MXFP6A16", "MXFP8"],
+)
+@pytest.mark.parametrize(
+    "module_type,base_type",
+    [
+        (LinearSubclass, torch.nn.Linear),
+        # nn.MultiheadAttention.out_proj
+        (torch.nn.modules.linear.NonDynamicallyQuantizableLinear, torch.nn.Linear),
+        (EmbeddingSubclass, torch.nn.Embedding),
+    ],
+)
+def test_infer_module_format_subclass(preset, module_type, base_type):
+    scheme = preset_name_to_scheme(preset, targets=[base_type.__name__])
+    expected = infer_module_format(base_type, scheme)
+    assert expected != CompressionFormat.dense
+    assert infer_module_format(module_type, scheme) == expected

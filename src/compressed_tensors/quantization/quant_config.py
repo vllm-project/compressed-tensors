@@ -44,11 +44,15 @@ def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]
 
     result = []
     for name in ignore_list:
+        # Some conversions match a complete weight key or a trailing dot.
+        # This assumes Linear-style `.weight` parameters; conversions specific
+        # to other parameter names are not handled.
+        name += ".weight"
         for rev in inverted:
             renamed, matched = rev.rename_source_key(name)
             if matched is not None:
                 name = renamed
-        result.append(name)
+        result.append(name.removesuffix(".weight"))
 
     return result
 

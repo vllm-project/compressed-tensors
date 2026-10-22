@@ -400,6 +400,36 @@ class TestModelCompressorEdgeCases:
         assert model.linear.quantization_scheme.format is not None
         assert hasattr(model.linear, "weight_packed")
 
+    def test_compress_model_linear_subclass(self):
+        """Test that a Linear subclass compresses and decompresses like nn.Linear."""
+
+        class LinearSubclass(nn.Linear):
+            pass
+
+        state_dicts = {}
+        for linear_cls in (nn.Linear, LinearSubclass):
+            torch.manual_seed(0)
+            model = nn.Sequential(linear_cls(128, 64, bias=False))
+            apply_quantization_config(
+                model, QuantizationConfig(config_groups={"W4A16": ["Linear"]})
+            )
+            model[0].weight_scale.data.fill_(0.01)
+            compressor = ModelCompressor.from_pretrained_model(model)
+            compressor.compress_model(model)
+            assert compressor.quantization_config.format == "pack-quantized"
+            compressed = model.state_dict()
+            compressor.decompress_model(model)
+            state_dicts[linear_cls] = (compressed, model.state_dict())
+
+        for expected, actual in zip(
+            state_dicts[nn.Linear], state_dicts[LinearSubclass]
+        ):
+            assert actual.keys() == expected.keys()
+            for key in expected:
+                assert torch.equal(actual[key], expected[key])
+        assert "0.weight_packed" in state_dicts[LinearSubclass][0]
+        assert "0.weight" in state_dicts[LinearSubclass][1]
+
     def test_empty_model(self):
         """Test compression of a model with no quantized modules."""
         model = nn.Sequential()

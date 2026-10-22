@@ -182,6 +182,42 @@ def test_map_to_checkpoint_names(model_id, hf_ignores, checkpoint_ignores):
     assert result == checkpoint_ignores
 
 
+@pytest.mark.parametrize("conversion", ["none", "prefix", "weight"])
+@pytest.mark.parametrize(
+    "targets",
+    [["runtime.0"], [r"re:^runtime\."], ["Linear"], ["Linear", r"re:^runtime\."]],
+)
+def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, targets):
+    WeightRenaming = pytest.importorskip(
+        "transformers.core_model_loading"
+    ).WeightRenaming
+    model = torch.nn.Module()
+    model.runtime = torch.nn.ModuleList([torch.nn.Linear(4, 4) for _ in range(33)])
+    if conversion == "prefix":
+        model._weight_conversions = [WeightRenaming("checkpoint.", "runtime.")]
+    elif conversion == "weight":
+        model._weight_conversions = [
+            WeightRenaming(f"checkpoint.{i}.weight", f"runtime.{i}.weight")
+            for i in range(33)
+        ]
+    scheme = QuantizationScheme(targets=targets, weights=QuantizationArgs(num_bits=8))
+    model.runtime[0].quantization_scheme = scheme
+    model.runtime[0].quantization_status = QuantizationStatus.FROZEN
+    original_scheme = scheme.model_dump()
+
+    exported = QuantizationConfig.from_pretrained(model)
+    prefix = "runtime" if conversion == "none" else "checkpoint"
+    expected_ignores = [f"{prefix}.{i}" for i in range(1, 33)]
+    assert exported.ignore == expected_ignores
+    assert exported.model_dump()["ignore"] == expected_ignores
+    assert exported.config_groups["group_0"].model_dump() == original_scheme
+    assert scheme.model_dump() == original_scheme
+    restored = QuantizationConfig.model_validate_json(exported.model_dump_json())
+    assert restored.ignore == expected_ignores
+    assert restored.config_groups["group_0"].targets == targets
+    assert QuantizationConfig.from_pretrained(model) == exported
+
+
 def test_get_vllm_module_type():
     assert get_vllm_module_type("ExpertMLP") == "ExpertMLP"
     assert get_vllm_module_type("ExpertMLPWithGate") == "ExpertMLPWithGate"
