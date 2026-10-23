@@ -162,11 +162,7 @@ class DiskCache(OffloadCache):
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
         # safetensors requires contiguous tensors; compressed/packed weights (e.g.
         # NVFP4, FP8 block) may be non-contiguous views after compression.
-        if (
-            self.async_writer is not None
-            and self.async_writer.is_batch_active
-            and not (dist.is_available() and dist.is_initialized())
-        ):
+        if self.async_writer is not None and self.async_writer.is_batch_active:
             # Snapshot to pageable CPU memory before returning. This synchronizes
             # the device-to-host copy and releases the caller's accelerator tensor
             # when its module mapping is replaced, while disk serialization runs

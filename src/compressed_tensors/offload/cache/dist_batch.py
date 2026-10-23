@@ -167,6 +167,10 @@ class BatchedOffloadMixin:
 
     offloaded_values: dict[Hashable, torch.Tensor]
 
+    def _requires_offload_barrier(self) -> bool:
+        """Whether an immediate metadata exchange needs a trailing barrier."""
+        return True
+
     @abstractmethod
     def offload_local(self, tensor: torch.Tensor) -> tuple[torch.Tensor, Any]:
         """
@@ -210,8 +214,11 @@ class BatchedOffloadMixin:
         if not is_source_process():
             tensor = self.recv_offload(tensor, payload[0])
 
-        # ensure that the source does not free its offload before others rebuild it
-        dist.barrier()
+        # Ensure the source does not free its offload before others rebuild it.
+        # Disk caches with asynchronous writers synchronize completion before a
+        # later stage reads the file, so they can skip this per-tensor barrier.
+        if self._requires_offload_barrier():
+            dist.barrier()
         return tensor
 
     @classmethod

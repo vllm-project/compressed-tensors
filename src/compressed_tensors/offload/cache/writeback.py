@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
+import torch.distributed as dist
 from safetensors.torch import save_file
 
 
@@ -39,10 +40,16 @@ class AsyncDiskWriteback:
     A single batch is the entire subgraph to be written.
     """
 
-    def __init__(self, max_queued_batches: int = 1):
+    def __init__(self, max_queued_batches: int = 1, defer_errors: bool = False):
+        """Create the bounded writer.
+
+        ``defer_errors`` keeps worker failures from aborting a later submission;
+        callers can then report them at a distributed flush point on every rank.
+        """
         if max_queued_batches < 1:
             raise ValueError("max_queued_batches must be at least 1")
 
+        self._defer_errors = defer_errors
         self._queue: queue.Queue = queue.Queue(maxsize=max_queued_batches)
         self._batch_slots = threading.BoundedSemaphore(max_queued_batches)
         self._condition = threading.Condition()
@@ -73,7 +80,8 @@ class AsyncDiskWriteback:
                 self._batch_slots.release()
                 raise RuntimeError("Disk writeback batches cannot be nested")
             try:
-                self._raise_first_error_locked()
+                if not self._defer_errors:
+                    self._raise_first_error_locked()
             except BaseException:
                 self._batch_slots.release()
                 raise
@@ -108,7 +116,8 @@ class AsyncDiskWriteback:
                 raise RuntimeError("Cannot submit to a closed disk writeback worker")
             if self._active_batch is None:
                 raise RuntimeError("Disk tensor snapshots must be submitted in a batch")
-            self._raise_first_error_locked()
+            if not self._defer_errors:
+                self._raise_first_error_locked()
             if path in self._pending:
                 raise RuntimeError(f"A disk write is already pending for {path}")
             future = Future()
@@ -138,6 +147,36 @@ class AsyncDiskWriteback:
         self._queue.join()
         with self._condition:
             self._raise_first_error_locked()
+
+    def flush_distributed(self, group) -> None:
+        """Flush local writes and report any failure to every rank in ``group``.
+
+        The group should be independent from the process group used for model
+        collectives when this is called from a staging thread.
+        """
+        local_error = None
+        try:
+            self.flush()
+        except BaseException as error:
+            local_error = error
+
+        local_message = (
+            None
+            if local_error is None
+            else f"{type(local_error).__name__}: {local_error}"
+        )
+        errors = [None] * dist.get_world_size(group)
+        dist.all_gather_object(errors, local_message, group=group)
+
+        failures = [
+            f"rank {rank}: {message}"
+            for rank, message in enumerate(errors)
+            if message is not None
+        ]
+        if failures:
+            raise RuntimeError(
+                "Asynchronous disk writeback failed on " + "; ".join(failures)
+            ) from local_error
 
     def close(self) -> None:
         """Drain queued writes and stop the worker."""
