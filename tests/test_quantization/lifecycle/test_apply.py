@@ -22,7 +22,7 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle import apply_quantization_config
 from compressed_tensors.utils import is_match, match_named_modules
-from transformers import AutoModelForCausalLM
+from transformers import AutoConfig, AutoModelForCausalLM
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -553,6 +553,35 @@ def test_apply_kv_cache_skips_non_cache_attention():
     assert not hasattr(model.vision_attention, "kv_cache")
     assert not hasattr(model.vision_attention, "k_scale")
     assert not hasattr(model.vision_attention, "v_scale")
+
+
+@pytest.mark.parametrize(
+    "strategy,scale_shape",
+    [(QuantizationStrategy.TENSOR, (1,)), (QuantizationStrategy.ATTN_HEAD, (4, 1, 1))],
+)
+def test_apply_kv_cache_without_num_key_value_heads(strategy, scale_shape):
+    # OPT configs have no `num_key_value_heads`: one key-value head per query head
+    config = AutoConfig.for_model(
+        "opt",
+        hidden_size=64,
+        ffn_dim=128,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        vocab_size=128,
+        word_embed_proj_dim=64,
+    )
+    assert not hasattr(config, "num_key_value_heads")
+    model = AutoModelForCausalLM.from_config(config)
+    args = QuantizationArgs(num_bits=8, type="int", strategy=strategy, symmetric=True)
+
+    apply_quantization_config(
+        model, QuantizationConfig(config_groups={}, kv_cache_scheme=args)
+    )
+
+    attention = model.model.decoder.layers[0].self_attn
+    assert attention.k_scale.shape == scale_shape
+    assert attention.v_scale.shape == scale_shape
+    model(input_ids=torch.randint(0, 128, (2, 8)))
 
 
 def test_apply_attention():
