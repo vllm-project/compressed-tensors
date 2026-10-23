@@ -190,6 +190,8 @@ class DiskCache(OffloadCache):
         if os.path.islink(file_path):
             assert self._is_ct_file_path(file_path), f"Attempted to remove {file_path}"
             os.unlink(file_path)
+            # reads now come from the new file, not the checkpoint shard
+            weight_info.pop("checkpoint_file", None)
         else:
             # rewriting in place, so drop any handle still reading the old contents
             _evict(file_path)
@@ -232,6 +234,9 @@ class DiskCache(OffloadCache):
             "safetensors_file": file_path,
             "weight_name": weight_info["weight_name"],
             "dtype": weight_info["dtype"],
+            # the shard this symlink points to, so reads from one shard can share
+            # a handle without resolving the symlink on every read
+            "checkpoint_file": str(source_path),
         }
 
     @classmethod
