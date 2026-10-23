@@ -2,7 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
+import json
 import os
+import struct
 import threading
 from collections import OrderedDict
 from typing import Iterator
@@ -35,7 +37,7 @@ _MAX_OPEN_FILES = 16
 @contextlib.contextmanager
 def disk_load_context() -> Iterator[None]:
     """
-    Hold safetensors file handles open for the duration of the block.
+    Hold safetensors and raw file handles open for the duration of the block.
 
     `safe_open` parses a header describing every tensor in the file, so the cost
     of opening is proportional to the number of tensors the file holds. Opening
@@ -61,7 +63,7 @@ def disk_load_context() -> Iterator[None]:
         _open_files.depth -= 1
         if _open_files.depth == 0:
             cache, _open_files.cache = _open_files.cache, None
-            for handle in cache.values():
+            for handle, _, _ in cache.values():
                 handle.__exit__(None, None, None)
 
 
@@ -74,25 +76,42 @@ def _opened(file_path: str, device: str) -> Iterator["safe_open"]:
     Outside that context this is an ordinary open/close, which keeps the
     uninstrumented path byte for byte what it was.
     """
-    cache = _open_files.cache
-    if cache is None:
-        with safe_open(file_path, framework="pt", device=device) as file:
-            yield file
-        return
+    with _cached_open(file_path, device) as (file, _, _):
+        yield file
 
-    key = (_file_key(file_path), device)
-    handle = cache.get(key)
-    if handle is None:
+
+@contextlib.contextmanager
+def _cached_open(file_path: str, device: str, raw: bool = False) -> Iterator[tuple]:
+    cache = _open_files.cache
+    key = (_file_key(file_path), "raw" if raw else device)
+    entry = cache.get(key) if cache is not None else None
+    if entry is None:
         handle = safe_open(file_path, framework="pt", device=device)
         handle.__enter__()
-        cache[key] = handle
-        # Evict oldest first, never the handle just requested.
-        while len(cache) > _MAX_OPEN_FILES:
-            _, evicted = cache.popitem(last=False)
-            evicted.__exit__(None, None, None)
-    else:
+        header, data_offset = None, 0
+        if raw:
+            handle.__exit__(None, None, None)
+            handle = open(file_path, "rb", buffering=0)
+            try:
+                header_size = struct.unpack("<Q", handle.read(8))[0]
+                header = json.loads(handle.read(header_size))
+                data_offset = 8 + header_size
+            except BaseException:
+                handle.close()
+                raise
+        entry = (handle, header, data_offset)
+        if cache is not None:
+            cache[key] = entry
+            while len(cache) > _MAX_OPEN_FILES:
+                _, evicted = cache.popitem(last=False)
+                evicted[0].__exit__(None, None, None)
+    elif cache is not None:
         cache.move_to_end(key)
-    yield handle
+    try:
+        yield entry
+    finally:
+        if cache is None:
+            entry[0].__exit__(None, None, None)
 
 
 def _file_key(file_path: str) -> str:
@@ -122,4 +141,4 @@ def _evict(file_path: str) -> None:
         return
     target = _file_key(file_path)
     for key in [key for key in cache if key[0] == target]:
-        cache.pop(key).__exit__(None, None, None)
+        cache.pop(key)[0].__exit__(None, None, None)
