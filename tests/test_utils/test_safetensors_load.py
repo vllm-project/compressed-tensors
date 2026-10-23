@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import json
 from unittest.mock import patch
 
 import pytest
-from compressed_tensors.utils.safetensors_load import get_nested_weight_mappings
+from compressed_tensors.utils.safetensors_load import (
+    get_nested_weight_mappings,
+    get_quantization_config,
+)
 
 
 mock_weight_mappings = {
@@ -69,3 +73,70 @@ class TestGetNestedWeightMappings:
         }
         assert result == expected_nested
         assert other_params == expected_other
+
+
+@pytest.mark.parametrize(
+    "config, expected",
+    [
+        ({}, None),
+        ({"text_config": None}, None),
+        ({"quantization_config": {"source": "top"}}, {"source": "top"}),
+        (
+            {
+                "quantization_config": {"source": "top"},
+                "text_config": {"quantization_config": {"source": "text"}},
+                "compression_config": {"source": "legacy"},
+            },
+            {"source": "top"},
+        ),
+        (
+            {
+                "quantization_config": None,
+                "text_config": {"quantization_config": {"source": "text"}},
+                "compression_config": {"source": "legacy"},
+            },
+            {"source": "text"},
+        ),
+        (
+            {"text_config": {"quantization_config": {"source": "text"}}},
+            {"source": "text"},
+        ),
+        (
+            {
+                "quantization_config": None,
+                "compression_config": {"source": "legacy"},
+            },
+            {"source": "legacy"},
+        ),
+        (
+            {
+                "text_config": {"quantization_config": None},
+                "compression_config": {"source": "legacy"},
+            },
+            {"source": "legacy"},
+        ),
+        (
+            {"text_config": None, "compression_config": {"source": "legacy"}},
+            {"source": "legacy"},
+        ),
+        ({"compression_config": {"source": "legacy"}}, {"source": "legacy"}),
+        (
+            {"quantization_config": {}, "compression_config": {"source": "legacy"}},
+            {},
+        ),
+        (
+            {
+                "text_config": {"quantization_config": {}},
+                "compression_config": {"source": "legacy"},
+            },
+            {},
+        ),
+    ],
+)
+def test_get_quantization_config_falls_back_only_for_null_values(
+    tmp_path, config, expected
+):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config))
+
+    assert get_quantization_config(config_path) == expected

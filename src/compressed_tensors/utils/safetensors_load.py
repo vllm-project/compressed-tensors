@@ -169,13 +169,12 @@ def get_quantization_config(config_path: str) -> dict | None:
     with open(config_path, "r") as f:
         config = json.load(f)
 
-    quant_config = None
-    if QUANTIZATION_CONFIG_NAME in config:
-        quant_config = config[QUANTIZATION_CONFIG_NAME]
-    elif "text_config" in config and QUANTIZATION_CONFIG_NAME in config["text_config"]:
-        quant_config = config["text_config"][QUANTIZATION_CONFIG_NAME]
-    elif "compression_config" in config:
-        quant_config = config["compression_config"]
+    quant_config = config.get(QUANTIZATION_CONFIG_NAME)
+    text_config = config.get("text_config")
+    if quant_config is None and text_config is not None:
+        quant_config = text_config.get(QUANTIZATION_CONFIG_NAME)
+    if quant_config is None:
+        quant_config = config.get("compression_config")
 
     return quant_config
 
