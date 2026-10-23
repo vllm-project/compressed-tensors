@@ -79,7 +79,7 @@ class OffloadBatch:
         self.keys.add(key)
 
         if self.is_source:
-            offloaded, self.metadata[key] = cache.offload_local(tensor)
+            offloaded, self.metadata[key] = cache.offload_local(tensor, name=name)
             return offloaded
 
         # a tensor on a device other than the offload device (e.g. an accelerator) is
@@ -167,8 +167,14 @@ class BatchedOffloadMixin:
 
     offloaded_values: dict[Hashable, torch.Tensor]
 
+    def _requires_offload_barrier(self) -> bool:
+        """Whether an immediate metadata exchange needs a trailing barrier."""
+        return True
+
     @abstractmethod
-    def offload_local(self, tensor: torch.Tensor) -> tuple[torch.Tensor, Any]:
+    def offload_local(
+        self, tensor: torch.Tensor, name: Hashable | None = None
+    ) -> tuple[torch.Tensor, Any]:
         """
         Offload a tensor on the source rank without synchronizing
 
@@ -191,7 +197,9 @@ class BatchedOffloadMixin:
         """
         raise NotImplementedError()
 
-    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
+    def offload(
+        self, tensor: torch.Tensor | None, name: Hashable | None = None
+    ) -> torch.Tensor | None:
         """
         Offload a tensor and immediately exchange its metadata with the other ranks
 
@@ -203,16 +211,24 @@ class BatchedOffloadMixin:
 
         payload = [None]
         if is_source_process():
-            tensor, payload[0] = self.offload_local(tensor)
+            tensor, payload[0] = self.offload_local(tensor, name=name)
 
         dist.broadcast_object_list(payload, src=get_source_rank())
 
         if not is_source_process():
             tensor = self.recv_offload(tensor, payload[0])
 
-        # ensure that the source does not free its offload before others rebuild it
-        dist.barrier()
+        # Ensure the source does not free its offload before others rebuild it.
+        # Disk caches with asynchronous writers synchronize completion before a
+        # later stage reads the file, so they can skip this per-tensor barrier.
+        if self._requires_offload_barrier():
+            dist.barrier()
         return tensor
+
+    def offload_named(
+        self, name: Hashable, tensor: torch.Tensor | None
+    ) -> torch.Tensor | None:
+        return self.offload(tensor, name=name)
 
     @classmethod
     def from_mapping(

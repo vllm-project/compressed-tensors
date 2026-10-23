@@ -8,7 +8,12 @@ from typing import Literal
 
 import torch
 from compressed_tensors.distributed.utils import set_source_process
-from compressed_tensors.offload.cache import DiskCache, OffloadCache, disk_load_context
+from compressed_tensors.offload.cache import (
+    AsyncDiskWriteback,
+    DiskCache,
+    OffloadCache,
+    disk_load_context,
+)
 from compressed_tensors.offload.convert import from_accelerate, to_accelerate
 from compressed_tensors.offload.dispatch import (  # noqa: F401
     dispatch_model,
@@ -55,6 +60,7 @@ __all__ = [
     "disable_onloading",
     "disable_offloading",
     "disk_load_context",
+    "AsyncDiskWriteback",
     # manipulate parameters
     "update_offload_parameter",
     "get_execution_device",
@@ -221,6 +227,8 @@ def get_cache_init_kwargs(
     )
     if hasattr(module._parameters, "offload_dir"):
         kwargs["offload_dir"] = module._parameters.offload_dir
+    if hasattr(module._parameters, "async_writer"):
+        kwargs["async_writer"] = module._parameters.async_writer
     return kwargs
 
 

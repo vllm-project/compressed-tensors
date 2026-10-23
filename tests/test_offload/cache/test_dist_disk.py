@@ -2,14 +2,18 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+import threading
+import time
 
 import pytest
 import torch
 import torch.distributed as dist
+from compressed_tensors.distributed import get_source_rank
 from compressed_tensors.offload import disable_onloading
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
 from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
+from compressed_tensors.offload.cache.writeback import AsyncDiskWriteback
 from safetensors import safe_open
 from safetensors.torch import save_file
 from tests.test_offload.cache.helpers import (
@@ -192,6 +196,121 @@ def test_distributed_files(tmp_path):
     if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
         files = os.listdir(offload_dir)
         assert len(files) == 0
+
+
+@pytest.mark.unit
+@torchrun(world_size=2)
+def test_distributed_async_disk_writeback(tmp_path, monkeypatch):
+    """DDP offload returns before disk serialization and flush makes reads safe."""
+    if not dist.is_initialized():
+        dist.init_process_group(backend="gloo")
+    writeback_group = dist.new_group(backend="gloo")
+
+    if dist.get_rank() == 0:
+        offload_dir = tmp_path / "offload_dir"
+        offload_dir.mkdir()
+        broadcast_obj = [str(offload_dir)]
+    else:
+        broadcast_obj = [None]
+    dist.broadcast_object_list(broadcast_obj, src=0)
+    offload_dir = broadcast_obj[0]
+    dist.barrier()
+
+    writer = AsyncDiskWriteback(defer_errors=True)
+    cache = DistributedDiskCache("cpu", offload_dir=offload_dir, async_writer=writer)
+    started = threading.Event()
+    release = threading.Event()
+    rank = dist.get_rank()
+    source_rank = get_source_rank()
+
+    if rank == source_rank:
+        original_write = AsyncDiskWriteback._write_atomically
+
+        def delayed_write(path, tensors):
+            started.set()
+            # The timeout keeps a regression from hanging the torchrun test if
+            # the cache accidentally waits for disk I/O inside offload again.
+            release.wait(timeout=3)
+            original_write(path, tensors)
+
+        monkeypatch.setattr(
+            AsyncDiskWriteback, "_write_atomically", staticmethod(delayed_write)
+        )
+
+    try:
+        start_time = time.monotonic()
+        with writer.batch():
+            cache["weight"] = torch.ones(8)
+        offload_elapsed = time.monotonic() - start_time
+
+        if rank == source_rank:
+            write_started = started.wait(timeout=3)
+            weight = cache.offloaded_values["weight"]
+            path = cache.index[weight]["safetensors_file"]
+            unpublished_while_blocked = write_started and not os.path.exists(path)
+            release.set()
+        else:
+            write_started = True
+            unpublished_while_blocked = True
+
+        writer.flush_distributed(writeback_group)
+        assert torch.equal(cache["weight"], torch.ones(8))
+
+        if rank == source_rank:
+            assert write_started
+            assert unpublished_while_blocked
+            assert offload_elapsed < 2
+    finally:
+        release.set()
+        try:
+            writer.close()
+        except RuntimeError:
+            pass
+        dist.destroy_process_group(writeback_group)
+
+
+@pytest.mark.unit
+@torchrun(world_size=2)
+def test_distributed_async_disk_writeback_error_propagates(tmp_path, monkeypatch):
+    """A source-rank worker failure is reported on every rank at flush."""
+    if not dist.is_initialized():
+        dist.init_process_group(backend="gloo")
+    writeback_group = dist.new_group(backend="gloo")
+
+    if dist.get_rank() == 0:
+        offload_dir = tmp_path / "offload_dir"
+        offload_dir.mkdir()
+        broadcast_obj = [str(offload_dir)]
+    else:
+        broadcast_obj = [None]
+    dist.broadcast_object_list(broadcast_obj, src=0)
+    offload_dir = broadcast_obj[0]
+    dist.barrier()
+
+    writer = AsyncDiskWriteback(defer_errors=True)
+    cache = DistributedDiskCache("cpu", offload_dir=offload_dir, async_writer=writer)
+    source_rank = get_source_rank()
+    if dist.get_rank() == source_rank:
+
+        def fail_write(path, tensors):
+            raise OSError("injected disk write failure")
+
+        monkeypatch.setattr(
+            AsyncDiskWriteback, "_write_atomically", staticmethod(fail_write)
+        )
+
+    try:
+        with writer.batch():
+            cache["weight"] = torch.ones(8)
+
+        with pytest.raises(RuntimeError, match=f"rank {source_rank}:"):
+            writer.flush_distributed(writeback_group)
+    finally:
+        try:
+            writer.close()
+        except RuntimeError:
+            pass
+        dist.destroy_process_group(writeback_group)
 
 
 @pytest.mark.unit
