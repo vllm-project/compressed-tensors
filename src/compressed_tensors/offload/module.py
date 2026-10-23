@@ -217,9 +217,10 @@ def subgraph_offload_modules(
             module_offload_kwargs["streaming_writer"] = streaming_writer
             module_offload_kwargs["module_name"] = name
 
-        if async_writer is not None and str(
-            module_offload_kwargs.get("offload_device")
-        ) == "disk":
+        if (
+            async_writer is not None
+            and str(module_offload_kwargs.get("offload_device")) == "disk"
+        ):
             module_offload_kwargs["async_writer"] = async_writer
         to_offload.append((module, module_offload_kwargs))
 
