@@ -68,3 +68,10 @@ def _register_tied_transform_weights(model: torch.nn.Module):
 
             if tied_keys:
                 module._tied_weights_keys = tied_keys
+                if hasattr(model, "all_tied_weights_keys"):
+                    model.all_tied_weights_keys.update(
+                        {
+                            f"{module_name}.{key}": source
+                            for key, source in tied_keys.items()
+                        }
+                    )

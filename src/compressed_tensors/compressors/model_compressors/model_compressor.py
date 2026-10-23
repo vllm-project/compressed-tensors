@@ -85,6 +85,9 @@ class ModelCompressor:
         # transform_config is added by transformers#42887
         q_config = compression_config.quantization_config
         t_config = getattr(compression_config, "transform_config", None)
+        if t_config is None and q_config is not None:
+            t_config = q_config.transform_config
+        t_config = TransformConfig.model_validate(t_config) if t_config else None
 
         return cls(quantization_config=q_config, transform_config=t_config)
 
@@ -233,7 +236,9 @@ class ModelCompressor:
             config_data = {}
 
         qconfig_data = (
-            self.quantization_config.model_dump(exclude=["quant_method"])
+            self.quantization_config.model_dump(
+                exclude=["quant_method", "transform_config"]
+            )
             if self.quantization_config is not None
             else {}
         )

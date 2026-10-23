@@ -22,6 +22,7 @@ class TransformLocation(str, Enum):
     | `WEIGHT_OUTPUT` | offline     | weight        | `this.OUTPUT`, `next.INPUT`, `next.WEIGHT_INPUT`         |  # noqa: E501
     | `OUTPUT`        | online      | activations   | `this.WEIGHT_OUTPUT`, `next.INPUT`, `next.WEIGHT_INPUT`  |  # noqa: E501
     | `K_CACHE`       | online      | key_values    | `q_proj.Q_ATTN`                                          |  # noqa: E501
+    | `V_CACHE`       | online      | value_states  | `o_proj.WEIGHT_INPUT`                                    |  # noqa: E501
     | `Q_ATTN`        | online      | query_values  | `k_proj.K_CACHE`                                         |  # noqa: E501
     | -------------------------------------------------------------------------------------------------------- |  # noqa: E501
     """
@@ -31,6 +32,7 @@ class TransformLocation(str, Enum):
     WEIGHT_OUTPUT = "weight_output"
     OUTPUT = "output"
     K_CACHE = "k_cache"
+    V_CACHE = "v_cache"
     Q_ATTN = "q_attn"
 
     def is_online(self) -> bool:
@@ -50,7 +52,7 @@ class TransformArgs(BaseModel, use_enum_values=True):
 
     :param targets: list of modules to apply transforms to
     :param location: where to apply transform on module, one of (`input`, `weight`,
-        `output`, `k_cache`, `q_attn`)
+        `output`, `k_cache`, `v_cache`, `q_attn`)
     :param inverse: whether or not to apply the inverse of a transform
     :param ignore: any modules which should be ignored from the targets list
     """

@@ -6,8 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import compressed_tensors.quantization.lifecycle.initialize as initialize_lifecycle
+import numpy
 import pytest
 import torch
+from compressed_tensors.modeling import IMPL_ATTR
 from compressed_tensors.offload import offload_module, set_onload_device
 from compressed_tensors.quantization import (
     FP8_E4M3_DATA,
@@ -25,6 +27,7 @@ from compressed_tensors.quantization.lifecycle.initialize import (
 )
 from tests.testing_utils import requires_gpu
 from torch.nn import Linear
+from transformers import PretrainedConfig
 
 
 NUM_BITS = 8
@@ -172,6 +175,217 @@ def _initialize_attn_qparams(config):
 
     initialize_attn_qparams(attention, scheme, force_zero_point=False)
     return attention
+
+
+class LayerAttention(torch.nn.Module):
+    def __init__(self, layer_idx, num_kv_heads, head_dim):
+        super().__init__()
+        self.layer_idx = layer_idx
+        self.head_dim = head_dim
+        self.k_proj = torch.nn.Linear(64, num_kv_heads * head_dim)
+
+    def forward(self, hidden_states, past_key_values=None):
+        return hidden_states
+
+
+def _heterogeneous_config():
+    if not hasattr(PretrainedConfig, "per_layer_config"):
+        pytest.skip("heterogeneous configs require transformers>=5.14")
+
+    config = PretrainedConfig(
+        num_attention_heads=8,
+        num_key_value_heads=4,
+        head_dim=16,
+        num_hidden_layers=2,
+    )
+    config.per_layer_config = {
+        1: {"head_dim": 32, "num_key_value_heads": 2, "num_attention_heads": 4}
+    }
+    return config
+
+
+def _attention_scheme(**kwargs):
+    return QuantizationScheme(
+        targets=["LayerAttention"], input_activations=QuantizationArgs(**kwargs)
+    )
+
+
+@pytest.mark.parametrize(
+    "strategy,expected_shapes",
+    [
+        (QuantizationStrategy.TENSOR, [(1,), (1,)]),
+        (QuantizationStrategy.ATTN_HEAD, [(4, 1, 1), (2, 1, 1)]),
+    ],
+)
+def test_initialize_attn_qparams_heterogeneous_config(strategy, expected_shapes):
+    config = _heterogeneous_config()
+    scheme = _attention_scheme(strategy=strategy)
+
+    for layer_idx, expected_shape in enumerate(expected_shapes):
+        layer_config = config.per_layer_config[layer_idx]
+        attention = LayerAttention(
+            layer_idx, layer_config.num_key_value_heads, layer_config.head_dim
+        )
+        attention.kv_cache = MockKVCache(config)
+
+        initialize_attn_qparams(attention, scheme, force_zero_point=False)
+
+        assert attention.k_scale.shape == expected_shape
+        assert attention.v_scale.shape == expected_shape
+
+
+@pytest.mark.parametrize("layer_idx", [None, 2, -1, True, "1", 1.0])
+def test_initialize_attn_qparams_heterogeneous_config_needs_layer_idx(layer_idx):
+    attention = LayerAttention(layer_idx, num_kv_heads=4, head_dim=16)
+    attention.kv_cache = MockKVCache(_heterogeneous_config())
+    scheme = _attention_scheme(strategy=QuantizationStrategy.TENSOR)
+
+    with pytest.raises(ValueError, match="layer_idx"):
+        initialize_attn_qparams(attention, scheme, force_zero_point=False)
+
+
+def test_initialize_attn_qparams_heterogeneous_config_numpy_layer_idx():
+    config = _heterogeneous_config()
+    attention = LayerAttention(numpy.int64(1), num_kv_heads=2, head_dim=32)
+    attention.kv_cache = MockKVCache(config)
+    scheme = _attention_scheme(strategy=QuantizationStrategy.ATTN_HEAD)
+
+    initialize_attn_qparams(attention, scheme, force_zero_point=False)
+
+    assert attention.k_scale.shape == (2, 1, 1)
+
+
+@pytest.mark.parametrize(
+    "strategy,expected_shape,warns",
+    [
+        (QuantizationStrategy.TENSOR, (1,), False),
+        (QuantizationStrategy.ATTN_HEAD, (8, 1, 1), True),
+    ],
+)
+def test_initialize_attn_qparams_reports_kv_heads_mismatch(
+    monkeypatch, strategy, expected_shape, warns
+):
+    # the config reports 8 key/value heads but the module projects to 2, as for
+    # gemma-4 full-attention layers on transformers<5.15
+    config = SimpleNamespace(
+        num_attention_heads=16, num_key_value_heads=8, head_dim=256
+    )
+    attention = LayerAttention(0, num_kv_heads=2, head_dim=512)
+    attention.kv_cache = MockKVCache(config)
+    warning = Mock()
+    monkeypatch.setattr(initialize_lifecycle.logger, "warning", warning)
+
+    initialize_attn_qparams(
+        attention, _attention_scheme(strategy=strategy), force_zero_point=False
+    )
+
+    # shapes keep following the config, so existing checkpoints still load
+    assert attention.k_scale.shape == expected_shape
+    if warns:
+        warning.assert_called_once()
+        assert "k_proj projects to 2 heads" in warning.call_args.args[0]
+        assert warning.call_args.kwargs == {"log_once": True}
+    else:
+        warning.assert_not_called()
+
+
+def test_initialize_attn_qparams_heterogeneous_kv_heads_mismatch():
+    # a per-layer config which disagrees with its module is an error
+    config = _heterogeneous_config()
+    attention = LayerAttention(1, num_kv_heads=4, head_dim=32)
+    attention.kv_cache = MockKVCache(config)
+    scheme = _attention_scheme(strategy=QuantizationStrategy.ATTN_HEAD)
+
+    with pytest.raises(ValueError, match="k_proj projects to 4 heads"):
+        initialize_attn_qparams(attention, scheme, force_zero_point=False)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        dict(strategy=QuantizationStrategy.GROUP, group_size=8),
+        dict(
+            strategy=QuantizationStrategy.TENSOR_GROUP,
+            group_size=16,
+            num_bits=4,
+            type="float",
+        ),
+    ],
+)
+def test_initialize_attn_qparams_rejects_static_group(args):
+    config = SimpleNamespace(num_attention_heads=8, num_key_value_heads=2, head_dim=16)
+    attention = LayerAttention(0, num_kv_heads=2, head_dim=16)
+    attention.kv_cache = MockKVCache(config)
+    scheme = _attention_scheme(dynamic=False, **args)
+
+    with pytest.raises(ValueError, match="not supported for attention"):
+        initialize_attn_qparams(attention, scheme, force_zero_point=False)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        dict(strategy=QuantizationStrategy.GROUP, group_size=8, dynamic=True),
+        dict(
+            strategy=QuantizationStrategy.TENSOR_GROUP,
+            group_size=16,
+            num_bits=4,
+            type="float",
+            dynamic="local",
+        ),
+    ],
+)
+def test_initialize_attn_qparams_allows_dynamic_group(args):
+    config = SimpleNamespace(num_attention_heads=8, num_key_value_heads=2, head_dim=16)
+    attention = LayerAttention(0, num_kv_heads=2, head_dim=16)
+    attention.kv_cache = MockKVCache(config)
+
+    initialize_attn_qparams(
+        attention, _attention_scheme(**args), force_zero_point=False
+    )
+
+    assert not hasattr(attention, "k_scale")
+
+
+def test_initialize_attn_qparams_heterogeneous_query_heads():
+    # query scales follow the number of attention heads of the module's layer
+    config = _heterogeneous_config()
+    scheme = _attention_scheme(strategy=QuantizationStrategy.ATTN_HEAD)
+
+    for layer_idx, expected_shape in enumerate([(8, 1, 1), (4, 1, 1)]):
+        layer_config = config.per_layer_config[layer_idx]
+        attention = LayerAttention(
+            layer_idx, layer_config.num_key_value_heads, layer_config.head_dim
+        )
+        attention.kv_cache = MockKVCache(config)
+        setattr(attention, IMPL_ATTR, torch.nn.Identity())
+
+        initialize_attn_qparams(attention, scheme, force_zero_point=False)
+
+        assert attention.q_scale.shape == expected_shape
+
+
+def test_initialize_attn_qparams_homogeneous_transformers_config():
+    # homogeneous transformers configs are read directly, without a layer_idx,
+    # also on transformers>=5.14 where every config has a per_layer_config view
+    config = PretrainedConfig(num_attention_heads=8, num_key_value_heads=2, head_dim=16)
+
+    attention = _initialize_attn_qparams(config)
+
+    assert attention.k_scale.shape == (2, 1, 1)
+
+
+def test_initialize_attn_qparams_heterogeneous_partial_kv_heads():
+    # a k_proj which is not a whole number of heads is not compared to the config
+    config = _heterogeneous_config()
+    attention = LayerAttention(0, num_kv_heads=4, head_dim=16)
+    attention.k_proj = torch.nn.Linear(64, 40)
+    attention.kv_cache = MockKVCache(config)
+    scheme = _attention_scheme(strategy=QuantizationStrategy.ATTN_HEAD)
+
+    initialize_attn_qparams(attention, scheme, force_zero_point=False)
+
+    assert attention.k_scale.shape == (4, 1, 1)
 
 
 @pytest.mark.parametrize(
