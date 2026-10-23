@@ -3,7 +3,7 @@
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Hashable, Literal, Optional
 
 import torch
 import torch.distributed as dist
@@ -52,6 +52,9 @@ class DiskCache(OffloadCache):
         offload_device: Optional["DeviceLikeType | Literal['disk']"] = None,
         offload_dir: Optional[str] = None,
         async_writer: AsyncDiskWriteback | None = None,
+        streaming_writer=None,
+        module_name: str | None = None,
+        nonpersistent_names: set[Hashable] | None = None,
     ):
         super().__init__(onload_device, offload_device=offload_device)
         if offload_device is not None:
@@ -64,7 +67,20 @@ class DiskCache(OffloadCache):
             )
         # Resolve relative paths to absolute paths for symlink creation
         self.offload_dir = Path(offload_dir).resolve()
+        self.offload_dir.mkdir(parents=True, exist_ok=True)
         self.async_writer = async_writer
+        self.streaming_writer = streaming_writer
+        self.module_name = module_name
+        self.nonpersistent_names = nonpersistent_names or set()
+
+    def offload_named(
+        self, name: Hashable, tensor: torch.Tensor | None
+    ) -> torch.Tensor | None:
+        return self.offload(
+            tensor,
+            weight_name=name,
+            persistent=name not in self.nonpersistent_names,
+        )
 
     @catch_pinned_mem_error
     def stage(
@@ -127,7 +143,11 @@ class DiskCache(OffloadCache):
         return onloaded
 
     def offload(
-        self, tensor: torch.Tensor | None, offloaded: Optional[torch.Tensor] = None
+        self,
+        tensor: torch.Tensor | None,
+        offloaded: Optional[torch.Tensor] = None,
+        weight_name: Hashable | None = None,
+        persistent: bool | None = None,
     ) -> torch.Tensor | None:
         """
         Offload a tensor to disk by writing a new safetensors file
@@ -138,6 +158,9 @@ class DiskCache(OffloadCache):
         """
         if tensor is None:
             return None
+
+        if persistent is None:
+            persistent = weight_name not in self.nonpersistent_names
 
         if tensor.device.type == "meta":
             assert tensor in self.index
@@ -152,25 +175,44 @@ class DiskCache(OffloadCache):
                 f"does not match offloaded meta tensor dtype {offloaded.dtype}"
             )
 
-        file_path = self._get_ct_file_path(self.offload_dir, offloaded)
+        write_checkpoint = (
+            self.streaming_writer is not None
+            and self.streaming_writer.is_source
+            and persistent
+        )
+        if write_checkpoint:
+            if self.module_name is None or weight_name is None:
+                raise ValueError(
+                    "Streaming checkpoint offload requires a module name and a "
+                    "local tensor name"
+                )
+            model_weight_name = f"{self.module_name}.{weight_name}".lstrip(".")
+            file_path, weight_name = self.streaming_writer.add_tensor(
+                model_weight_name, tensor
+            )
+        else:
+            file_path = self._get_ct_file_path(self.offload_dir, offloaded)
+            weight_name = "weight"
+
         self.index[offloaded] = {
             "safetensors_file": file_path,
-            "weight_name": "weight",
+            "weight_name": str(weight_name),
             "dtype": str(tensor.dtype).removeprefix("torch."),
         }
 
-        assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
-        # safetensors requires contiguous tensors; compressed/packed weights (e.g.
-        # NVFP4, FP8 block) may be non-contiguous views after compression.
-        if self.async_writer is not None and self.async_writer.is_batch_active:
-            # Snapshot to pageable CPU memory before returning. This synchronizes
-            # the device-to-host copy and releases the caller's accelerator tensor
-            # when its module mapping is replaced, while disk serialization runs
-            # independently on the writeback worker.
-            cpu_tensor = tensor.detach().contiguous().to(device="cpu", copy=True)
-            self.async_writer.submit(file_path, {"weight": cpu_tensor})
-        else:
-            save_file({"weight": tensor.contiguous()}, file_path)
+        if not write_checkpoint:
+            assert self._is_ct_file_path(
+                file_path
+            ), f"Attempted to write to {file_path}"
+            # safetensors requires contiguous tensors; compressed/packed weights (e.g.
+            # NVFP4, FP8 block) may be non-contiguous views after compression.
+            if self.async_writer is not None and self.async_writer.is_batch_active:
+                # Snapshot to pageable CPU memory before returning. The asynchronous
+                # worker only retains host tensors while it serializes the file.
+                cpu_tensor = tensor.detach().contiguous().to(device="cpu", copy=True)
+                self.async_writer.submit(file_path, {"weight": cpu_tensor})
+            else:
+                save_file({"weight": tensor.contiguous()}, file_path)
         return offloaded
 
     def __delitem__(self, key: str):
@@ -210,10 +252,24 @@ class DiskCache(OffloadCache):
         weight_name = weight_info["weight_name"]
         dtype = getattr(torch, weight_info["dtype"])
 
+        if (
+            self.streaming_writer is not None
+            and self.streaming_writer.is_checkpoint_path(file_path)
+        ):
+            # Drop any cached safetensors handle before the writer atomically
+            # replaces this multi-tensor shard.
+            _evict(file_path)
+            self.streaming_writer.update_tensor(
+                file_path,
+                weight_name,
+                data.reshape_as(offloaded).to(dtype=dtype),
+            )
+            return
+
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
 
-        # Replacing the path atomically handles checkpoint symlinks without an unlink
-        # gap. Evict a cached handle to regular files so later reads see new contents.
+        # Replacing a symlink atomically avoids an unlink gap. Evict cached handles
+        # to regular files so later reads see the updated contents.
         if not os.path.islink(file_path):
             _evict(file_path)
 
@@ -229,7 +285,12 @@ class DiskCache(OffloadCache):
                 os.remove(temporary_path)
 
     def _wait_for_write(self, file_path: str) -> None:
-        if self.async_writer is not None:
+        if (
+            self.streaming_writer is not None
+            and self.streaming_writer.is_checkpoint_path(file_path)
+        ):
+            self.streaming_writer.wait(file_path)
+        elif self.async_writer is not None:
             self.async_writer.wait(file_path)
 
     @classmethod

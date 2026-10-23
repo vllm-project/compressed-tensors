@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+from collections.abc import Hashable
 from typing import Optional
 
 import torch
@@ -35,7 +36,9 @@ class DistributedDiskCache(BatchedOffloadMixin, DiskCache):
         """Queue deletion until the distributed operation reaches its flush point."""
         self._deferred_file_deletions.add(file_path)
 
-    def offload_local(self, tensor: torch.Tensor) -> tuple[torch.Tensor, list]:
+    def offload_local(
+        self, tensor: torch.Tensor, name: Hashable | None = None
+    ) -> tuple[torch.Tensor, list]:
         """
         Write tensor data to disk on the source rank.
 
@@ -46,7 +49,7 @@ class DistributedDiskCache(BatchedOffloadMixin, DiskCache):
         :return: meta tensor representing the disk offloaded tensor, and the file
             location, dtype and shape used by other ranks to rebuild it
         """
-        offloaded = DiskCache.offload(self, tensor)
+        offloaded = DiskCache.offload(self, tensor, weight_name=name)
         weight_info = self.index[offloaded]
         return offloaded, [
             weight_info["safetensors_file"],

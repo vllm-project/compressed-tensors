@@ -24,6 +24,7 @@ class _WriteRequest:
     path: str
     tensors: dict
     future: Future
+    metadata: dict[str, str] | None = None
 
 
 _STOP = object()
@@ -54,6 +55,7 @@ class AsyncDiskWriteback:
         self._batch_slots = threading.BoundedSemaphore(max_queued_batches)
         self._condition = threading.Condition()
         self._active_batch: list[_WriteRequest] | None = None
+        self._flushing = False
         self._pending: dict[str, Future] = {}
         self._errors: dict[str, BaseException] = {}
         self._closed = False
@@ -66,6 +68,8 @@ class AsyncDiskWriteback:
     def batch(self) -> Iterator[AsyncDiskWriteback]:
         """Reserve bounded queue capacity and collect one subgraph's snapshots."""
         with self._condition:
+            while self._flushing:
+                self._condition.wait()
             if self._closed:
                 raise RuntimeError("Cannot submit to a closed disk writeback worker")
             if self._active_batch is not None:
@@ -73,6 +77,8 @@ class AsyncDiskWriteback:
 
         self._batch_slots.acquire()
         with self._condition:
+            while self._flushing:
+                self._condition.wait()
             if self._closed:
                 self._batch_slots.release()
                 raise RuntimeError("Cannot submit to a closed disk writeback worker")
@@ -92,23 +98,34 @@ class AsyncDiskWriteback:
             yield self
         except BaseException as error:
             with self._condition:
-                for request in batch:
+                failed_requests = list(batch)
+                for request in failed_requests:
                     self._pending.pop(request.path, None)
                     self._errors[request.path] = error
                     request.future.set_exception(error)
                 self._active_batch = None
+                self._condition.notify_all()
             self._batch_slots.release()
+            for request in failed_requests:
+                self._write_error_marker(request.path, error)
             raise
         else:
             with self._condition:
                 self._active_batch = None
-            if batch:
-                # The semaphore reserves a queue slot for this batch.
-                self._queue.put(batch)
-            else:
-                self._batch_slots.release()
+                if batch:
+                    # The semaphore reserves a queue slot for this batch. Enqueue
+                    # before waking flush callers so they cannot miss this batch.
+                    self._queue.put(batch)
+                else:
+                    self._batch_slots.release()
+                self._condition.notify_all()
 
-    def submit(self, path: str, tensors: dict) -> None:
+    def submit(
+        self,
+        path: str,
+        tensors: dict,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
         """Add a stable, contiguous CPU mapping to the active subgraph batch."""
         path = os.fspath(path)
         with self._condition:
@@ -116,14 +133,75 @@ class AsyncDiskWriteback:
                 raise RuntimeError("Cannot submit to a closed disk writeback worker")
             if self._active_batch is None:
                 raise RuntimeError("Disk tensor snapshots must be submitted in a batch")
-            if not self._defer_errors:
-                self._raise_first_error_locked()
-            if path in self._pending:
-                raise RuntimeError(f"A disk write is already pending for {path}")
-            future = Future()
-            request = _WriteRequest(path, tensors, future)
-            self._pending[path] = future
-            self._active_batch.append(request)
+            self._submit_locked(path, tensors, metadata)
+
+    def submit_file(
+        self,
+        path: str | os.PathLike,
+        tensors: dict,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        """Submit a file write to the active subgraph or as a bounded singleton.
+
+        Checkpoint shards can be flushed by a later staging thread after the
+        subgraph's offload batch has ended. In that case, enqueue the write through
+        the same bounded worker used for per-tensor disk-cache files.
+        """
+        path = os.fspath(path)
+        with self._condition:
+            while self._flushing and self._active_batch is None:
+                self._condition.wait()
+            if self._closed:
+                raise RuntimeError("Cannot submit to a closed disk writeback worker")
+            if self._active_batch is not None:
+                self._submit_locked(path, tensors, metadata)
+                return
+
+        # Reserve queue capacity without holding the condition. A batch may begin
+        # while this thread waits, so check for one again after acquiring the slot.
+        self._batch_slots.acquire()
+        with self._condition:
+            while self._flushing and self._active_batch is None:
+                self._condition.wait()
+            if self._closed:
+                self._batch_slots.release()
+                raise RuntimeError("Cannot submit to a closed disk writeback worker")
+            if self._active_batch is not None:
+                try:
+                    self._submit_locked(path, tensors, metadata)
+                finally:
+                    self._batch_slots.release()
+                return
+            try:
+                if not self._defer_errors:
+                    self._raise_first_error_locked()
+                request = self._new_request_locked(path, tensors, metadata)
+            except BaseException:
+                self._batch_slots.release()
+                raise
+            # The reserved semaphore slot guarantees this insertion can proceed
+            # without waiting for the worker while holding the condition.
+            self._queue.put([request])
+            self._condition.notify_all()
+
+    def _submit_locked(
+        self, path: str, tensors: dict, metadata: dict[str, str] | None
+    ) -> None:
+        if not self._defer_errors:
+            self._raise_first_error_locked()
+        request = self._new_request_locked(path, tensors, metadata)
+        assert self._active_batch is not None
+        self._active_batch.append(request)
+
+    def _new_request_locked(
+        self, path: str, tensors: dict, metadata: dict[str, str] | None
+    ) -> _WriteRequest:
+        if path in self._pending:
+            raise RuntimeError(f"A disk write is already pending for {path}")
+        future = Future()
+        request = _WriteRequest(path, tensors, future, metadata)
+        self._pending[path] = future
+        return request
 
     @property
     def is_batch_active(self) -> bool:
@@ -144,9 +222,20 @@ class AsyncDiskWriteback:
 
     def flush(self) -> None:
         """Wait for queued writes and propagate the first write error."""
-        self._queue.join()
         with self._condition:
-            self._raise_first_error_locked()
+            while self._flushing:
+                self._condition.wait()
+            self._flushing = True
+            while self._active_batch is not None:
+                self._condition.wait()
+        try:
+            self._queue.join()
+            with self._condition:
+                self._raise_first_error_locked()
+        finally:
+            with self._condition:
+                self._flushing = False
+                self._condition.notify_all()
 
     def flush_distributed(self, group) -> None:
         """Flush local writes and report any failure to every rank in ``group``.
@@ -181,6 +270,8 @@ class AsyncDiskWriteback:
     def close(self) -> None:
         """Drain queued writes and stop the worker."""
         with self._condition:
+            while self._flushing:
+                self._condition.wait()
             if self._active_batch is not None:
                 raise RuntimeError("Cannot close with an uncommitted writeback batch")
             if self._closed:
@@ -225,11 +316,14 @@ class AsyncDiskWriteback:
                 self._batch_slots.release()
                 for request in batch:
                     try:
-                        self._write_atomically(request.path, request.tensors)
+                        self._write_atomically(
+                            request.path, request.tensors, request.metadata
+                        )
                     except BaseException as error:
                         request.future.set_exception(error)
                         with self._condition:
                             self._errors[request.path] = error
+                        self._write_error_marker(request.path, error)
                     else:
                         request.future.set_result(None)
                     finally:
@@ -245,7 +339,19 @@ class AsyncDiskWriteback:
             raise RuntimeError(f"Asynchronous disk write failed for {path}") from cause
 
     @staticmethod
-    def _write_atomically(path: str, tensors: dict) -> None:
+    def _write_error_marker(path: str, error: BaseException) -> None:
+        marker = Path(path).with_suffix(Path(path).suffix + ".error")
+        try:
+            marker.write_text(repr(error), encoding="utf-8")
+        except OSError:
+            pass
+
+    @staticmethod
+    def _write_atomically(
+        path: str,
+        tensors: dict,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
         directory = os.path.dirname(path)
         prefix = f".{Path(path).name}."
         fd, temporary_path = tempfile.mkstemp(
@@ -254,8 +360,10 @@ class AsyncDiskWriteback:
         os.close(fd)
 
         try:
-            save_file(tensors, temporary_path)
+            save_file(tensors, temporary_path, metadata=metadata)
             os.replace(temporary_path, path)
+            error_path = Path(path).with_suffix(Path(path).suffix + ".error")
+            error_path.unlink(missing_ok=True)
         finally:
             if os.path.exists(temporary_path):
                 os.remove(temporary_path)

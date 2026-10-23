@@ -79,7 +79,7 @@ class OffloadBatch:
         self.keys.add(key)
 
         if self.is_source:
-            offloaded, self.metadata[key] = cache.offload_local(tensor)
+            offloaded, self.metadata[key] = cache.offload_local(tensor, name=name)
             return offloaded
 
         # a tensor on a device other than the offload device (e.g. an accelerator) is
@@ -172,7 +172,9 @@ class BatchedOffloadMixin:
         return True
 
     @abstractmethod
-    def offload_local(self, tensor: torch.Tensor) -> tuple[torch.Tensor, Any]:
+    def offload_local(
+        self, tensor: torch.Tensor, name: Hashable | None = None
+    ) -> tuple[torch.Tensor, Any]:
         """
         Offload a tensor on the source rank without synchronizing
 
@@ -195,7 +197,9 @@ class BatchedOffloadMixin:
         """
         raise NotImplementedError()
 
-    def offload(self, tensor: torch.Tensor | None) -> torch.Tensor | None:
+    def offload(
+        self, tensor: torch.Tensor | None, name: Hashable | None = None
+    ) -> torch.Tensor | None:
         """
         Offload a tensor and immediately exchange its metadata with the other ranks
 
@@ -207,7 +211,7 @@ class BatchedOffloadMixin:
 
         payload = [None]
         if is_source_process():
-            tensor, payload[0] = self.offload_local(tensor)
+            tensor, payload[0] = self.offload_local(tensor, name=name)
 
         dist.broadcast_object_list(payload, src=get_source_rank())
 
@@ -220,6 +224,11 @@ class BatchedOffloadMixin:
         if self._requires_offload_barrier():
             dist.barrier()
         return tensor
+
+    def offload_named(
+        self, name: Hashable, tensor: torch.Tensor | None
+    ) -> torch.Tensor | None:
+        return self.offload(tensor, name=name)
 
     @classmethod
     def from_mapping(

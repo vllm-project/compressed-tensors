@@ -41,8 +41,13 @@ def offload_module(
     module._parameters = cache_cls.from_mapping(
         module._parameters, onload_device, offload_device, **kwargs
     )
+    buffer_kwargs = kwargs.copy()
+    if kwargs.get("streaming_writer") is not None:
+        # Non-persistent buffers are needed while running the model but are not
+        # part of state_dict and therefore must not be written to the checkpoint.
+        buffer_kwargs["nonpersistent_names"] = module._non_persistent_buffers_set
     module._buffers = cache_cls.from_mapping(
-        module._buffers, onload_device, offload_device, **kwargs
+        module._buffers, onload_device, offload_device, **buffer_kwargs
     )
 
     original_forward_func = module.forward.__func__
@@ -182,9 +187,13 @@ def subgraph_offload_modules(
     modules: dict[str, torch.nn.Module],
     offload_kwargs: dict[str, dict],
     async_writer: AsyncDiskWriteback | None = None,
+    streaming_writer=None,
 ):
-    """Offload modules, optionally handing disk serialization to a worker."""
+    """Offload modules through one bounded writer for cache files and shards."""
     from compressed_tensors.offload import get_cache_init_kwargs
+
+    if streaming_writer is not None and async_writer is None:
+        async_writer = streaming_writer.async_writer
 
     to_offload = []
     for name, module in modules.items():
@@ -194,6 +203,24 @@ def subgraph_offload_modules(
             # we should consider raising warnings, but observers will
             # clog the output with warnings, so we will skip for now
             module_offload_kwargs = get_cache_init_kwargs(module)
+
+        if streaming_writer is not None:
+            # Checkpoint shards back persistent model tensors. Non-persistent buffers
+            # still use the ordinary disk-cache format.
+            module_offload_kwargs["offload_device"] = "disk"
+            if module_offload_kwargs.get("offload_dir") is None:
+                cache_dir = streaming_writer.output_dir.parent / (
+                    f".{streaming_writer.output_dir.name}-offload"
+                )
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                module_offload_kwargs["offload_dir"] = str(cache_dir)
+            module_offload_kwargs["streaming_writer"] = streaming_writer
+            module_offload_kwargs["module_name"] = name
+
+        if async_writer is not None and str(
+            module_offload_kwargs.get("offload_device")
+        ) == "disk":
+            module_offload_kwargs["async_writer"] = async_writer
         to_offload.append((module, module_offload_kwargs))
 
     uses_disk = any(
@@ -201,10 +228,14 @@ def subgraph_offload_modules(
         for _, module_offload_kwargs in to_offload
     )
     use_async = async_writer is not None and uses_disk
-    batch_context = async_writer.batch() if use_async else contextlib.nullcontext()
-    with batch_context:
-        for module, module_offload_kwargs in to_offload:
-            if use_async and str(module_offload_kwargs.get("offload_device")) == "disk":
-                module_offload_kwargs["async_writer"] = async_writer
+    use_streaming = streaming_writer is not None and any(
+        "streaming_writer" in module_kwargs for _, module_kwargs in to_offload
+    )
 
+    with contextlib.ExitStack() as stack:
+        if use_async:
+            stack.enter_context(async_writer.batch())
+        if use_streaming:
+            stack.enter_context(streaming_writer.batch())
+        for module, module_offload_kwargs in to_offload:
             offload_module(module, **module_offload_kwargs)
