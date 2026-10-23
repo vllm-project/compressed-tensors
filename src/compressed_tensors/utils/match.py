@@ -31,6 +31,14 @@ __all__ = [
 FusedMappping = Mapping[str, Iterable[str]]
 
 
+def _target_priority_key(target: str) -> tuple:
+    """Sort key for match_targets: exact names, then longer regexes."""
+    if target.startswith("re:"):
+        pattern = target.removeprefix("re:")
+        return (1, -len(pattern), pattern)
+    return (0, 0, target)
+
+
 def match_named_modules(
     model: torch.nn.Module,
     targets: Iterable[str] | None,
@@ -135,10 +143,10 @@ def match_targets(
     # specific to least specific, and this order will be used when merging configs.
     # The entries are sorted in the following order:
     #     1. matches on exact strings
-    #     2. matches on regex patterns
+    #     2. matches on regex patterns (longer patterns before shorter ones)
     #     3. matches on module names (e.g. "Linear")
 
-    targets = sorted(targets, key=lambda x: ("re:" in x, x))
+    targets = sorted(targets, key=_target_priority_key)
     matched_targets = []
     for target in targets:
         if match_name(name, target):
