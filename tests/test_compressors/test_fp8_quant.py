@@ -16,6 +16,7 @@ from compressed_tensors.quantization import (
     apply_quantization_config,
 )
 from compressed_tensors.quantization.lifecycle.forward import fake_quantize
+from safetensors.torch import save_file
 from torch.nn.modules import Linear, Sequential
 
 
@@ -131,9 +132,14 @@ def test_compress_decompress_match(
         (300, 400, 128, 128),
         (256, 300, 128, 128),
         (300, 256, 128, 128),
+        # gemma-4-26B-A4B dense shared-expert mlp.down_proj: column dim not
+        # divisible by the block width
+        (2816, 2112, 128, 128),
     ],
 )
-def test_block_quant_compression_padding(rows, cols, block_height, block_width):
+def test_block_quant_compression_padding(
+    rows, cols, block_height, block_width, tmp_path
+):
     """
     Block quantization compresses weights with non-divisible dimensions without
     changing the original shape.
@@ -164,3 +170,10 @@ def test_block_quant_compression_padding(rows, cols, block_height, block_width):
         rows,
         cols,
     ), "Compressed weight shape should match original"
+
+    # Truncating the padded weight must not leave behind a view: column
+    # padding yields a non-contiguous slice, which safetensors refuses to save
+    assert compressed[
+        "weight"
+    ].is_contiguous(), "Compressed weight should be contiguous"
+    save_file(compressed, str(tmp_path / "compressed.safetensors"))

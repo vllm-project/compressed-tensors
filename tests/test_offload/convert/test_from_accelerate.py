@@ -14,7 +14,12 @@ from compressed_tensors.offload import (
     from_accelerate,
     load_offloaded_model,
 )
-from compressed_tensors.offload.cache import CPUCache, DeviceCache, DiskCache
+from compressed_tensors.offload.cache import (
+    CPUCache,
+    DeviceCache,
+    DiskCache,
+    DistributedDiskCache,
+)
 from compressed_tensors.offload.convert.from_accelerate import (
     remove_accelerate_from_module,
 )
@@ -88,6 +93,48 @@ def test_remove_accelerate_from_module_disk(accel_device, tmp_path):
     )
     assert remove_accelerate_from_module(linear) == (accel_device, "disk", offload_dir)
     assert not hasattr(linear, "_hf_hook")
+
+
+@pytest.mark.unit
+@requires_gpu
+@pytest.mark.filterwarnings("ignore::UserWarning")
+def test_remove_accelerate_non_persistent_buffer_meta(accel_device, tmp_path):
+    # non-persistent buffers are excluded from state dicts, so they can never
+    # have a checkpoint key or an offload record. When such a buffer is left on
+    # the meta device (e.g. transformers' Gemma4TextScaledWordEmbedding.
+    # embed_scale under disk offloading), it should be passed through rather
+    # than raising, since it is never serialized anyway
+    from accelerate.big_modeling import dispatch_model
+
+    class ScaledEmbedding(torch.nn.Embedding):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.register_buffer("embed_scale", torch.tensor(2.0), persistent=False)
+
+    current_accelerator = torch.accelerator.current_accelerator()
+    offload_dir = tmp_path / "offload_dir"
+    os.mkdir(offload_dir)
+
+    embedding = ScaledEmbedding(10, 5)
+    assert "embed_scale" not in embedding.state_dict()  # non-persistent
+    model = torch.nn.Sequential(embedding)
+    dispatch_model(
+        model,
+        {"0": "disk", "fake_module": "cpu"},
+        main_device=current_accelerator,
+        force_hooks=True,
+        offload_dir=offload_dir,
+    )
+
+    # simulate the state the offload dispatch leaves behind for tensors with
+    # no offload record: the non-persistent buffer on the meta device
+    embedding.embed_scale = torch.empty((), device="meta")
+
+    onload_dev, offload_dev, _offload_dir = remove_accelerate_from_module(embedding)
+    assert onload_dev == accel_device
+    assert offload_dev == "disk"
+    assert _offload_dir == offload_dir
+    assert not hasattr(embedding, "_hf_hook")
 
 
 @pytest.mark.unit
@@ -205,6 +252,9 @@ def test_dist_disk_safetensors_update(tmp_path):
         delattr(rank_1_module, "weight")
 
         # Check that the new files were deleted
+        # Wait for all ranks to finish reading before flushing deferred deletions.
+        dist.barrier()
+        DistributedDiskCache.flush_deferred_file_deletions()
         dist.barrier()
         assert not os.path.exists(q_file_path)
         assert not os.path.exists(k_file_path)

@@ -22,6 +22,7 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle.forward import fake_quantize
 from compressed_tensors.quantization.quant_args import ActivationOrdering
+from safetensors.torch import load_file, save_file
 from torch.nn.modules import Linear, Sequential
 
 
@@ -135,16 +136,20 @@ def test_repack_8bit(value):
 
 @pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
 @pytest.mark.parametrize("shape", [(256, 1024), (512, 100), (128, 33)])
-def test_pack_unpack_roundtrip(num_bits, shape):
-    """Pack/unpack roundtrip preserves values for all supported bit widths."""
+def test_pack_unpack_roundtrip(num_bits, shape, tmp_path):
+    """Pack/save/load/unpack preserves values for all supported bit widths."""
     lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
-    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8, device="cpu")
 
     packed = pack_to_int32(value, num_bits)
     assert packed.dtype == torch.int32
 
     # Dense packing: 32 elements → num_bits int32 words
     assert packed.shape == (shape[0], math.ceil(shape[1] * num_bits / 32))
+
+    path = tmp_path / "packed.safetensors"
+    save_file({"weight_packed": packed}, path)
+    packed = load_file(path)["weight_packed"]
 
     unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
     assert torch.equal(unpacked, value)

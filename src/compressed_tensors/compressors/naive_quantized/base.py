@@ -80,11 +80,15 @@ class NaiveQuantizationCompressor(BaseCompressor):
             dtype=weights.pytorch_dtype(),
         )
 
-        # Truncate back to original shape if padding was added
+        # Truncate back to original shape if padding was added. The slice is
+        # a view into the padded buffer, so it is non-contiguous whenever the
+        # columns were padded; copy it so that the compressed weight can be
+        # serialized (e.g. by safetensors, which rejects non-contiguous
+        # tensors)
         if quantized_weight.shape != original_weight_shape:
             quantized_weight = quantized_weight[
                 tuple([slice(v) for v in original_weight_shape])
-            ]
+            ].contiguous()
 
         state_dict["weight"] = quantized_weight
         state_dict = cls._remove_symmetric_zp(state_dict, scheme)
