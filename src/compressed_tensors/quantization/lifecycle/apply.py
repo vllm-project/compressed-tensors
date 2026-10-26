@@ -13,10 +13,7 @@ from compressed_tensors.modeling import (
 )
 from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization.lifecycle.initialize import (
-    _get_layer_config,
-    _validate_attention_scheme,
-    _validate_group_size,
-    _validate_num_kv_heads,
+    _validate_attention_config,
     initialize_module_for_quantization,
     is_cached_attention_module,
 )
@@ -27,7 +24,6 @@ from compressed_tensors.quantization.quant_config import (
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils import KV_CACHE_TARGETS
-from compressed_tensors.utils import get_head_dim, get_num_kv_heads
 from compressed_tensors.utils.match import (
     is_narrow_match,
     match_named_modules,
@@ -127,7 +123,6 @@ def apply_quantization_config(
         return dict()
 
     _validate_attention_application(model, config, allowed_modules)
-    _restore_online_transforms(model, config)
 
     # force zero points during initialization
     # TODO: remove zero points from initialization
@@ -189,57 +184,48 @@ def apply_quantization_config(
 
 
 def _validate_attention_application(model, config, allowed_modules):
-    """Validate requested attention operations before restoring hooks or qparams."""
-    target_to_scheme = OrderedDict()
-    for scheme in config.config_groups.values():
-        for target in scheme.targets:
-            target_to_scheme[target] = scheme
+    """Do not silently drop an explicitly requested attention operation."""
+    targets = OrderedDict(
+        (target, scheme)
+        for scheme in config.config_groups.values()
+        for target in scheme.targets
+    )
 
     def validate(module, scheme):
-        _validate_attention_scheme(scheme)
         cache = getattr(module, "kv_cache", None)
         owner = (
             cache.config
             if cache is not None
             else model.config.get_text_config(decoder=True)
         )
-        layer = _get_layer_config(owner, module)
-        if getattr(owner, "is_heterogeneous", False):
-            _validate_num_kv_heads(
-                module, scheme.input_activations, get_num_kv_heads(layer), strict=True
-            )
-        _validate_group_size(module, scheme.input_activations, get_head_dim(layer))
+        _validate_attention_config(module, scheme, owner)
 
-    for name, module in match_named_modules(model, target_to_scheme, config.ignore):
+    for name, module in match_named_modules(model, targets, config.ignore):
         if allowed_modules is not None and module not in allowed_modules:
             continue
-        matched = match_targets(name, module, target_to_scheme)
-        scheme = _scheme_from_targets(target_to_scheme, matched, name)
+        scheme = _scheme_from_targets(
+            targets, match_targets(name, module, targets), name
+        )
         if not is_narrow_match(model, scheme.targets, name):
             continue
         if is_cached_attention_module(module):
             validate(module, scheme)
         elif not isinstance(module, (torch.nn.Linear, torch.nn.Embedding)) and (
             "attention" in type(module).__name__.lower()
-            or getattr(module, "is_kv_shared_layer", False)
             or any(hasattr(module, attr) for attr in ("q_proj", "qkv_proj", "query"))
         ):
             raise ValueError(
-                f"Quantization requested for attention module {name!r} "
-                f"({type(module).__name__}), but its requested query/KV operation "
-                "is not supported. Target supported attention modules explicitly, "
-                "or explicitly ignore this module when only KV-owning layers "
-                "are intended"
+                f"Quantization requested for unsupported attention module {name!r}; "
+                "target supported modules or explicitly ignore this module"
             )
-
     if config.kv_cache_scheme is not None:
         scheme = QuantizationScheme(
             targets=KV_CACHE_TARGETS, input_activations=config.kv_cache_scheme
         )
         for module in model.modules():
-            if allowed_modules is not None and module not in allowed_modules:
-                continue
-            if is_cached_attention_module(module):
+            if (allowed_modules is None or module in allowed_modules) and (
+                is_cached_attention_module(module)
+            ):
                 validate(module, scheme)
 
 
@@ -265,20 +251,8 @@ def _apply_kv_cache_scheme(
         if is_cached_attention_module(submodule):
             submodule.quantization_scheme = scheme
             initialize_hooked_kv_cache(model, submodule)
-            initialize_module_for_quantization(
-                submodule, force_zero_point=False, quantize_query=False
-            )
+            initialize_module_for_quantization(submodule, force_zero_point=False)
             submodule.quantization_status = status
-
-
-def _restore_online_transforms(model: Module, quantization_config: QuantizationConfig):
-    """Restore saved activation transforms before initializing attention qparams."""
-    from compressed_tensors.transform import apply_transform_config
-
-    saved = quantization_config.transform_config
-    if not saved:
-        return
-    apply_transform_config(model, saved, restore=True)
 
 
 def _load_quant_args_from_mapping(

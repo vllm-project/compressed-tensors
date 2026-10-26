@@ -31,7 +31,6 @@ from compressed_tensors.utils import get_head_dim, get_num_attn_heads, get_num_k
 from compressed_tensors.utils.helpers import deprecated
 from loguru import logger
 from torch.nn import Module, Parameter
-from transformers import PretrainedConfig
 
 
 __all__ = [
@@ -58,7 +57,6 @@ def initialize_module_for_quantization(
     module: Module,
     scheme: QuantizationScheme | None = None,
     force_zero_point: bool = True,
-    quantize_query: bool | None = None,
 ):
     """
     Attaches appropriate scales, zero points, and observers to a layer
@@ -73,9 +71,6 @@ def initialize_module_for_quantization(
         if not provided, the layer will be skipped
     :param force_zero_point: whether to force initialization of a zero point for
         symmetric quantization
-    :param quantize_query: whether an attention scheme also quantizes the query.
-        False for kv-cache-only schemes, including when a query transform is hooked.
-        None preserves inference from the presence of an attention implementation.
     """
     from compressed_tensors.linear.compressed_linear import CompressedLinear  # circ dep
 
@@ -86,9 +81,7 @@ def initialize_module_for_quantization(
     QuantizationMetadata.clear_all_qparams(module)
 
     if is_cached_attention_module(module):
-        initialize_attn_qparams(
-            module, scheme, force_zero_point, quantize_query=quantize_query
-        )
+        initialize_attn_qparams(module, scheme, force_zero_point)
 
     elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
         with disable_onloading():
@@ -292,12 +285,9 @@ def initialize_qparams(
 
 
 def initialize_attn_qparams(
-    module: Module,
-    scheme: QuantizationScheme,
-    force_zero_point: bool,
-    quantize_query: bool | None = None,
+    module: Module, scheme: QuantizationScheme, force_zero_point: bool
 ):
-    """Initialize attention scales, optionally including query quantization."""
+    """Initlaize k_scale, v_scale for self_attn"""
 
     impl: QuantizedAttentionImpl | None = getattr(module, IMPL_ATTR, None)
     kv_cache: QuantizedKVCache | None = getattr(module, KV_CACHE_ATTR, None)
@@ -309,29 +299,17 @@ def initialize_attn_qparams(
             "attributes are initialized using `apply_quantization_config`."
         )
 
-    _validate_attention_scheme(scheme)
-
-    # extract shapes from the config of this attention module's decoder layer
-    is_heterogeneous = getattr(kv_cache.config, "is_heterogeneous", False)
-    config = _get_layer_config(kv_cache.config, module)
+    config = _validate_attention_config(module, scheme, kv_cache.config)
     num_attn_heads = get_num_attn_heads(config)
     num_kv_heads = get_num_kv_heads(config)
     head_dim = get_head_dim(config)
-    _validate_num_kv_heads(
-        module, scheme.input_activations, num_kv_heads, strict=is_heterogeneous
-    )
-    _validate_group_size(module, scheme.input_activations, head_dim)
 
     # (batch_size, num_heads, slen, head_dim)
     q_observed_shape = (num_attn_heads, None, head_dim)
     kv_observed_shape = (num_kv_heads, None, head_dim)
     observed_dtype = next(module.parameters()).dtype
 
-    if quantize_query is None:
-        quantize_query = impl is not None
     if impl is not None:
-        impl._quantize_query = quantize_query
-    if quantize_query:
         initialize_qparams(
             module,
             "q",
@@ -380,114 +358,66 @@ def _validate_attention_scheme(scheme: QuantizationScheme):
         QuantizationStrategy.GROUP,
         QuantizationStrategy.TENSOR_GROUP,
     ):
-        strategy = QuantizationStrategy(args.strategy).value
         raise ValueError(
-            f"Static {strategy} quantization is not supported for attention or the "
-            "kv cache. Use the tensor or attn_head strategy, or dynamic quantization"
+            "Static group quantization is not supported for attention or the KV "
+            "cache; use tensor, attn_head, or dynamic quantization"
         )
 
 
-def _get_layer_config(config: PretrainedConfig, module: Module) -> PretrainedConfig:
-    """
-    Get the config of the decoder layer which owns an attention module
-
-    Heterogeneous configs (transformers>=5.14, for example gemma-4) vary attributes
-    such as `head_dim` and `num_key_value_heads` per layer, and transformers raises
-    when they are read from the global config. Read them from the config of the
-    module's own layer instead, selected by the module's `layer_idx`.
-
-    :param config: decoder config of the model
-    :param module: attention module
-    :return: config of the module's layer, or `config` if it is homogeneous
-    """
+def _get_layer_config(config, module: Module):
+    """Resolve the config of the attention module's owning decoder layer."""
     if not getattr(config, "is_heterogeneous", False):
         return config
-
-    layer_idx = getattr(module, "layer_idx", None)
-    num_layers = len(config.per_layer_config)
-    is_index = isinstance(layer_idx, numbers.Integral) and not isinstance(
-        layer_idx, bool
-    )
-    if not is_index or not 0 <= layer_idx < num_layers:
+    index = getattr(module, "layer_idx", None)
+    layers = config.per_layer_config
+    if (
+        not isinstance(index, numbers.Integral)
+        or isinstance(index, bool)
+        or not 0 <= index < len(layers)
+    ):
         raise ValueError(
             f"Cannot initialize attention quantization for {type(module).__name__}: "
-            f"the model config varies {sorted(config.per_layer_attributes)} per "
-            f"layer, but the module's layer_idx ({layer_idx!r}) does not select one "
-            f"of its {num_layers} layers"
+            f"layer_idx ({index!r}) must select one of {len(layers)} layer configs "
+            f"for per-layer attributes {sorted(config.per_layer_attributes)}"
         )
+    return layers[int(index)]
 
-    return config.per_layer_config[int(layer_idx)]
 
-
-def _validate_num_kv_heads(
-    module: Module, args: QuantizationArgs, num_kv_heads: int, strict: bool
-):
-    """
-    Check that the config's number of key/value heads matches the attention module
-    before shaping per-head kv cache scales by it.
-
-    For per-layer configs a mismatch is an error. For other configs it only logs a
-    warning and keeps the config-shaped scales, as before this check existed: some
-    models initialize today despite a mismatch, for example the Idefics2 perceiver
-    attention, which is hooked with the decoder config, while others fail later when
-    calibrated or run, for example gemma-4 26B/31B on transformers<5.15.
-
-    :param module: attention module
-    :param args: input activation quantization args of the attention module
-    :param num_kv_heads: number of key/value heads read from the config
-    :param strict: raise instead of warning when the counts disagree
-    """
-    if args.strategy != QuantizationStrategy.ATTN_HEAD or args.dynamic is not False:
-        return
-
-    head_dim = getattr(module, "head_dim", None)
-    out_features = getattr(getattr(module, "k_proj", None), "out_features", None)
-    if not isinstance(head_dim, int) or not isinstance(out_features, int):
-        return
-    if head_dim <= 0 or out_features % head_dim != 0:
-        return
-
-    module_kv_heads = out_features // head_dim
-    if module_kv_heads != num_kv_heads:
+def _validate_attention_config(module: Module, scheme: QuantizationScheme, owner):
+    """Check geometry before application mutates any attention modules."""
+    _validate_attention_scheme(scheme)
+    config = _get_layer_config(owner, module)
+    args = scheme.input_activations
+    dim = getattr(module, "head_dim", None)
+    projected = getattr(getattr(module, "k_proj", None), "out_features", None)
+    if (
+        args.strategy == QuantizationStrategy.ATTN_HEAD
+        and args.dynamic is False
+        and isinstance(dim, int)
+        and dim > 0
+        and isinstance(projected, int)
+        and projected % dim == 0
+        and projected // dim != get_num_kv_heads(config)
+    ):
         message = (
-            f"attn_head quantization of {type(module).__name__} shapes its kv cache "
-            f"scales for {num_kv_heads} key/value heads from the config, but its "
-            f"k_proj projects to {module_kv_heads} heads of size {head_dim}"
+            f"attn_head quantization of {type(module).__name__} uses "
+            f"{get_num_kv_heads(config)} KV heads from the config, but k_proj "
+            f"projects to {projected // dim} heads of size {dim}"
         )
-        if strict:
+        if getattr(owner, "is_heterogeneous", False):
             raise ValueError(message)
-        logger.warning(
-            f"{message}. The scales keep the config's shape, so this module may "
-            "fail to calibrate or run; the tensor strategy does not depend on the "
-            "number of heads",
-            log_once=True,
-        )
-
-
-def _validate_group_size(module: Module, args: QuantizationArgs, head_dim):
-    """Reject group sizes incompatible with a known owning attention head layout."""
-    if args.strategy not in (
+        # Preserve homogeneous models whose attention is hooked with a different
+        # decoder config, such as the Idefics2 perceiver.
+        logger.warning(message, log_once=True)
+    if args.strategy in (
         QuantizationStrategy.GROUP,
         QuantizationStrategy.TENSOR_GROUP,
     ):
-        return
-
-    def is_dim(value):
-        return (
-            isinstance(value, numbers.Integral)
-            and not isinstance(value, bool)
-            and value > 0
-        )
-
-    module_dim = getattr(module, "head_dim", None)
-    # A decoder config can also be attached to unrelated vision/perceiver modules.
-    # Preserve those layouts until their actual attention dimensions are resolved.
-    if is_dim(module_dim) and is_dim(head_dim) and module_dim != head_dim:
-        return
-    if not is_dim(head_dim):
-        head_dim = module_dim
-    if is_dim(head_dim) and head_dim % args.group_size:
-        raise ValueError(
-            f"{args.strategy} quantization of {type(module).__name__} uses group_size "
-            f"{args.group_size}, which does not divide its head_dim ({head_dim})"
-        )
+        head_dim = get_head_dim(config)
+        if isinstance(head_dim, int) and (dim is None or dim == head_dim):
+            if head_dim % args.group_size:
+                raise ValueError(
+                    f"group_size ({args.group_size}) must divide this attention "
+                    f"layer's head_dim ({head_dim})"
+                )
+    return config

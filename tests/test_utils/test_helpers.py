@@ -10,8 +10,6 @@ from compressed_tensors import (
     patch_attr,
     patch_attrs,
 )
-from compressed_tensors.utils.helpers import get_head_dim
-from transformers import PretrainedConfig
 
 
 def test_patch_attr():
@@ -77,31 +75,3 @@ def test_get_nested_value(key, default, expected_value):
     a = {"b": 1, "c": {"d": 4}}
 
     assert get_nested_value(a, key, default) == expected_value
-
-
-def test_get_head_dim():
-    assert get_head_dim(SimpleNamespace(head_dim=256)) == 256
-    assert get_head_dim(SimpleNamespace(hidden_size=1536, num_attention_heads=8)) == 192
-    with pytest.raises(ValueError, match="Cannot determine head_dim"):
-        get_head_dim(SimpleNamespace())
-
-
-def test_get_head_dim_heterogeneous_config():
-    # heterogeneous configs (transformers>=5.14) vary head_dim per layer, so there
-    # is no single global value: callers must read it from a layer's config
-    if not hasattr(PretrainedConfig, "per_layer_config"):
-        pytest.skip("heterogeneous configs require transformers>=5.14")
-
-    config = PretrainedConfig(
-        hidden_size=1536,
-        num_attention_heads=8,
-        head_dim=256,
-        num_hidden_layers=4,
-    )
-    config.per_layer_config = {1: {"head_dim": 128}}
-
-    with pytest.raises(RuntimeError, match="per-layer attribute"):
-        get_head_dim(config)
-
-    assert get_head_dim(config.per_layer_config[0]) == 256
-    assert get_head_dim(config.per_layer_config[1]) == 128

@@ -9,7 +9,11 @@ from compressed_tensors.compressors import BaseCompressor
 from compressed_tensors.compressors.format import infer_module_format
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters import Converter
-from compressed_tensors.quantization import QuantizationConfig, QuantizationMetadata
+from compressed_tensors.quantization import (
+    KVCacheScaleType,
+    QuantizationConfig,
+    QuantizationMetadata,
+)
 from compressed_tensors.utils.match import match_name, match_quantizable_tensors
 from compressed_tensors.utils.safetensors_load import (
     get_checkpoint_files,
@@ -44,21 +48,6 @@ class CompressedTensorsDequantizer(Converter):
         quant_config_data = get_quantization_config(config_resolved_path)
         if quant_config_data is None:
             raise ValueError("Could not find quantization_config in config.json")
-
-        transform_config = quant_config_data.get("transform_config")
-        if transform_config not in (None, {}):
-            from compressed_tensors.transform.apply import _prepare_restore_config
-
-            try:
-                execution, _ = _prepare_restore_config(transform_config)
-            except ValueError as error:
-                raise ValueError(
-                    "Cannot dequantize checkpoint with unknown transform semantics"
-                ) from error
-            if execution.config_groups:
-                raise ValueError(
-                    "Model-free dequantization cannot preserve online transforms"
-                )
 
         try:
             self.quant_config = QuantizationConfig.model_validate(quant_config_data)
@@ -137,9 +126,9 @@ class CompressedTensorsDequantizer(Converter):
                 ].to(self.dtype)
 
         # Copy over any remaining ignored/untargeted tensors, skipping kv cache qparams
-        kv_cache_param_names = set(QuantizationMetadata.attention_qparam_names())
+        kv_cache_param_names = [v.value for v in KVCacheScaleType]
         for name, tensor in tensors.items():
-            if name.rpartition(".")[-1] in kv_cache_param_names:
+            if any([name.endswith(param_name) for param_name in kv_cache_param_names]):
                 continue
             dequantized_tensors[name] = tensor
 

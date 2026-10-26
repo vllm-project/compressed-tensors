@@ -15,7 +15,6 @@ from compressed_tensors.modeling.attention import (
 from compressed_tensors.modeling.kvcache import (
     initialize_hooked_kv_cache,
     register_key_hook,
-    register_value_hook,
 )
 from compressed_tensors.offload import OffloadCache
 from compressed_tensors.registry.registry import RegistryMixin, T
@@ -82,12 +81,11 @@ class TransformFactory(RegistryMixin, ABC):
         """
         raise NotImplementedError()
 
-    def apply_to_model(self, model: Module, use_tqdm=True, *, restore: bool = False):
+    def apply_to_model(self, model: Module, use_tqdm=True):
         """
         Create transforms and apply them to the model
 
         :param model: module to apply transforms to
-        :param restore: reconstruct online transforms without fusing saved weights again
         """
         modules_args = [
             (module, arg)
@@ -102,12 +100,7 @@ class TransformFactory(RegistryMixin, ABC):
             disable=(not use_tqdm),
             position=(dist.get_rank() if is_distributed() else 0),
         ):
-            if restore and not arg.is_online():
-                # Construction order determines shared matrices, precision and RNG.
-                # The corresponding weight rotation is already in the checkpoint.
-                self.create_transform(module, arg)
-            else:
-                self._apply_to_module(model, module, arg)
+            self._apply_to_module(model, module, arg)
 
     def _apply_to_module(self, model: Module, module: Module, args: TransformArgs):
         """
@@ -179,24 +172,19 @@ class TransformFactory(RegistryMixin, ABC):
             def query_hook(_, query_states):
                 return transform(query_states)
 
-            initialize_hooked_attention(model, module, allow_unselected=True)
+            initialize_hooked_attention(model, module)
             register_query_hook(module, query_hook)
 
-        # register a key or value hook to the kv cache
-        elif args.location in (TransformLocation.K_CACHE, TransformLocation.V_CACHE):
+        # register key hook to kvcache
+        elif args.location == TransformLocation.K_CACHE:
             if not isinstance(model, PreTrainedModel):
                 raise ValueError(f"Cannot hook attention of model: {model}")
 
-            def cache_hook(_, states):
-                return transform(states)
+            def key_hook(_, key_states):
+                return transform(key_states)
 
             initialize_hooked_kv_cache(model, module)
-            register_hook = (
-                register_key_hook
-                if args.location == TransformLocation.K_CACHE
-                else register_value_hook
-            )
-            register_hook(module, cache_hook)
+            register_key_hook(module, key_hook)
 
         else:
             raise NotImplementedError()

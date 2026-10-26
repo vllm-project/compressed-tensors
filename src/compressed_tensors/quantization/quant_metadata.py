@@ -23,21 +23,12 @@ class QuantizationMetadata:
     """
 
     @staticmethod
-    def attention_qparam_names():
-        """Quantization parameters registered for query, key and value states."""
-        return [
-            f"{base_name}_{suffix}"
-            for base_name in ("q", "k", "v")
-            for suffix in ("global_scale", "scale", "zero_point")
-        ]
-
-    @classmethod
-    def all_qparam_names(cls):
+    def all_qparam_names():
         """
         All quantization parameter names that might be registered
         onto a module during lifecycle (excluding serialized parameters)
         """
-        return cls.attention_qparam_names() + [
+        return [KVCacheScaleType.KEY.value, KVCacheScaleType.VALUE.value] + [
             f"{base_name}_{suffix}"
             for base_name in ("input", "weight", "output")
             for suffix in (
