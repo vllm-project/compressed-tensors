@@ -148,6 +148,8 @@ def test_get_checkpoint_files_local_path_ignores_model_kwargs(
     [
         ({}, None),
         ({"text_config": None}, None),
+        ({"text_config": {}}, None),
+        ({"text_config": {"model_type": "example"}}, None),
         ({"quantization_config": {"source": "top"}}, {"source": "top"}),
         (
             {
@@ -185,6 +187,17 @@ def test_get_checkpoint_files_local_path_ignores_model_kwargs(
         ),
         (
             {"text_config": None, "compression_config": {"source": "legacy"}},
+            {"source": "legacy"},
+        ),
+        (
+            {"text_config": {}, "compression_config": {"source": "legacy"}},
+            {"source": "legacy"},
+        ),
+        (
+            {
+                "text_config": {"model_type": "example"},
+                "compression_config": {"source": "legacy"},
+            },
             {"source": "legacy"},
         ),
         ({"compression_config": {"source": "legacy"}}, {"source": "legacy"}),
