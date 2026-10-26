@@ -104,13 +104,18 @@ def test_attention_scales_follow_each_layer(
     scheme = QuantizationScheme(
         targets=["Gemma4TextAttention"], input_activations=_kv_cache_scheme("attn_head")
     )
+    ignored = [
+        f"model.layers.{index}.self_attn"
+        for index, layer in enumerate(model.model.layers)
+        if layer.self_attn.is_kv_shared_layer
+    ]
     apply_quantization_config(
-        model, QuantizationConfig(config_groups={"attention": scheme})
+        model, QuantizationConfig(config_groups={"attention": scheme}, ignore=ignored)
     )
 
     for attention in _kv_attention_modules(model):
         if attention.is_kv_shared_layer:
-            # has no key/value projections of its own, so is not quantized
+            # Explicitly excluded: query-only quantization is not supported here.
             assert not hasattr(attention, "q_scale")
             continue
 

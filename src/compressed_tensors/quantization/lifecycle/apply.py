@@ -13,6 +13,9 @@ from compressed_tensors.modeling import (
 )
 from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization.lifecycle.initialize import (
+    _get_layer_config,
+    _validate_attention_scheme,
+    _validate_group_size,
     initialize_module_for_quantization,
     is_cached_attention_module,
 )
@@ -23,6 +26,7 @@ from compressed_tensors.quantization.quant_config import (
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils import KV_CACHE_TARGETS
+from compressed_tensors.utils import get_head_dim
 from compressed_tensors.utils.match import (
     is_narrow_match,
     match_named_modules,
@@ -121,6 +125,7 @@ def apply_quantization_config(
     if config is None:  # see PR #180
         return dict()
 
+    _validate_attention_application(model, config, allowed_modules)
     _restore_online_transforms(model, config)
 
     # force zero points during initialization
@@ -182,6 +187,57 @@ def apply_quantization_config(
             module.quantization_status = config.quantization_status
 
 
+def _validate_attention_application(model, config, allowed_modules):
+    """Validate requested attention operations before restoring hooks or qparams."""
+    target_to_scheme = OrderedDict()
+    for scheme in config.config_groups.values():
+        for target in scheme.targets:
+            target_to_scheme[target] = scheme
+
+    def validate(module, scheme):
+        _validate_attention_scheme(scheme)
+        cache = getattr(module, "kv_cache", None)
+        owner = (
+            cache.config
+            if cache is not None
+            else model.config.get_text_config(decoder=True)
+        )
+        layer = _get_layer_config(owner, module)
+        _validate_group_size(module, scheme.input_activations, get_head_dim(layer))
+
+    for name, module in match_named_modules(model, target_to_scheme, config.ignore):
+        if allowed_modules is not None and module not in allowed_modules:
+            continue
+        matched = match_targets(name, module, target_to_scheme)
+        scheme = _scheme_from_targets(target_to_scheme, matched, name)
+        if not is_narrow_match(model, scheme.targets, name):
+            continue
+        if is_cached_attention_module(module):
+            validate(module, scheme)
+        elif not isinstance(module, (torch.nn.Linear, torch.nn.Embedding)) and (
+            "attention" in type(module).__name__.lower()
+            or getattr(module, "is_kv_shared_layer", False)
+            or any(hasattr(module, attr) for attr in ("q_proj", "qkv_proj", "query"))
+        ):
+            raise ValueError(
+                f"Quantization requested for attention module {name!r} "
+                f"({type(module).__name__}), but its requested query/KV operation "
+                "is not supported. Target supported attention modules explicitly, "
+                "or explicitly ignore this module when only KV-owning layers "
+                "are intended"
+            )
+
+    if config.kv_cache_scheme is not None:
+        scheme = QuantizationScheme(
+            targets=KV_CACHE_TARGETS, input_activations=config.kv_cache_scheme
+        )
+        for module in model.modules():
+            if allowed_modules is not None and module not in allowed_modules:
+                continue
+            if is_cached_attention_module(module):
+                validate(module, scheme)
+
+
 def _apply_kv_cache_scheme(
     model: torch.nn.Module,
     kv_cache_scheme: QuantizationArgs,
@@ -212,24 +268,12 @@ def _apply_kv_cache_scheme(
 
 def _restore_online_transforms(model: Module, quantization_config: QuantizationConfig):
     """Restore saved activation transforms before initializing attention qparams."""
-    from compressed_tensors import TRANSFORM_CONFIG_NAME
-    from compressed_tensors.transform import TransformConfig, apply_transform_config
+    from compressed_tensors.transform import apply_transform_config
 
-    if hasattr(model, TRANSFORM_CONFIG_NAME):
-        return
     saved = quantization_config.transform_config
     if not saved:
         return
-    config = TransformConfig.model_validate(saved)
-    online = config.model_copy(deep=True)
-    for scheme in online.config_groups.values():
-        # Offline rotations are already fused into the checkpoint weights.
-        scheme.apply = [arg for arg in scheme.apply if arg.is_online()]
-    online.config_groups = {
-        name: scheme for name, scheme in online.config_groups.items() if scheme.apply
-    }
-    apply_transform_config(model, online)
-    setattr(model, TRANSFORM_CONFIG_NAME, config)
+    apply_transform_config(model, saved, restore=True)
 
 
 def _load_quant_args_from_mapping(

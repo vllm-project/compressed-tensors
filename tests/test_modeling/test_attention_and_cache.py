@@ -14,7 +14,7 @@ from compressed_tensors.modeling import (
     register_query_hook,
     register_value_hook,
 )
-from compressed_tensors.modeling.attention import HOOKED_ATTENTION_NAME
+from compressed_tensors.modeling.attention import _hooked_attention
 from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationConfig,
@@ -31,6 +31,8 @@ from transformers import (
     LlavaConfig,
     LlavaForConditionalGeneration,
 )
+from transformers.masking_utils import ALL_MASK_ATTENTION_FUNCTIONS
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 
 
 @requires_gpu
@@ -142,7 +144,12 @@ def test_attention_quantization_skips_attention_that_cannot_be_quantized(
             getattr(module, f"{name}_scale").data.fill_(1.0)
 
     # the vision tower uses the hooked attention too, without an impl
-    assert model.config.vision_config._attn_implementation == HOOKED_ATTENTION_NAME
+    vision_backend = model.config.vision_config._attn_implementation
+    assert ALL_ATTENTION_FUNCTIONS[vision_backend] is _hooked_attention
+    assert (
+        ALL_MASK_ATTENTION_FUNCTIONS[vision_backend]
+        is ALL_MASK_ATTENTION_FUNCTIONS[attn_implementation]
+    )
 
     query_modules = []
 

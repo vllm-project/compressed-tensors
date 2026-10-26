@@ -320,6 +320,7 @@ def initialize_attn_qparams(
     _validate_num_kv_heads(
         module, scheme.input_activations, num_kv_heads, strict=is_heterogeneous
     )
+    _validate_group_size(module, scheme.input_activations, head_dim)
 
     # (batch_size, num_heads, slen, head_dim)
     q_observed_shape = (num_attn_heads, None, head_dim)
@@ -460,4 +461,33 @@ def _validate_num_kv_heads(
             "fail to calibrate or run; the tensor strategy does not depend on the "
             "number of heads",
             log_once=True,
+        )
+
+
+def _validate_group_size(module: Module, args: QuantizationArgs, head_dim):
+    """Reject group sizes incompatible with a known owning attention head layout."""
+    if args.strategy not in (
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        return
+
+    def is_dim(value):
+        return (
+            isinstance(value, numbers.Integral)
+            and not isinstance(value, bool)
+            and value > 0
+        )
+
+    module_dim = getattr(module, "head_dim", None)
+    # A decoder config can also be attached to unrelated vision/perceiver modules.
+    # Preserve those layouts until their actual attention dimensions are resolved.
+    if is_dim(module_dim) and is_dim(head_dim) and module_dim != head_dim:
+        return
+    if not is_dim(head_dim):
+        head_dim = module_dim
+    if is_dim(head_dim) and head_dim % args.group_size:
+        raise ValueError(
+            f"{args.strategy} quantization of {type(module).__name__} uses group_size "
+            f"{args.group_size}, which does not divide its head_dim ({head_dim})"
         )
