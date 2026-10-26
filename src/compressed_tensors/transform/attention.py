@@ -60,6 +60,13 @@ def _producer(reader_name, reader, nodes):
 
 def validate_attention_transforms(model, config):
     """Validate shared-cache query/key bases before any transform mutates the model."""
+    # HF checkpoint loading can create modules under a default meta device. The
+    # metadata proxy must materialize its matrices to compare the planned bases.
+    with torch.device("cpu"):
+        _validate_attention_transforms(model, config)
+
+
+def _validate_attention_transforms(model, config):
     from compressed_tensors.transform.factory.base import (
         TransformBase,
         TransformFactory,
