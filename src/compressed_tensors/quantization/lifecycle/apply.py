@@ -16,6 +16,7 @@ from compressed_tensors.quantization.lifecycle.initialize import (
     _get_layer_config,
     _validate_attention_scheme,
     _validate_group_size,
+    _validate_num_kv_heads,
     initialize_module_for_quantization,
     is_cached_attention_module,
 )
@@ -26,7 +27,7 @@ from compressed_tensors.quantization.quant_config import (
 )
 from compressed_tensors.quantization.quant_scheme import QuantizationScheme
 from compressed_tensors.quantization.utils import KV_CACHE_TARGETS
-from compressed_tensors.utils import get_head_dim
+from compressed_tensors.utils import get_head_dim, get_num_kv_heads
 from compressed_tensors.utils.match import (
     is_narrow_match,
     match_named_modules,
@@ -203,6 +204,10 @@ def _validate_attention_application(model, config, allowed_modules):
             else model.config.get_text_config(decoder=True)
         )
         layer = _get_layer_config(owner, module)
+        if getattr(owner, "is_heterogeneous", False):
+            _validate_num_kv_heads(
+                module, scheme.input_activations, get_num_kv_heads(layer), strict=True
+            )
         _validate_group_size(module, scheme.input_activations, get_head_dim(layer))
 
     for name, module in match_named_modules(model, target_to_scheme, config.ignore):

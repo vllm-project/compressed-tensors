@@ -315,6 +315,52 @@ def test_attention_qparam_device_dtype_and_shape(dtype, device):
             assert not scale.requires_grad and not zero.requires_grad
 
 
+@pytest.mark.parametrize("scope", ["attention", "kv"])
+@pytest.mark.parametrize("strategy", ["attn_head", "tensor"])
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_heterogeneous_kv_head_validation_precedes_all_mutation(
+    scope, strategy, mismatch
+):
+    model = _model()
+    reference = deepcopy(model)
+    if mismatch:
+        config = model.config
+        overrides = {
+            index: {
+                name: deepcopy(getattr(layer, name))
+                for name in config.per_layer_attributes
+            }
+            for index, layer in enumerate(config.per_layer_config)
+        }
+        overrides[3]["num_key_value_heads"] = 1
+        config.per_layer_config = overrides
+        assert config.per_layer_config[3].num_key_value_heads == 1
+        module = _attention(model)[3]
+        assert module.k_proj.out_features // module.head_dim == 2
+    before = _snapshot(model)
+    args = _args(strategy)
+    quantization = (
+        _quantization(args)
+        if scope == "attention"
+        else QuantizationConfig(config_groups={}, kv_cache_scheme=args)
+    )
+    if mismatch and strategy == "attn_head":
+        with pytest.raises(ValueError, match="1 key/value heads.*k_proj.*2 heads"):
+            apply_quantization_config(model, quantization)
+        _unchanged(model, before)
+    else:
+        apply_quantization_config(model, quantization)
+        for module in _attention(model):
+            expected = (2, 1, 1) if strategy == "attn_head" else (1,)
+            assert module.k_scale.shape == module.v_scale.shape == expected
+            module.quantization_enabled = False
+        inputs = torch.tensor([[1, 2, 3, 4, 5]])
+        with torch.no_grad():
+            expected = reference(inputs, use_cache=False).logits
+            actual = model(inputs, use_cache=False).logits
+        torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+
 @pytest.mark.parametrize("transform_type", ["hadamard", "random-hadamard"])
 @pytest.mark.parametrize("valid", [False, True])
 def test_shared_attention_validation_preserves_meta_device_context(
