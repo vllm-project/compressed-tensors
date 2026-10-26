@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, MutableMapping
 from typing import ClassVar, Literal
@@ -44,6 +45,9 @@ class OffloadCache(MutableMapping, ABC):
 
     # offloaded tensors -> onloaded tensors (only when offloading is disabled)
     keep_onloaded_values: ClassVar[dict[torch.Tensor, torch.Tensor]] = dict()
+    _offloading_context_lock = threading.Lock()
+    _offloading_context_count: ClassVar[int] = 0
+    _offloading_restore_value: ClassVar[bool] = False
 
     # staged flag
     is_staged: bool = False
@@ -279,17 +283,28 @@ class OffloadCache(MutableMapping, ABC):
         Context to disable all offloading for offloaded modules which share this cache.
         After a weight has been fetched once, that onloaded value is cached and
         subsequent fetches will leverage the cache, reducing device movement
+
+        Overlapping contexts share retention until the last context exits. This
+        protects tensor lifetime, not concurrent mutation of the same tensor.
         """
-        if not OffloadCache.offloading_disabled:
-            restore_value = OffloadCache.offloading_disabled
+        with OffloadCache._offloading_context_lock:
+            if OffloadCache._offloading_context_count == 0:
+                OffloadCache._offloading_restore_value = (
+                    OffloadCache.offloading_disabled
+                )
+            OffloadCache._offloading_context_count += 1
             OffloadCache.offloading_disabled = True
-            try:
-                yield
-            finally:
-                OffloadCache.offloading_disabled = restore_value
-                OffloadCache.keep_onloaded_values.clear()
-        else:
+        try:
             yield
+        finally:
+            with OffloadCache._offloading_context_lock:
+                OffloadCache._offloading_context_count -= 1
+                if OffloadCache._offloading_context_count == 0:
+                    OffloadCache.offloading_disabled = (
+                        OffloadCache._offloading_restore_value
+                    )
+                    if not OffloadCache.offloading_disabled:
+                        OffloadCache.keep_onloaded_values.clear()
 
     @classmethod
     @contextlib.contextmanager
