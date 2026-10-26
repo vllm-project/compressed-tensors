@@ -82,11 +82,12 @@ class TransformFactory(RegistryMixin, ABC):
         """
         raise NotImplementedError()
 
-    def apply_to_model(self, model: Module, use_tqdm=True):
+    def apply_to_model(self, model: Module, use_tqdm=True, *, restore: bool = False):
         """
         Create transforms and apply them to the model
 
         :param model: module to apply transforms to
+        :param restore: reconstruct online transforms without fusing saved weights again
         """
         modules_args = [
             (module, arg)
@@ -101,7 +102,12 @@ class TransformFactory(RegistryMixin, ABC):
             disable=(not use_tqdm),
             position=(dist.get_rank() if is_distributed() else 0),
         ):
-            self._apply_to_module(model, module, arg)
+            if restore and not arg.is_online():
+                # Construction order determines shared matrices, precision and RNG.
+                # The corresponding weight rotation is already in the checkpoint.
+                self.create_transform(module, arg)
+            else:
+                self._apply_to_module(model, module, arg)
 
     def _apply_to_module(self, model: Module, module: Module, args: TransformArgs):
         """
@@ -173,7 +179,7 @@ class TransformFactory(RegistryMixin, ABC):
             def query_hook(_, query_states):
                 return transform(query_states)
 
-            initialize_hooked_attention(model, module)
+            initialize_hooked_attention(model, module, allow_unselected=True)
             register_query_hook(module, query_hook)
 
         # register a key or value hook to the kv cache

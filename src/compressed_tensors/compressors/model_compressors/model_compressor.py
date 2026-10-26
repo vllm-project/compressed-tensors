@@ -28,6 +28,11 @@ from compressed_tensors.offload import (
 from compressed_tensors.quantization import QuantizationConfig, QuantizationStatus
 from compressed_tensors.quantization.utils.helpers import is_module_quantized
 from compressed_tensors.transform import TransformConfig
+from compressed_tensors.transform.apply import (
+    _prepare_restore_config,
+    _same_transform_config,
+    _serialize_transform_config,
+)
 from tqdm import tqdm
 from transformers import CompressedTensorsConfig
 from transformers.file_utils import CONFIG_NAME
@@ -61,7 +66,7 @@ class ModelCompressor:
     # these attributes are used by `CompressedTensorsHfQuantizer` to apply configs
     # during `_process_model_before_weight_loading`
     quantization_config: QuantizationConfig | None
-    transform_config: TransformConfig | None
+    transform_config: TransformConfig | dict | None
     force_compression_format: CompressionFormat | None
 
     @classmethod
@@ -85,10 +90,6 @@ class ModelCompressor:
         # transform_config is added by transformers#42887
         q_config = compression_config.quantization_config
         t_config = getattr(compression_config, "transform_config", None)
-        if t_config is None and q_config is not None:
-            t_config = q_config.transform_config
-        t_config = TransformConfig.model_validate(t_config) if t_config else None
-
         return cls(quantization_config=q_config, transform_config=t_config)
 
     @classmethod
@@ -126,11 +127,31 @@ class ModelCompressor:
     def __init__(
         self,
         quantization_config: Optional[QuantizationConfig] = None,
-        transform_config: Optional[TransformConfig] = None,
+        transform_config: TransformConfig | dict | None = None,
         force_compression_format: Optional[str] = None,
     ):
+        nested = (
+            quantization_config.transform_config
+            if quantization_config is not None
+            else None
+        )
+        metadata = None
+        for candidate in (transform_config, nested):
+            if candidate:
+                _, candidate = _prepare_restore_config(candidate)
+                if metadata is not None and not _same_transform_config(
+                    metadata, candidate
+                ):
+                    raise ValueError(
+                        "Conflicting transform configs in compression metadata"
+                    )
+                metadata = candidate
         self.quantization_config = quantization_config
-        self.transform_config = transform_config
+        self.transform_config = metadata
+        if quantization_config is not None:
+            quantization_config.transform_config = (
+                _serialize_transform_config(metadata) if metadata is not None else None
+            )
         self.force_compression_format = (
             CompressionFormat(force_compression_format)
             if force_compression_format is not None
@@ -243,7 +264,7 @@ class ModelCompressor:
             else {}
         )
         tconfig_data = (
-            self.transform_config.model_dump()
+            _serialize_transform_config(self.transform_config)
             if self.transform_config is not None
             else {}
         )
@@ -256,7 +277,8 @@ class ModelCompressor:
             **qconfig_data,
         }
         with open(config_file_path, "w") as config_file:
-            json.dump(config_data, config_file, indent=2, sort_keys=True)
+            # Transform groups execute in insertion order, including on reload.
+            json.dump(config_data, config_file, indent=2)
 
     def add_decompress_hook(self, model: torch.nn.Module):
         """
