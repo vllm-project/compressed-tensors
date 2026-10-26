@@ -11,6 +11,7 @@ from compressed_tensors.quantization import (
     QuantizationMetadata,
     QuantizationScheme,
     QuantizationStatus,
+    is_cached_attention_module,
 )
 from compressed_tensors.registry import RegistryMixin
 from compressed_tensors.utils import (
@@ -110,7 +111,18 @@ class BaseCompressor(RegistryMixin, ABC):
         scheme = getattr(module, "quantization_scheme")
 
         state_dict = get_direct_state_dict(module)
-        compressed_state_dict = cls.compress(state_dict, scheme)
+        # Compressed initialization omits symmetric zero points, including for
+        # dense activation-only schemes. Keep standalone compressor mappings intact.
+        compressed_state_dict = cls._remove_symmetric_zp(
+            dict(cls.compress(state_dict, scheme)), scheme
+        )
+        if (
+            scheme.input_activations is not None
+            and scheme.input_activations.symmetric
+            and is_cached_attention_module(module)
+        ):
+            for prefix in ("q", "k", "v"):
+                compressed_state_dict.pop(f"{prefix}_zero_point", None)
         replace_direct_state_dict(module, compressed_state_dict)
 
         module.quantization_status = QuantizationStatus.COMPRESSED

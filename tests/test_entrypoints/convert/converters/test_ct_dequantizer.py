@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import json
+
 import pytest
 import torch
 from compressed_tensors.config import CompressionFormat
@@ -13,6 +15,7 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationStrategy,
     QuantizationType,
 )
+from safetensors.torch import load_file, save_file
 
 
 def _create_dequantizer(ignore=None):
@@ -215,3 +218,100 @@ def test_get_dependencies_returns_empty_for_ignored_module():
 
     deps = dequantizer.get_dependencies("model.embed_tokens.weight")
     assert deps == set()
+
+
+@pytest.mark.parametrize("ignore_attention", [False, True])
+def test_checkpoint_dequantization_removes_only_attention_qparams(
+    tmp_path, ignore_attention
+):
+    scheme = QuantizationScheme(
+        targets=["model.mlp"],
+        weights=QuantizationArgs(num_bits=8, strategy="channel"),
+        input_activations=QuantizationArgs(num_bits=8, strategy="token", dynamic=True),
+        format=CompressionFormat.int_quantized,
+    )
+    config = QuantizationConfig(config_groups={"weights": scheme})
+    (tmp_path / "config.json").write_text(
+        json.dumps({"quantization_config": config.model_dump(mode="json")})
+    )
+    weight = torch.arange(16, dtype=torch.int8).reshape(4, 4)
+    tensors = {
+        "model.mlp.weight": weight,
+        "model.mlp.weight_scale": torch.full((4, 1), 0.25),
+    }
+    controls = {
+        "model.attn.q_proj.weight": torch.ones(4, 4),
+        "model.attn.q_shape": torch.tensor([2, 4]),
+        "model.attn.k_shape": torch.tensor([2, 4]),
+        "model.attn.v_shape": torch.tensor([2, 4]),
+        "model.attn.native_q_scale": torch.tensor([3.0]),
+        "native_v_scale": torch.tensor([7.0]),
+    }
+    tensors.update(controls)
+    for base in ("q", "k", "v"):
+        for suffix in ("global_scale", "scale", "zero_point"):
+            tensors[f"model.attn.{base}_{suffix}"] = torch.ones(1)
+    checkpoint = tmp_path / "model.safetensors"
+    save_file(tensors, checkpoint)
+    converter = CompressedTensorsDequantizer(
+        tmp_path, ignore=["model.attn"] if ignore_attention else [], dtype=torch.float32
+    )
+    output = converter.validate(load_file(checkpoint))
+    assert set(output) == {"model.mlp.weight", *controls}
+    torch.testing.assert_close(
+        output["model.mlp.weight"], weight.float() * 0.25, atol=0, rtol=0
+    )
+    for name, value in controls.items():
+        assert torch.equal(output[name], value)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "online",
+        "unknown_location",
+        "unknown_online_field",
+        "offline",
+        "offline_annotation",
+        "empty",
+    ],
+)
+def test_checkpoint_dequantization_rejects_executable_transforms(tmp_path, kind):
+    scheme = QuantizationScheme(
+        targets=["model.mlp"],
+        weights=QuantizationArgs(num_bits=8, strategy="channel"),
+        input_activations=QuantizationArgs(num_bits=8, strategy="token", dynamic=True),
+        format=CompressionFormat.int_quantized,
+    )
+    config = QuantizationConfig(config_groups={"weights": scheme})
+    group = {
+        "type": "hadamard",
+        "apply": [{"targets": ["model.mlp"], "location": "input"}],
+    }
+    if kind.startswith("offline"):
+        group["apply"][0]["location"] = "weight_input"
+    if kind == "unknown_location":
+        group["apply"][0]["location"] = "future_activation"
+    if kind in ("unknown_online_field", "offline_annotation"):
+        group["future_annotation"] = True
+    data = config.model_dump(mode="json")
+    data["transform_config"] = {
+        "config_groups": {} if kind == "empty" else {"rotation": group}
+    }
+    (tmp_path / "config.json").write_text(json.dumps({"quantization_config": data}))
+    checkpoint = tmp_path / "model.safetensors"
+    tensors = {
+        "model.mlp.weight": torch.ones(4, 4, dtype=torch.int8),
+        "model.mlp.weight_scale": torch.ones(4, 1),
+    }
+    save_file(tensors, checkpoint)
+    before = checkpoint.read_bytes()
+    if kind in ("online", "unknown_location", "unknown_online_field"):
+        with pytest.raises(ValueError, match="[Tt]ransform|online"):
+            CompressedTensorsDequantizer(tmp_path)
+        assert checkpoint.read_bytes() == before
+    else:
+        converter = CompressedTensorsDequantizer(tmp_path, dtype=torch.float32)
+        output = converter.validate(load_file(checkpoint))
+        assert set(output) == {"model.mlp.weight"}
+        assert torch.equal(output["model.mlp.weight"], torch.ones(4, 4))
