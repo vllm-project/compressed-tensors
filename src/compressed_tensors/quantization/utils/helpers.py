@@ -3,10 +3,12 @@
 
 import logging
 import math
+from functools import lru_cache
 
 import torch
 from compressed_tensors.quantization.quant_args import (
     FP4_E2M1_DATA,
+    FP6_E2M3_DATA,
     FP8_E4M3_DATA,
     FloatArgs,
     QuantizationArgs,
@@ -83,17 +85,17 @@ def calculate_qparams(
                 x=max_val_pos, num_bits=quantization_args.num_bits
             )
         else:
-            scales = max_val_pos / (float(bit_range) / 2)
+            scales = max_val_pos / (bit_range.to(max_val_pos.dtype) / 2)
         zero_points = torch.zeros(scales.shape, device=device, dtype=min_vals.dtype)
     else:
         if (
-            quantization_args.num_bits == 4
+            quantization_args.num_bits in (4, 6)
             and quantization_args.type == QuantizationType.FLOAT
         ):
             raise NotImplementedError(
-                "Asymmetric Quantization is not supported for FP4"
+                "Asymmetric Quantization is not supported for FP4 and FP6"
             )
-        scales = (max_vals - min_vals) / float(bit_range)
+        scales = (max_vals - min_vals) / bit_range.to(max_vals.dtype)
         zero_points = bit_min - (min_vals / scales)
         zero_points = torch.clamp(zero_points, bit_min, bit_max)
 
@@ -195,35 +197,49 @@ def compute_dynamic_scales_and_zp(
     return calculate_qparams(min_val, max_val, args, global_scale=global_scale)
 
 
+@lru_cache(maxsize=None)
+def _calculate_range(
+    quant_type: str, num_bits: int, device: str | torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if quant_type == QuantizationType.INT:
+        bit_range = 2.0**num_bits
+        q_max = torch.tensor(bit_range / 2 - 1, device=device)
+        q_min = torch.tensor(-bit_range / 2, device=device)
+    elif quant_type == QuantizationType.FLOAT:
+        if num_bits == 8:
+            q_max = torch.tensor(FP8_E4M3_DATA.max, device=device)
+            q_min = torch.tensor(FP8_E4M3_DATA.min, device=device)
+        elif num_bits == 6:
+            q_max = torch.tensor(FP6_E2M3_DATA.max, device=device)
+            q_min = torch.tensor(FP6_E2M3_DATA.min, device=device)
+        elif num_bits == 4:
+            q_max = torch.tensor(FP4_E2M1_DATA.max, device=device)
+            q_min = torch.tensor(FP4_E2M1_DATA.min, device=device)
+        else:
+            raise NotImplementedError(
+                "Range calculation only supported for 4, 6 and 8 bits"
+            )
+    else:
+        raise ValueError(f"Invalid quantization type {quant_type}")
+
+    return q_min, q_max
+
+
 def calculate_range(
     quantization_args: QuantizationArgs, device: str
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Calculated the effective quantization range for the given Quantization Args
 
+    Results are memoized on (type, num_bits, device), so the scalar tensors are
+    constructed once per unique key instead of on every call. The returned
+    tensors are shared across calls and must not be modified in place.
+
     :param quantization_args: quantization args to get range of
     :param device: device to store the range to
     :return: tuple endpoints for the given quantization range
     """
-    if quantization_args.type == QuantizationType.INT:
-        bit_range = 2.0**quantization_args.num_bits
-        q_max = torch.tensor(bit_range / 2 - 1, device=device)
-        q_min = torch.tensor(-bit_range / 2, device=device)
-    elif quantization_args.type == QuantizationType.FLOAT:
-        if quantization_args.num_bits == 8:
-            q_max = torch.tensor(FP8_E4M3_DATA.max, device=device)
-            q_min = torch.tensor(FP8_E4M3_DATA.min, device=device)
-        elif quantization_args.num_bits == 4:
-            q_max = torch.tensor(FP4_E2M1_DATA.max, device=device)
-            q_min = torch.tensor(FP4_E2M1_DATA.min, device=device)
-        else:
-            raise NotImplementedError(
-                "Range calculation only supported for 4 and 8 bits"
-            )
-    else:
-        raise ValueError(f"Invalid quantization type {quantization_args.type}")
-
-    return q_min, q_max
+    return _calculate_range(quantization_args.type, quantization_args.num_bits, device)
 
 
 def is_module_quantized(module: Module) -> bool:

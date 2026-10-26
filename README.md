@@ -46,6 +46,32 @@ cd compressed-tensors
 pip install -e .
 ```
 
+## Development
+
+Install the development dependencies and run the linting, formatting, and type checks:
+
+```bash
+pip install -e .[dev]
+make quality   # check
+make style     # auto-fix
+```
+
+### Pre-commit Hooks
+
+We provide [pre-commit](https://pre-commit.com/) hooks that run the same checks as `make quality` (plus a DCO sign-off hook) before each commit, so problems are caught locally instead of in CI. After installing the `[dev]` dependencies, enable them once per clone:
+
+```bash
+pre-commit install
+```
+
+The hooks then run automatically on `git commit`. To run them against all files on demand:
+
+```bash
+pre-commit run --all-files
+```
+
+To bypass the hooks for a single commit, use `git commit --no-verify`; to skip one hook, prefix the command with `SKIP=<hook-id>` (e.g. `SKIP=flake8`).
+
 ## Getting Started
 
 ### Compressing a Model to MXFP4
@@ -53,6 +79,19 @@ pip install -e .
 The following example loads Llama 3 8B, applies round-to-nearest (RTN) MXFP4 weight quantization, compresses the weights, and saves the result. No calibration data is needed — scales are computed directly from the weights.
 
 ```python
+import math
+
+import torch
+from transformers import AutoModelForCausalLM
+
+from compressed_tensors.compressors import ModelCompressor
+from compressed_tensors.offload import update_offload_parameter
+from compressed_tensors.quantization import (
+    QuantizationConfig,
+    apply_quantization_config,
+)
+from compressed_tensors.quantization.utils import calculate_qparams
+
 model_name = "meta-llama/Meta-Llama-3-8B"
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -166,4 +205,18 @@ Once done, the config.json will have the following quantization_config:
   },
 ```
 
-See `examples/` for more examples including quantization with calibration (`examples/llama_1.1b/`) and checkpoint conversion (`examples/convert_checkpoint/`).
+See `examples/` for more examples including quantization with calibration and checkpoint conversion (`examples/convert_checkpoint/`).
+
+## Citation 
+
+If you find compressed-tensors useful in your research or projects, please consider citing it:
+
+```
+@software{compressedtensors2024,
+    title={{compressed-tensors}},
+    author={Red Hat AI and vLLM Project},
+    year={2024},
+    month={4},
+    url={https://github.com/vllm-project/compressed-tensors},
+}
+```

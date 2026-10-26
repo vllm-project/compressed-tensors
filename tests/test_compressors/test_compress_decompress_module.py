@@ -8,7 +8,6 @@ from compressed_tensors.compressors import ModelCompressor
 from compressed_tensors.compressors.base import compress_module, decompress_module
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
-    ActivationOrdering,
     QuantizationArgs,
     QuantizationConfig,
     QuantizationScheme,
@@ -70,9 +69,7 @@ def _run_compress_decompress(
         ("UNQUANTIZED", CompressionFormat.dense, None),
         ("W8A16", CompressionFormat.pack_quantized, None),
         ("W4A16", CompressionFormat.pack_quantized, None),
-        ("W4A16", CompressionFormat.pack_quantized, ActivationOrdering.GROUP),
         ("W4A16_ASYM", CompressionFormat.pack_quantized, None),
-        ("W4A16_ASYM", CompressionFormat.pack_quantized, ActivationOrdering.GROUP),
         ("W8A8", CompressionFormat.int_quantized, None),
         ("W4A8", CompressionFormat.int_quantized, None),
         ("W4AFP8", CompressionFormat.int_quantized, None),
@@ -81,6 +78,8 @@ def _run_compress_decompress(
         ("FP8_BLOCK", CompressionFormat.float_quantized, None),
         ("NVFP4A16", CompressionFormat.nvfp4_pack_quantized, None),
         ("NVFP4", CompressionFormat.nvfp4_pack_quantized, None),
+        ("MXFP6A16", CompressionFormat.mxfp6_pack_quantized, None),
+        ("MXFP6A8", CompressionFormat.mxfp6_pack_quantized, None),
     ],
 )
 @pytest.mark.parametrize("device", ["cpu", "meta", "cuda"])
@@ -93,6 +92,7 @@ def test_compress_decompress_module(scheme_name, expected_format, actorder, devi
     [
         ("MXFP4A16", CompressionFormat.mxfp4_pack_quantized),
         ("MXFP4", CompressionFormat.mxfp4_pack_quantized),
+        ("MXFP4xFP8", CompressionFormat.mxfp4_pack_quantized),
     ],
 )
 @pytest.mark.parametrize("device", ["cpu", "meta", "cuda"])
@@ -106,10 +106,10 @@ def test_compress_decompress_module_mxfp4(scheme_name, expected_format, device):
         ("UNQUANTIZED", CompressionFormat.dense, None),
         ("W8A16", CompressionFormat.pack_quantized, None),
         ("W4A16", CompressionFormat.pack_quantized, None),
-        ("W4A16", CompressionFormat.pack_quantized, ActivationOrdering.GROUP),
         ("W4A16_ASYM", CompressionFormat.pack_quantized, None),
         ("NVFP4A16", CompressionFormat.nvfp4_pack_quantized, None),
         ("MXFP4A16", CompressionFormat.mxfp4_pack_quantized, None),
+        ("MXFP6A16", CompressionFormat.mxfp6_pack_quantized, None),
     ],
 )
 @pytest.mark.parametrize("device", ["cpu", "meta", "cuda"])
@@ -168,3 +168,26 @@ def test_linear_only_config_leaves_embedding_untouched():
     assert embed_keys == {"weight"}
     assert not hasattr(model.embed, "quantization_status")
     assert torch.equal(model.embed.weight, embed_weight_before)
+
+
+def test_decompress_module_can_clear_quantization_metadata():
+    module = nn.Linear(256, 256, bias=False)
+    scheme = preset_name_to_scheme("W8A16", ["Linear"])
+
+    initialize_module_for_quantization(module, scheme)
+    module.weight_scale.data.fill_(1)
+    module.weight_zero_point.data.zero_()
+
+    compress_module(module)
+
+    assert "weight_packed" in get_direct_state_dict(module)
+    assert is_module_quantized(module)
+
+    decompress_module(module, leave_decompressed=False)
+
+    state_dict = get_direct_state_dict(module)
+    assert "weight" in state_dict
+    assert "weight_packed" not in state_dict
+    assert not hasattr(module, "quantization_scheme")
+    assert not hasattr(module, "quantization_status")
+    assert not hasattr(module.forward, "__wrapped__")

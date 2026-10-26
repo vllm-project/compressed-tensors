@@ -27,10 +27,10 @@ def test_args_full():
         ignore=ignore,
     )
 
-    args.targets = targets
-    args.location == location
-    args.inverse == inverse
-    args.ignore == ignore
+    assert args.targets == targets
+    assert args.location == location
+    assert args.inverse == inverse
+    assert args.ignore == ignore
 
 
 def test_singleton_targets():

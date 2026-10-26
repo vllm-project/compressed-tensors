@@ -8,16 +8,16 @@ from unittest.mock import Mock
 import compressed_tensors.quantization.lifecycle.initialize as initialize_lifecycle
 import pytest
 import torch
-from compressed_tensors.offload import set_onload_device
+from compressed_tensors.offload import offload_module, set_onload_device
 from compressed_tensors.quantization import (
     FP8_E4M3_DATA,
-    ActivationOrdering,
     QuantizationArgs,
     QuantizationScheme,
     QuantizationStatus,
     QuantizationStrategy,
 )
 from compressed_tensors.quantization.lifecycle.initialize import (
+    _is_attention_module,
     initialize_attn_qparams,
     initialize_module_for_quantization,
     is_attention_module,
@@ -62,6 +62,29 @@ class EncoderAttention(torch.nn.Module):
         return hidden_states
 
 
+class T5StyleAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.q = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states, past_key_value=None):
+        return hidden_states
+
+
+class ProjectionOnlyBlock(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.k_proj = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states):
+        return hidden_states
+
+
+class ProjectionAttention(torch.nn.Module):
+    def forward(self, hidden_states):
+        return hidden_states
+
+
 @pytest.fixture
 def layer():
     return Linear(4, 4)
@@ -73,10 +96,24 @@ def layer():
         (CacheAwareAttention, True),
         (PluralCacheAwareAttention, True),
         (EncoderAttention, False),
+        (T5StyleAttention, False),
+        (ProjectionOnlyBlock, False),
     ],
 )
 def test_is_cached_attention_module(attention_cls, expected):
     assert is_cached_attention_module(attention_cls()) is expected
+
+
+@pytest.mark.parametrize(
+    ("attention_cls", "expected"),
+    [
+        (CacheAwareAttention, True),
+        (T5StyleAttention, True),
+        (ProjectionOnlyBlock, False),
+    ],
+)
+def test_is_attention_module_detects_attention_blocks(attention_cls, expected):
+    assert _is_attention_module(attention_cls()) is expected
 
 
 def test_is_attention_module_is_deprecated():
@@ -221,6 +258,45 @@ def test_initialize_module_for_quantization_offloaded(
     )
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "weights,input_activations",
+    [
+        (
+            QuantizationArgs(num_bits=NUM_BITS, symmetric=True),
+            None,
+        ),
+        (
+            None,
+            QuantizationArgs(num_bits=NUM_BITS, symmetric=True),
+        ),
+        (
+            QuantizationArgs(num_bits=NUM_BITS, symmetric=True),
+            QuantizationArgs(num_bits=NUM_BITS, symmetric=True),
+        ),
+    ],
+)
+def test_initialize_module_for_quantization_disk_offloaded(
+    create_quantization_scheme, weights, input_activations, layer, tmp_path
+):
+    offload_module(layer, "cpu", "disk", offload_dir=str(tmp_path))
+
+    test_initialize_module_for_quantization(
+        create_quantization_scheme,
+        weights,
+        input_activations,
+        layer,
+    )
+
+    # qparams are offloaded to disk along with the weight and bias; accessing them
+    # onloads their values from disk rather than yielding an unpopulated meta tensor
+    for param_name in ("weight_scale", "weight_zero_point", "input_scale"):
+        if param_name in layer._parameters:
+            param = getattr(layer, param_name)
+            assert param.device.type == "cpu"
+            assert param.numel() > 0
+
+
 @pytest.mark.parametrize(
     "weights,input_activations",
     [
@@ -234,10 +310,6 @@ def test_initialize_module_for_quantization_offloaded(
         ),
         (
             QuantizationArgs(strategy="group", group_size=2),
-            None,
-        ),
-        (
-            QuantizationArgs(strategy="group", group_size=2, actorder="group"),
             None,
         ),
         (
@@ -339,9 +411,3 @@ def test_initialize_quantization_parameters(weights, input_activations):
         if not args.dynamic:
             assert getattr(layer, f"{q_param_name}_scale").shape == expected_shape
             assert getattr(layer, f"{q_param_name}_zero_point").shape == expected_shape
-
-        # g_idx
-        if args.actorder == ActivationOrdering.GROUP:
-            assert getattr(layer, f"{q_param_name}_g_idx").shape == (
-                layer.weight.shape[1],
-            )

@@ -279,8 +279,10 @@ A lighter-weight dispatch that moves all modules in a model to the same `onload_
 
 ```python
 # Move all execution to cuda:0, keeping offloads unchanged
-model = set_onload_device(model, onload_device="cuda:0")
+set_onload_device(model, onload_device="cuda:0")
 ```
+
+This function updates the model in place. Continue using the original `model` object for inference; its return value is dispatch bookkeeping, not the model.
 
 **When to use:** when you have already loaded a model with weights in the right place (e.g., via `load_offloaded_model`) and just need to set the execution device. Less powerful than `dispatch_model` but simpler.
 
@@ -516,6 +518,31 @@ For offloaded modules: temporarily overrides `onload_device` and disables offloa
 For non-offloaded modules: moves tensors manually and restores them on exit.
 
 > Use `disable_offloading()` combined with `get_execution_device()` for new code.
+
+---
+
+#### `print_offload_folder(model, offload_folder)`
+
+Print a formatted table showing all parameters stored in a disk offload folder, mapping each file to its corresponding model parameter path, shape, and dtype.
+
+```python
+from compressed_tensors.offload import print_offload_folder
+
+# Print all offloaded parameters in the folder
+print_offload_folder(model, "/tmp/offload")
+```
+
+Output example:
+```
+Parameter Path                                               Shape                     Dtype     
+-----------------------------------------------------------------------------------------------
+model.embed_tokens.weight                                    (32000, 4096)             bfloat16  
+model.layers.0.self_attn.q_proj.weight                       (4096, 4096)              bfloat16  
+model.layers.0.self_attn.k_proj.weight                       (4096, 4096)              bfloat16  
+...
+```
+
+**Use when:** debugging disk offload to verify which parameters are stored on disk, inspect their shapes and dtypes, or identify unknown files in the offload directory.
 
 ---
 

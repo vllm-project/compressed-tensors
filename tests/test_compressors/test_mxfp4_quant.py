@@ -65,10 +65,12 @@ def test_decompress_decodes_mx_scales_and_restores_weight():
         group_size=32,
         scale_dtype=torch.uint8,
     )
+    # group_size=32 is the source of truth, so each scale group covers 32
+    # weight columns. Use two groups (scales 0.25 and 0.5) spanning 64 columns.
     scale = torch.tensor([[0.25, 0.5]], dtype=torch.bfloat16)
-    packed = pack_fp4_to_uint8(
-        torch.tensor([[0.5, 1.0, 1.5, 2.0]], dtype=torch.bfloat16)
-    )
+    group_values = torch.tensor([0.5, 1.0, 1.5, 2.0], dtype=torch.bfloat16)
+    fp4_values = group_values.repeat(16).unsqueeze(0)  # (1, 64)
+    packed = pack_fp4_to_uint8(fp4_values)
 
     decompressed = MXFP4PackedCompressor.decompress(
         {
@@ -78,7 +80,11 @@ def test_decompress_decodes_mx_scales_and_restores_weight():
         QuantizationScheme(targets=["Linear"], weights=quant_args),
     )
 
-    expected_weight = torch.tensor([[0.125, 0.25, 0.75, 1.0]], dtype=torch.bfloat16)
+    expected_group0 = group_values * 0.25  # first 32 columns
+    expected_group1 = group_values * 0.5  # last 32 columns
+    expected_weight = torch.cat(
+        [expected_group0.repeat(8), expected_group1.repeat(8)]
+    ).unsqueeze(0)
 
     assert torch.equal(decompressed["weight_scale"], scale)
     assert torch.equal(decompressed["weight"], expected_weight)

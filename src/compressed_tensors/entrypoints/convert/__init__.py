@@ -6,3 +6,4 @@
 
 from .converters import *
 from .convert_checkpoint import *
+from .memory import exec_jobs_dynamic

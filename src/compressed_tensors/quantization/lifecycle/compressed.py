@@ -38,7 +38,6 @@ def compress_quantized_weights(module: Module):
     weight = getattr(module, "weight", None)
     scale = getattr(module, "weight_scale", None)
     zero_point = getattr(module, "weight_zero_point", None)
-    g_idx = getattr(module, "weight_g_idx", None)
 
     if weight is None or scale is None:
         # no weight, scale, or ZP, nothing to do
@@ -52,7 +51,6 @@ def compress_quantized_weights(module: Module):
         x=weight,
         scale=scale,
         zero_point=zero_point,
-        g_idx=g_idx,
         args=scheme.weights,
         dtype=torch.int8,
     )

@@ -25,5 +25,4 @@ convert_checkpoint(
             num_bits=8, dynamic=False, type=QuantizationType.FLOAT
         ),
     ),
-    max_workers=8,
 )

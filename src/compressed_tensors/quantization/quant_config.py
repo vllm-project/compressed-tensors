@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import re
 import warnings
 from collections import defaultdict
 from enum import Enum
 
-from compressed_tensors.config import CompressionFormat
+from compressed_tensors.config import CompressionFormat, ExpertSparsityConfig
 from compressed_tensors.quantization.quant_args import DynamicType, QuantizationArgs
 from compressed_tensors.quantization.quant_scheme import (
     QuantizationScheme,
@@ -43,11 +44,15 @@ def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]
 
     result = []
     for name in ignore_list:
+        # Some conversions match a complete weight key or a trailing dot.
+        # This assumes Linear-style `.weight` parameters; conversions specific
+        # to other parameter names are not handled.
+        name += ".weight"
         for rev in inverted:
             renamed, matched = rev.rename_source_key(name)
             if matched is not None:
                 name = renamed
-        result.append(name)
+        result.append(name.removesuffix(".weight"))
 
     return result
 
@@ -151,6 +156,8 @@ class QuantizationConfig(BaseModel):
         compression ratio achieved by the quantization config
     :ignore: optional list of layers to ignore from config_groups. Layers in this list
         are not quantized even if they match up with a target in config_groups
+    :param moe_sparsity_config: optional ExpertSparsityConfig describing per-layer
+        MoE expert sparsity. If None, the model has no expert sparsity.
     """
 
     config_groups: dict[str, QuantizationScheme | list[str]]
@@ -160,6 +167,7 @@ class QuantizationConfig(BaseModel):
     quantization_status: QuantizationStatus = QuantizationStatus.INITIALIZED
     global_compression_ratio: float | None = None
     ignore: list[str] | None = Field(default_factory=list)
+    moe_sparsity_config: ExpertSparsityConfig | None = None
 
     def model_post_init(self, __context):
         """
@@ -371,7 +379,9 @@ def get_vllm_module_type(module_type: str) -> str:
     layers for the purposes of config matching.
     """
     if "ExpertMLP" not in module_type and (
-        "Router" in module_type or "Gate" in module_type or "Gating" in module_type
+        "Router" in module_type
+        or "Gating" in module_type
+        or re.search(r"Gate(?![a-z])", module_type)
     ):
         module_type = "Linear"
 

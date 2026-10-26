@@ -116,7 +116,7 @@ def test_from_accelerate(accel_device, tmp_path):
 
     # accelerator devices are index agnostic when distributed
     assert device_map == {
-        "": (None, None),
+        "": (accel_device, accel_device),
         "0": (accel_device, accel_device),
         "1": (accel_device, torch.device("cpu")),
         "2": (accel_device, "disk"),

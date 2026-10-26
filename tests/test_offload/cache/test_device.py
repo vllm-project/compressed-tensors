@@ -97,6 +97,16 @@ def test_onload(offload_device, onload_device, offload_cache):
 
 
 @pytest.mark.unit
+def test_stage_is_noop():
+    cache = DeviceCache(torch.device("cpu"))
+    tensor = torch.ones(10)
+
+    staged = cache.stage(tensor, pin_memory=True)
+
+    assert staged is tensor
+
+
+@pytest.mark.unit
 @requires_gpu
 def test_onloading(offload_device, onload_device, offload_cache):
     _test_onloading(offload_device, onload_device, offload_cache)

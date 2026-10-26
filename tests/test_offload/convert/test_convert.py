@@ -44,12 +44,17 @@ def test_conversion_lifecycle(accel_device, tmp_path):
     model, offload_dir = get_hf_dispatched_model(accel_device, tmp_path)
 
     exp_device_map = {
-        "": (None, None),
+        "": (accel_device, accel_device),
         "0": (accel_device, accel_device),
         "1": (accel_device, torch.device("cpu")),
         "2": (accel_device, "disk"),
     }
-    exp_hf_device_map = {"": "cpu", "0": str(accel_device), "1": "cpu", "2": "disk"}
+    exp_hf_device_map = {
+        "": str(accel_device),
+        "0": str(accel_device),
+        "1": "cpu",
+        "2": "disk",
+    }
 
     # 1. from_accelerate (oneshot/ load_offloaded_model)
     device_map, _offload_dir = from_accelerate(model)

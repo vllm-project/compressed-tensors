@@ -19,11 +19,6 @@ from compressed_tensors.quantization.lifecycle.forward import fake_quantize
 from torch.nn.modules import Linear, Sequential
 
 
-def make_dummy_g_idx(columns: int, group_size: int) -> torch.Tensor:
-    perm = torch.randperm(columns)
-    return torch.tensor([index // group_size for index in range(columns)])[perm]
-
-
 @pytest.mark.parametrize(
     "strategy,group_size,sc,zp",
     [
@@ -48,8 +43,6 @@ def test_quant_format(strategy, group_size, sc, zp):
         "weight_scale": sc.to(torch.float32),
         "weight_zero_point": zp.to(torch.float32),
     }
-    if group_size is not None:
-        module_sd["weight_g_idx"] = make_dummy_g_idx(1024, group_size)
 
     scheme = QuantizationScheme(
         targets=["Linear"],
@@ -64,8 +57,6 @@ def test_quant_format(strategy, group_size, sc, zp):
     assert "weight_zero_point" not in compressed
     assert compressed["weight_scale"].dtype == torch.float32
     assert torch.equal(compressed["weight_scale"], module_sd["weight_scale"])
-    if group_size is not None:
-        assert torch.equal(compressed["weight_g_idx"], module_sd["weight_g_idx"])
 
 
 @pytest.mark.parametrize(

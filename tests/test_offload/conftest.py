@@ -10,10 +10,11 @@ from typing import Any, Callable, Literal, Optional
 
 import pytest
 import torch
+import torch.distributed as dist
 from compressed_tensors.offload.utils import send_tensors
 
 
-accelerator_device = torch.accelerator.current_accelerator()
+accelerator_device = torch.accelerator.current_accelerator() or torch.device("cpu")
 
 skip_if_mps_device = pytest.mark.skipif(
     accelerator_device.type == "mps",
@@ -30,7 +31,13 @@ def assert_device_equal(
     if device_b == "disk":
         device_b = torch.device("meta")
 
-    cur_index = torch.accelerator.current_device_index()
+    # CPU-only test runs have no current accelerator or device index. Treat
+    # CPU as device 0 so the same assertions can cover accelerator-free paths.
+    cur_index = (
+        torch.accelerator.current_device_index()
+        if torch.accelerator.is_available()
+        else 0
+    )
     a_index = cur_index if device_a.index is None else device_a.index
     b_index = cur_index if device_b.index is None else device_b.index
 
@@ -38,7 +45,7 @@ def assert_device_equal(
     # on "xpu" actually live on the real accelerator, so their .device reports
     # the real type. Normalize device types: if one matches the fake type and
     # the other matches the real type, treat them as equal.
-    accel = torch.accelerator.current_accelerator()
+    accel = torch.accelerator.current_accelerator() or torch.device("cpu")
     fake_type = accel.type
     real_type = getattr(accel, "_real_type", None)
 
@@ -77,6 +84,28 @@ def assert_tensor_equal(
         assert torch.equal(tensor_a, tensor_b)
 
 
+def _init_test_dist(world_size: int) -> None:
+    """
+    Initialize the process group for a `torchrun` test.
+
+    With one accelerator per rank this is `init_dist`, which assigns each rank
+    its own device and the matching backend. `init_dist` derives the device as
+    `{accelerator}:{local_rank}`, so with fewer accelerators than ranks, or none,
+    it has nothing valid to assign. In that case fall back to a CPU gloo group,
+    which lets tests that need no accelerator run anywhere. Tests that do need
+    one are gated with `requires_gpu(world_size)` and never reach the fallback.
+    """
+    if (
+        torch.accelerator.is_available()
+        and torch.accelerator.device_count() >= world_size
+    ):
+        from compressed_tensors.distributed import init_dist
+
+        init_dist()
+    elif not dist.is_initialized():
+        dist.init_process_group(backend="gloo")
+
+
 def torchrun(
     world_size: int = 1, init_dist: bool = False
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -113,9 +142,7 @@ def torchrun(
             # We're running in a torchrun subprocess: optionally init then run the test
             if "TORCHELASTIC_RUN_ID" in os.environ:
                 if init_dist:
-                    from compressed_tensors.distributed import init_dist as _init_dist
-
-                    _init_dist()
+                    _init_test_dist(world_size)
                 return func(*args, **kwargs)
 
             # First time calling in the main process:

@@ -12,6 +12,7 @@ from compressed_tensors.quantization.quant_args import (
 )
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
 from compressed_tensors.quantization.utils.fp4_utils import _round_to_fp4
+from compressed_tensors.quantization.utils.fp6_utils import _round_to_fp6
 from compressed_tensors.utils.impl_backend import ImplBackend
 from compressed_tensors.utils.triton import tl, triton, triton_req
 
@@ -125,11 +126,9 @@ def _process_group(
     dtype: torch.dtype | None,
     do_quantize: bool,
     do_dequantize: bool,
-    g_idx: torch.Tensor | None,
     global_scale: torch.Tensor | None,
 ) -> torch.Tensor:
-    """Group/tensor-group quantization: handle activation ordering, reshape
-    into groups, quantize, restore."""
+    """Group/tensor-group quantization: reshape into groups, quantize, restore."""
     group_size = args.group_size
     output_dtype = dtype if dtype is not None else x.dtype
     columns = x.shape[-1]
@@ -138,17 +137,11 @@ def _process_group(
         scale = scale.unsqueeze(1)
         zero_point = zero_point.unsqueeze(1) if zero_point is not None else None
 
-    if columns >= group_size and columns % group_size != 0:
+    if columns % group_size != 0:
         raise ValueError(
             "tensor column shape must be divisble "
             f"by the given group_size {group_size} but got {columns}"
         )
-
-    # support column-order (default) quantization as well as other orderings
-    # such as activation ordering. Below checks if g_idx has been initialized
-    if g_idx is not None:
-        perm = torch.argsort(g_idx)
-        x = x.index_select(-1, perm)
 
     # reshape last dim into (num_groups, group_size)
     reshaped_dims = (ceil(x.shape[-1] / group_size), group_size)
@@ -168,10 +161,6 @@ def _process_group(
     )
 
     output = output.flatten(start_dim=-2).to(output_dtype)
-
-    if g_idx is not None:
-        inv_perm = torch.argsort(perm)
-        output = output.index_select(-1, inv_perm)
 
     return output
 
@@ -244,10 +233,12 @@ def _quantize_kernel(
     group_size,
     num_scale_cols,
     quant_type: tl.constexpr,  # QUANT_TYPE_INT or QUANT_TYPE_FLOAT
-    num_bits: tl.constexpr,  # 4 or 8
+    num_bits: tl.constexpr,  # 4, 6 or 8
     use_intel_libdevice: tl.constexpr,
     BLOCK_SIZE_R: tl.constexpr,
     BLOCK_SIZE_C: tl.constexpr,
+    has_zero_point: tl.constexpr,
+    has_global_scale: tl.constexpr,
 ):
     """General quantize kernel using explicit strides.
 
@@ -304,13 +295,13 @@ def _quantize_kernel(
     input = tl.load(input_ptr + input_offsets, masks, 0.0)
     scale = tl.load(scale_ptr + scale_offsets, scale_masks, 1.0)
 
-    if global_scale_ptr is not None:
+    if has_global_scale:
         global_scale = tl.load(global_scale_ptr)
-        scale = scale / global_scale.to(scale.dtype)
+        scale = tl.div_rn(scale.to(tl.float32), global_scale.to(tl.float32))
 
-    output = input / scale
+    output = tl.div_rn(input.to(tl.float32), scale.to(tl.float32))
 
-    if zero_point_ptr is not None:
+    if has_zero_point:
         zero_point = tl.load(zero_point_ptr + scale_offsets, scale_masks, 0.0)
         output += zero_point
 
@@ -326,8 +317,9 @@ def _quantize_kernel(
     elif quant_type == QUANT_TYPE_FLOAT:
         output = tl.clamp(output, q_min, q_max)
         if num_bits == 4:
-            orig_dtype = output.dtype
-            output = _round_to_fp4(output.to(tl.bfloat16)).to(orig_dtype)
+            output = _round_to_fp4(output)
+        elif num_bits == 6:
+            output = _round_to_fp6(output, use_intel_libdevice)
         elif num_bits == 8:
             output = output.to(tl.float8e4nv).to(output.dtype)
 
@@ -354,7 +346,10 @@ def _is_fp8_supported(device: torch.device) -> bool:
 
 
 def adapt_scale_and_zp_for_triton(
-    scale: torch.Tensor, zero_point: torch.Tensor | None, num_rows: int
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    num_rows: int,
+    strategy: QuantizationStrategy,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """
     Adapt scale and zero point for Triton kernel.
@@ -364,21 +359,19 @@ def adapt_scale_and_zp_for_triton(
     Note: We keep scale/zp contiguous because they are small tensors
     (one value per row/group), so contiguous() is cheap
     """
-    if scale.ndim == 0:
-        scale = scale.expand(num_rows, 1)
-    elif scale.ndim == 1:
-        scale = scale.unsqueeze(1).expand(num_rows, 1)
-    elif scale.shape[0] == 1:
-        scale = scale.expand(num_rows, -1)
-    scale = scale.contiguous()
+    match strategy:
+        case QuantizationStrategy.CHANNEL:
+            scale = scale.unflatten(0, (num_rows, -1))
+            if zero_point is not None:
+                zero_point = zero_point.unflatten(0, (num_rows, -1))
 
+        case QuantizationStrategy.TENSOR:
+            scale = scale.expand(num_rows, -1)
+            if zero_point is not None:
+                zero_point = zero_point.expand(num_rows, -1)
+
+    scale = scale.contiguous()
     if zero_point is not None:
-        if zero_point.ndim == 0:
-            zero_point = zero_point.expand(num_rows, 1)
-        elif zero_point.ndim == 1:
-            zero_point = zero_point.unsqueeze(1).expand(num_rows, 1)
-        elif zero_point.shape[0] == 1:
-            zero_point = zero_point.expand(num_rows, -1)
         zero_point = zero_point.contiguous()
     return scale, zero_point
 
@@ -400,7 +393,7 @@ def _quantize_triton_req(
 
 
 @torch.no_grad()
-@ImplBackend.register("_quantize", _quantize_triton_req, "disable")
+@ImplBackend.register("_quantize", _quantize_triton_req, 0)
 def _quantize_triton(
     x: torch.Tensor,
     scale: torch.Tensor,
@@ -412,8 +405,9 @@ def _quantize_triton(
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     num_rows = x.shape[0]
-    scale, zero_point = adapt_scale_and_zp_for_triton(scale, zero_point, num_rows)
-
+    scale, zero_point = adapt_scale_and_zp_for_triton(
+        scale, zero_point, num_rows, args.strategy
+    )
     original_shape = x.shape
 
     quant_type = (
@@ -444,6 +438,9 @@ def _quantize_triton(
 
     num_rows = dim_0 * dim_1
     num_cols = dim_2 * dim_3
+    scale, zero_point = adapt_scale_and_zp_for_triton(
+        scale, zero_point, num_rows, num_scale_cols
+    )
     block_size_r: int = 32
     block_size_c: int = 32
 
@@ -482,41 +479,43 @@ def _quantize_triton(
         output_stride_1, output_stride_3 = out_strides
         output_stride_2 = 0
 
-    _quantize_kernel[grid](
-        quantized_value,
-        x,
-        scale,
-        zero_point,
-        q_min,
-        q_max,
-        global_scale,
-        input_stride_0,
-        input_stride_1,
-        input_stride_2,
-        input_stride_3,
-        output_stride_0,
-        output_stride_1,
-        output_stride_2,
-        output_stride_3,
-        dim_0,
-        dim_1,
-        dim_2,
-        dim_3,
-        group_size,
-        num_scale_cols,
-        quant_type=quant_type,
-        num_bits=num_bits,
-        use_intel_libdevice=x.device.type == "xpu",
-        BLOCK_SIZE_R=block_size_r,
-        BLOCK_SIZE_C=block_size_c,
-    )
+    output_dtype = dtype if dtype is not None else x.dtype
+
+    with torch.get_device_module().device(x.device):
+        _quantize_kernel[grid](
+            quantized_value,
+            x,
+            scale,
+            zero_point if zero_point is not None else x,  # pass x as dummy
+            q_min,
+            q_max,
+            global_scale if global_scale is not None else x,  # pass x as dummy
+            input_stride_0,
+            input_stride_1,
+            input_stride_2,
+            input_stride_3,
+            output_stride_0,
+            output_stride_1,
+            output_stride_2,
+            output_stride_3,
+            dim_0,
+            dim_1,
+            dim_2,
+            dim_3,
+            group_size,
+            num_scale_cols,
+            quant_type=quant_type,
+            num_bits=num_bits,
+            use_intel_libdevice=x.device.type == "xpu",
+            BLOCK_SIZE_R=block_size_r,
+            BLOCK_SIZE_C=block_size_c,
+            has_zero_point=zero_point is not None,
+            has_global_scale=global_scale is not None,
+        )
 
     quantized_value = quantized_value.reshape(original_shape)
 
-    if dtype is not None:
-        quantized_value = quantized_value.to(dtype)
-
-    return quantized_value
+    return quantized_value.to(output_dtype)
 
 
 @torch.no_grad()

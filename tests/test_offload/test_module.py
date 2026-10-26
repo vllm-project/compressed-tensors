@@ -14,7 +14,7 @@ from tests.test_offload.conftest import assert_device_equal
 from tests.testing_utils import requires_gpu
 
 
-ONLOAD_DEVICE = torch.accelerator.current_accelerator()
+ONLOAD_DEVICE = torch.accelerator.current_accelerator() or torch.device("cpu")
 OFFLOAD_DEVICE = torch.device("cpu")
 
 
@@ -145,6 +145,7 @@ def test_forward_call(linear: torch.nn.Linear, cache):
 
 
 @pytest.mark.unit
+@requires_gpu
 @pytest.mark.parametrize("param_device", (ONLOAD_DEVICE, OFFLOAD_DEVICE))
 @pytest.mark.parametrize("use_register_parameter", (True, False))
 @pytest.mark.parametrize("requires_grad", (True, False))
@@ -168,6 +169,7 @@ def test_register_parameter(
 
 
 @pytest.mark.unit
+@requires_gpu
 @pytest.mark.parametrize("param_device", (ONLOAD_DEVICE, OFFLOAD_DEVICE))
 @pytest.mark.parametrize("use_register_parameter", (True, False))
 @pytest.mark.parametrize("requires_grad", (True, False))
@@ -220,6 +222,15 @@ def test_set_item(offloaded_linear: torch.nn.Linear):
     offloaded_linear.weight = overwrite
     with disable_onloading():
         assert offloaded_linear.weight is overwrite
+
+    # overwrite buffer as parameter
+    offloaded_linear.aux = torch.nn.Buffer(torch.rand(6, 6, device=OFFLOAD_DEVICE))
+    buffer = torch.nn.Parameter(
+        torch.rand(6, 6, device=OFFLOAD_DEVICE), requires_grad=False
+    )
+    offloaded_linear.aux = buffer
+    with disable_onloading():
+        assert offloaded_linear.aux is buffer
 
 
 @pytest.mark.unit
