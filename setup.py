@@ -77,7 +77,8 @@ def _setup_packages() -> List:
     )
 
 def _setup_install_requires() -> List:
-    return ["torch>=2.10.0", "transformers>=4.45.0", "pydantic>=2.0", "loguru", "psutil"]
+    # Transformers 5.21.0 fails to reload valid KV-only quantization configs.
+    return ["torch>=2.10.0", "transformers>=4.45.0,!=5.21.0", "pydantic>=2.0", "loguru", "psutil"]
 
 def _setup_extras() -> Dict:
     return {
