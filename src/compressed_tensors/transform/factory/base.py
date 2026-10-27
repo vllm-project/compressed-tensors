@@ -9,6 +9,7 @@ import torch.nn.utils.parametrize as P
 import tqdm
 from compressed_tensors.distributed import is_distributed
 from compressed_tensors.modeling.attention import (
+    _IMPL_REQUIRED_ATTR,
     initialize_hooked_attention,
     register_query_hook,
 )
@@ -185,9 +186,35 @@ class TransformFactory(RegistryMixin, ABC):
 
             initialize_hooked_kv_cache(model, module)
             register_key_hook(module, key_hook)
+            self._require_shared_kv_query_impl(model, module)
 
         else:
             raise NotImplementedError()
+
+    @staticmethod
+    def _require_shared_kv_query_impl(model: Module, producer: Module):
+        # Native attention cannot consume rotated shared keys with an unrotated
+        # query. Keep the missing-impl error for readers of this producer; later
+        # transform groups may still install their query hooks before forward.
+        if not getattr(producer, "store_full_length_kv", False):
+            return
+        config = getattr(producer, "config", None)
+        layer_type = getattr(producer, "layer_type", None)
+        if config is None or layer_type is None:
+            return
+        scope = model
+        for component in model.modules():
+            if isinstance(component, PreTrainedModel) and any(
+                module is producer for module in component.modules()
+            ):
+                scope = component
+        for reader in scope.modules():
+            if (
+                getattr(reader, "is_kv_shared_layer", False)
+                and getattr(reader, "config", None) is config
+                and getattr(reader, "layer_type", None) == layer_type
+            ):
+                setattr(reader, _IMPL_REQUIRED_ATTR, True)
 
 
 class TransformBase(InternalModule, ABC):
