@@ -15,7 +15,7 @@ from compressed_tensors.offload.cache.utils import (
     catch_pinned_mem_error,
     load_disk_tensor_from_offload,
 )
-from compressed_tensors.offload.cache.writeback import AsyncDiskWriteback
+from compressed_tensors.offload.cache.writeback import AsyncWriter
 from compressed_tensors.offload.utils import _pin_memory, send_tensors
 from compressed_tensors.utils import is_accelerator_type
 from safetensors.torch import save_file
@@ -43,7 +43,7 @@ class DiskCache(OffloadCache):
 
     # directory where new tensors are written to
     offload_dir: str
-    async_writer: AsyncDiskWriteback | None
+    async_writer: AsyncWriter | None
     _ct_file_prefix = "ct_disk_cache"
 
     def __init__(
@@ -51,8 +51,7 @@ class DiskCache(OffloadCache):
         onload_device: torch.device,
         offload_device: Optional["DeviceLikeType | Literal['disk']"] = None,
         offload_dir: Optional[str] = None,
-        async_writer: AsyncDiskWriteback | None = None,
-        streaming_writer=None,
+        async_writer: AsyncWriter | None = None,
         module_name: str | None = None,
         nonpersistent_names: set[Hashable] | None = None,
     ):
@@ -69,7 +68,6 @@ class DiskCache(OffloadCache):
         self.offload_dir = Path(offload_dir).resolve()
         self.offload_dir.mkdir(parents=True, exist_ok=True)
         self.async_writer = async_writer
-        self.streaming_writer = streaming_writer
         self.module_name = module_name
         self.nonpersistent_names = nonpersistent_names or set()
 
@@ -176,8 +174,9 @@ class DiskCache(OffloadCache):
             )
 
         write_checkpoint = (
-            self.streaming_writer is not None
-            and self.streaming_writer.is_source
+            self.async_writer is not None
+            and self.async_writer.streaming_save
+            and self.async_writer.is_source
             and persistent
         )
         if write_checkpoint:
@@ -187,7 +186,7 @@ class DiskCache(OffloadCache):
                     "local tensor name"
                 )
             model_weight_name = f"{self.module_name}.{weight_name}".lstrip(".")
-            file_path, weight_name = self.streaming_writer.add_tensor(
+            file_path, weight_name = self.async_writer.add_tensor(
                 model_weight_name, tensor
             )
         else:
@@ -253,13 +252,13 @@ class DiskCache(OffloadCache):
         dtype = getattr(torch, weight_info["dtype"])
 
         if (
-            self.streaming_writer is not None
-            and self.streaming_writer.is_checkpoint_path(file_path)
+            self.async_writer is not None
+            and self.async_writer.is_checkpoint_path(file_path)
         ):
             # Drop any cached safetensors handle before the writer atomically
             # replaces this multi-tensor shard.
             _evict(file_path)
-            self.streaming_writer.update_tensor(
+            self.async_writer.update_tensor(
                 file_path,
                 weight_name,
                 data.reshape_as(offloaded).to(dtype=dtype),
@@ -285,12 +284,7 @@ class DiskCache(OffloadCache):
                 os.remove(temporary_path)
 
     def _wait_for_write(self, file_path: str) -> None:
-        if (
-            self.streaming_writer is not None
-            and self.streaming_writer.is_checkpoint_path(file_path)
-        ):
-            self.streaming_writer.wait(file_path)
-        elif self.async_writer is not None:
+        if self.async_writer is not None:
             self.async_writer.wait(file_path)
 
     @classmethod

@@ -13,7 +13,7 @@ from compressed_tensors.offload import disable_onloading
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
 from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
-from compressed_tensors.offload.cache.writeback import AsyncDiskWriteback
+from compressed_tensors.offload.cache.writeback import AsyncWriter
 from safetensors import safe_open
 from safetensors.torch import save_file
 from tests.test_offload.cache.helpers import (
@@ -206,7 +206,7 @@ def test_distributed_files(tmp_path):
 
 @pytest.mark.unit
 @torchrun(world_size=2)
-def test_distributed_async_disk_writeback(tmp_path, monkeypatch):
+def test_distributed_async_writer(tmp_path, monkeypatch):
     """DDP offload returns before disk serialization and flush makes reads safe."""
     if not dist.is_initialized():
         dist.init_process_group(backend="gloo")
@@ -222,7 +222,7 @@ def test_distributed_async_disk_writeback(tmp_path, monkeypatch):
     offload_dir = broadcast_obj[0]
     dist.barrier()
 
-    writer = AsyncDiskWriteback(defer_errors=True)
+    writer = AsyncWriter(defer_errors=True)
     cache = DistributedDiskCache("cpu", offload_dir=offload_dir, async_writer=writer)
     started = threading.Event()
     release = threading.Event()
@@ -230,7 +230,7 @@ def test_distributed_async_disk_writeback(tmp_path, monkeypatch):
     source_rank = get_source_rank()
 
     if rank == source_rank:
-        original_write = AsyncDiskWriteback._write_atomically
+        original_write = AsyncWriter._write_atomically
 
         def delayed_write(path, tensors):
             started.set()
@@ -240,7 +240,7 @@ def test_distributed_async_disk_writeback(tmp_path, monkeypatch):
             original_write(path, tensors)
 
         monkeypatch.setattr(
-            AsyncDiskWriteback, "_write_atomically", staticmethod(delayed_write)
+            AsyncWriter, "_write_atomically", staticmethod(delayed_write)
         )
 
     try:
@@ -277,7 +277,7 @@ def test_distributed_async_disk_writeback(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 @torchrun(world_size=2)
-def test_distributed_async_disk_writeback_error_propagates(tmp_path, monkeypatch):
+def test_distributed_async_writer_error_propagates(tmp_path, monkeypatch):
     """A source-rank worker failure is reported on every rank at flush."""
     if not dist.is_initialized():
         dist.init_process_group(backend="gloo")
@@ -293,7 +293,7 @@ def test_distributed_async_disk_writeback_error_propagates(tmp_path, monkeypatch
     offload_dir = broadcast_obj[0]
     dist.barrier()
 
-    writer = AsyncDiskWriteback(defer_errors=True)
+    writer = AsyncWriter(defer_errors=True)
     cache = DistributedDiskCache("cpu", offload_dir=offload_dir, async_writer=writer)
     source_rank = get_source_rank()
     if dist.get_rank() == source_rank:
@@ -302,7 +302,7 @@ def test_distributed_async_disk_writeback_error_propagates(tmp_path, monkeypatch
             raise OSError("injected disk write failure")
 
         monkeypatch.setattr(
-            AsyncDiskWriteback, "_write_atomically", staticmethod(fail_write)
+            AsyncWriter, "_write_atomically", staticmethod(fail_write)
         )
 
     try:

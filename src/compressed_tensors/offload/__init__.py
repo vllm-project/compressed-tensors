@@ -9,7 +9,7 @@ from typing import Literal
 import torch
 from compressed_tensors.distributed.utils import set_source_process
 from compressed_tensors.offload.cache import (
-    AsyncDiskWriteback,
+    AsyncWriter,
     DiskCache,
     OffloadCache,
     disk_load_context,
@@ -60,7 +60,7 @@ __all__ = [
     "disable_onloading",
     "disable_offloading",
     "disk_load_context",
-    "AsyncDiskWriteback",
+    "AsyncWriter",
     # manipulate parameters
     "update_offload_parameter",
     "get_execution_device",
