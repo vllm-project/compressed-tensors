@@ -186,10 +186,6 @@ def subgraph_onload_modules(
                 offload_kwargs[name] = init_kwargs
 
                 remove_module_offload(module, onload_tensors=True)
-            else:
-                pass
-                # we should consider raising warnings, but observers will
-                # clog the output with warnings, so we will skip for now
     return offload_kwargs
 
 

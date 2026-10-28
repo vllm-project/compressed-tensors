@@ -232,12 +232,12 @@ def test_distributed_async_writer(tmp_path, monkeypatch):
     if rank == source_rank:
         original_write = AsyncWriter._write_atomically
 
-        def delayed_write(path, tensors):
+        def delayed_write(path, tensors, metadata=None):
             started.set()
             # The timeout keeps a regression from hanging the torchrun test if
             # the cache accidentally waits for disk I/O inside offload again.
             release.wait(timeout=3)
-            original_write(path, tensors)
+            original_write(path, tensors, metadata)
 
         monkeypatch.setattr(
             AsyncWriter, "_write_atomically", staticmethod(delayed_write)
@@ -298,7 +298,7 @@ def test_distributed_async_writer_error_propagates(tmp_path, monkeypatch):
     source_rank = get_source_rank()
     if dist.get_rank() == source_rank:
 
-        def fail_write(path, tensors):
+        def fail_write(path, tensors, metadata=None):
             raise OSError("injected disk write failure")
 
         monkeypatch.setattr(

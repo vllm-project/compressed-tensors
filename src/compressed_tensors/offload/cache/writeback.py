@@ -548,9 +548,6 @@ class AsyncWriter:
             (self.output_dir / "model_mtp.safetensors").unlink(missing_ok=True)
             (self.output_dir / "model_backbone.safetensors").unlink(missing_ok=True)
             (self.output_dir / "model.safetensors").unlink(missing_ok=True)
-            (self.output_dir / "model.safetensors.index.json.error").unlink(
-                missing_ok=True
-            )
             logger.info(
                 "Streamed {} tensors into {} checkpoint shards",
                 len(self._weight_map),
