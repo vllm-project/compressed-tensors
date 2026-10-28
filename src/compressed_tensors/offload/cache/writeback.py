@@ -538,9 +538,7 @@ class AsyncWriter:
                     temp_path.unlink()
 
             keep = set(self._weight_map.values())
-            for old_shard in self.output_dir.glob(
-                f"{self.SHARD_PREFIX}*.safetensors"
-            ):
+            for old_shard in self.output_dir.glob(f"{self.SHARD_PREFIX}*.safetensors"):
                 if old_shard.name not in keep:
                     old_shard.unlink(missing_ok=True)
             for old_shard in self.output_dir.glob("model-?????-of-?????.safetensors"):

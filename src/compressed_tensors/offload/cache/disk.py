@@ -251,9 +251,8 @@ class DiskCache(OffloadCache):
         weight_name = weight_info["weight_name"]
         dtype = getattr(torch, weight_info["dtype"])
 
-        if (
-            self.async_writer is not None
-            and self.async_writer.is_checkpoint_path(file_path)
+        if self.async_writer is not None and self.async_writer.is_checkpoint_path(
+            file_path
         ):
             # Drop any cached safetensors handle before the writer atomically
             # replaces this multi-tensor shard.

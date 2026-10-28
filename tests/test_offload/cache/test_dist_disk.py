@@ -301,9 +301,7 @@ def test_distributed_async_writer_error_propagates(tmp_path, monkeypatch):
         def fail_write(path, tensors, metadata=None):
             raise OSError("injected disk write failure")
 
-        monkeypatch.setattr(
-            AsyncWriter, "_write_atomically", staticmethod(fail_write)
-        )
+        monkeypatch.setattr(AsyncWriter, "_write_atomically", staticmethod(fail_write))
 
     try:
         with writer.batch():
