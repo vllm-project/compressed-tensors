@@ -99,7 +99,7 @@ def pack_to_int32(
     if packed_dim == 0:
         output = output.transpose(0, 1)
 
-    return output
+    return output.contiguous()
 
 
 def unpack_from_int32(
