@@ -145,13 +145,22 @@ def unwrap_offload_forward(module: torch.nn.Module):
 def subgraph_stage_modules(
     modules: dict[str, torch.nn.Module],
     pin_memory: bool = False,
+    async_writer: AsyncWriter | None = None,
+    distributed_group=None,
 ) -> None:
     """
     Stage offloaded module tensors in CPU memory for a later onload.
 
     Reads are grouped under `disk_load_context`, so tensors from the same
     safetensors shard share one open instead of re-parsing its header per read.
+    When a distributed writeback group is supplied, wait for all ranks' pending
+    disk writes before reading shared offload files.
     """
+    if distributed_group is not None:
+        if async_writer is None:
+            raise ValueError("Distributed staging requires an async disk writer")
+        async_writer.flush_distributed(distributed_group)
+
     with disk_load_context():
         for name, module in modules.items():
             if not isinstance(module._parameters, OffloadCache):
