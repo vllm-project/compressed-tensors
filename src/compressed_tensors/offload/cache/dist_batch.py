@@ -228,7 +228,9 @@ class BatchedOffloadMixin:
     def offload_named(
         self, name: Hashable, tensor: torch.Tensor | None
     ) -> torch.Tensor | None:
-        return self.offload(tensor, name=name)
+        # Call the distributed implementation directly: a concrete cache class may
+        # also define an ``offload`` method that does not accept the tensor name.
+        return BatchedOffloadMixin.offload(self, tensor, name=name)
 
     @classmethod
     def from_mapping(
