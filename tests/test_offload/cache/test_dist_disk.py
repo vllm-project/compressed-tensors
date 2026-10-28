@@ -42,6 +42,9 @@ def offload_device():
 @torchrun(world_size=2, init_dist=True)
 def test_delete(offload_device, onload_device, offload_cache):
     _test_delete(offload_device, onload_device, offload_cache)
+    dist.barrier()
+    DistributedDiskCache.flush_deferred_file_deletions()
+    dist.barrier()
 
 
 @pytest.mark.unit
@@ -189,6 +192,9 @@ def test_distributed_files(tmp_path):
     # delete
     del cache["weight"]
     assert len(DiskCache.index) == 0
+    dist.barrier()
+    DistributedDiskCache.flush_deferred_file_deletions()
+    dist.barrier()
     if dist.get_rank() == 0:  # only rank0 bc `tmp_path` is not shared between ranks
         files = os.listdir(offload_dir)
         assert len(files) == 0
