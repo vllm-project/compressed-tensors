@@ -7,6 +7,7 @@ from functools import wraps
 import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
+from compressed_tensors.offload.cache.writeback import AsyncWriter
 from compressed_tensors.offload.utils import send_tensors
 
 
@@ -40,8 +41,14 @@ def offload_module(
     module._parameters = cache_cls.from_mapping(
         module._parameters, onload_device, offload_device, **kwargs
     )
+    buffer_kwargs = kwargs.copy()
+    cache_writer = kwargs.get("async_writer")
+    if cache_writer is not None and cache_writer.streaming_save:
+        # Non-persistent buffers are needed while running the model but are not
+        # part of state_dict and therefore must not be written to the checkpoint.
+        buffer_kwargs["nonpersistent_names"] = module._non_persistent_buffers_set
     module._buffers = cache_cls.from_mapping(
-        module._buffers, onload_device, offload_device, **kwargs
+        module._buffers, onload_device, offload_device, **buffer_kwargs
     )
 
     original_forward_func = module.forward.__func__
@@ -138,13 +145,22 @@ def unwrap_offload_forward(module: torch.nn.Module):
 def subgraph_stage_modules(
     modules: dict[str, torch.nn.Module],
     pin_memory: bool = False,
+    async_writer: AsyncWriter | None = None,
+    distributed_group=None,
 ) -> None:
     """
     Stage offloaded module tensors in CPU memory for a later onload.
 
     Reads are grouped under `disk_load_context`, so tensors from the same
     safetensors shard share one open instead of re-parsing its header per read.
+    When a distributed writeback group is supplied, wait for all ranks' pending
+    disk writes before reading shared offload files.
     """
+    if distributed_group is not None:
+        if async_writer is None:
+            raise ValueError("Distributed staging requires an async disk writer")
+        async_writer.flush_distributed(distributed_group)
+
     with disk_load_context():
         for name, module in modules.items():
             if not isinstance(module._parameters, OffloadCache):
@@ -170,27 +186,53 @@ def subgraph_onload_modules(
                 offload_kwargs[name] = init_kwargs
 
                 remove_module_offload(module, onload_tensors=True)
-            else:
-                pass
-                # we should consider raising warnings, but observers will
-                # clog the output with warnings, so we will skip for now
     return offload_kwargs
 
 
 def subgraph_offload_modules(
     modules: dict[str, torch.nn.Module],
     offload_kwargs: dict[str, dict],
+    async_writer: AsyncWriter | None = None,
 ):
-    """
-    Offload a list of modules, using the provided device map and kwargs.
-    """
+    """Offload modules through one bounded writer for cache files and shards."""
     from compressed_tensors.offload import get_cache_init_kwargs
 
+    to_offload = []
     for name, module in modules.items():
         if name in offload_kwargs:
-            offload_module(module, **offload_kwargs[name])
+            module_offload_kwargs = offload_kwargs[name].copy()
         else:
             # we should consider raising warnings, but observers will
             # clog the output with warnings, so we will skip for now
             module_offload_kwargs = get_cache_init_kwargs(module)
+
+        if async_writer is not None and async_writer.streaming_save:
+            # Checkpoint shards back persistent model tensors. Non-persistent buffers
+            # still use the ordinary disk-cache format.
+            module_offload_kwargs["offload_device"] = "disk"
+            if module_offload_kwargs.get("offload_dir") is None:
+                output_dir = async_writer.output_dir
+                if output_dir is None:
+                    raise ValueError("Streaming save requires an output directory")
+                cache_dir = output_dir.parent / f".{output_dir.name}-offload"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                module_offload_kwargs["offload_dir"] = str(cache_dir)
+            module_offload_kwargs["module_name"] = name
+
+        if (
+            async_writer is not None
+            and str(module_offload_kwargs.get("offload_device")) == "disk"
+        ):
+            module_offload_kwargs["async_writer"] = async_writer
+        to_offload.append((module, module_offload_kwargs))
+
+    uses_disk = any(
+        str(module_offload_kwargs.get("offload_device")) == "disk"
+        for _, module_offload_kwargs in to_offload
+    )
+    use_async = async_writer is not None and uses_disk
+    with contextlib.ExitStack() as stack:
+        if use_async:
+            stack.enter_context(async_writer.batch())
+        for module, module_offload_kwargs in to_offload:
             offload_module(module, **module_offload_kwargs)

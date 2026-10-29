@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+from collections.abc import Hashable
 from typing import Optional
 
 import torch
@@ -35,15 +36,20 @@ class DistributedDiskCache(BatchedOffloadMixin, DiskCache):
         """Queue deletion until the distributed operation reaches its flush point."""
         self._deferred_file_deletions.add(file_path)
 
-    def offload_local(self, tensor: torch.Tensor) -> tuple[torch.Tensor, list]:
+    def offload_local(
+        self, tensor: torch.Tensor, name: Hashable | None = None
+    ) -> tuple[torch.Tensor, list]:
         """
         Write tensor data to disk on the source rank.
+
+        If an asynchronous writer is active, disk serialization continues in its
+        worker while this method returns the metadata needed by other ranks.
 
         :param tensor: tensor on any device
         :return: meta tensor representing the disk offloaded tensor, and the file
             location, dtype and shape used by other ranks to rebuild it
         """
-        offloaded = DiskCache.offload(self, tensor)
+        offloaded = DiskCache.offload(self, tensor, weight_name=name)
         weight_info = self.index[offloaded]
         return offloaded, [
             weight_info["safetensors_file"],
@@ -80,6 +86,10 @@ class DistributedDiskCache(BatchedOffloadMixin, DiskCache):
             "dtype": dtype,
         }
         return offloaded
+
+    def _requires_offload_barrier(self) -> bool:
+        """Skip per-tensor synchronization while the pipeline batches async writes."""
+        return self.async_writer is None or not self.async_writer.is_batch_active
 
     def __delitem__(self, key: str):
         """
