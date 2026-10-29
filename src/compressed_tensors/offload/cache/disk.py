@@ -194,7 +194,8 @@ class DiskCache(OffloadCache):
 
         # Replacing the path atomically handles checkpoint symlinks without an unlink
         # gap. Evict a cached handle to regular files so later reads see new contents.
-        if not os.path.islink(file_path):
+        was_checkpoint_symlink = os.path.islink(file_path)
+        if not was_checkpoint_symlink:
             _evict(file_path)
 
         temporary_path = f"{file_path}.tmp-{os.getpid()}-{id(offloaded)}"
@@ -207,6 +208,10 @@ class DiskCache(OffloadCache):
         finally:
             if os.path.lexists(temporary_path):
                 os.remove(temporary_path)
+
+        if was_checkpoint_symlink:
+            # reads now come from the new file, not the checkpoint shard
+            weight_info.pop("checkpoint_file", None)
 
     @classmethod
     def create_checkpoint_symlink(
@@ -242,6 +247,9 @@ class DiskCache(OffloadCache):
             "safetensors_file": file_path,
             "weight_name": weight_info["weight_name"],
             "dtype": weight_info["dtype"],
+            # the shard this symlink points to, so reads from one shard can share
+            # a handle without resolving the symlink on every read
+            "checkpoint_file": str(source_path),
         }
 
     @classmethod
