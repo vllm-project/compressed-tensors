@@ -60,7 +60,8 @@ class QuantizationScheme(BaseModel, use_enum_values=True):
             if not is_lut_b_quantization(weights):
                 raise ValueError(
                     "Codebook weights currently require the LUT-B contract: "
-                    "num_bits=3, strategy='block', block_structure=[8, 64]"
+                    "num_bits=3, strategy='block', a 2D block_structure, and "
+                    "scale_dtype=None or torch.uint8 (E8M0)"
                 )
             if format not in (None, CompressionFormat.lut_b):
                 raise ValueError(
@@ -185,14 +186,14 @@ def is_preset_scheme(name: str) -> bool:
 
 UNQUANTIZED = dict()
 
-# TODO: confirm block structure and scale_dtype (None or e8m0)
-# https://github.com/NVIDIA/Model-Optimizer/issues/2204
+# LUT-B codebooks store normalized E4M3 values and one E8M0 range scale per tile.
 LUTB = dict(
     weights=QuantizationArgs(
         num_bits=3,
         type=QuantizationType.CODEBOOK,
         strategy=QuantizationStrategy.BLOCK,
         block_structure=[8, 64],
+        scale_dtype=torch.uint8,
         symmetric=True,
         dynamic=False,
     )
