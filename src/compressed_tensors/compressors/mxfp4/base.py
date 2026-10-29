@@ -57,7 +57,7 @@ class MXFP4PackedCompressor(NVFP4PackedCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """MXFP4 matches FP4 with group_size=32."""
         return (
-            module_type in COMPRESSIBLE_MODULE_TYPES
+            issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
             and scheme.weights is not None
             and scheme.weights.num_bits == 4
             and scheme.weights.type == QuantizationType.FLOAT.value

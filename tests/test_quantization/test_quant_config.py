@@ -29,6 +29,25 @@ def test_basic_config():
     assert config.quantization_status == QuantizationStatus.INITIALIZED
     assert config.global_compression_ratio is None
     assert isinstance(config.ignore, list) and len(config.ignore) == 0
+    assert config.moe_sparsity_config is None
+
+
+def test_config_with_moe_sparsity():
+    from compressed_tensors.config import ExpertSparsityConfig, MoESparsityMethod
+
+    config = QuantizationConfig(
+        config_groups={"group_1": QuantizationScheme(targets=[])},
+        moe_sparsity_config=ExpertSparsityConfig(
+            method="prune", num_experts=[None, 129, 253]
+        ),
+    )
+    assert isinstance(config.moe_sparsity_config, ExpertSparsityConfig)
+    assert config.moe_sparsity_config.method == MoESparsityMethod.PRUNE
+
+    # round-trips through dict (de)serialization
+    restored = QuantizationConfig.model_validate(config.model_dump())
+    assert isinstance(restored.moe_sparsity_config, ExpertSparsityConfig)
+    assert restored.moe_sparsity_config.num_experts == [None, 129, 253]
 
 
 def test_full_config():
@@ -161,6 +180,42 @@ def test_map_to_checkpoint_names(model_id, hf_ignores, checkpoint_ignores):
     result = _map_to_checkpoint_names(model, hf_ignores)
 
     assert result == checkpoint_ignores
+
+
+@pytest.mark.parametrize("conversion", ["none", "prefix", "weight"])
+@pytest.mark.parametrize(
+    "targets",
+    [["runtime.0"], [r"re:^runtime\."], ["Linear"], ["Linear", r"re:^runtime\."]],
+)
+def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, targets):
+    WeightRenaming = pytest.importorskip(
+        "transformers.core_model_loading"
+    ).WeightRenaming
+    model = torch.nn.Module()
+    model.runtime = torch.nn.ModuleList([torch.nn.Linear(4, 4) for _ in range(33)])
+    if conversion == "prefix":
+        model._weight_conversions = [WeightRenaming("checkpoint.", "runtime.")]
+    elif conversion == "weight":
+        model._weight_conversions = [
+            WeightRenaming(f"checkpoint.{i}.weight", f"runtime.{i}.weight")
+            for i in range(33)
+        ]
+    scheme = QuantizationScheme(targets=targets, weights=QuantizationArgs(num_bits=8))
+    model.runtime[0].quantization_scheme = scheme
+    model.runtime[0].quantization_status = QuantizationStatus.FROZEN
+    original_scheme = scheme.model_dump()
+
+    exported = QuantizationConfig.from_pretrained(model)
+    prefix = "runtime" if conversion == "none" else "checkpoint"
+    expected_ignores = [f"{prefix}.{i}" for i in range(1, 33)]
+    assert exported.ignore == expected_ignores
+    assert exported.model_dump()["ignore"] == expected_ignores
+    assert exported.config_groups["group_0"].model_dump() == original_scheme
+    assert scheme.model_dump() == original_scheme
+    restored = QuantizationConfig.model_validate_json(exported.model_dump_json())
+    assert restored.ignore == expected_ignores
+    assert restored.config_groups["group_0"].targets == targets
+    assert QuantizationConfig.from_pretrained(model) == exported
 
 
 def test_get_vllm_module_type():

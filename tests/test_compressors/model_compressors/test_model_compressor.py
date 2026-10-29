@@ -16,6 +16,7 @@ from compressed_tensors.quantization import (
     QuantizationConfig,
     QuantizationScheme,
     QuantizationStatus,
+    apply_quantization_config,
 )
 from compressed_tensors.transform import TransformConfig
 from tests.test_offload.conftest import torchrun
@@ -208,6 +209,42 @@ class TestModelCompressorCompression:
         assert model.linear.weight.dtype == torch.float32
         assert not hasattr(model.linear, "weight_packed")
 
+    @pytest.mark.parametrize("scheme", ["W4A16", "FP8"])
+    def test_compress_model_twice_decompresses_once(self, scheme):
+        """Test that compressing again (e.g. a second save) keeps a single hook."""
+
+        def make_model():
+            torch.manual_seed(0)
+            model = nn.Sequential(nn.Linear(128, 64, bias=False))
+            config = QuantizationConfig(config_groups={scheme: ["Linear"]})
+            apply_quantization_config(model, config)
+            weight = model[0].weight
+            if scheme == "FP8":
+                scale = weight.abs().amax(dim=-1, keepdim=True) / 448.0
+            else:
+                scale = weight.abs().unflatten(-1, (-1, 128)).amax(dim=-1) / 7.0
+            model[0].weight_scale.data = scale
+            return model
+
+        expected = make_model()
+        compressor = ModelCompressor.from_pretrained_model(expected)
+        compressor.compress_model(expected)
+        compressor.decompress_model(expected)
+
+        model = make_model()
+        compressor = ModelCompressor.from_pretrained_model(model)
+        compressor.compress_model(model)
+        compressor.compress_model(model, skip_compressed=True)
+        assert len(model._forward_pre_hooks) == 1
+
+        x = torch.randn(2, 128)
+        for _ in range(3):
+            _ = model(x)
+            assert torch.equal(model[0].weight, expected[0].weight)
+
+        assert len(model._forward_pre_hooks) == 0
+        assert not hasattr(model, "ct_decompress_hook")
+
     def test_compress_model_updates_format_in_config(self):
         """Test that from_pretrained_model infers and sets the format correctly."""
         model = DummyLinear()
@@ -362,6 +399,36 @@ class TestModelCompressorEdgeCases:
         # Format should be inferred and set
         assert model.linear.quantization_scheme.format is not None
         assert hasattr(model.linear, "weight_packed")
+
+    def test_compress_model_linear_subclass(self):
+        """Test that a Linear subclass compresses and decompresses like nn.Linear."""
+
+        class LinearSubclass(nn.Linear):
+            pass
+
+        state_dicts = {}
+        for linear_cls in (nn.Linear, LinearSubclass):
+            torch.manual_seed(0)
+            model = nn.Sequential(linear_cls(128, 64, bias=False))
+            apply_quantization_config(
+                model, QuantizationConfig(config_groups={"W4A16": ["Linear"]})
+            )
+            model[0].weight_scale.data.fill_(0.01)
+            compressor = ModelCompressor.from_pretrained_model(model)
+            compressor.compress_model(model)
+            assert compressor.quantization_config.format == "pack-quantized"
+            compressed = model.state_dict()
+            compressor.decompress_model(model)
+            state_dicts[linear_cls] = (compressed, model.state_dict())
+
+        for expected, actual in zip(
+            state_dicts[nn.Linear], state_dicts[LinearSubclass]
+        ):
+            assert actual.keys() == expected.keys()
+            for key in expected:
+                assert torch.equal(actual[key], expected[key])
+        assert "0.weight_packed" in state_dicts[LinearSubclass][0]
+        assert "0.weight" in state_dicts[LinearSubclass][1]
 
     def test_empty_model(self):
         """Test compression of a model with no quantized modules."""

@@ -187,7 +187,7 @@ class PackedQuantizationCompressor(BaseCompressor):
             if scheme.input_activations.type == QuantizationType.FLOAT.value:
                 return False
         return (
-            module_type in COMPRESSIBLE_MODULE_TYPES
+            issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
             and scheme.weights is not None
             and 1 <= scheme.weights.num_bits <= 8
             and scheme.weights.type == QuantizationType.INT.value

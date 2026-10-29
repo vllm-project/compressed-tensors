@@ -273,6 +273,9 @@ class ModelCompressor:
                 self.decompress_model(model)
             # decompress_model already removes the hook via remove_decompression_hook
 
+        # compress_model may run more than once (on load and again on each save);
+        # keep a single hook so the model is decompressed only once
+        self.remove_decompression_hook(model)
         model.ct_decompress_hook = model.register_forward_pre_hook(ct_decompress_hook)
 
     def remove_decompression_hook(self, model: torch.nn.Module):

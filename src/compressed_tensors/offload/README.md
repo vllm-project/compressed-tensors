@@ -279,8 +279,10 @@ A lighter-weight dispatch that moves all modules in a model to the same `onload_
 
 ```python
 # Move all execution to cuda:0, keeping offloads unchanged
-model = set_onload_device(model, onload_device="cuda:0")
+set_onload_device(model, onload_device="cuda:0")
 ```
+
+This function updates the model in place. Continue using the original `model` object for inference; its return value is dispatch bookkeeping, not the model.
 
 **When to use:** when you have already loaded a model with weights in the right place (e.g., via `load_offloaded_model`) and just need to set the execution device. Less powerful than `dispatch_model` but simpler.
 

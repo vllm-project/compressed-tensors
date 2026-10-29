@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import pytest
+import torch
 from compressed_tensors.quantization import (
     ActivationOrdering,
     QuantizationArgs,
@@ -163,3 +164,85 @@ def test_serialize_args():
     # Deserialize from dict
     reloaded = QuantizationArgs.model_validate(args_dict)
     assert reloaded == args
+
+
+def test_default_fields_not_serialized():
+    """
+    Fields actorder, block_structure, observer, observer_kwargs, scale_dtype,
+    and zp_dtype are omitted from model_dump() when not explicitly set.
+
+    Before this change, model_dump() on QuantizationArgs() would produce:
+        {
+            "num_bits": 8, "type": "int", "symmetric": True,
+            "group_size": None, "strategy": "tensor", "dynamic": False,
+            "actorder": None,
+            "block_structure": None,
+            "observer": None,
+            "observer_kwargs": {},
+            "scale_dtype": None,
+            "zp_dtype": None,  # None because symmetric=True
+        }
+
+    After this change, model_dump() on QuantizationArgs() produces:
+        {
+            "num_bits": 8, "type": "int", "symmetric": True,
+            "group_size": None, "strategy": "tensor", "dynamic": False,
+        }
+    """
+    args = QuantizationArgs()
+    serialized = args.model_dump()
+
+    assert "actorder" not in serialized
+    assert "block_structure" not in serialized
+    assert "observer" not in serialized
+    assert "observer_kwargs" not in serialized
+    assert "scale_dtype" not in serialized
+    assert "zp_dtype" not in serialized
+
+    # Core fields are still present
+    assert serialized["num_bits"] == 8
+    assert serialized["type"] == "int"
+    assert serialized["strategy"] == "tensor"
+
+
+def test_explicit_fields_are_serialized():
+    """Explicitly set optional fields appear in model_dump()."""
+    args = QuantizationArgs(
+        group_size=128,
+        actorder=ActivationOrdering.WEIGHT,
+        observer="minmax",
+        observer_kwargs={"percentile": 99.9},
+        scale_dtype=torch.float16,
+    )
+    serialized = args.model_dump()
+
+    assert serialized["actorder"] == "weight"
+    assert serialized["observer"] == "minmax"
+    assert serialized["observer_kwargs"] == {"percentile": 99.9}
+    assert "scale_dtype" in serialized
+
+
+def test_explicit_zp_dtype_serialized_when_asymmetric():
+    """Explicitly set zp_dtype is serialized for asymmetric quantization."""
+    args = QuantizationArgs(symmetric=False, zp_dtype=torch.int16)
+    serialized = args.model_dump()
+    assert "zp_dtype" in serialized
+    assert serialized["zp_dtype"] == "torch.int16"
+
+
+def test_zp_dtype_not_serialized_when_symmetric():
+    """zp_dtype is omitted when symmetric=True even if explicitly set."""
+    args = QuantizationArgs(symmetric=True, zp_dtype=torch.int8)
+    serialized = args.model_dump()
+    assert "zp_dtype" not in serialized
+
+
+def test_round_trip_with_optional_fields_omitted():
+    """Serializing and deserializing default args produces equivalent args."""
+    for args in (
+        QuantizationArgs(),
+        QuantizationArgs(group_size=128, actorder=ActivationOrdering.WEIGHT),
+        QuantizationArgs(num_bits=4, type=QuantizationType.INT, group_size=128),
+    ):
+        reloaded = QuantizationArgs.model_validate(args.model_dump())
+        assert args == reloaded
