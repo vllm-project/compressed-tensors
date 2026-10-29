@@ -3,7 +3,6 @@
 
 import contextlib
 import json
-import os
 import struct
 import threading
 from collections import OrderedDict
@@ -16,7 +15,7 @@ __all__ = ["disk_load_context"]
 
 
 # Open safetensors handles held for the duration of `disk_load_context`, keyed by
-# (resolved path, device). Thread local because handles are not safe to share
+# (file read from, device). Thread local because handles are not safe to share
 # across threads and callers may prefetch on a background thread.
 class _OpenFiles(threading.local):
     """Per-thread handle cache and nesting depth for `disk_load_context`."""
@@ -68,7 +67,9 @@ def disk_load_context() -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def _opened(file_path: str, device: str, raw: bool = False) -> Iterator[tuple]:
+def _opened(
+    file_path: str, device: str, file_key: str | None = None, raw: bool = False
+) -> Iterator[tuple]:
     """
     Yield (handle, header, data_offset), reusing an open reader inside
     `disk_load_context`. For safetensors handles, header is None.
@@ -78,9 +79,15 @@ def _opened(file_path: str, device: str, raw: bool = False) -> Iterator[tuple]:
     tensor offsets in the JSON header are relative to the data section.
 
     Outside the context, close the reader after each use.
+
+    :param file_key: the file `file_path` reads from, when the caller knows it.
+        Checkpoint symlinks record their shard in the `DiskCache` index, so N
+        tensors from one shard share one handle without resolving each symlink.
+        Resolving costs several syscalls per read, each releasing the GIL.
+        Defaults to `file_path`.
     """
     cache = _open_files.cache
-    key = (_file_key(file_path), "raw" if raw else device)
+    key = (file_key or file_path, "raw" if raw else device)
     entry = cache.get(key) if cache is not None else None
     if entry is None:
         handle = safe_open(file_path, framework="pt", device=device)
@@ -111,24 +118,14 @@ def _opened(file_path: str, device: str, raw: bool = False) -> Iterator[tuple]:
             entry[0].__exit__(None, None, None)
 
 
-def _file_key(file_path: str) -> str:
-    """
-    Identify the file a path actually reads from.
-
-    `DiskCache.create_checkpoint_symlink` gives every tensor its own symlink,
-    named after `id(offloaded)`, pointing into a shared checkpoint shard. Keying
-    on the path as given would treat N tensors from one shard as N files, so the
-    cache would never hit on exactly the path where grouping matters.
-    """
-    return os.path.realpath(file_path)
-
-
 def _evict(file_path: str) -> None:
     """
     Close and drop any cached handle onto the file at `file_path`.
 
     Must be called before that file's contents are rewritten in place. A handle
     held inside `disk_load_context` otherwise keeps reading the old contents.
+    Only files `DiskCache` wrote itself are rewritten in place, and those are
+    keyed by their own path.
 
     Only affects the calling thread's cache, matching `disk_load_context`,
     which is thread local.
@@ -136,6 +133,5 @@ def _evict(file_path: str) -> None:
     cache = _open_files.cache
     if not cache:
         return
-    target = _file_key(file_path)
-    for key in [key for key in cache if key[0] == target]:
+    for key in [key for key in cache if key[0] == file_path]:
         cache.pop(key)[0].__exit__(None, None, None)
