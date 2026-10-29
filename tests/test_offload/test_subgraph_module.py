@@ -3,7 +3,9 @@
 
 import compressed_tensors.offload as offload
 import compressed_tensors.offload.module as module_offload
+import pytest
 import torch
+from compressed_tensors.offload.cache import OffloadCache
 
 
 class _FakeOffloadCache(dict):
@@ -106,7 +108,7 @@ def test_subgraph_offload_uses_defaults_for_untracked_modules(monkeypatch):
     monkeypatch.setattr(module_offload, "offload_module", fake_offload_module)
 
     module_offload.subgraph_offload_modules(
-        {"root": root, "root.child": root.child},
+        {"root": root, "root_other.child": root.child},
         {"root": {"onload_device": "meta", "offload_device": "cpu"}},
     )
 
@@ -115,6 +117,92 @@ def test_subgraph_offload_uses_defaults_for_untracked_modules(monkeypatch):
         ("init", root.child),
         ("offload", root.child, {"onload_device": "cpu", "offload_device": "cpu"}),
     ]
+
+
+@pytest.mark.parametrize("prefix", ["", "layer"])
+def test_subgraph_offload_inherits_saved_ancestor_settings(tmp_path, prefix):
+    model = torch.nn.Sequential(torch.nn.Linear(4, 4))
+    module_offload.offload_module(model, "cpu", "disk", offload_dir=tmp_path)
+    module_offload.offload_module(model[0], "cpu", "cpu")
+    # Children can precede parents in the original scope.
+    modules = dict(reversed(list(model.named_modules(prefix=prefix))))
+    original_scope = modules.copy()
+    saved = module_offload.subgraph_onload_modules(modules)
+
+    # New nested children inherit the parent settings even though their tensors
+    # are currently on CPU. Explicit child settings override the root's settings.
+    model.added = torch.nn.Sequential(torch.nn.Linear(4, 4))
+    model[0].added = torch.nn.Sequential(torch.nn.Linear(4, 4))
+    model.alias = model.added[0]  # shared descendants must only be offloaded once
+    model.added[0].register_buffer("extra", torch.randn(4))
+    expected = {name: tensor.clone() for name, tensor in model.state_dict().items()}
+    module_offload.subgraph_offload_modules(modules, saved)
+    assert modules == original_scope
+
+    for module in (model, model.added, model.added[0]):
+        for cache in (module._parameters, module._buffers):
+            assert isinstance(cache, OffloadCache)
+            assert cache.offload_device == "disk"
+            assert cache.offload_dir == tmp_path
+            assert cache.onload_device == "cpu"
+    for module in (model[0], model[0].added, model[0].added[0]):
+        assert isinstance(module._parameters, OffloadCache)
+        assert module._parameters.offload_device == torch.device("cpu")
+
+    module_offload.subgraph_onload_modules(dict(model.named_modules(prefix=prefix)))
+    torch.testing.assert_close(model.state_dict(), expected)
+
+
+def test_subgraph_offload_inherits_without_offloading_ancestor_or_siblings(tmp_path):
+    parent = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.Linear(4, 4))
+    module_offload.offload_module(parent, "cpu", "disk", offload_dir=tmp_path)
+    module_offload.offload_module(parent[1], "cpu", "disk", offload_dir=tmp_path)
+    sibling_modules = {"parent.1": parent[1]}
+    module_offload.subgraph_stage_modules(sibling_modules)
+    sibling_cache = parent[1]._parameters
+    sibling_weight = sibling_cache.offloaded_values["weight"]
+    parent_cache = parent._parameters
+
+    module_offload.subgraph_offload_modules(
+        {"parent.0": parent[0]}, {"parent": offload.get_cache_init_kwargs(parent)}
+    )
+
+    assert parent[0]._parameters.offload_device == "disk"
+    assert parent[0]._parameters.offload_dir == tmp_path
+    assert parent._parameters is parent_cache
+    assert parent[1]._parameters is sibling_cache
+    assert sibling_cache.is_staged
+    assert sibling_cache.offloaded_values["weight"] is sibling_weight
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_subgraph_offload_stops_at_other_offloaded_subtrees(tmp_path, staged):
+    parent = torch.nn.Sequential(
+        torch.nn.Linear(4, 4), torch.nn.Sequential(torch.nn.Linear(4, 4))
+    )
+    for module in parent.modules():
+        module_offload.offload_module(module, "cpu", "disk", offload_dir=tmp_path)
+    modules = {"parent": parent, "parent.0": parent[0]}
+    saved = module_offload.subgraph_onload_modules(modules)
+    other_scope = {"parent.1": parent[1], "parent.1.0": parent[1][0]}
+    if staged:
+        module_offload.subgraph_stage_modules(other_scope)
+    other_caches = [module._parameters for module in other_scope.values()]
+    other_weight = parent[1][0]._parameters.offloaded_values["weight"]
+
+    parent.added = torch.nn.Sequential(torch.nn.Linear(4, 4))
+    parent[1].added = torch.nn.Linear(4, 4)
+    module_offload.subgraph_offload_modules(modules, saved)
+
+    assert set(modules) == {"parent", "parent.0"}
+    for module in parent.added.modules():
+        assert isinstance(module._parameters, OffloadCache)
+        assert module._parameters.offload_device == "disk"
+    for module, cache in zip(other_scope.values(), other_caches):
+        assert module._parameters is cache
+        assert cache.is_staged == staged
+    assert parent[1][0]._parameters.offloaded_values["weight"] is other_weight
+    assert not isinstance(parent[1].added._parameters, OffloadCache)
 
 
 class _StagingCache(_FakeOffloadCache):
