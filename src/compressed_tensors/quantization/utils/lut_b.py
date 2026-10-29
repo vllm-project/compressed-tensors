@@ -11,6 +11,7 @@ from the :class:`QuantizationArgs` describing the weight, so a scheme's
 ``block_structure`` and ``num_bits`` fully determine the on-disk layout. Callers
 are expected to have validated the args with :func:`is_lut_b_quantization`
 first, so the helpers here read the args directly without re-validating them.
+Each tile stores a uint8 E8M0 exponent alongside its normalized E4M3 codebook.
 """
 
 import torch
@@ -33,6 +34,8 @@ __all__ = [
 
 LUT_B_LLOYD_ITERATIONS = 8
 LUT_B_MAX_TILES_PER_CHUNK = 4096
+LUT_B_E8M0_BIAS = 127
+LUT_B_E4M3_MAX = torch.finfo(torch.float8_e4m3fn).max
 
 
 def is_lut_b_quantization(args: QuantizationArgs) -> bool:
@@ -43,6 +46,7 @@ def is_lut_b_quantization(args: QuantizationArgs) -> bool:
         and args.strategy == QuantizationStrategy.BLOCK
         and isinstance(args.block_structure, list)
         and len(args.block_structure) == 2
+        and args.scale_dtype in (None, torch.uint8)
     )
 
 
@@ -145,6 +149,43 @@ def _weight_to_tiles(weight: torch.Tensor, args: QuantizationArgs) -> torch.Tens
     )
 
 
+def _scale_lut_b_tiles(tiles: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Normalize flattened LUT-B tiles and return their E8M0 scales.
+
+    The exponent places each tile's maximum magnitude in
+    ``(E4M3_MAX / 2, E4M3_MAX]``, matching the LUT-B online quantizer. The
+    returned scale bytes use the E8M0 bias of 127.
+    """
+    values = tiles.to(torch.float32)
+    amax = values.abs().amax(dim=1).clamp_min(torch.finfo(torch.float32).tiny)
+    exponent = torch.ceil(torch.log2(amax / LUT_B_E4M3_MAX)).clamp(
+        -LUT_B_E8M0_BIAS, LUT_B_E8M0_BIAS
+    )
+    scales = (exponent + LUT_B_E8M0_BIAS).to(torch.uint8)
+    normalized = values * torch.exp2(-exponent).unsqueeze(1)
+    return normalized, scales
+
+
+def _decode_lut_b_scales(scales: torch.Tensor) -> torch.Tensor:
+    """Decode E8M0 scale bytes to FP32 power-of-two scale factors."""
+    return torch.exp2(scales.to(torch.float32) - LUT_B_E8M0_BIAS)
+
+
+def _validate_lut_b_scales(
+    scales: torch.Tensor,
+    tile_shape: tuple[int, ...],
+    device: torch.device,
+) -> None:
+    if scales.shape != tile_shape:
+        raise ValueError(f"LUT-B scale shape must be {tile_shape}, got {scales.shape}")
+    if scales.dtype != torch.uint8:
+        raise ValueError(f"LUT-B E8M0 scales must use uint8, got {scales.dtype}")
+    if scales.device != device:
+        raise ValueError("LUT-B weight and scales must be on the same device")
+    if scales.device.type != "meta" and torch.any(scales == 0xFF):
+        raise ValueError("LUT-B E8M0 scale byte 255 is reserved for NaN")
+
+
 def _snap_to_e4m3(values: torch.Tensor) -> torch.Tensor:
     finfo = torch.finfo(torch.float8_e4m3fn)
     return (
@@ -234,14 +275,17 @@ def quantize_lut_b(
     weight: torch.Tensor,
     args: QuantizationArgs,
     codebooks: torch.Tensor | None = None,
+    scales: torch.Tensor | None = None,
     *,
     max_tiles_per_chunk: int = LUT_B_MAX_TILES_PER_CHUNK,
     num_iterations: int = LUT_B_LLOYD_ITERATIONS,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Create canonical packed indices and E4M3 codebooks for a weight.
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Create canonical packed indices, E4M3 codebooks and E8M0 tile scales.
 
-    A supplied codebook is used as-is after E4M3 rounding and sorting. This is
-    the integration point for calibration-aware codebook creation.
+    Codebooks contain normalized values; multiplying them by the returned
+    per-tile E8M0 scale reconstructs the represented weight. A supplied scale
+    fixes the range for codebook fitting, and a supplied codebook is used after
+    E4M3 rounding and sorting.
     """
     block_n, block_k = args.block_structure
     codebook_size = 1 << args.num_bits
@@ -260,6 +304,8 @@ def quantize_lut_b(
         if codebooks.device != weight.device:
             raise ValueError("LUT-B weight and codebooks must be on the same device")
         codebooks = _prepare_codebooks(codebooks, tile_shape, args)
+    if scales is not None:
+        _validate_lut_b_scales(scales, tile_shape, weight.device)
 
     if weight.device.type == "meta":
         packed = torch.empty(
@@ -275,7 +321,9 @@ def quantize_lut_b(
                 dtype=torch.float8_e4m3fn,
                 device=weight.device,
             )
-        return packed, codebooks
+        if scales is None:
+            scales = torch.empty(*tile_shape, dtype=torch.uint8, device=weight.device)
+        return packed, codebooks, scales
 
     packed = torch.empty(
         *tile_shape,
@@ -289,6 +337,11 @@ def quantize_lut_b(
         dtype=torch.float8_e4m3fn,
         device=weight.device,
     )
+    fitted_scales = (
+        scales
+        if scales is not None
+        else torch.empty(*tile_shape, dtype=torch.uint8, device=weight.device)
+    )
 
     tiles = _weight_to_tiles(weight, args)
     flat_codebooks = (
@@ -296,10 +349,20 @@ def quantize_lut_b(
     )
     flat_packed = packed.reshape(-1, packed_tile_bytes)
     flat_fitted_codebooks = fitted_codebooks.reshape(-1, codebook_size)
+    flat_fitted_scales = fitted_scales.reshape(-1)
+    flat_supplied_scales = scales.reshape(-1) if scales is not None else None
 
     for start in range(0, tiles.shape[0], max_tiles_per_chunk):
         end = min(start + max_tiles_per_chunk, tiles.shape[0])
         values = tiles[start:end].to(torch.float32)
+        if flat_supplied_scales is None:
+            values, chunk_scales = _scale_lut_b_tiles(values)
+            flat_fitted_scales[start:end] = chunk_scales
+        else:
+            chunk_scales = flat_supplied_scales[start:end]
+            values = values * torch.exp2(
+                -(chunk_scales.to(torch.float32) - LUT_B_E8M0_BIAS)
+            ).unsqueeze(1)
         if flat_codebooks is None:
             indices, centers = _fit_codebooks(values, args, num_iterations)
         else:
@@ -308,7 +371,7 @@ def quantize_lut_b(
         flat_packed[start:end] = pack_lut_b_indices(indices, args)
         flat_fitted_codebooks[start:end] = centers
 
-    return packed, fitted_codebooks
+    return packed, fitted_codebooks, fitted_scales
 
 
 @torch.no_grad()
@@ -316,6 +379,7 @@ def dequantize_lut_b(
     packed: torch.Tensor,
     codebooks: torch.Tensor,
     args: QuantizationArgs,
+    scales: torch.Tensor | None = None,
     *,
     dtype: torch.dtype = torch.bfloat16,
 ) -> torch.Tensor:
@@ -337,6 +401,16 @@ def dequantize_lut_b(
     row_tiles, column_tiles = packed.shape[-3:-1]
     tile_shape = (*leading_shape, row_tiles, column_tiles)
     _validate_codebook_shape(codebooks, tile_shape, args)
+    if scales is None:
+        # Compatibility for callers with unscaled codebooks from the earlier
+        # LUT-B representation.
+        scales = torch.full(
+            tile_shape,
+            LUT_B_E8M0_BIAS,
+            dtype=torch.uint8,
+            device=packed.device,
+        )
+    _validate_lut_b_scales(scales, tile_shape, packed.device)
     if codebooks.dtype != torch.float8_e4m3fn:
         raise ValueError(
             "Canonical LUT-B codebooks must use torch.float8_e4m3fn, "
@@ -352,8 +426,11 @@ def dequantize_lut_b(
         )
 
     indices = unpack_lut_b_indices(packed, args).reshape(-1, block_n * block_k)
+    scaled_codebooks = codebooks.reshape(-1, codebook_size).to(torch.float32) * (
+        _decode_lut_b_scales(scales).reshape(-1, 1)
+    )
     values = torch.gather(
-        codebooks.reshape(-1, codebook_size).to(dtype),
+        scaled_codebooks.to(dtype),
         1,
         indices.to(torch.int64),
     ).reshape(
@@ -382,7 +459,12 @@ def fake_quantize_lut_b(
     weight: torch.Tensor,
     args: QuantizationArgs,
     codebooks: torch.Tensor | None = None,
+    scales: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Quantize and dequantize a weight through the canonical LUT-B format."""
-    packed, fitted_codebooks = quantize_lut_b(weight, args, codebooks)
-    return dequantize_lut_b(packed, fitted_codebooks, args, dtype=weight.dtype)
+    packed, fitted_codebooks, fitted_scales = quantize_lut_b(
+        weight, args, codebooks, scales
+    )
+    return dequantize_lut_b(
+        packed, fitted_codebooks, args, fitted_scales, dtype=weight.dtype
+    )

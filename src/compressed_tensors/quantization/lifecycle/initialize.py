@@ -197,7 +197,7 @@ def initialize_qparams(
 
     if quantization_args.type == QuantizationType.CODEBOOK:
         # Codebooks are currently disconnected from observers and produce their named
-        # qparams (weight_codebook, weight_packed) directly during compression.
+        # qparams (weight_codebook, weight_scale, weight_packed) during compression.
         return
 
     # Skip all intialization for fully dynamic quantization

@@ -142,7 +142,7 @@ def fake_quantize(
     :return: fake quantized tensor
     """
     if args.type == QuantizationType.CODEBOOK:
-        return fake_quantize_lut_b(x, args, codebooks)
+        return fake_quantize_lut_b(x, args, codebooks, scale)
 
     return _process_quantization(
         x=x,
@@ -285,6 +285,7 @@ def forward_quantize(
             value,
             args,
             getattr(module, "weight_codebook", None),
+            getattr(module, "weight_scale", None),
         )
     global_scale = getattr(module, f"{base_name}_global_scale", None)
 

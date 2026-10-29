@@ -22,7 +22,7 @@ class LutBCompressor(BaseCompressor):
 
     @classmethod
     def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
-        return ("weight_packed", "weight_codebook")
+        return ("weight_packed", "weight_codebook", "weight_scale")
 
     @classmethod
     def compress(
@@ -30,14 +30,18 @@ class LutBCompressor(BaseCompressor):
         state_dict: TensorStateDict,
         scheme: QuantizationScheme,
     ) -> TensorStateDict:
-        """Compress a weight to packed 3-bit indices and E4M3 codebooks."""
+        """Compress a weight to packed indices, E4M3 codebooks and E8M0 scales."""
         state_dict = state_dict.copy()
         weight = state_dict.pop("weight")
         codebooks = state_dict.pop("weight_codebook", None)
+        scales = state_dict.pop("weight_scale", None)
 
-        packed, codebooks = quantize_lut_b(weight, scheme.weights, codebooks)
+        packed, codebooks, scales = quantize_lut_b(
+            weight, scheme.weights, codebooks, scales
+        )
         state_dict["weight_packed"] = packed
         state_dict["weight_codebook"] = codebooks
+        state_dict["weight_scale"] = scales
         state_dict = cls._remove_symmetric_zp(state_dict, scheme)
         return state_dict
 
@@ -51,10 +55,12 @@ class LutBCompressor(BaseCompressor):
         state_dict = state_dict.copy()
         packed = state_dict.pop("weight_packed")
         codebooks = state_dict["weight_codebook"]
+        scales = state_dict.get("weight_scale")
         state_dict["weight"] = dequantize_lut_b(
             packed,
             codebooks,
             scheme.weights,
+            scales,
             dtype=torch.bfloat16,
         )
         return state_dict
