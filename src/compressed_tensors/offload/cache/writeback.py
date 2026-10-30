@@ -23,6 +23,7 @@ import torch
 import torch.distributed as dist
 from loguru import logger
 from safetensors.torch import load_file, save_file
+from compressed_tensors.offload.transfer import current_async_transfer
 
 
 @dataclass
@@ -31,6 +32,9 @@ class _WriteRequest:
     tensors: dict
     future: Future
     metadata: dict[str, str] | None = None
+    ready_events: tuple[object, ...] = ()
+    label: str | None = None
+    queued_at: float = 0.0
 
 
 _STOP = object()
@@ -47,7 +51,15 @@ def _size_in_bytes(size: int | str) -> int:
     return amount * (1024 ** ("B", "KB", "MB", "GB", "TB").index(unit))
 
 
-_ShardJob = tuple[Path, dict[str, torch.Tensor], threading.Event]
+_ShardJob = tuple[Path, dict[str, torch.Tensor], threading.Event, tuple[object, ...]]
+
+
+def _merge_events(*event_groups: tuple[object, ...]) -> tuple[object, ...]:
+    events: dict[int, object] = {}
+    for group in event_groups:
+        for event in group:
+            events[id(event)] = event
+    return tuple(events.values())
 
 
 class AsyncWriter:
@@ -112,6 +124,8 @@ class AsyncWriter:
         self._batch_slots = threading.BoundedSemaphore(max_queued_batches)
         self._condition = threading.Condition()
         self._active_batch: list[_WriteRequest] | None = None
+        self._active_ready_events: tuple[object, ...] = ()
+        self._active_label: str | None = None
         self._flushing = False
         self._pending: dict[str, Future] = {}
         self._errors: dict[str, BaseException] = {}
@@ -124,6 +138,7 @@ class AsyncWriter:
         self._current_path: Path | None = None
         self._current_tensors: dict[str, torch.Tensor] = {}
         self._current_size = 0
+        self._current_ready_events: tuple[object, ...] = ()
         self._shard_number = 0
         self._in_batch = False
         self._published = False
@@ -133,7 +148,12 @@ class AsyncWriter:
         self._thread.start()
 
     @contextlib.contextmanager
-    def batch(self) -> Iterator[AsyncWriter]:
+    def batch(
+        self,
+        *,
+        ready_event: object | None = None,
+        label: str | None = None,
+    ) -> Iterator[AsyncWriter]:
         """Reserve bounded queue capacity for one subgraph's writes."""
         with self._condition:
             while self._flushing:
@@ -161,6 +181,10 @@ class AsyncWriter:
                 raise
             batch: list[_WriteRequest] = []
             self._active_batch = batch
+            self._active_ready_events = (
+                (ready_event,) if ready_event is not None else ()
+            )
+            self._active_label = label
             if self.streaming_save and self.is_source:
                 with self._checkpoint_lock:
                     self._in_batch = True
@@ -178,6 +202,8 @@ class AsyncWriter:
                     self._errors[request.path] = error
                     request.future.set_exception(error)
                 self._active_batch = None
+                self._active_ready_events = ()
+                self._active_label = None
                 self._condition.notify_all()
             self._batch_slots.release()
             for request in failed_requests:
@@ -192,9 +218,14 @@ class AsyncWriter:
                 if batch:
                     # The semaphore reserves a queue slot for this batch. Enqueue
                     # before waking flush callers so they cannot miss this batch.
+                    queued_at = time.perf_counter()
+                    for request in batch:
+                        request.queued_at = queued_at
                     self._queue.put(batch)
                 else:
                     self._batch_slots.release()
+                self._active_ready_events = ()
+                self._active_label = None
                 self._condition.notify_all()
 
     def submit(
@@ -202,6 +233,8 @@ class AsyncWriter:
         path: str,
         tensors: dict,
         metadata: dict[str, str] | None = None,
+        ready_events: tuple[object, ...] = (),
+        label: str | None = None,
     ) -> None:
         """Add a stable, contiguous CPU mapping to the active subgraph batch."""
         path = os.fspath(path)
@@ -210,13 +243,16 @@ class AsyncWriter:
                 raise RuntimeError("Cannot submit to a closed disk writeback worker")
             if self._active_batch is None:
                 raise RuntimeError("Disk tensor snapshots must be submitted in a batch")
-            self._submit_locked(path, tensors, metadata)
+            self._submit_locked(path, tensors, metadata, ready_events, label)
 
     def submit_file(
         self,
         path: str | os.PathLike,
         tensors: dict,
         metadata: dict[str, str] | None = None,
+        *,
+        ready_events: tuple[object, ...] = (),
+        label: str | None = None,
     ) -> None:
         """Submit a file write to the active subgraph or as a bounded singleton.
 
@@ -231,7 +267,7 @@ class AsyncWriter:
             if self._closed:
                 raise RuntimeError("Cannot submit to a closed disk writeback worker")
             if self._active_batch is not None:
-                self._submit_locked(path, tensors, metadata)
+                self._submit_locked(path, tensors, metadata, ready_events, label)
                 return
 
         # Reserve queue capacity without holding the condition. A batch may begin
@@ -245,38 +281,61 @@ class AsyncWriter:
                 raise RuntimeError("Cannot submit to a closed disk writeback worker")
             if self._active_batch is not None:
                 try:
-                    self._submit_locked(path, tensors, metadata)
+                    self._submit_locked(path, tensors, metadata, ready_events, label)
                 finally:
                     self._batch_slots.release()
                 return
             try:
                 if not self._defer_errors:
                     self._raise_first_error_locked()
-                request = self._new_request_locked(path, tensors, metadata)
+                request = self._new_request_locked(
+                    path, tensors, metadata, ready_events, label
+                )
             except BaseException:
                 self._batch_slots.release()
                 raise
             # The reserved semaphore slot guarantees this insertion can proceed
             # without waiting for the worker while holding the condition.
+            request.queued_at = time.perf_counter()
             self._queue.put([request])
             self._condition.notify_all()
 
     def _submit_locked(
-        self, path: str, tensors: dict, metadata: dict[str, str] | None
+        self,
+        path: str,
+        tensors: dict,
+        metadata: dict[str, str] | None,
+        ready_events: tuple[object, ...] = (),
+        label: str | None = None,
     ) -> None:
         if not self._defer_errors:
             self._raise_first_error_locked()
-        request = self._new_request_locked(path, tensors, metadata)
+        request = self._new_request_locked(
+            path, tensors, metadata, ready_events, label
+        )
         assert self._active_batch is not None
         self._active_batch.append(request)
 
     def _new_request_locked(
-        self, path: str, tensors: dict, metadata: dict[str, str] | None
+        self,
+        path: str,
+        tensors: dict,
+        metadata: dict[str, str] | None,
+        ready_events: tuple[object, ...] = (),
+        label: str | None = None,
     ) -> _WriteRequest:
         if path in self._pending:
             raise RuntimeError(f"A disk write is already pending for {path}")
         future = Future()
-        request = _WriteRequest(path, tensors, future, metadata)
+        request = _WriteRequest(
+            path,
+            tensors,
+            future,
+            metadata,
+            _merge_events(self._active_ready_events, ready_events),
+            label or self._active_label,
+            0.0,
+        )
         self._pending[path] = future
         return request
 
@@ -370,7 +429,15 @@ class AsyncWriter:
 
             # Snapshot on the producer so CT can replace the parameter with its
             # meta handle while the worker serializes the stable CPU tensor.
-            snapshot = tensor.detach().contiguous().to(device="cpu", copy=True)
+            transfer = current_async_transfer()
+            if transfer is None:
+                snapshot = tensor.detach().contiguous().to(device="cpu", copy=True)
+            else:
+                snapshot = transfer.to_cpu(tensor, copy=True, contiguous=True)
+                if transfer.ready_event is not None:
+                    self._current_ready_events = _merge_events(
+                        self._current_ready_events, (transfer.ready_event,)
+                    )
             self._current_tensors[name] = snapshot
             self._current_size += tensor_bytes
             self._weight_map[name] = self._current_path.name
@@ -395,14 +462,27 @@ class AsyncWriter:
         self._current_path = None
         self._current_tensors = {}
         self._current_size = 0
-        return path, tensors, event
+        ready_events = self._current_ready_events
+        self._current_ready_events = ()
+        return path, tensors, event, ready_events
 
     def _submit_shard(self, job: _ShardJob | None) -> None:
         if job is None:
             return
-        path, tensors, event = job
+        path, tensors, event, ready_events = job
         try:
-            self.submit_file(path, tensors, metadata={"format": "pt"})
+            label = (
+                None
+                if self.is_batch_active or not ready_events
+                else "checkpoint shard"
+            )
+            self.submit_file(
+                path,
+                tensors,
+                metadata={"format": "pt"},
+                ready_events=ready_events,
+                label=label,
+            )
         except BaseException as error:
             with self._checkpoint_lock:
                 self._submission_errors[str(path)] = error
@@ -665,11 +745,23 @@ class AsyncWriter:
                 # Once the worker has taken a batch, its queue slot can be
                 # reserved by the producer while this batch is being written.
                 self._batch_slots.release()
+                queue_wait_ms = max(
+                    (time.perf_counter() - request.queued_at) * 1000
+                    for request in batch
+                ) if batch else 0.0
+                event_wait_ms = 0.0
+                write_ms = 0.0
                 for request in batch:
                     try:
+                        wait_started = time.perf_counter()
+                        for event in request.ready_events:
+                            event.synchronize()
+                        event_wait_ms += (time.perf_counter() - wait_started) * 1000
+                        write_started = time.perf_counter()
                         self._write_atomically(
                             request.path, request.tensors, request.metadata
                         )
+                        write_ms += (time.perf_counter() - write_started) * 1000
                     except BaseException as error:
                         request.future.set_exception(error)
                         with self._condition:
@@ -680,6 +772,17 @@ class AsyncWriter:
                     finally:
                         with self._condition:
                             self._pending.pop(request.path, None)
+                if batch and batch[0].label is not None:
+                    logger.info(
+                        "AsyncWriter batch [{}]: worker queue delay={:.2f} ms, "
+                        "CUDA readiness wait={:.2f} ms, file serialization and "
+                        "replace={:.2f} ms, files={}",
+                        batch[0].label,
+                        queue_wait_ms,
+                        event_wait_ms,
+                        write_ms,
+                        len(batch),
+                    )
             finally:
                 self._queue.task_done()
 

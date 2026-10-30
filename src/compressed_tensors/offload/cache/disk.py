@@ -16,6 +16,7 @@ from compressed_tensors.offload.cache.utils import (
     load_disk_tensor_from_offload,
 )
 from compressed_tensors.offload.cache.writeback import AsyncWriter
+from compressed_tensors.offload.transfer import current_async_transfer
 from compressed_tensors.offload.utils import _pin_memory, send_tensors
 from compressed_tensors.utils import is_accelerator_type
 from safetensors.torch import save_file
@@ -206,9 +207,15 @@ class DiskCache(OffloadCache):
             # safetensors requires contiguous tensors; compressed/packed weights (e.g.
             # NVFP4, FP8 block) may be non-contiguous views after compression.
             if self.async_writer is not None and self.async_writer.is_batch_active:
-                # Snapshot to pageable CPU memory before returning. The asynchronous
-                # worker only retains host tensors while it serializes the file.
-                cpu_tensor = tensor.detach().contiguous().to(device="cpu", copy=True)
+                transfer = current_async_transfer()
+                if transfer is None:
+                    # Snapshot to CPU memory before returning. The asynchronous
+                    # worker only retains host tensors while it serializes the file.
+                    cpu_tensor = tensor.detach().contiguous().to(
+                        device="cpu", copy=True
+                    )
+                else:
+                    cpu_tensor = transfer.to_cpu(tensor, copy=True, contiguous=True)
                 self.async_writer.submit(file_path, {"weight": cpu_tensor})
             else:
                 save_file({"weight": tensor.contiguous()}, file_path)

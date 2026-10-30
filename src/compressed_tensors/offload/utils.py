@@ -8,6 +8,7 @@ from itertools import chain
 from typing import TypeVar
 
 import torch
+from compressed_tensors.offload.transfer import current_async_transfer
 from compressed_tensors.utils.helpers import patch_attr
 from loguru import logger
 
@@ -39,7 +40,11 @@ def send_tensors(value: T, *args, **kwargs) -> T:
     match value:
         case torch.Tensor():
             with torch.no_grad():
-                tensor = value.to(*args, **kwargs)
+                transfer = current_async_transfer()
+                if transfer is None:
+                    tensor = value.to(*args, **kwargs)
+                else:
+                    tensor = transfer.move_tensor(value, *args, **kwargs)
 
             # special case: avoid changing param pointer when possible. Compare devices
             # too, since tensors without elements have a null data pointer everywhere

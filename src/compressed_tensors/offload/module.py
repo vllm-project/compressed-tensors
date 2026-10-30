@@ -8,6 +8,7 @@ import torch
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
 from compressed_tensors.offload.cache.writeback import AsyncWriter
+from compressed_tensors.offload.transfer import AsyncTransfer
 from compressed_tensors.offload.utils import send_tensors
 
 
@@ -173,6 +174,8 @@ def subgraph_stage_modules(
 
 def subgraph_onload_modules(
     modules: dict[str, torch.nn.Module],
+    async_transfer: AsyncTransfer | None = None,
+    transfer_label: str = "subgraph",
 ) -> dict[str, dict]:
     """Onload modules, consuming tensors staged in CPU memory."""
     from compressed_tensors.offload import get_cache_init_kwargs
@@ -180,12 +183,18 @@ def subgraph_onload_modules(
     offload_kwargs = {}
     # tensors that were not staged are read from disk here, grouped like staging
     with disk_load_context():
-        for name, module in modules.items():
-            if isinstance(module._parameters, OffloadCache):
-                init_kwargs = get_cache_init_kwargs(module)
-                offload_kwargs[name] = init_kwargs
+        transfer_context = (
+            async_transfer.onloading(transfer_label)
+            if async_transfer is not None
+            else contextlib.nullcontext()
+        )
+        with transfer_context:
+            for name, module in modules.items():
+                if isinstance(module._parameters, OffloadCache):
+                    init_kwargs = get_cache_init_kwargs(module)
+                    offload_kwargs[name] = init_kwargs
 
-                remove_module_offload(module, onload_tensors=True)
+                    remove_module_offload(module, onload_tensors=True)
     return offload_kwargs
 
 
@@ -193,6 +202,8 @@ def subgraph_offload_modules(
     modules: dict[str, torch.nn.Module],
     offload_kwargs: dict[str, dict],
     async_writer: AsyncWriter | None = None,
+    async_transfer: AsyncTransfer | None = None,
+    transfer_label: str = "subgraph",
 ):
     """Offload modules through one bounded writer for cache files and shards."""
     from compressed_tensors.offload import get_cache_init_kwargs
@@ -232,7 +243,13 @@ def subgraph_offload_modules(
     )
     use_async = async_writer is not None and uses_disk
     with contextlib.ExitStack() as stack:
-        if use_async:
+        if async_transfer is not None:
+            stack.enter_context(
+                async_transfer.offloading(
+                    transfer_label, async_writer if use_async else None
+                )
+            )
+        elif use_async:
             stack.enter_context(async_writer.batch())
         for module, module_offload_kwargs in to_offload:
             offload_module(module, **module_offload_kwargs)

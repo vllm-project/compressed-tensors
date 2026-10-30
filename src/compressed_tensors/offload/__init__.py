@@ -31,6 +31,7 @@ from compressed_tensors.offload.dist_utils import (
 )
 from compressed_tensors.offload.load import load_offloaded_model
 from compressed_tensors.offload.module import offload_module, unwrap_offload_forward
+from compressed_tensors.offload.transfer import AsyncTransfer
 from compressed_tensors.offload.utils import (
     as_single_threaded,
     get_module_device,
@@ -61,6 +62,7 @@ __all__ = [
     "disable_offloading",
     "disk_load_context",
     "AsyncWriter",
+    "AsyncTransfer",
     # manipulate parameters
     "update_offload_parameter",
     "get_execution_device",
