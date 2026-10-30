@@ -38,15 +38,16 @@ def _checkpoint_backed_cache(tmp_path, tensors, onload_device="cuda"):
 @requires_gpu
 @pytest.mark.unit
 def test_staged_onload_is_correct_with_async_copies(tmp_path):
-    # non_blocking H2D from pinned memory must be ordered before anything
-    # that observes the tensor, without an explicit synchronize
+    # non_blocking H2D must be ordered before anything that observes the
+    # tensor, without an explicit synchronize — for pinned and pageable
+    # staging alike
     tensors = {
         "a": torch.arange(64, dtype=torch.float32).reshape(8, 8),
         "b": torch.arange(8, dtype=torch.bfloat16),
     }
     cache, offloaded = _checkpoint_backed_cache(tmp_path, tensors)
 
-    # capture the copy mode onload requests for pinned tensors
+    # capture the copy mode onload requests for staged tensors
     seen = []
     real_send = ct_disk.send_tensors
 
@@ -65,7 +66,7 @@ def test_staged_onload_is_correct_with_async_copies(tmp_path):
             assert torch.equal(onloaded, tensor.to(onloaded.device))
         assert seen == [True, True]
 
-        # unpinned staging must keep synchronous copies
+        # pageable staging must also onload asynchronously
         cache2, offloaded2 = _checkpoint_backed_cache(
             tmp_path / "unpinned", {"c": torch.ones(4, 4)}
         )
@@ -73,7 +74,7 @@ def test_staged_onload_is_correct_with_async_copies(tmp_path):
         cache2.is_staged = True
         onloaded = cache2.onload(staged)
         assert torch.equal(onloaded.cpu(), torch.ones(4, 4))
-        assert seen == [True, True, False]
+        assert seen == [True, True, True]
     finally:
         ct_disk.send_tensors = real_send
 

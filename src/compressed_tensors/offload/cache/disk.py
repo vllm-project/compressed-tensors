@@ -100,13 +100,14 @@ class DiskCache(OffloadCache):
         device = _get_safe_open_device(self.onload_device)
 
         if self.is_staged:
-            # page-locked staging enables asynchronous H2D copies: they are
-            # stream-ordered with the work that consumes them, and the pinned
-            # blocks are not reused until the copies complete
+            # staged CPU tensors are onloaded with asynchronous H2D copies,
+            # stream-ordered with the work that consumes them. Pinned tensors
+            # are read by the DMA engine directly; pageable tensors are staged
+            # by the driver through a pinned bounce buffer, and skipping the
+            # post-copy synchronize still lets each copy's DMA overlap the
+            # next staging copy and the consuming kernels
             non_blocking = (
-                torch.accelerator.is_available()
-                and offloaded.device.type == "cpu"
-                and offloaded.is_pinned()
+                torch.accelerator.is_available() and offloaded.device.type == "cpu"
             )
             onloaded = send_tensors(
                 offloaded, device=device, copy=False, non_blocking=non_blocking
