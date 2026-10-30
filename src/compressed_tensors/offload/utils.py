@@ -10,6 +10,7 @@ from typing import TypeVar
 import torch
 from compressed_tensors.utils.helpers import patch_attr
 from loguru import logger
+from torch.utils._pytree import tree_map
 
 
 __all__ = [
@@ -27,6 +28,34 @@ T = TypeVar("T")
 TensorCls = TypeVar("TensorCls", bound=torch.Tensor)
 
 
+def _send_leaf(leaf, *args, **kwargs):
+    if isinstance(leaf, torch.Tensor):
+        with torch.no_grad():
+            tensor = leaf.to(*args, **kwargs)
+
+        # special case: avoid changing param pointer when possible. Compare devices
+        # too, since tensors without elements have a null data pointer everywhere
+        if tensor.device == leaf.device and tensor.data_ptr() == leaf.data_ptr():
+            return leaf
+
+        tensor.__class__ = leaf.__class__
+        tensor.__dict__ = leaf.__dict__.copy()
+        return tensor
+    elif is_dataclass(leaf) and not isinstance(leaf, type):
+        return type(leaf)(
+            **{
+                f.name: send_tensors(getattr(leaf, f.name), *args, **kwargs)
+                for f in fields(leaf)
+            }
+        )
+    elif isinstance(leaf, dict):
+        return type(leaf)(
+            {k: send_tensors(v, *args, **kwargs) for k, v in leaf.items()}
+        )
+    else:
+        return leaf
+
+
 def send_tensors(value: T, *args, **kwargs) -> T:
     """
     Recursively identify and move tensors using `torch.Tensor.to`
@@ -36,34 +65,7 @@ def send_tensors(value: T, *args, **kwargs) -> T:
     :param kwargs: keyword arguments to `to`
     :return: value with moved tensors
     """
-    match value:
-        case torch.Tensor():
-            with torch.no_grad():
-                tensor = value.to(*args, **kwargs)
-
-            # special case: avoid changing param pointer when possible. Compare devices
-            # too, since tensors without elements have a null data pointer everywhere
-            if tensor.device == value.device and tensor.data_ptr() == value.data_ptr():
-                return value
-
-            tensor.__class__ = value.__class__
-            tensor.__dict__ = value.__dict__.copy()
-            return tensor
-        case list():
-            return [send_tensors(v, *args, **kwargs) for v in value]
-        case tuple():
-            return tuple(send_tensors(v, *args, **kwargs) for v in value)
-        case dict():
-            return {k: send_tensors(v, *args, **kwargs) for k, v in value.items()}
-        case _ if is_dataclass(value):
-            return type(value)(
-                **{
-                    f.name: send_tensors(getattr(value, f.name), *args, **kwargs)
-                    for f in fields(value)
-                }
-            )
-        case _:
-            return value
+    return tree_map(lambda leaf: _send_leaf(leaf, *args, **kwargs), value)
 
 
 def get_module_device(
