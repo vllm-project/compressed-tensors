@@ -5,6 +5,7 @@ import io
 import math
 
 import pytest
+import safetensors
 import torch
 from compressed_tensors.offload.cache import disk_utils, utils
 from compressed_tensors.offload.cache.disk import DiskCache
@@ -81,22 +82,13 @@ def test_raw_read_preserves_bytes(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "target_dtype,mapped",
-    [
-        (torch.float32, True),
-        (torch.bfloat16, True),
-        (torch.int8, True),
-        (torch.float32, False),
-    ],
-)
+@pytest.mark.parametrize("target_dtype", [torch.float32, torch.bfloat16, torch.int8])
 @pytest.mark.parametrize("requires_grad", [False, True])
 def test_pinned_stage_preserves_parameter_and_cast(
     tmp_path,
     monkeypatch,
     emulate_pinned_allocation,
     target_dtype,
-    mapped,
     requires_grad,
 ):
     parameter = torch.nn.Parameter(
@@ -110,8 +102,6 @@ def test_pinned_stage_preserves_parameter_and_cast(
     entry = DiskCache.index[offloaded]
     save_file({"weight": parameter.data.float()}, entry["safetensors_file"])
     entry["dtype"] = str(target_dtype).removeprefix("torch.")
-    if not mapped:
-        monkeypatch.delitem(utils.str_to_torch_dtype, "F32")
     emulate_pinned_allocation.clear()
 
     staged = cache.stage(offloaded, pin_memory=True)
@@ -121,13 +111,16 @@ def test_pinned_stage_preserves_parameter_and_cast(
     assert staged.requires_grad == (requires_grad and target_dtype.is_floating_point)
     assert staged.dtype == target_dtype
     assert torch.equal(staged, parameter.detach().to(target_dtype))
-    assert emulate_pinned_allocation == [True]
+    # a matching dtype is a single read directly into pinned memory; a cast
+    # reads the on-disk dtype into pageable memory before pinning the result
+    expected = [True] if target_dtype == torch.float32 else [False, True]
+    assert emulate_pinned_allocation == expected
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("onload_device", ["cpu", torch.device("cpu"), "cuda"])
 @pytest.mark.parametrize("accelerator_available", [False, True])
-def test_stage_without_pinning_uses_existing_loader(
+def test_stage_reads_raw_without_safetensors(
     tmp_path, monkeypatch, onload_device, accelerator_available
 ):
     cache = DiskCache(onload_device, offload_dir=tmp_path)
@@ -137,10 +130,10 @@ def test_stage_without_pinning_uses_existing_loader(
         torch.accelerator, "is_available", lambda: accelerator_available
     )
 
-    def unexpected_raw_open(*args, **kwargs):
-        pytest.fail("Unpinned staging must use the existing safetensors loader")
+    def unexpected_safe_open(*args, **kwargs):
+        pytest.fail("Disk reads must use the raw reader, not safetensors")
 
-    monkeypatch.setattr(disk_utils, "open", unexpected_raw_open, raising=False)
+    monkeypatch.setattr(safetensors, "safe_open", unexpected_safe_open)
     assert torch.equal(cache.stage(offloaded), tensor)
     assert cache.stage(None, pin_memory=True) is None
     if not accelerator_available or torch.device(onload_device).type == "cpu":

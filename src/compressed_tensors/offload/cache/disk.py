@@ -12,7 +12,6 @@ from compressed_tensors.logger import logger
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.cache.disk_utils import _evict
 from compressed_tensors.offload.cache.utils import (
-    _pinned_staging_enabled,
     catch_pinned_mem_error,
     load_disk_tensor_from_offload,
 )
@@ -105,8 +104,7 @@ class DiskCache(OffloadCache):
             # stream-ordered with the work that consumes them, and the pinned
             # blocks are not reused until the copies complete
             non_blocking = (
-                _pinned_staging_enabled()
-                and torch.accelerator.is_available()
+                torch.accelerator.is_available()
                 and offloaded.device.type == "cpu"
                 and offloaded.is_pinned()
             )
@@ -263,12 +261,11 @@ class DiskCache(OffloadCache):
 
 def _get_safe_open_device(device: "DeviceLikeType") -> str:
     """
-    `safetensors.safe_open` does not accept `torch.device` as argument, so
-    we must convert from torch.device to a string, while considering accelerator
-    device index resolution.
+    Normalize a device for tensor transfers, converting from torch.device to a
+    string while considering accelerator device index resolution.
 
     :param device: torch device to convert
-    :return: device string for `safetensors.safe_open`
+    :return: device string for `torch.Tensor.to`
     """
     device = torch.device(device)
     if is_accelerator_type(device.type):

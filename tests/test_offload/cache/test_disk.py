@@ -10,6 +10,7 @@ from compressed_tensors.offload import offload_module
 from compressed_tensors.offload.cache import utils as cache_utils
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
+from compressed_tensors.offload.cache.utils import load_disk_tensor_from_offload
 from compressed_tensors.offload.module import (
     remove_module_offload,
     stage_module_offload,
@@ -226,21 +227,6 @@ def test_stage_pinned_memory_logs_hint(tmp_path, monkeypatch):
     assert any("Pinned-memory staging ran out of host RAM" in w for w in warnings)
 
 
-def _counting_safe_open(monkeypatch):
-    """Patch `safe_open` in the disk cache module and count how often it opens."""
-    from compressed_tensors.offload.cache import disk_utils as disk_module
-
-    real = disk_module.safe_open
-    calls = []
-
-    def counted(*args, **kwargs):
-        calls.append(args[0])
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(disk_module, "safe_open", counted)
-    return calls
-
-
 def _counting_open(monkeypatch):
     """Patch the raw reader's `open` in the disk cache module and count opens."""
     from compressed_tensors.offload.cache import disk_utils as disk_module
@@ -269,28 +255,29 @@ def _cache_with_weights(offload_dir, names):
 def test_disk_load_context_reuses_one_handle_per_file(tmp_path, monkeypatch):
     """The point of the context: N reads from one file cost one open, not N.
 
-    `safe_open` parses a header covering every tensor in the file, so opening
-    per read is O(N) per read and O(N**2) across the group. This asserts the
-    group collapses to a single open.
+    The raw reader parses a header covering every tensor in the file, so
+    opening per read is O(N) per read and O(N**2) across the group. This
+    asserts the group collapses to a single open.
     """
-    from compressed_tensors.offload.cache.disk_utils import _opened
-
     names = [f"w{i}" for i in range(6)]
     shard = tmp_path / "shard.safetensors"
     save_file({n: torch.full((4,), float(i)) for i, n in enumerate(names)}, shard)
 
-    opens = _counting_safe_open(monkeypatch)
+    infos = {
+        n: {"safetensors_file": str(shard), "weight_name": n, "dtype": "float32"}
+        for n in names
+    }
+    opens = _counting_open(monkeypatch)
     with disk_load_context():
         for i, name in enumerate(names):
-            with _opened(str(shard), "cpu") as file:
-                assert_tensor_equal(file.get_tensor(name), torch.full((4,), float(i)))
+            value = load_disk_tensor_from_offload(infos[name], device="cpu")
+            assert_tensor_equal(value, torch.full((4,), float(i)))
     assert len(opens) == 1, f"expected a single open, got {len(opens)}"
 
     # same reads outside the context open once each
     opens.clear()
     for name in names:
-        with _opened(str(shard), "cpu") as file:
-            file.get_tensor(name)
+        load_disk_tensor_from_offload(infos[name], device="cpu")
     assert len(opens) == len(names)
 
 
@@ -302,7 +289,7 @@ def test_without_context_opens_per_read(tmp_path, monkeypatch):
     names = [f"w{i}" for i in range(4)]
     cache = _cache_with_weights(offload_dir, names)
 
-    opens = _counting_safe_open(monkeypatch)
+    opens = _counting_open(monkeypatch)
     outside = [cache[name] for name in names]
     assert len(opens) == len(names)
 
@@ -316,37 +303,35 @@ def test_without_context_opens_per_read(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_disk_load_context_closes_handles_on_exit(tmp_path):
-    """Handles must actually be closed on exit, not merely dropped.
+    """Readers must actually be closed on exit, not merely dropped.
 
-    Asserts against the handle itself rather than the cache dict, because
+    Asserts against the reader itself rather than the cache dict, because
     clearing the dict while leaking the descriptors would otherwise pass.
     """
     from compressed_tensors.offload.cache import disk_utils as disk_module
-    from compressed_tensors.offload.cache.disk_utils import _opened
+    from compressed_tensors.offload.cache.disk_utils import _opened_raw
 
     shard = tmp_path / "shard.safetensors"
     save_file({"a": torch.zeros(4)}, shard)
 
     with disk_load_context():
-        with _opened(str(shard), "cpu") as file:
-            file.get_tensor("a")
-        held = list(disk_module._open_files.cache.values())
-        assert held, "expected a cached handle"
-    assert disk_module._open_files.cache is None
-    for handle in held:
-        with pytest.raises(Exception, match="closed"):
-            handle.get_tensor("a")
+        with _opened_raw(str(shard)) as (file, _, _):
+            file.read(8)
+        held = [entry[0] for entry in disk_module._open_files.raw_cache.values()]
+        assert held, "expected a cached reader"
+    assert disk_module._open_files.raw_cache is None
+    for file in held:
+        assert file.closed
 
     # and the same when the block raises
     with pytest.raises(RuntimeError):
         with disk_load_context():
-            with _opened(str(shard), "cpu") as file:
-                file.get_tensor("a")
-            held = list(disk_module._open_files.cache.values())
+            with _opened_raw(str(shard)) as (file, _, _):
+                file.read(8)
+            held = [entry[0] for entry in disk_module._open_files.raw_cache.values()]
             raise RuntimeError("boom")
-    for handle in held:
-        with pytest.raises(Exception, match="closed"):
-            handle.get_tensor("a")
+    for file in held:
+        assert file.closed
 
 
 @pytest.mark.unit
@@ -358,14 +343,14 @@ def test_disk_load_context_nests(tmp_path, monkeypatch):
     os.mkdir(offload_dir)
     cache = _cache_with_weights(offload_dir, ["w0"])
 
-    opens = _counting_safe_open(monkeypatch)
+    opens = _counting_open(monkeypatch)
     with disk_load_context():
         cache["w0"]
         with disk_load_context():
             cache["w0"]
-        assert disk_module._open_files.cache is not None
+        assert disk_module._open_files.raw_cache is not None
         cache["w0"]
-    assert disk_module._open_files.cache is None
+    assert disk_module._open_files.raw_cache is None
     assert len(opens) == 1
 
 
@@ -383,7 +368,7 @@ def test_disk_load_context_bounds_open_handles(tmp_path, monkeypatch):
     with disk_load_context():
         for name in names:
             cache[name]
-        assert len(disk_module._open_files.cache) <= disk_module._MAX_OPEN_FILES
+        assert len(disk_module._open_files.raw_cache) <= disk_module._MAX_OPEN_FILES
 
 
 def _symlinked_shard(tmp_path, count):
@@ -430,8 +415,7 @@ def test_disk_load_context_hits_across_checkpoint_symlinks(
     cache, offloaded = _symlinked_shard(tmp_path, count=8)
     assert len({DiskCache.index[m]["safetensors_file"] for m in offloaded}) == 8
 
-    opens = _counting_safe_open(monkeypatch)
-    raw_opens = _counting_open(monkeypatch)
+    opens = _counting_open(monkeypatch)
     if pin_memory:
         cache.onload_device = torch.accelerator.current_accelerator()
     with disk_load_context():
@@ -440,8 +424,7 @@ def test_disk_load_context_hits_across_checkpoint_symlinks(
             for meta in offloaded
         ]
 
-    total = len(opens) + len(raw_opens)
-    assert total == 1, f"expected one open for one shard, got {total}"
+    assert len(opens) == 1, f"expected one open for one shard, got {len(opens)}"
     for i, value in enumerate(values):
         assert_tensor_equal(value, torch.full((4,), float(i)))
         if pin_memory:
@@ -481,7 +464,7 @@ def test_update_offload_keeps_shared_shard_handle(tmp_path, monkeypatch):
     the shard untouched, so the other tensors keep hitting the cached handle.
     """
     cache, offloaded = _symlinked_shard(tmp_path, count=4)
-    opens = _counting_safe_open(monkeypatch)
+    opens = _counting_open(monkeypatch)
     with disk_load_context():
         for meta in offloaded:
             cache.onload(meta)
