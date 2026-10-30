@@ -2,11 +2,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import errno
+import os
 import sys
 from functools import wraps
 
 import torch
-from compressed_tensors.offload.cache.disk_utils import _opened
+from compressed_tensors.offload.cache.disk_utils import _opened, _opened_raw
 from compressed_tensors.offload.utils import _pin_memory, to_tensor
 from compressed_tensors.utils.safetensors_load import str_to_torch_dtype
 from loguru import logger
@@ -107,13 +108,66 @@ def catch_pinned_mem_error(func):
     return wrapper
 
 
+def _pinned_staging_enabled() -> bool:
+    """
+    Whether disk tensors may be read directly into page-locked memory.
+
+    Set COMPRESSED_TENSORS_PINNED_STAGING=0 to disable, falling back to reading
+    through safetensors and pinning the result (an extra full copy per tensor).
+    """
+    value = os.environ.get("COMPRESSED_TENSORS_PINNED_STAGING", "1")
+    return value.lower() not in ("0", "false", "no", "off")
+
+
+def _empty_pinned(shape, dtype: torch.dtype) -> torch.Tensor:
+    """Allocate page-locked storage for a direct read."""
+    return torch.empty(shape, dtype=dtype, pin_memory=True)
+
+
+def _load_pinned_raw(offloaded: dict, dtype: torch.dtype) -> torch.Tensor | None:
+    """
+    Read a disk-offloaded tensor's payload directly into page-locked memory.
+
+    Returns None when the on-disk dtype differs from the requested dtype, so
+    the caller can convert through safetensors instead. Raw payloads are
+    little-endian, so big-endian hosts must swap bytes after reading.
+    """
+    file_path = offloaded["safetensors_file"]
+    name = offloaded["weight_name"]
+    with _opened_raw(file_path) as (file, header, data_offset):
+        info = header[name]
+        if str_to_torch_dtype.get(info.get("dtype")) != dtype:
+            return None
+
+        onloaded = _empty_pinned(info["shape"], dtype)
+        start, end = info["data_offsets"]
+        if onloaded.nbytes != end - start:
+            raise ValueError(f"Invalid byte length for tensor {name}")
+
+        array = onloaded.reshape(-1).view(torch.uint8).numpy()
+        remaining = memoryview(array)
+        file.seek(data_offset + start)
+        while remaining:
+            count = file.readinto(remaining)
+            if not count:
+                raise EOFError(
+                    f"Unexpected end of file reading tensor {name} from {file_path}"
+                )
+            remaining = remaining[count:]
+
+        if sys.byteorder == "big" and onloaded.element_size() > 1:
+            array.view(f"u{onloaded.element_size()}").byteswap(inplace=True)
+    return onloaded
+
+
 def load_disk_tensor_from_offload(
     offloaded: dict,
     device: str,
     template: torch.Tensor | None = None,
     pin_memory: bool = False,
 ) -> torch.Tensor:
-    """Load a tensor, reading matching dtypes directly into pinned CPU memory.
+    """
+    Load a tensor, reading matching dtypes directly into pinned CPU memory.
 
     Dtype conversions use safetensors before pinning the result. Raw payloads
     are little-endian, so big-endian hosts must swap bytes after reading.
@@ -121,34 +175,15 @@ def load_disk_tensor_from_offload(
     dtype = getattr(torch, offloaded["dtype"])
     file_path = offloaded["safetensors_file"]
     pin_memory = pin_memory and torch.accelerator.is_available()
-    with _opened(file_path, device, raw=pin_memory) as (
-        file,
-        header,
-        data_offset,
-    ):
-        name = offloaded["weight_name"]
-        if header is None:
-            onloaded = file.get_tensor(name).to(dtype)
-        else:
-            info = header[name]
-            if str_to_torch_dtype.get(info["dtype"]) != dtype:
-                with _opened(file_path, device) as (source_file, _, _):
-                    onloaded = _pin_memory(source_file.get_tensor(name).to(dtype))
-            else:
-                onloaded = torch.empty(
-                    info["shape"], dtype=dtype, device="cpu", pin_memory=True
-                )
-                start, end = info["data_offsets"]
-                if onloaded.nbytes != end - start:
-                    raise ValueError(f"Invalid byte length for tensor {name}")
-                array = onloaded.reshape(-1).view(torch.uint8).numpy()
-                remaining = memoryview(array)
-                file.seek(data_offset + start)
-                while remaining:
-                    count = file.readinto(remaining)
-                    if not count:
-                        raise EOFError(f"Unexpected end of file reading tensor {name}")
-                    remaining = remaining[count:]
-                if sys.byteorder == "big":
-                    array.view(f"u{onloaded.element_size()}").byteswap(inplace=True)
+
+    onloaded = None
+    if pin_memory and _pinned_staging_enabled():
+        onloaded = _load_pinned_raw(offloaded, dtype)
+
+    if onloaded is None:
+        with _opened(file_path, device) as file:
+            onloaded = file.get_tensor(offloaded["weight_name"]).to(dtype)
+            if pin_memory:
+                onloaded = _pin_memory(onloaded)
+
     return to_tensor(onloaded, template) if template is not None else onloaded

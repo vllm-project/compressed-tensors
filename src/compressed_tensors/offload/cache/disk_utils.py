@@ -19,10 +19,11 @@ __all__ = ["disk_load_context"]
 # (resolved path, device). Thread local because handles are not safe to share
 # across threads and callers may prefetch on a background thread.
 class _OpenFiles(threading.local):
-    """Per-thread handle cache and nesting depth for `disk_load_context`."""
+    """Per-thread handle caches and nesting depth for `disk_load_context`."""
 
     def __init__(self):
         self.cache: OrderedDict | None = None
+        self.raw_cache: OrderedDict | None = None
         self.depth = 0
 
 
@@ -37,7 +38,7 @@ _MAX_OPEN_FILES = 16
 @contextlib.contextmanager
 def disk_load_context() -> Iterator[None]:
     """
-    Hold safetensors and raw file handles open for the duration of the block.
+    Hold safetensors file handles open for the duration of the block.
 
     `safe_open` parses a header describing every tensor in the file, so the cost
     of opening is proportional to the number of tensors the file holds. Opening
@@ -56,6 +57,7 @@ def disk_load_context() -> Iterator[None]:
     """
     if _open_files.depth == 0:
         _open_files.cache = OrderedDict()
+        _open_files.raw_cache = OrderedDict()
     _open_files.depth += 1
     try:
         yield
@@ -63,52 +65,41 @@ def disk_load_context() -> Iterator[None]:
         _open_files.depth -= 1
         if _open_files.depth == 0:
             cache, _open_files.cache = _open_files.cache, None
-            for handle, _, _ in cache.values():
+            raw_cache, _open_files.raw_cache = _open_files.raw_cache, None
+            for handle in cache.values():
                 handle.__exit__(None, None, None)
+            for file, _, _ in raw_cache.values():
+                file.close()
 
 
 @contextlib.contextmanager
-def _opened(file_path: str, device: str, raw: bool = False) -> Iterator[tuple]:
+def _opened(file_path: str, device: str) -> Iterator["safe_open"]:
     """
-    Yield (handle, header, data_offset), reusing an open reader inside
-    `disk_load_context`. For safetensors handles, header is None.
+    Yield a safetensors handle for `file_path`, reusing an open one if the
+    caller is inside `disk_load_context`.
 
-    Raw readers validate the file with safetensors before opening an unbuffered
-    byte stream. The format fixes the header length to a little-endian uint64;
-    tensor offsets in the JSON header are relative to the data section.
-
-    Outside the context, close the reader after each use.
+    Outside that context this is an ordinary open/close, which keeps the
+    uninstrumented path byte for byte what it was.
     """
     cache = _open_files.cache
-    key = (_file_key(file_path), "raw" if raw else device)
-    entry = cache.get(key) if cache is not None else None
-    if entry is None:
+    if cache is None:
+        with safe_open(file_path, framework="pt", device=device) as file:
+            yield file
+        return
+
+    key = (_file_key(file_path), device)
+    handle = cache.get(key)
+    if handle is None:
         handle = safe_open(file_path, framework="pt", device=device)
         handle.__enter__()
-        header, data_offset = None, 0
-        if raw:
-            handle.__exit__(None, None, None)
-            handle = open(file_path, "rb", buffering=0)
-            try:
-                header_size = struct.unpack("<Q", handle.read(8))[0]
-                header = json.loads(handle.read(header_size))
-                data_offset = 8 + header_size
-            except BaseException:
-                handle.close()
-                raise
-        entry = (handle, header, data_offset)
-        if cache is not None:
-            cache[key] = entry
-            while len(cache) > _MAX_OPEN_FILES:
-                _, evicted = cache.popitem(last=False)
-                evicted[0].__exit__(None, None, None)
-    elif cache is not None:
+        cache[key] = handle
+        # Evict oldest first, never the handle just requested.
+        while len(cache) > _MAX_OPEN_FILES:
+            _, evicted = cache.popitem(last=False)
+            evicted.__exit__(None, None, None)
+    else:
         cache.move_to_end(key)
-    try:
-        yield entry
-    finally:
-        if cache is None:
-            entry[0].__exit__(None, None, None)
+    yield handle
 
 
 def _file_key(file_path: str) -> str:
@@ -123,6 +114,48 @@ def _file_key(file_path: str) -> str:
     return os.path.realpath(file_path)
 
 
+@contextlib.contextmanager
+def _opened_raw(file_path: str) -> Iterator[tuple]:
+    """
+    Yield `(file, header, data_offset)` for reading raw tensor bytes, reusing
+    an open reader inside `disk_load_context`.
+
+    The safetensors format fixes the header length to a little-endian uint64
+    followed by a JSON header; tensor `data_offsets` in the header are relative
+    to the end of the header. Unlike `safe_open`, the returned reader allows
+    reading a payload directly into caller-owned memory (used to read into
+    page-locked buffers without an intermediate copy).
+
+    Readers are positioned per read; the same reader must not be shared across
+    threads. Outside the context, the reader is closed after each use.
+    """
+    cache = _open_files.raw_cache
+    key = _file_key(file_path)
+    entry = cache.get(key) if cache is not None else None
+    if entry is None:
+        file = open(file_path, "rb", buffering=0)
+        try:
+            header_size = struct.unpack("<Q", file.read(8))[0]
+            header = json.loads(file.read(header_size))
+            data_offset = 8 + header_size
+        except BaseException:
+            file.close()
+            raise
+        entry = (file, header, data_offset)
+        if cache is not None:
+            cache[key] = entry
+            while len(cache) > _MAX_OPEN_FILES:
+                _, evicted = cache.popitem(last=False)
+                evicted[0].close()
+    else:
+        cache.move_to_end(key)
+    try:
+        yield entry
+    finally:
+        if cache is None:
+            entry[0].close()
+
+
 def _evict(file_path: str) -> None:
     """
     Close and drop any cached handle onto the file at `file_path`.
@@ -134,8 +167,14 @@ def _evict(file_path: str) -> None:
     which is thread local.
     """
     cache = _open_files.cache
-    if not cache:
+    raw_cache = _open_files.raw_cache
+    if not cache and not raw_cache:
         return
     target = _file_key(file_path)
-    for key in [key for key in cache if key[0] == target]:
-        cache.pop(key)[0].__exit__(None, None, None)
+    if cache:
+        for key in [key for key in cache if key[0] == target]:
+            cache.pop(key).__exit__(None, None, None)
+    if raw_cache:
+        entry = raw_cache.pop(target, None)
+        if entry is not None:
+            entry[0].close()

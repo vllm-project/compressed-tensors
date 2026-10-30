@@ -12,6 +12,7 @@ from compressed_tensors.logger import logger
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.cache.disk_utils import _evict
 from compressed_tensors.offload.cache.utils import (
+    _pinned_staging_enabled,
     catch_pinned_mem_error,
     load_disk_tensor_from_offload,
 )
@@ -80,11 +81,11 @@ class DiskCache(OffloadCache):
 
         weight_info = self.index[offloaded]
 
+        # the loader reads matching dtypes directly into page-locked memory;
+        # pinning is only useful when the tensors are later onloaded to a device
+        pin = pin_memory and torch.device(self.onload_device).type != "cpu"
         return load_disk_tensor_from_offload(
-            weight_info,
-            device="cpu",
-            template=offloaded,
-            pin_memory=pin_memory and torch.device(self.onload_device).type != "cpu",
+            weight_info, device="cpu", template=offloaded, pin_memory=pin
         )
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
@@ -100,7 +101,18 @@ class DiskCache(OffloadCache):
         device = _get_safe_open_device(self.onload_device)
 
         if self.is_staged:
-            onloaded = send_tensors(offloaded, device=device, copy=False)
+            # page-locked staging enables asynchronous H2D copies: they are
+            # stream-ordered with the work that consumes them, and the pinned
+            # blocks are not reused until the copies complete
+            non_blocking = (
+                _pinned_staging_enabled()
+                and torch.accelerator.is_available()
+                and offloaded.device.type == "cpu"
+                and offloaded.is_pinned()
+            )
+            onloaded = send_tensors(
+                offloaded, device=device, copy=False, non_blocking=non_blocking
+            )
         else:
             weight_info = self.index[offloaded]
             onloaded = load_disk_tensor_from_offload(

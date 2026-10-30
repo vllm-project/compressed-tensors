@@ -269,7 +269,7 @@ def test_disk_load_context_is_per_rank(tmp_path_factory):
 
     with disk_load_context():
         for i in range(4):
-            with _opened(str(shard), "cpu") as (file, _, _):
+            with _opened(str(shard), "cpu") as file:
                 assert_tensor_equal(
                     file.get_tensor(f"w{i}"), torch.full((4,), float(i))
                 )
@@ -281,7 +281,7 @@ def test_disk_load_context_is_per_rank(tmp_path_factory):
 
     dist.barrier()
     assert disk_utils._open_files.cache is None, f"rank {rank} leaked its cache"
-    for handle, _, _ in held:
+    for handle in held:
         with pytest.raises(Exception, match="closed"):
             handle.get_tensor("w0")
 

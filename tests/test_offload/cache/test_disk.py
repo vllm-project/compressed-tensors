@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import builtins
 import os
 
 import pytest
 import torch
 from compressed_tensors.offload import offload_module
+from compressed_tensors.offload.cache import utils as cache_utils
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
 from compressed_tensors.offload.module import (
@@ -204,10 +206,11 @@ def test_stage_pinned_memory_logs_hint(tmp_path, monkeypatch):
     tensor = torch.arange(10, device=onload_device)
     offloaded = cache.offload(tensor)
 
-    def raise_memory_error(*args, **kwargs):
+    # fail the page-locked allocation performed while staging
+    def raise_memory_error(shape, dtype):
         raise RuntimeError("CUDA out of memory. Tried to allocate 1 GiB")
 
-    monkeypatch.setattr(torch, "empty", raise_memory_error)
+    monkeypatch.setattr(cache_utils, "_empty_pinned", raise_memory_error)
 
     warnings = []
     handler_id = loguru_logger.add(
@@ -238,6 +241,21 @@ def _counting_safe_open(monkeypatch):
     return calls
 
 
+def _counting_open(monkeypatch):
+    """Patch the raw reader's `open` in the disk cache module and count opens."""
+    from compressed_tensors.offload.cache import disk_utils as disk_module
+
+    calls = []
+    real_open = builtins.open
+
+    def counted(*args, **kwargs):
+        calls.append(args[0])
+        return real_open(*args, **kwargs)
+
+    monkeypatch.setattr(disk_module, "open", counted, raising=False)
+    return calls
+
+
 def _cache_with_weights(offload_dir, names):
     """A DiskCache holding `names`, each in its own backing file."""
     DiskCache.index = {}
@@ -264,14 +282,14 @@ def test_disk_load_context_reuses_one_handle_per_file(tmp_path, monkeypatch):
     opens = _counting_safe_open(monkeypatch)
     with disk_load_context():
         for i, name in enumerate(names):
-            with _opened(str(shard), "cpu") as (file, _, _):
+            with _opened(str(shard), "cpu") as file:
                 assert_tensor_equal(file.get_tensor(name), torch.full((4,), float(i)))
     assert len(opens) == 1, f"expected a single open, got {len(opens)}"
 
     # same reads outside the context open once each
     opens.clear()
     for name in names:
-        with _opened(str(shard), "cpu") as (file, _, _):
+        with _opened(str(shard), "cpu") as file:
             file.get_tensor(name)
     assert len(opens) == len(names)
 
@@ -310,9 +328,9 @@ def test_disk_load_context_closes_handles_on_exit(tmp_path):
     save_file({"a": torch.zeros(4)}, shard)
 
     with disk_load_context():
-        with _opened(str(shard), "cpu") as (file, _, _):
+        with _opened(str(shard), "cpu") as file:
             file.get_tensor("a")
-        held = [entry[0] for entry in disk_module._open_files.cache.values()]
+        held = list(disk_module._open_files.cache.values())
         assert held, "expected a cached handle"
     assert disk_module._open_files.cache is None
     for handle in held:
@@ -322,9 +340,9 @@ def test_disk_load_context_closes_handles_on_exit(tmp_path):
     # and the same when the block raises
     with pytest.raises(RuntimeError):
         with disk_load_context():
-            with _opened(str(shard), "cpu") as (file, _, _):
+            with _opened(str(shard), "cpu") as file:
                 file.get_tensor("a")
-            held = [entry[0] for entry in disk_module._open_files.cache.values()]
+            held = list(disk_module._open_files.cache.values())
             raise RuntimeError("boom")
     for handle in held:
         with pytest.raises(Exception, match="closed"):
@@ -413,6 +431,7 @@ def test_disk_load_context_hits_across_checkpoint_symlinks(
     assert len({DiskCache.index[m]["safetensors_file"] for m in offloaded}) == 8
 
     opens = _counting_safe_open(monkeypatch)
+    raw_opens = _counting_open(monkeypatch)
     if pin_memory:
         cache.onload_device = torch.accelerator.current_accelerator()
     with disk_load_context():
@@ -421,7 +440,8 @@ def test_disk_load_context_hits_across_checkpoint_symlinks(
             for meta in offloaded
         ]
 
-    assert len(opens) == 1, f"expected one open for one shard, got {len(opens)}"
+    total = len(opens) + len(raw_opens)
+    assert total == 1, f"expected one open for one shard, got {total}"
     for i, value in enumerate(values):
         assert_tensor_equal(value, torch.full((4,), float(i)))
         if pin_memory:
