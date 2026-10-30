@@ -7,6 +7,9 @@ line-length = 88
 target-version = ['py311']
 
 [tool.pytest.ini_options]
+# always import compressed_tensors from the repo source rather than an
+# installed copy (e.g. a release from PyPI), which may be outdated
+pythonpath = ["src"]
 markers = [
     "unit: tests to ensure code correctness and regression test functionality",
     "smoke: quick tests to check basic functionality",
