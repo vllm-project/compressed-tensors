@@ -31,6 +31,7 @@ class CompressionFormat(str, Enum):
     mxfp4_pack_quantized = "mxfp4-pack-quantized"
     mxfp6_pack_quantized = "mxfp6-pack-quantized"
     mxfp8_quantized = "mxfp8-quantized"
+    lut_b = "lut-b"
 
 
 @unique
