@@ -80,11 +80,11 @@ class DiskCache(OffloadCache):
 
         weight_info = self.index[offloaded]
 
-        # the loader reads matching dtypes directly into page-locked memory;
-        # pinning is only useful when the tensors are later onloaded to a device
-        pin = pin_memory and torch.device(self.onload_device).type != "cpu"
         return load_disk_tensor_from_offload(
-            weight_info, device="cpu", template=offloaded, pin_memory=pin
+            weight_info,
+            device="cpu",
+            template=offloaded,
+            pin_memory=pin_memory and torch.device(self.onload_device).type != "cpu",
         )
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:

@@ -9,7 +9,7 @@ import safetensors
 import torch
 from compressed_tensors.offload.cache import disk_utils, utils
 from compressed_tensors.offload.cache.disk import DiskCache
-from compressed_tensors.offload.cache.disk_utils import _opened_raw, disk_load_context
+from compressed_tensors.offload.cache.disk_utils import _opened, disk_load_context
 from compressed_tensors.offload.cache.utils import load_disk_tensor_from_offload
 from safetensors.torch import save_file
 from tests.testing_utils import requires_gpu
@@ -144,8 +144,8 @@ def test_stage_reads_raw_without_safetensors(
 def test_raw_reader_reused_and_closed(shard, emulate_pinned_allocation):
     with disk_load_context():
         assert torch.equal(_load(shard, "a"), torch.ones(3))
-        with _opened_raw(str(shard)) as first:
-            with disk_load_context(), _opened_raw(str(shard)) as second:
+        with _opened(str(shard)) as first:
+            with disk_load_context(), _opened(str(shard)) as second:
                 assert first is second
                 assert torch.equal(_load(shard), torch.arange(16).float().reshape(4, 4))
         assert not first[0].closed

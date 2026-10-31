@@ -7,7 +7,6 @@ import os
 import pytest
 import torch
 from compressed_tensors.offload import offload_module
-from compressed_tensors.offload.cache import utils as cache_utils
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
 from compressed_tensors.offload.cache.utils import load_disk_tensor_from_offload
@@ -207,11 +206,10 @@ def test_stage_pinned_memory_logs_hint(tmp_path, monkeypatch):
     tensor = torch.arange(10, device=onload_device)
     offloaded = cache.offload(tensor)
 
-    # fail the page-locked allocation performed while staging
-    def raise_memory_error(shape, dtype):
+    def raise_memory_error(*args, **kwargs):
         raise RuntimeError("CUDA out of memory. Tried to allocate 1 GiB")
 
-    monkeypatch.setattr(cache_utils, "_empty_pinned", raise_memory_error)
+    monkeypatch.setattr(torch, "empty", raise_memory_error)
 
     warnings = []
     handler_id = loguru_logger.add(
@@ -303,32 +301,32 @@ def test_without_context_opens_per_read(tmp_path, monkeypatch):
 
 @pytest.mark.unit
 def test_disk_load_context_closes_handles_on_exit(tmp_path):
-    """Readers must actually be closed on exit, not merely dropped.
+    """Handles must actually be closed on exit, not merely dropped.
 
-    Asserts against the reader itself rather than the cache dict, because
+    Asserts against the handle itself rather than the cache dict, because
     clearing the dict while leaking the descriptors would otherwise pass.
     """
     from compressed_tensors.offload.cache import disk_utils as disk_module
-    from compressed_tensors.offload.cache.disk_utils import _opened_raw
+    from compressed_tensors.offload.cache.disk_utils import _opened
 
     shard = tmp_path / "shard.safetensors"
     save_file({"a": torch.zeros(4)}, shard)
 
     with disk_load_context():
-        with _opened_raw(str(shard)) as (file, _, _):
+        with _opened(str(shard)) as (file, _, _):
             file.read(8)
-        held = [entry[0] for entry in disk_module._open_files.raw_cache.values()]
-        assert held, "expected a cached reader"
-    assert disk_module._open_files.raw_cache is None
+        held = [entry[0] for entry in disk_module._open_files.cache.values()]
+        assert held, "expected a cached handle"
+    assert disk_module._open_files.cache is None
     for file in held:
         assert file.closed
 
     # and the same when the block raises
     with pytest.raises(RuntimeError):
         with disk_load_context():
-            with _opened_raw(str(shard)) as (file, _, _):
+            with _opened(str(shard)) as (file, _, _):
                 file.read(8)
-            held = [entry[0] for entry in disk_module._open_files.raw_cache.values()]
+            held = [entry[0] for entry in disk_module._open_files.cache.values()]
             raise RuntimeError("boom")
     for file in held:
         assert file.closed
@@ -348,9 +346,9 @@ def test_disk_load_context_nests(tmp_path, monkeypatch):
         cache["w0"]
         with disk_load_context():
             cache["w0"]
-        assert disk_module._open_files.raw_cache is not None
+        assert disk_module._open_files.cache is not None
         cache["w0"]
-    assert disk_module._open_files.raw_cache is None
+    assert disk_module._open_files.cache is None
     assert len(opens) == 1
 
 
@@ -368,7 +366,7 @@ def test_disk_load_context_bounds_open_handles(tmp_path, monkeypatch):
     with disk_load_context():
         for name in names:
             cache[name]
-        assert len(disk_module._open_files.raw_cache) <= disk_module._MAX_OPEN_FILES
+        assert len(disk_module._open_files.cache) <= disk_module._MAX_OPEN_FILES
 
 
 def _symlinked_shard(tmp_path, count):

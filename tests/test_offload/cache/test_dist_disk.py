@@ -253,11 +253,11 @@ def test_distributed_async_update(tmp_path):
 @pytest.mark.unit
 @torchrun(world_size=2, init_dist=True)
 def test_disk_load_context_is_per_rank(tmp_path_factory):
-    """Each rank keeps its own reader cache and does not disturb the other's.
+    """Each rank keeps its own handle cache and does not disturb the other's.
 
     The cache is thread local, so it is also process local. Two ranks reading
     the same shard must each open it once, and one rank leaving the context
-    must not close a reader the other rank is still holding.
+    must not close a handle the other rank is still holding.
     """
     from compressed_tensors.offload.cache import disk_utils
 
@@ -276,14 +276,14 @@ def test_disk_load_context_is_per_rank(tmp_path_factory):
     with disk_load_context():
         for i in range(4):
             assert_tensor_equal(load(f"w{i}"), torch.full((4,), float(i)))
-        held = [entry[0] for entry in disk_utils._open_files.raw_cache.values()]
-        assert len(held) == 1, f"rank {rank} expected one cached reader"
+        held = [entry[0] for entry in disk_utils._open_files.cache.values()]
+        assert len(held) == 1, f"rank {rank} expected one cached handle"
         dist.barrier()
-        # the other rank has also entered and is holding its own reader
-        assert disk_utils._open_files.raw_cache is not None
+        # the other rank has also entered and is holding its own handle
+        assert disk_utils._open_files.cache is not None
 
     dist.barrier()
-    assert disk_utils._open_files.raw_cache is None, f"rank {rank} leaked its cache"
+    assert disk_utils._open_files.cache is None, f"rank {rank} leaked its cache"
     for file in held:
         assert file.closed
 
