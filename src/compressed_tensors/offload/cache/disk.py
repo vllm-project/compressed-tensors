@@ -100,7 +100,18 @@ class DiskCache(OffloadCache):
         device = _get_safe_open_device(self.onload_device)
 
         if self.is_staged:
-            onloaded = send_tensors(offloaded, device=device, copy=False)
+            # staged CPU tensors are onloaded with asynchronous H2D copies,
+            # stream-ordered with the work that consumes them. Pinned tensors
+            # are read by the DMA engine directly; pageable tensors are staged
+            # by the driver through a pinned bounce buffer, and skipping the
+            # post-copy synchronize still lets each copy's DMA overlap the
+            # next staging copy and the consuming kernels
+            non_blocking = (
+                torch.accelerator.is_available() and offloaded.device.type == "cpu"
+            )
+            onloaded = send_tensors(
+                offloaded, device=device, copy=False, non_blocking=non_blocking
+            )
         else:
             weight_info = self.index[offloaded]
             onloaded = load_disk_tensor_from_offload(
@@ -251,12 +262,11 @@ class DiskCache(OffloadCache):
 
 def _get_safe_open_device(device: "DeviceLikeType") -> str:
     """
-    `safetensors.safe_open` does not accept `torch.device` as argument, so
-    we must convert from torch.device to a string, while considering accelerator
-    device index resolution.
+    Normalize a device for tensor transfers, converting from torch.device to a
+    string while considering accelerator device index resolution.
 
     :param device: torch device to convert
-    :return: device string for `safetensors.safe_open`
+    :return: device string for `torch.Tensor.to`
     """
     device = torch.device(device)
     if is_accelerator_type(device.type):

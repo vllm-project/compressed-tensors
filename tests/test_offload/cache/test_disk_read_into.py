@@ -5,12 +5,12 @@ import io
 import math
 
 import pytest
+import safetensors
 import torch
 from compressed_tensors.offload.cache import disk_utils, utils
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.cache.disk_utils import _opened, disk_load_context
 from compressed_tensors.offload.cache.utils import load_disk_tensor_from_offload
-from safetensors import SafetensorError
 from safetensors.torch import save_file
 from tests.testing_utils import requires_gpu
 
@@ -82,22 +82,13 @@ def test_raw_read_preserves_bytes(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "target_dtype,mapped",
-    [
-        (torch.float32, True),
-        (torch.bfloat16, True),
-        (torch.int8, True),
-        (torch.float32, False),
-    ],
-)
+@pytest.mark.parametrize("target_dtype", [torch.float32, torch.bfloat16, torch.int8])
 @pytest.mark.parametrize("requires_grad", [False, True])
 def test_pinned_stage_preserves_parameter_and_cast(
     tmp_path,
     monkeypatch,
     emulate_pinned_allocation,
     target_dtype,
-    mapped,
     requires_grad,
 ):
     parameter = torch.nn.Parameter(
@@ -111,8 +102,6 @@ def test_pinned_stage_preserves_parameter_and_cast(
     entry = DiskCache.index[offloaded]
     save_file({"weight": parameter.data.float()}, entry["safetensors_file"])
     entry["dtype"] = str(target_dtype).removeprefix("torch.")
-    if not mapped:
-        monkeypatch.delitem(utils.str_to_torch_dtype, "F32")
     emulate_pinned_allocation.clear()
 
     staged = cache.stage(offloaded, pin_memory=True)
@@ -122,13 +111,16 @@ def test_pinned_stage_preserves_parameter_and_cast(
     assert staged.requires_grad == (requires_grad and target_dtype.is_floating_point)
     assert staged.dtype == target_dtype
     assert torch.equal(staged, parameter.detach().to(target_dtype))
-    assert emulate_pinned_allocation == [True]
+    # a matching dtype is a single read directly into pinned memory; a cast
+    # reads the on-disk dtype into pageable memory before pinning the result
+    expected = [True] if target_dtype == torch.float32 else [False, True]
+    assert emulate_pinned_allocation == expected
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("onload_device", ["cpu", torch.device("cpu"), "cuda"])
 @pytest.mark.parametrize("accelerator_available", [False, True])
-def test_stage_without_pinning_uses_existing_loader(
+def test_stage_reads_raw_without_safetensors(
     tmp_path, monkeypatch, onload_device, accelerator_available
 ):
     cache = DiskCache(onload_device, offload_dir=tmp_path)
@@ -138,10 +130,10 @@ def test_stage_without_pinning_uses_existing_loader(
         torch.accelerator, "is_available", lambda: accelerator_available
     )
 
-    def unexpected_raw_open(*args, **kwargs):
-        pytest.fail("Unpinned staging must use the existing safetensors loader")
+    def unexpected_safe_open(*args, **kwargs):
+        pytest.fail("Disk reads must use the raw reader, not safetensors")
 
-    monkeypatch.setattr(disk_utils, "open", unexpected_raw_open, raising=False)
+    monkeypatch.setattr(safetensors, "safe_open", unexpected_safe_open)
     assert torch.equal(cache.stage(offloaded), tensor)
     assert cache.stage(None, pin_memory=True) is None
     if not accelerator_available or torch.device(onload_device).type == "cpu":
@@ -152,8 +144,8 @@ def test_stage_without_pinning_uses_existing_loader(
 def test_raw_reader_reused_and_closed(shard, emulate_pinned_allocation):
     with disk_load_context():
         assert torch.equal(_load(shard, "a"), torch.ones(3))
-        with _opened(str(shard), "cpu", raw=True) as first:
-            with disk_load_context(), _opened(str(shard), "cpu", raw=True) as second:
+        with _opened(str(shard)) as first:
+            with disk_load_context(), _opened(str(shard)) as second:
                 assert first is second
                 assert torch.equal(_load(shard), torch.arange(16).float().reshape(4, 4))
         assert not first[0].closed
@@ -182,15 +174,6 @@ def test_raw_reader_handles_short_reads_and_eof(
             _load(shard)
     else:
         assert torch.equal(_load(shard), torch.arange(16).float().reshape(4, 4))
-
-
-@pytest.mark.unit
-def test_raw_reader_validates_safetensors(tmp_path):
-    shard = tmp_path / "invalid.safetensors"
-    shard.write_bytes(b"invalid file")
-    with pytest.raises(SafetensorError):
-        with _opened(str(shard), "cpu", raw=True):
-            pytest.fail("Invalid safetensors files must be rejected")
 
 
 @pytest.mark.unit
