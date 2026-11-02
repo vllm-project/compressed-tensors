@@ -196,6 +196,20 @@ Extends `DiskCache`. On `offload`:
 
 **Result:** all ranks share the same disk files for offloaded weights.
 
+For sequential subgraph staging, `subgraph_stage_modules(..., pin_memory=True)`
+automatically shares disk-backed staging across ranks in an initialized process
+group. Rank 0 prepares one POSIX shared CPU buffer per weight without running
+distributed collectives in the prefetch worker. When
+`subgraph_onload_modules(...)` runs on the main thread, ranks on the same host
+attach to that buffer, register their mappings with CUDA, and release the
+registrations after onload. Ranks on other hosts stage from disk locally.
+With `pin_memory=False` and no dtype conversion, safetensors file mappings
+already share physical page cache on each host. A dtype conversion creates
+rank-local CPU tensors. The shared pinned buffer uses roughly one weight's
+worth of physical CPU memory on rank 0's host. Checkpoint page cache and other
+allocations are additional. The buffer must fit in `/dev/shm`; if it cannot
+reserve space there, staging falls back to the usual rank-local path.
+
 ---
 
 ### `module.py` — Module-Level Offloading

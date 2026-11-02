@@ -3,6 +3,8 @@
 
 """Shared CPU storage and CUDA registration for distributed disk staging."""
 
+import os
+import tempfile
 import threading
 
 import torch
@@ -12,15 +14,56 @@ _registration_lock = threading.Lock()
 _registrations: dict[int, int] = {}
 
 
-def share_staged_tensor(tensor: torch.Tensor) -> tuple:
-    """Move a staged CPU tensor to shared memory and describe its storage."""
-    handle = tensor.untyped_storage()._share_filename_cpu_()
+def share_staged_tensor(tensor: torch.Tensor, memo: dict, directory: str) -> tuple:
+    """Copy a staged CPU tensor to named shared memory and describe its storage."""
+    source = tensor.untyped_storage()
+    nbytes = source.nbytes()
+    shape = tuple(tensor.shape)
+    stride = tuple(tensor.stride())
+    storage_offset = tensor.storage_offset()
+    if nbytes == 0:
+        return (None, 0, tensor.dtype, shape, stride, storage_offset)
+
+    key = (source.data_ptr(), nbytes)
+    entry = memo.get(key)
+    if entry is None:
+        fd, filename = tempfile.mkstemp(prefix="weight-", dir=directory)
+        try:
+            # Reserve tmpfs pages now. A sparse ftruncate could SIGBUS later
+            # during the tensor copy if /dev/shm fills up.
+            os.posix_fallocate(fd, 0, nbytes)
+            os.close(fd)
+            fd = -1
+            shared = torch.UntypedStorage.from_file(
+                filename, shared=True, nbytes=nbytes
+            )
+            source_bytes = torch.empty(0, dtype=torch.uint8).set_(
+                source, 0, (nbytes,), (1,)
+            )
+            shared_bytes = torch.empty(0, dtype=torch.uint8).set_(
+                shared, 0, (nbytes,), (1,)
+            )
+            shared_bytes.copy_(source_bytes)
+        except BaseException:
+            if fd != -1:
+                os.close(fd)
+            os.unlink(filename)
+            raise
+        # Keep the source mapping alive until staging finishes, so a later
+        # tensor cannot reuse its virtual address and collide with this key.
+        memo[key] = (filename, shared, source)
+    else:
+        filename, shared, _ = entry
+
+    with torch.no_grad():
+        tensor.set_(shared, storage_offset, shape, stride)
     return (
-        *handle,
+        filename,
+        nbytes,
         tensor.dtype,
-        tuple(tensor.shape),
-        tuple(tensor.stride()),
-        tensor.storage_offset(),
+        shape,
+        stride,
+        storage_offset,
     )
 
 
@@ -28,11 +71,15 @@ def attach_staged_tensor(
     template: torch.Tensor, descriptor: tuple, memo: dict
 ) -> torch.Tensor:
     """Attach to the source rank's storage while retaining local tensor attributes."""
-    *handle, dtype, shape, stride, storage_offset = descriptor
-    filename = handle[1]
+    filename, nbytes, dtype, shape, stride, storage_offset = descriptor
+    if nbytes == 0:
+        return to_tensor(
+            torch.empty_strided(shape, stride, dtype=dtype, device="cpu"), template
+        )
+
     storage = memo.get(filename)
     if storage is None:
-        storage = torch.UntypedStorage._new_shared_filename_cpu(*handle)
+        storage = torch.UntypedStorage.from_file(filename, shared=True, nbytes=nbytes)
         memo[filename] = storage
 
     tensor = to_tensor(torch.empty(0, dtype=dtype, device="cpu"), template)
