@@ -14,7 +14,12 @@ from compressed_tensors.offload import (
     from_accelerate,
     load_offloaded_model,
 )
-from compressed_tensors.offload.cache import CPUCache, DeviceCache, DiskCache
+from compressed_tensors.offload.cache import (
+    CPUCache,
+    DeviceCache,
+    DiskCache,
+    DistributedDiskCache,
+)
 from compressed_tensors.offload.convert.from_accelerate import (
     remove_accelerate_from_module,
 )
@@ -247,6 +252,9 @@ def test_dist_disk_safetensors_update(tmp_path):
         delattr(rank_1_module, "weight")
 
         # Check that the new files were deleted
+        # Wait for all ranks to finish reading before flushing deferred deletions.
+        dist.barrier()
+        DistributedDiskCache.flush_deferred_file_deletions()
         dist.barrier()
         assert not os.path.exists(q_file_path)
         assert not os.path.exists(k_file_path)

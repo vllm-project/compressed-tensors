@@ -126,6 +126,11 @@ def replace_module_parallel(
     :param desc: optional description for the progress bar (shown on each rank)
     """
     from compressed_tensors.offload import OffloadCache, disable_onloading, to_meta
+    from compressed_tensors.offload.cache import DistributedDiskCache
+
+    # A rank may finish a forward pass and enter the next replacement round while
+    # another rank is still reading files from the previous round.
+    dist.barrier()
 
     _, _, assigned_rank = greedy_bin_packing(modules, dist.get_world_size(), weight_fn)
 
@@ -165,8 +170,13 @@ def replace_module_parallel(
                 }
 
         else:
-            broadcast_obj = [get_direct_state_dict(module)]
             received_state_dict = _broadcast_direct_state_dict(
                 get_direct_state_dict(module), assigned_rank[module]
             )
             replace_direct_state_dict(module, received_state_dict)
+
+    # All ranks have finished transforming and recoupling modules before queued
+    # cache files are removed.
+    dist.barrier()
+    DistributedDiskCache.flush_deferred_file_deletions()
+    dist.barrier()

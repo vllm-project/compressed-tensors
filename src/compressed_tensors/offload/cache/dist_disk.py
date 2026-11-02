@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
 from typing import Optional
 
 import torch
@@ -15,6 +16,24 @@ class DistributedDiskCache(BatchedOffloadMixin, DiskCache):
     Handles offloading and onloading tensors from/to disk. For more information, see
     `compressed_tensors.offload.cache.disk_cache::DiskCache`.
     """
+
+    _deferred_file_deletions: set[str] = set()
+
+    @classmethod
+    def flush_deferred_file_deletions(cls) -> None:
+        """Delete queued files after the caller synchronizes all distributed workers."""
+        pending = set(cls._deferred_file_deletions)
+        for file_path in pending:
+            try:
+                os.remove(file_path)
+            except FileNotFoundError:
+                # Another rank may have reclaimed the same stale path first.
+                pass
+        cls._deferred_file_deletions.difference_update(pending)
+
+    def _remove_file(self, file_path: str) -> None:
+        """Queue deletion until the distributed operation reaches its flush point."""
+        self._deferred_file_deletions.add(file_path)
 
     def offload_local(self, tensor: torch.Tensor) -> tuple[torch.Tensor, list]:
         """
@@ -50,8 +69,7 @@ class DistributedDiskCache(BatchedOffloadMixin, DiskCache):
 
         # transformers may init params/buffers on non-source (meta) ranks with a
         # different dtype or shape than the checkpoint (e.g. `inv_freq`, or
-        # tied/multimodal weights), so rebuild the meta tensor to match the
-        # source. See https://github.com/huggingface/transformers/pull/47486
+        # tied/multimodal weights), so rebuild the meta tensor to match the source.
         if offloaded.dtype != src_dtype or offloaded.shape != src_shape:
             empty = torch.empty(src_shape, dtype=src_dtype, device="meta")
             offloaded = to_tensor(empty, offloaded)
