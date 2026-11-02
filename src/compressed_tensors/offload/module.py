@@ -2,11 +2,21 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import contextlib
+import socket
+from dataclasses import dataclass
 from functools import wraps
 
 import torch
+import torch.distributed as dist
 from compressed_tensors.offload.cache.base import OffloadCache
+from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
+from compressed_tensors.offload.shared_stage import (
+    attach_staged_tensor,
+    register_shared_storage,
+    share_staged_tensor,
+    unregister_shared_storage,
+)
 from compressed_tensors.offload.utils import send_tensors
 
 
@@ -155,6 +165,149 @@ def subgraph_stage_modules(
             stage_module_offload(module, pin_memory=pin_memory)
 
 
+@dataclass
+class SharedDiskStageResult:
+    descriptors: dict[tuple[str, str, str], tuple]
+    error: Exception | None = None
+
+
+def prepare_shared_disk_stage(
+    modules: dict[str, torch.nn.Module],
+    pin_memory: bool = True,
+    source_rank: int = 0,
+) -> SharedDiskStageResult:
+    """Prefetch disk weights on the source rank without running collectives.
+
+    Other cache types keep their existing rank-local staging behavior. Errors are
+    returned so all ranks can receive them at the main-thread synchronization point.
+    """
+    descriptors = {}
+    try:
+        with disk_load_context():
+            for module_name, module in modules.items():
+                cache = module._parameters
+                if not isinstance(cache, OffloadCache):
+                    continue
+                if not isinstance(cache, DistributedDiskCache):
+                    stage_module_offload(module, pin_memory=pin_memory)
+                    continue
+                if dist.get_rank() != source_rank:
+                    continue
+
+                # The source makes one shared copy. The CUDA registrations happen
+                # after all ranks attach, on the main thread before onloading.
+                stage_module_offload(module, pin_memory=False)
+                for attr in ("_parameters", "_buffers"):
+                    staged_cache = getattr(module, attr)
+                    for tensor_name, tensor in staged_cache.offloaded_values.items():
+                        if tensor is not None:
+                            descriptors[(module_name, attr, tensor_name)] = (
+                                share_staged_tensor(tensor)
+                            )
+    except Exception as error:
+        return SharedDiskStageResult({}, error)
+    return SharedDiskStageResult(descriptors)
+
+
+def _release_shared_stage(cache: OffloadCache) -> None:
+    pointers = getattr(cache, "_shared_stage_pointers", None)
+    if pointers:
+        for pointer in tuple(pointers):
+            unregister_shared_storage(pointer)
+            pointers.remove(pointer)
+
+
+def finish_shared_disk_stage(
+    modules: dict[str, torch.nn.Module],
+    prepared: SharedDiskStageResult,
+    pin_memory: bool = True,
+    source_rank: int = 0,
+) -> None:
+    """Attach every rank to the staged storage and pin its local CUDA mapping.
+
+    This function must run on the main thread and in the same order on every rank;
+    staging itself may run in a background thread while modifiers use collectives.
+    """
+    if not dist.is_initialized():
+        raise RuntimeError("Shared disk staging requires an initialized process group")
+
+    states = [None] * dist.get_world_size()
+    dist.all_gather_object(
+        states, (socket.gethostname(), repr(prepared.error) if prepared.error else None)
+    )
+    if len({hostname for hostname, _ in states}) != 1:
+        raise RuntimeError("Shared disk staging requires all ranks on one host")
+    errors = [error for _, error in states]
+    if any(errors):
+        if prepared.error is not None:
+            raise prepared.error
+        raise RuntimeError(f"Shared disk staging failed on another rank: {errors}")
+
+    is_source = dist.get_rank() == source_rank
+    payload = [prepared.descriptors if is_source else None]
+    dist.broadcast_object_list(payload, src=source_rank)
+    descriptors = payload[0]
+    memo = {}
+    local_error = None
+    try:
+        for module_name, module in modules.items():
+            if not isinstance(module._parameters, DistributedDiskCache):
+                continue
+            for attr in ("_parameters", "_buffers"):
+                cache = getattr(module, attr)
+                pointers = cache._shared_stage_pointers = set()
+                staged_values = {}
+                for tensor_name, tensor in cache.offloaded_values.items():
+                    if tensor is None:
+                        staged_values[tensor_name] = None
+                        continue
+                    descriptor = descriptors.get((module_name, attr, tensor_name))
+                    if descriptor is None:
+                        # A rank may own a module absent on the source rank.
+                        staged = (
+                            tensor
+                            if is_source
+                            else cache.stage(tensor, pin_memory=pin_memory)
+                        )
+                    else:
+                        staged = (
+                            tensor
+                            if is_source
+                            else attach_staged_tensor(tensor, descriptor, memo)
+                        )
+                        if (
+                            pin_memory
+                            and staged is not None
+                            and torch.device(cache.onload_device).type == "cuda"
+                        ):
+                            pointer = staged.untyped_storage().data_ptr()
+                            if pointer not in pointers:
+                                registered = register_shared_storage(staged)
+                                if registered is not None:
+                                    pointers.add(registered)
+                    staged_values[tensor_name] = staged
+                cache.offloaded_values = staged_values
+                cache.is_staged = True
+
+            if hasattr(module, "_original_forward_func"):
+                module.forward = module._original_forward_func.__get__(module)
+                del module._original_forward_func
+    except Exception as error:
+        local_error = error
+
+    errors = [None] * dist.get_world_size()
+    dist.all_gather_object(errors, repr(local_error) if local_error else None)
+    if any(errors):
+        for module in modules.values():
+            for attr in ("_parameters", "_buffers"):
+                cache = getattr(module, attr)
+                if isinstance(cache, DistributedDiskCache):
+                    _release_shared_stage(cache)
+        if local_error is not None:
+            raise local_error
+        raise RuntimeError(f"Shared disk staging failed on another rank: {errors}")
+
+
 def subgraph_onload_modules(
     modules: dict[str, torch.nn.Module],
 ) -> dict[str, dict]:
@@ -169,7 +322,12 @@ def subgraph_onload_modules(
                 init_kwargs = get_cache_init_kwargs(module)
                 offload_kwargs[name] = init_kwargs
 
-                remove_module_offload(module, onload_tensors=True)
+                parameter_cache, buffer_cache = module._parameters, module._buffers
+                try:
+                    remove_module_offload(module, onload_tensors=True)
+                finally:
+                    _release_shared_stage(parameter_cache)
+                    _release_shared_stage(buffer_cache)
             else:
                 pass
                 # we should consider raising warnings, but observers will
