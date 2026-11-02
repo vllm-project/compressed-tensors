@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 import torch.distributed as dist
 import compressed_tensors.offload.module as module_offload
@@ -42,14 +43,14 @@ def test_shared_disk_stage_reads_once_and_shares_storage(offload_folder, monkeyp
     modules = {"linear": module}
     # Modifier work can change the global source rank while prefetch runs.
     with set_source_process(1):
-        prepared = prepare_shared_disk_stage(modules, pin_memory=False, source_rank=0)
-        finish_shared_disk_stage(modules, prepared, pin_memory=False, source_rank=0)
+        prepared = prepare_shared_disk_stage(modules)
+        finish_shared_disk_stage(modules, prepared)
     staged = module._parameters.offloaded_values["weight"]
     assert staged.is_shared()
     if dist.get_rank() == 0:
         assert all(
             not os.path.exists(descriptor[0])
-            for descriptor in prepared.descriptors.values()
+            for descriptor in prepared["descriptors"].values()
         )
 
     if dist.get_rank() == 0:
@@ -98,8 +99,8 @@ def test_shared_stage_falls_back_to_local_disk_on_other_host(
     )
 
     modules = {"linear": module}
-    prepared = prepare_shared_disk_stage(modules, pin_memory=False, source_rank=0)
-    finish_shared_disk_stage(modules, prepared, pin_memory=False, source_rank=0)
+    prepared = prepare_shared_disk_stage(modules)
+    finish_shared_disk_stage(modules, prepared)
     staged = module._parameters.offloaded_values["weight"]
     assert staged.is_shared() == (dist.get_rank() == 0)
 
@@ -128,10 +129,33 @@ def test_shared_stage_falls_back_when_shm_is_full(offload_folder, monkeypatch):
 
     modules = {"linear": module}
     subgraph_stage_modules(modules, pin_memory=True)
-    prepared = module._shared_disk_stage_result
-    assert not prepared.descriptors
+    prepared = module._shared_disk_stage
+    assert not prepared["descriptors"]
 
     subgraph_onload_modules(modules)
     assert torch.all(module.weight == 9)
+    dist.barrier()
+    dist.destroy_process_group()
+
+
+@torchrun(world_size=2)
+def test_source_stage_error_reaches_all_ranks(offload_folder, monkeypatch):
+    dist.init_process_group("gloo")
+    module = torch.nn.Linear(4, 4, bias=False)
+    offload_module(
+        module, onload_device="cpu", offload_device="disk", offload_dir=offload_folder
+    )
+    if dist.get_rank() == 0:
+
+        def failed_stage(*args, **kwargs):
+            raise ValueError("staging failed")
+
+        monkeypatch.setattr(module._parameters, "stage", failed_stage)
+
+    modules = {"linear": module}
+    subgraph_stage_modules(modules, pin_memory=True)
+    expected_error = ValueError if dist.get_rank() == 0 else RuntimeError
+    with pytest.raises(expected_error, match="staging failed"):
+        subgraph_onload_modules(modules)
     dist.barrier()
     dist.destroy_process_group()

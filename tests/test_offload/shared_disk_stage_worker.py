@@ -15,7 +15,6 @@ from compressed_tensors.offload.module import (
     subgraph_onload_modules,
     subgraph_stage_modules,
 )
-from compressed_tensors.offload.shared_stage import _registrations
 
 
 def main() -> None:
@@ -30,9 +29,10 @@ def main() -> None:
     dist.broadcast_object_list(payload, src=0)
     offload_folder = payload[0]
 
-    module = torch.nn.Linear(4, 4, bias=False)
+    module = torch.nn.Linear(4, 4, bias=True)
     with torch.no_grad():
         module.weight.fill_(5)
+        module.bias.fill_(3)
     offload_module(
         module, onload_device="cuda", offload_device="disk", offload_dir=offload_folder
     )
@@ -42,13 +42,17 @@ def main() -> None:
         assert subgraph_stage_modules(modules, pin_memory=True) is None
 
     original_finish = module_offload.finish_shared_disk_stage
+    staged = None
 
     def checked_finish(*args, **kwargs):
-        original_finish(*args, **kwargs)
+        nonlocal staged
+        registered = original_finish(*args, **kwargs)
         staged = module._parameters.offloaded_values["weight"]
         assert staged.is_shared()
         assert staged.is_pinned()
-        assert len(_registrations) == 1
+        assert module._parameters.offloaded_values["bias"].is_pinned()
+        assert len(registered) == 2
+        return registered
 
     module_offload.finish_shared_disk_stage = checked_finish
     try:
@@ -58,8 +62,9 @@ def main() -> None:
 
     assert module.weight.device.type == "cuda"
     assert torch.all(module.weight == 5)
-    assert not _registrations
-    assert not hasattr(module, "_shared_disk_stage_result")
+    assert torch.all(module.bias == 3)
+    assert not staged.is_pinned()
+    assert not hasattr(module, "_shared_disk_stage")
     dist.barrier()
     dist.destroy_process_group()
     if temporary is not None:

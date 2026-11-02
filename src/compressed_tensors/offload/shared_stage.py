@@ -5,13 +5,9 @@
 
 import os
 import tempfile
-import threading
 
 import torch
 from compressed_tensors.offload.utils import to_tensor
-
-_registration_lock = threading.Lock()
-_registrations: dict[int, int] = {}
 
 
 def share_staged_tensor(tensor: torch.Tensor, memo: dict, directory: str) -> tuple:
@@ -95,25 +91,12 @@ def register_shared_storage(tensor: torch.Tensor) -> int | None:
         return None
 
     pointer = storage.data_ptr()
-    with _registration_lock:
-        if pointer in _registrations:
-            _registrations[pointer] += 1
-        else:
-            # cudaHostRegisterPortable makes the registration usable by any CUDA
-            # context in this process. Each rank registers its own virtual mapping.
-            torch.cuda.check_error(
-                torch.cuda.cudart().cudaHostRegister(pointer, storage.nbytes(), 1)
-            )
-            _registrations[pointer] = 1
+    torch.cuda.check_error(
+        torch.cuda.cudart().cudaHostRegister(pointer, storage.nbytes(), 1)
+    )
     return pointer
 
 
 def unregister_shared_storage(pointer: int) -> None:
     """Release a process-local CUDA registration after the blocking GPU onload."""
-    with _registration_lock:
-        count = _registrations[pointer]
-        if count == 1:
-            torch.cuda.check_error(torch.cuda.cudart().cudaHostUnregister(pointer))
-            del _registrations[pointer]
-        else:
-            _registrations[pointer] = count - 1
+    torch.cuda.check_error(torch.cuda.cudart().cudaHostUnregister(pointer))
