@@ -98,4 +98,5 @@ except Exception as exception:
 def triton_req(*args, **kwargs) -> bool:
     """Standard requirement for using triton, to be used with `ImplBackend`"""
     x: torch.Tensor = args[0]
-    return HAS_TRITON and (x.is_cuda or x.is_xpu)
+    is_nvidia = x.is_cuda and torch.version.hip is None
+    return HAS_TRITON and (is_nvidia or x.is_xpu)
