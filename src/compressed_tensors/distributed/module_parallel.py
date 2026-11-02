@@ -167,6 +167,6 @@ def replace_module_parallel(
         else:
             broadcast_obj = [get_direct_state_dict(module)]
             received_state_dict = _broadcast_direct_state_dict(
-                broadcast_obj[0], assigned_rank[module]
+                get_direct_state_dict(module), assigned_rank[module]
             )
             replace_direct_state_dict(module, received_state_dict)
