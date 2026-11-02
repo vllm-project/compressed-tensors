@@ -13,7 +13,7 @@ import torch.distributed as dist
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
-from compressed_tensors.offload.shared_stage import (
+from compressed_tensors.offload.cache.utils import (
     attach_staged_tensor,
     register_shared_storage,
     share_staged_tensor,
