@@ -141,12 +141,6 @@ def remove_module_offload(
             del module._original_forward_func
 
         if onload_tensors:
-            broadcast_onload = (
-                broadcast_onload
-                and dist.is_available()
-                and dist.is_initialized()
-                and dist.get_world_size() > 1
-            )
             for attr in ("_parameters", "_buffers"):
                 cache = getattr(module, attr)
                 if (
