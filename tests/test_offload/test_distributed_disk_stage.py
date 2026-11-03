@@ -5,7 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 import torch
 import torch.distributed as dist
 from compressed_tensors.offload.module import (
@@ -49,28 +48,5 @@ def test_gloo_cpu_stage_keeps_local_disk_path(offload_folder):
 
     subgraph_onload_modules(modules)
     assert torch.all(module.weight == 9)
-    dist.barrier()
-    dist.destroy_process_group()
-
-
-@torchrun(world_size=2)
-def test_stage_error_reaches_all_ranks(offload_folder, monkeypatch):
-    dist.init_process_group("gloo")
-    module = torch.nn.Linear(4, 4, bias=False)
-    offload_module(
-        module, onload_device="cpu", offload_device="disk", offload_dir=offload_folder
-    )
-    if dist.get_rank() == 0:
-
-        def failed_stage(*args, **kwargs):
-            raise ValueError("staging failed")
-
-        monkeypatch.setattr(module._parameters, "stage", failed_stage)
-
-    modules = {"linear": module}
-    subgraph_stage_modules(modules, pin_memory=True)
-    expected_error = ValueError if dist.get_rank() == 0 else RuntimeError
-    with pytest.raises(expected_error, match="staging failed"):
-        subgraph_onload_modules(modules)
     dist.barrier()
     dist.destroy_process_group()

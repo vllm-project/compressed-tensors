@@ -148,21 +148,10 @@ def subgraph_stage_modules(
     Reads are grouped under `disk_load_context`, so tensors from the same
     safetensors shard share one open instead of re-parsing its header per read.
     """
-    if (
-        pin_memory
-        and dist.is_available()
-        and dist.is_initialized()
-        and dist.get_world_size() > 1
-        and modules
-    ):
-        # Prefetch on rank 0 without collectives in the worker thread. The
-        # main thread broadcasts GPU weights during subgraph onload.
-        first_module = next(iter(modules.values()))
-        first_module._distributed_disk_stage_error = prepare_distributed_disk_stage(
-            modules
-        )
-        return
-
+    is_distributed = (
+        dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
+    )
+    is_source = not is_distributed or dist.get_rank() == 0
     with disk_load_context():
         for name, module in modules.items():
             if not isinstance(module._parameters, OffloadCache):
@@ -170,146 +159,70 @@ def subgraph_stage_modules(
                 # clog the output with warnings, so we will skip for now
                 continue
 
+            cache = module._parameters
+            if (
+                is_distributed
+                and not is_source
+                and isinstance(cache, DistributedDiskCache)
+                and torch.device(cache.onload_device).type == "cuda"
+            ):
+                continue
+
             stage_module_offload(module, pin_memory=pin_memory)
 
 
-def prepare_distributed_disk_stage(
+def _has_distributed_cuda_disk_cache(
     modules: dict[str, torch.nn.Module],
-) -> Exception | None:
-    """Prefetch pinned disk weights on rank 0 without worker-thread collectives."""
-    is_source = dist.get_rank() == 0
-    use_gpu_broadcast = dist.get_backend() in ("nccl", "gloo")
-    try:
-        with disk_load_context():
-            for module in modules.values():
-                cache = module._parameters
-                if not isinstance(cache, OffloadCache):
-                    continue
-                if (
-                    use_gpu_broadcast
-                    and isinstance(cache, DistributedDiskCache)
-                    and torch.device(cache.onload_device).type == "cuda"
-                    and not is_source
-                ):
-                    continue
-                stage_module_offload(module, pin_memory=True)
-    except Exception as error:
-        # The main thread relays this error to every rank before GPU broadcasts.
-        return error
-    return None
+) -> bool:
+    return any(
+        isinstance(module._parameters, DistributedDiskCache)
+        and torch.device(module._parameters.onload_device).type == "cuda"
+        for module in modules.values()
+    )
 
 
-def finish_distributed_disk_stage(
-    modules: dict[str, torch.nn.Module], stage_error: Exception | None
+def _broadcast_distributed_disk_stage(
+    modules: dict[str, torch.nn.Module],
 ) -> None:
-    """Onload matching disk weights through rank 0, then broadcast GPU tensors."""
-    use_gpu_broadcast = dist.get_backend() in ("nccl", "gloo")
+    """Load staged weights on rank 0 and broadcast them to every DDP rank."""
     is_source = dist.get_rank() == 0
-    metadata = {}
-    local_error = stage_error
-    try:
-        if local_error is None and use_gpu_broadcast:
-            for module_name, module in modules.items():
-                if not isinstance(module._parameters, DistributedDiskCache):
-                    continue
-                for attr in ("_parameters", "_buffers"):
-                    cache = getattr(module, attr)
-                    if torch.device(cache.onload_device).type != "cuda":
-                        continue
-                    for tensor_name, tensor in cache.offloaded_values.items():
-                        if tensor is not None and (
-                            not is_source or tensor.is_contiguous()
-                        ):
-                            metadata[(module_name, attr, tensor_name)] = (
-                                tensor.dtype,
-                                tuple(tensor.shape),
-                            )
-    except Exception as error:
-        local_error = error
 
-    states = [None] * dist.get_world_size()
-    dist.all_gather_object(
-        states, (metadata, repr(local_error) if local_error else None)
-    )
-    errors = [error for _, error in states]
-    if any(errors):
-        if local_error is not None:
-            raise local_error
-        raise RuntimeError(f"Distributed disk staging failed on another rank: {errors}")
-    if not use_gpu_broadcast:
-        return
-
-    # Only broadcast weights that every rank owns with matching metadata.
-    common = set(states[0][0])
-    for rank_metadata, _ in states[1:]:
-        common.intersection_update(rank_metadata)
-    common = sorted(
-        key
-        for key in common
-        if all(rank_metadata[key] == states[0][0][key] for rank_metadata, _ in states)
-    )
-    common_set = set(common)
-
-    ready = []
-    gpu_values = {}
-    local_error = None
-    try:
-        for module_name, module in modules.items():
-            if not isinstance(module._parameters, DistributedDiskCache):
-                continue
-            for attr in ("_parameters", "_buffers"):
-                cache = getattr(module, attr)
-                if torch.device(cache.onload_device).type != "cuda":
-                    continue
-                values = {}
-                for tensor_name, tensor in cache.offloaded_values.items():
-                    if tensor is None:
-                        values[tensor_name] = None
-                        continue
-                    key = (module_name, attr, tensor_name)
-                    if key in common_set:
-                        gpu_tensor = (
-                            cache.onload(tensor)
-                            if is_source
-                            else to_empty(
-                                tensor,
-                                device=cache.onload_device,
-                                memory_format=torch.contiguous_format,
-                            )
-                        )
-                        gpu_values[key] = gpu_tensor
-                        values[tensor_name] = gpu_tensor
-                    else:
-                        # Ranks with different local modules keep the disk path.
-                        values[tensor_name] = (
-                            tensor
-                            if is_source
-                            else cache.stage(tensor, pin_memory=True)
-                        )
-                ready.append((cache, values))
-    except Exception as error:
-        local_error = error
-
-    # Every rank must finish allocation and fallback staging before broadcasts.
-    errors = [None] * dist.get_world_size()
-    dist.all_gather_object(errors, repr(local_error) if local_error else None)
-    if any(errors):
-        if local_error is not None:
-            raise local_error
-        raise RuntimeError(f"Distributed disk onload failed on another rank: {errors}")
-
-    for key in common:
-        tensor = gpu_values[key]
-        if tensor.numel():
-            dist.broadcast(as_broadcastable(tensor), src=0)
-
-    for cache, values in ready:
-        cache.offloaded_values = values
-        cache.is_staged = True
+    # All ranks own the same modules and tensors in the DDP path, so they can
+    # broadcast in module and mapping order without exchanging metadata.
     for module in modules.values():
-        if isinstance(module._parameters, DistributedDiskCache) and hasattr(
-            module, "_original_forward_func"
-        ):
+        if not isinstance(module._parameters, DistributedDiskCache):
+            continue
+
+        for attr in ("_parameters", "_buffers"):
+            cache = getattr(module, attr)
+            if torch.device(cache.onload_device).type != "cuda":
+                continue
+
+            values = {}
+            for name, tensor in cache.offloaded_values.items():
+                if tensor is None:
+                    values[name] = None
+                    continue
+
+                gpu_tensor = (
+                    cache.onload(tensor)
+                    if is_source
+                    else to_empty(
+                        tensor,
+                        device=cache.onload_device,
+                        memory_format=torch.contiguous_format,
+                    )
+                )
+                if gpu_tensor.numel():
+                    dist.broadcast(as_broadcastable(gpu_tensor), src=0)
+                values[name] = gpu_tensor
+
+            cache.offloaded_values = values
+            cache.is_staged = True
+
+        # Non-source ranks skipped stage_module_offload, so restore their wrapped
+        # forward functions here. Rank 0 already restored its during staging.
+        if hasattr(module, "_original_forward_func"):
             module.forward = module._original_forward_func.__get__(module)
             del module._original_forward_func
 
@@ -320,16 +233,15 @@ def subgraph_onload_modules(
     """Onload modules, consuming tensors staged in CPU memory."""
     from compressed_tensors.offload import get_cache_init_kwargs
 
-    first_module = next(iter(modules.values()), None)
-    if first_module is not None and hasattr(
-        first_module, "_distributed_disk_stage_error"
+    if (
+        dist.is_available()
+        and dist.is_initialized()
+        and dist.get_world_size() > 1
+        and _has_distributed_cuda_disk_cache(modules)
     ):
-        try:
-            finish_distributed_disk_stage(
-                modules, first_module._distributed_disk_stage_error
-            )
-        finally:
-            del first_module._distributed_disk_stage_error
+        # subgraph_stage_modules runs in a prefetch thread. The first broadcast
+        # waits here on the main thread until every rank is ready to onload.
+        _broadcast_distributed_disk_stage(modules)
 
     offload_kwargs = {}
     # tensors that were not staged are read from disk here, grouped like staging

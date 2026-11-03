@@ -196,17 +196,13 @@ Extends `DiskCache`. On `offload`:
 
 **Result:** all ranks share the same disk files for offloaded weights.
 
-For sequential subgraph staging, `subgraph_stage_modules(..., pin_memory=True)`
-prefetches disk-backed CUDA weights into pinned CPU memory only on rank 0 with
-a CUDA-capable process group. During `subgraph_onload_modules(...)`, rank 0
-copies matching weights to its GPU and broadcasts those GPU tensors to the
-other ranks. Ranks with different local weights stage those weights from disk
-locally. The prefetch worker does not run distributed collectives.
-With `pin_memory=False` and no dtype conversion, safetensors file mappings
-already share physical page cache on each host. A dtype conversion creates
-rank-local CPU tensors. With pinned staging and matching weights, the source
-rank holds the only staged CPU copy. Checkpoint page cache and other allocations
-are additional. GPU broadcast happens once per matching tensor during onload.
+For sequential subgraph staging, distributed disk-backed CUDA weights are staged
+on rank 0 only. During `subgraph_onload_modules(...)`, rank 0 loads each weight
+to its GPU and broadcasts it; the other ranks allocate the matching GPU tensor
+and receive the weight. This assumes every DDP rank has the same module and
+tensor layout. The prefetch worker does not run distributed collectives.
+`pin_memory=True` keeps the source rank's staged CPU tensors pinned for GPU
+transfers. GPU broadcast happens once per tensor during onload.
 
 ---
 

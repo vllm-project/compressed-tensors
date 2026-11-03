@@ -8,7 +8,6 @@ import tempfile
 
 import torch
 import torch.distributed as dist
-from compressed_tensors.distributed import set_source_process
 from compressed_tensors.offload.module import (
     offload_module,
     subgraph_onload_modules,
@@ -62,8 +61,7 @@ def main() -> None:
 
         module._parameters.stage = unexpected_disk_read
 
-    with set_source_process(1):
-        subgraph_stage_modules(modules, pin_memory=True)
+    subgraph_stage_modules(modules, pin_memory=True)
     staged = module._parameters.offloaded_values["weight"]
     if rank == 0:
         assert staged.device.type == "cpu" and staged.is_pinned()
@@ -74,37 +72,6 @@ def main() -> None:
     assert module.weight.device.type == "cuda"
     assert torch.all(module.weight == 5)
     assert torch.all(module.bias == 3)
-    assert not hasattr(module, "_distributed_disk_stage_error")
-
-    # A weight absent on rank 0 must use rank 1's local disk path.
-    other = torch.nn.Linear(3, 3, bias=True)
-    with torch.no_grad():
-        other.weight.fill_(7)
-        other.bias.fill_(11)
-    offload_module(
-        other, onload_device="cuda", offload_device="disk", offload_dir=offload_folder
-    )
-    if rank == 0:
-        other._parameters.offloaded_values.pop("bias")
-
-    modules = {"other": other}
-    subgraph_stage_modules(modules, pin_memory=True)
-    local_reads = 0
-    if rank == 1:
-        original_stage = other._parameters.stage
-
-        def counted_stage(*args, **kwargs):
-            nonlocal local_reads
-            local_reads += 1
-            return original_stage(*args, **kwargs)
-
-        other._parameters.stage = counted_stage
-
-    assert onload_and_count_broadcasts(modules) == 1
-    assert torch.all(other.weight == 7)
-    if rank == 1:
-        assert local_reads == 1
-        assert torch.all(other.bias == 11)
 
     dist.barrier()
     dist.destroy_process_group()
