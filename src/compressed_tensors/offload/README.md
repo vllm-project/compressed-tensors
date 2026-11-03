@@ -228,12 +228,13 @@ offload_module(layer, onload_device="cuda:0", offload_device="cpu")
 
 ---
 
-#### `remove_module_offload(module, onload_tensors=False)`
+#### `remove_module_offload(module, onload_tensors=False, broadcast_onload=False)`
 
 Removes offloading from a single module, restoring plain dicts for `_parameters` and `_buffers` and restoring the original forward function.
 
 - `onload_tensors=True`: restores weights to the `onload_device` (GPU). Use before running a forward pass without offloading.
 - `onload_tensors=False` (default): keeps weights on the offload device. Use when freeing memory or re-dispatching.
+- `broadcast_onload=True`: for distributed disk caches targeting CUDA, rank 0 onloads each tensor and broadcasts it. All ranks must call this in the same module and tensor order. The sequential subgraph onload path uses this option.
 
 ---
 

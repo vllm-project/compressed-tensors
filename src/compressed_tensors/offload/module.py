@@ -91,12 +91,46 @@ def stage_module_offload(module: torch.nn.Module, pin_memory: bool = False):
         del module._original_forward_func
 
 
-def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False):
+def _broadcast_distributed_disk_cache(
+    cache: DistributedDiskCache,
+) -> dict[str, torch.Tensor | None]:
+    """Onload a distributed disk cache on rank 0 and broadcast its tensors."""
+    is_source = dist.get_rank() == 0
+    values = {}
+    for name, tensor in cache.offloaded_values.items():
+        if tensor is None:
+            values[name] = None
+            continue
+
+        gpu_tensor = (
+            cache.onload(tensor)
+            if is_source
+            else to_empty(
+                tensor,
+                device=cache.onload_device,
+                memory_format=torch.contiguous_format,
+            )
+        )
+        if gpu_tensor.numel():
+            dist.broadcast(as_broadcastable(gpu_tensor), src=0)
+        values[name] = gpu_tensor
+
+    return values
+
+
+def remove_module_offload(
+    module: torch.nn.Module,
+    onload_tensors: bool = False,
+    broadcast_onload: bool = False,
+):
     """
     Remove any offloading applied to the module
 
     :param onload_tensors: Whether to move tensors to the onloaded device, or keep them
         on the offload device. Defaults to False.
+    :param broadcast_onload: Whether to onload CUDA `DistributedDiskCache` tensors on
+        rank 0 and broadcast them. Every rank must call this in the same module and
+        tensor order.
     """
     if isinstance(module._parameters, OffloadCache):
         assert isinstance(module._buffers, OffloadCache)
@@ -107,14 +141,26 @@ def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False)
             del module._original_forward_func
 
         if onload_tensors:
-            module._parameters = {
-                name: module._parameters.onload(param)
-                for name, param in module._parameters.offloaded_values.items()
-            }
-            module._buffers = {
-                name: module._buffers.onload(param)
-                for name, param in module._buffers.offloaded_values.items()
-            }
+            broadcast_onload = (
+                broadcast_onload
+                and dist.is_available()
+                and dist.is_initialized()
+                and dist.get_world_size() > 1
+            )
+            for attr in ("_parameters", "_buffers"):
+                cache = getattr(module, attr)
+                if (
+                    broadcast_onload
+                    and isinstance(cache, DistributedDiskCache)
+                    and torch.device(cache.onload_device).type == "cuda"
+                ):
+                    values = _broadcast_distributed_disk_cache(cache)
+                else:
+                    values = {
+                        name: cache.onload(tensor)
+                        for name, tensor in cache.offloaded_values.items()
+                    }
+                setattr(module, attr, values)
         else:
             module._parameters = module._parameters.offloaded_values
             module._buffers = module._buffers.offloaded_values
@@ -171,77 +217,17 @@ def subgraph_stage_modules(
             stage_module_offload(module, pin_memory=pin_memory)
 
 
-def _has_distributed_cuda_disk_cache(
-    modules: dict[str, torch.nn.Module],
-) -> bool:
-    return any(
-        isinstance(module._parameters, DistributedDiskCache)
-        and torch.device(module._parameters.onload_device).type == "cuda"
-        for module in modules.values()
-    )
-
-
-def _broadcast_distributed_disk_stage(
-    modules: dict[str, torch.nn.Module],
-) -> None:
-    """Load staged weights on rank 0 and broadcast them to every DDP rank."""
-    is_source = dist.get_rank() == 0
-
-    # All ranks own the same modules and tensors in the DDP path, so they can
-    # broadcast in module and mapping order without exchanging metadata.
-    for module in modules.values():
-        if not isinstance(module._parameters, DistributedDiskCache):
-            continue
-
-        for attr in ("_parameters", "_buffers"):
-            cache = getattr(module, attr)
-            if torch.device(cache.onload_device).type != "cuda":
-                continue
-
-            values = {}
-            for name, tensor in cache.offloaded_values.items():
-                if tensor is None:
-                    values[name] = None
-                    continue
-
-                gpu_tensor = (
-                    cache.onload(tensor)
-                    if is_source
-                    else to_empty(
-                        tensor,
-                        device=cache.onload_device,
-                        memory_format=torch.contiguous_format,
-                    )
-                )
-                if gpu_tensor.numel():
-                    dist.broadcast(as_broadcastable(gpu_tensor), src=0)
-                values[name] = gpu_tensor
-
-            cache.offloaded_values = values
-            cache.is_staged = True
-
-        # Non-source ranks skipped stage_module_offload, so restore their wrapped
-        # forward functions here. Rank 0 already restored its during staging.
-        if hasattr(module, "_original_forward_func"):
-            module.forward = module._original_forward_func.__get__(module)
-            del module._original_forward_func
-
-
 def subgraph_onload_modules(
     modules: dict[str, torch.nn.Module],
 ) -> dict[str, dict]:
     """Onload modules, consuming tensors staged in CPU memory."""
     from compressed_tensors.offload import get_cache_init_kwargs
 
-    if (
+    broadcast_onload = (
         dist.is_available()
         and dist.is_initialized()
         and dist.get_world_size() > 1
-        and _has_distributed_cuda_disk_cache(modules)
-    ):
-        # subgraph_stage_modules runs in a prefetch thread. The first broadcast
-        # waits here on the main thread until every rank is ready to onload.
-        _broadcast_distributed_disk_stage(modules)
+    )
 
     offload_kwargs = {}
     # tensors that were not staged are read from disk here, grouped like staging
@@ -250,7 +236,11 @@ def subgraph_onload_modules(
             if isinstance(module._parameters, OffloadCache):
                 init_kwargs = get_cache_init_kwargs(module)
                 offload_kwargs[name] = init_kwargs
-                remove_module_offload(module, onload_tensors=True)
+                remove_module_offload(
+                    module,
+                    onload_tensors=True,
+                    broadcast_onload=broadcast_onload,
+                )
             else:
                 pass
                 # we should consider raising warnings, but observers will
