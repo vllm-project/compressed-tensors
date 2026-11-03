@@ -154,6 +154,13 @@ def _process_quantization(
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     q_min, q_max = calculate_range(args, x.device)
+    # Quantization parameters can remain on CPU when a module is offloaded while
+    # its input is on an accelerator. Use local copies on the input device.
+    scale = scale.to(device=x.device)
+    if zero_point is not None:
+        zero_point = zero_point.to(device=x.device)
+    if global_scale is not None:
+        global_scale = global_scale.to(device=x.device)
 
     if args.strategy == QuantizationStrategy.BLOCK:
         return _process_block(
