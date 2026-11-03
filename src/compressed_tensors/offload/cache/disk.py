@@ -4,6 +4,7 @@
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
+from uuid import uuid4
 
 import torch
 import torch.distributed as dist
@@ -135,7 +136,10 @@ class DiskCache(OffloadCache):
                 f"does not match offloaded meta tensor dtype {offloaded.dtype}"
             )
 
-        file_path = self._get_ct_file_path(self.offload_dir, offloaded)
+        if offloaded in self.index:
+            file_path = self.index[offloaded]["safetensors_file"]
+        else:
+            file_path = self._get_ct_file_path(self.offload_dir)
         self.index[offloaded] = {
             "safetensors_file": file_path,
             "weight_name": "weight",
@@ -228,7 +232,7 @@ class DiskCache(OffloadCache):
 
         # Resolve relative paths to absolute paths for symlink creation
         source_path = Path(weight_info["safetensors_file"]).resolve()
-        file_path = cls._get_ct_file_path(offload_dir, offloaded)
+        file_path = cls._get_ct_file_path(offload_dir)
 
         os.symlink(source_path, file_path)
         cls.index[offloaded] = {
@@ -243,9 +247,9 @@ class DiskCache(OffloadCache):
         return os.path.basename(file_path).startswith(cls._ct_file_prefix)
 
     @classmethod
-    def _get_ct_file_path(cls, offload_dir: str, offloaded: torch.Tensor) -> str:
-        """Create file path with a prefix marking it as modifiable"""
-        file_name = f"{cls._ct_file_prefix}_{_get_rank()}_{id(offloaded)}.safetensors"
+    def _get_ct_file_path(cls, offload_dir: str) -> str:
+        """Create a unique cache-owned path, even when retired tensor IDs are reused."""
+        file_name = f"{cls._ct_file_prefix}_{_get_rank()}_{uuid4().hex}.safetensors"
         return os.path.join(offload_dir, file_name)
 
 
