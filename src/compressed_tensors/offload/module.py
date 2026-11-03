@@ -197,42 +197,33 @@ def subgraph_offload_modules(
     """Offload modules through one bounded writer for cache files and shards."""
     from compressed_tensors.offload import get_cache_init_kwargs
 
-    to_offload = []
-    for name, module in modules.items():
-        if name in offload_kwargs:
-            module_offload_kwargs = offload_kwargs[name].copy()
-        else:
-            # we should consider raising warnings, but observers will
-            # clog the output with warnings, so we will skip for now
-            module_offload_kwargs = get_cache_init_kwargs(module)
-
-        if async_writer is not None and async_writer.streaming_save:
-            # Checkpoint shards back persistent model tensors. Non-persistent buffers
-            # still use the ordinary disk-cache format.
-            module_offload_kwargs["offload_device"] = "disk"
-            if module_offload_kwargs.get("offload_dir") is None:
-                output_dir = async_writer.output_dir
-                if output_dir is None:
-                    raise ValueError("Streaming save requires an output directory")
-                cache_dir = output_dir.parent / f".{output_dir.name}-offload"
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                module_offload_kwargs["offload_dir"] = str(cache_dir)
-            module_offload_kwargs["module_name"] = name
-
-        if (
-            async_writer is not None
-            and str(module_offload_kwargs.get("offload_device")) == "disk"
-        ):
-            module_offload_kwargs["async_writer"] = async_writer
-        to_offload.append((module, module_offload_kwargs))
-
-    uses_disk = any(
-        str(module_offload_kwargs.get("offload_device")) == "disk"
-        for _, module_offload_kwargs in to_offload
-    )
-    use_async = async_writer is not None and uses_disk
     with contextlib.ExitStack() as stack:
-        if use_async:
+        if async_writer is not None:
             stack.enter_context(async_writer.batch())
-        for module, module_offload_kwargs in to_offload:
+
+        for name, module in modules.items():
+            if name in offload_kwargs:
+                module_offload_kwargs = offload_kwargs[name].copy()
+            else:
+                # we should consider raising warnings, but observers will
+                # clog the output with warnings, so we will skip for now
+                module_offload_kwargs = get_cache_init_kwargs(module)
+
+            if async_writer is not None and async_writer.streaming_save:
+                # Checkpoint shards back persistent model tensors. Non-persistent
+                # buffers still use the ordinary disk-cache format.
+                module_offload_kwargs["offload_device"] = "disk"
+                if module_offload_kwargs.get("offload_dir") is None:
+                    output_dir = async_writer.output_dir
+                    if output_dir is None:
+                        raise ValueError("Streaming save requires an output directory")
+                    cache_dir = output_dir.parent / f".{output_dir.name}-offload"
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    module_offload_kwargs["offload_dir"] = str(cache_dir)
+                module_offload_kwargs["module_name"] = name
+
+            uses_disk = str(module_offload_kwargs.get("offload_device")) == "disk"
+            if async_writer is not None and uses_disk:
+                module_offload_kwargs["async_writer"] = async_writer
+
             offload_module(module, **module_offload_kwargs)
