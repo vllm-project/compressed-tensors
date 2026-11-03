@@ -15,7 +15,7 @@ from compressed_tensors.offload.cache.utils import (
     catch_pinned_mem_error,
     load_disk_tensor_from_offload,
 )
-from compressed_tensors.offload.utils import _pin_memory, send_tensors
+from compressed_tensors.offload.utils import send_tensors
 from compressed_tensors.utils import is_accelerator_type
 from safetensors.torch import save_file
 
@@ -80,19 +80,12 @@ class DiskCache(OffloadCache):
 
         weight_info = self.index[offloaded]
 
-        staged = load_disk_tensor_from_offload(
-            weight_info, device="cpu", template=offloaded
+        return load_disk_tensor_from_offload(
+            weight_info,
+            device="cpu",
+            template=offloaded,
+            pin_memory=pin_memory and torch.device(self.onload_device).type != "cpu",
         )
-        # direct disk --> pinned memory is a bit complicated,
-        # leave this for a future change. For now, copy to cpu first
-        staged = (
-            _pin_memory(staged)
-            if (pin_memory and self.onload_device != "cpu")
-            else staged
-        )
-        # don't transfer to pinned if onload_device is cpu
-
-        return staged
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
@@ -168,9 +161,13 @@ class DiskCache(OffloadCache):
         if not self.onloading_disabled:
             file_path = self.index[offloaded]["safetensors_file"]
             if self._is_ct_file_path(file_path):
-                os.remove(file_path)
+                self._remove_file(file_path)
             del self.index[offloaded]
         super().__delitem__(key)
+
+    def _remove_file(self, file_path: str) -> None:
+        """Remove a cache-owned file when its last in-process reference is gone."""
+        os.remove(file_path)
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
@@ -186,17 +183,23 @@ class DiskCache(OffloadCache):
         weight_name = weight_info["weight_name"]
         dtype = getattr(torch, weight_info["dtype"])
 
-        # create new file if old file was a symlink to a checkpoint file
-        if os.path.islink(file_path):
-            assert self._is_ct_file_path(file_path), f"Attempted to remove {file_path}"
-            os.unlink(file_path)
-        else:
-            # rewriting in place, so drop any handle still reading the old contents
+        assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
+
+        # Replacing the path atomically handles checkpoint symlinks without an unlink
+        # gap. Evict a cached handle to regular files so later reads see new contents.
+        if not os.path.islink(file_path):
             _evict(file_path)
 
-        # save with data using original weight_name
-        assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
-        save_file({weight_name: data.reshape_as(offloaded).to(dtype=dtype)}, file_path)
+        temporary_path = f"{file_path}.tmp-{os.getpid()}-{id(offloaded)}"
+        try:
+            save_file(
+                {weight_name: data.reshape_as(offloaded).to(dtype=dtype)},
+                temporary_path,
+            )
+            os.replace(temporary_path, file_path)
+        finally:
+            if os.path.lexists(temporary_path):
+                os.remove(temporary_path)
 
     @classmethod
     def create_checkpoint_symlink(

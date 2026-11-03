@@ -2,11 +2,13 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import errno
+import sys
 from functools import wraps
 
 import torch
 from compressed_tensors.offload.cache.disk_utils import _opened
-from compressed_tensors.offload.utils import to_tensor
+from compressed_tensors.offload.utils import _pin_memory, to_tensor
+from compressed_tensors.utils.safetensors_load import str_to_torch_dtype
 from loguru import logger
 
 
@@ -109,10 +111,44 @@ def load_disk_tensor_from_offload(
     offloaded: dict,
     device: str,
     template: torch.Tensor | None = None,
+    pin_memory: bool = False,
 ) -> torch.Tensor:
-    with _opened(offloaded["safetensors_file"], device) as file:
-        onloaded = file.get_tensor(offloaded["weight_name"])
-        onloaded = onloaded.to(getattr(torch, offloaded["dtype"]))
-        if template is not None:
-            onloaded = to_tensor(onloaded, template)
-        return onloaded
+    """Load a tensor, reading matching dtypes directly into pinned CPU memory.
+
+    Dtype conversions use safetensors before pinning the result. Raw payloads
+    are little-endian, so big-endian hosts must swap bytes after reading.
+    """
+    dtype = getattr(torch, offloaded["dtype"])
+    file_path = offloaded["safetensors_file"]
+    pin_memory = pin_memory and torch.accelerator.is_available()
+    with _opened(file_path, device, raw=pin_memory) as (
+        file,
+        header,
+        data_offset,
+    ):
+        name = offloaded["weight_name"]
+        if header is None:
+            onloaded = file.get_tensor(name).to(dtype)
+        else:
+            info = header[name]
+            if str_to_torch_dtype.get(info["dtype"]) != dtype:
+                with _opened(file_path, device) as (source_file, _, _):
+                    onloaded = _pin_memory(source_file.get_tensor(name).to(dtype))
+            else:
+                onloaded = torch.empty(
+                    info["shape"], dtype=dtype, device="cpu", pin_memory=True
+                )
+                start, end = info["data_offsets"]
+                if onloaded.nbytes != end - start:
+                    raise ValueError(f"Invalid byte length for tensor {name}")
+                array = onloaded.reshape(-1).view(torch.uint8).numpy()
+                remaining = memoryview(array)
+                file.seek(data_offset + start)
+                while remaining:
+                    count = file.readinto(remaining)
+                    if not count:
+                        raise EOFError(f"Unexpected end of file reading tensor {name}")
+                    remaining = remaining[count:]
+                if sys.byteorder == "big":
+                    array.view(f"u{onloaded.element_size()}").byteswap(inplace=True)
+    return to_tensor(onloaded, template) if template is not None else onloaded

@@ -163,7 +163,13 @@ def remove_accelerate_from_module(
 
         # Not offloaded, likely a buffer
         else:
-            if tensor.device.type == "meta":
+            if (
+                tensor.device.type == "meta"
+                # non-persistent buffers are excluded from state dicts, so they
+                # can never have a checkpoint key or an offload record; they
+                # are also never serialized, so a meta value is harmless
+                and local_name not in module._non_persistent_buffers_set
+            ):
                 raise RuntimeError(
                     f"Parameter/buffer `{full_name}` is on the meta device and has "
                     "no corresponding entry in accelerate's offload map, meaning it "
