@@ -34,7 +34,7 @@ def onload_and_count_broadcasts(modules: dict) -> int:
 
 
 def main() -> None:
-    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    torch.accelerator.set_device_index(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group("gloo")
     rank = dist.get_rank()
 

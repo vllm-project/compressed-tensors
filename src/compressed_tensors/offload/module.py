@@ -8,8 +8,8 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import as_broadcastable
 from compressed_tensors.offload.cache.base import OffloadCache
-from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
+from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
 from compressed_tensors.offload.utils import send_tensors, to_empty
 
 
@@ -218,9 +218,7 @@ def subgraph_onload_modules(
     from compressed_tensors.offload import get_cache_init_kwargs
 
     broadcast_onload = (
-        dist.is_available()
-        and dist.is_initialized()
-        and dist.get_world_size() > 1
+        dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
     )
 
     offload_kwargs = {}
