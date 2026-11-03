@@ -5,6 +5,8 @@ import math
 
 import pytest
 import torch
+from compressed_tensors.offload import disable_offloading
+from compressed_tensors.offload.module import offload_module
 from compressed_tensors.quantization.lifecycle.forward import (
     _process_quantization,
     fake_quantize,
@@ -1227,3 +1229,80 @@ def test_calculate_range_memoized_on_field_values():
     q_min_8, q_max_8 = calculate_range(QuantizationArgs(num_bits=8, type="int"), device)
     assert q_min_8.item() == -128.0
     assert q_max_8.item() == 127.0
+
+
+@pytest.mark.parametrize(
+    "onload_device,offload_device",
+    [
+        pytest.param(
+            "accelerator",
+            "cpu",
+            marks=pytest.mark.skipif(
+                torch.accelerator.device_count() < 1, reason="requires accelerator"
+            ),
+        ),
+        ("cpu", "disk"),
+    ],
+)
+def test_set_forward_quantized_offloaded_weight(
+    mock_per_tensor_calibration,
+    create_quantization_scheme,
+    onload_device,
+    offload_device,
+    tmp_path,
+):
+    """
+    Weight fake quantization must apply to offloaded modules, whose parameter
+    accesses return a newly onloaded tensor each time
+    """
+    if onload_device == "accelerator":
+        onload_device = torch.accelerator.current_accelerator()
+
+    layer = Linear(16, 16, bias=False)
+    quantization_scheme = create_quantization_scheme(
+        targets=["*"],
+        weights=QuantizationArgs(num_bits=4, symmetric=True),
+    )
+    initialize_module_for_quantization(layer, quantization_scheme)
+    layer.quantization_status = QuantizationStatus.FROZEN
+    mock_per_tensor_calibration(layer, "weight", value=layer.weight.data)
+
+    input_tensor = torch.randn(2, 16)
+    expected = layer(input_tensor)
+    assert not torch.allclose(expected, input_tensor @ layer.weight.T)
+
+    kwargs = {"offload_dir": str(tmp_path)} if offload_device == "disk" else {}
+    offload_module(layer, onload_device, offload_device, **kwargs)
+    assert layer.weight is not layer.weight  # each access onloads a new tensor
+
+    output = layer(input_tensor)
+    assert torch.allclose(output.cpu(), expected, atol=1e-5)
+
+
+def test_set_forward_quantized_offloaded_weight_nested(
+    mock_per_tensor_calibration, create_quantization_scheme, tmp_path
+):
+    """
+    Calling an offloaded quantized module within an existing `disable_offloading`
+    context must not release the values onloaded by the outer context
+    """
+    layer = Linear(16, 16, bias=False)
+    quantization_scheme = create_quantization_scheme(
+        targets=["*"],
+        weights=QuantizationArgs(num_bits=4, symmetric=True),
+    )
+    initialize_module_for_quantization(layer, quantization_scheme)
+    layer.quantization_status = QuantizationStatus.FROZEN
+    mock_per_tensor_calibration(layer, "weight", value=layer.weight.data)
+
+    input_tensor = torch.randn(2, 16)
+    expected = layer(input_tensor)
+
+    offload_module(layer, "cpu", "disk", offload_dir=str(tmp_path))
+    with disable_offloading():
+        weight = layer.weight
+        output = layer(input_tensor)
+        assert layer.weight is weight  # outer context still holds the onloaded value
+
+    assert torch.allclose(output, expected, atol=1e-5)
+    assert layer.weight is not layer.weight  # released when the outer context exits
