@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from collections.abc import Hashable
 from typing import Optional
 
 import torch
@@ -16,7 +17,9 @@ class DistributedCPUCache(BatchedOffloadMixin, CPUCache):
     """
 
     @catch_cpu_mem_error
-    def offload_local(self, tensor: torch.Tensor) -> tuple[torch.Tensor, list]:
+    def offload_local(
+        self, tensor: torch.Tensor, name: Hashable | None = None
+    ) -> tuple[torch.Tensor, list]:
         """
         Create shared cpu memory for offload on the source rank.
 

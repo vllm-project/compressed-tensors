@@ -118,10 +118,17 @@ class OffloadCache(MutableMapping, ABC):
             onload_device=onload_device, offload_device=offload_device, **kwargs
         )
         instance.offloaded_values = {
-            name: instance.offload(tensor) for name, tensor in mapping.items()
+            name: instance.offload_named(name, tensor)
+            for name, tensor in mapping.items()
         }
 
         return instance
+
+    def offload_named(
+        self, name: Hashable, tensor: torch.Tensor | None
+    ) -> torch.Tensor | None:
+        """Offload one mapping entry, allowing cache types to use its local name."""
+        return self.offload(tensor)
 
     def __init__(
         self,
