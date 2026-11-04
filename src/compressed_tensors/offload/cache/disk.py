@@ -15,7 +15,7 @@ from compressed_tensors.offload.cache.utils import (
     catch_pinned_mem_error,
     load_disk_tensor_from_offload,
 )
-from compressed_tensors.offload.utils import _pin_memory, send_tensors
+from compressed_tensors.offload.utils import send_tensors
 from compressed_tensors.utils import is_accelerator_type
 from safetensors.torch import save_file
 
@@ -80,19 +80,12 @@ class DiskCache(OffloadCache):
 
         weight_info = self.index[offloaded]
 
-        staged = load_disk_tensor_from_offload(
-            weight_info, device="cpu", template=offloaded
+        return load_disk_tensor_from_offload(
+            weight_info,
+            device="cpu",
+            template=offloaded,
+            pin_memory=pin_memory and torch.device(self.onload_device).type != "cpu",
         )
-        # direct disk --> pinned memory is a bit complicated,
-        # leave this for a future change. For now, copy to cpu first
-        staged = (
-            _pin_memory(staged)
-            if (pin_memory and self.onload_device != "cpu")
-            else staged
-        )
-        # don't transfer to pinned if onload_device is cpu
-
-        return staged
 
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
