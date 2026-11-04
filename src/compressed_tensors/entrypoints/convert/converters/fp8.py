@@ -3,7 +3,6 @@
 
 import re
 from collections.abc import Iterable
-from typing import Any, cast
 
 import torch
 from compressed_tensors.config import CompressionFormat
@@ -23,8 +22,10 @@ from compressed_tensors.quantization import (
     QuantizationType,
 )
 from compressed_tensors.utils.match import match_name
+from compressed_tensors.utils.safetensors_load import get_quantization_config
 from loguru import logger
-from transformers import AutoConfig
+from transformers.file_utils import CONFIG_NAME
+from transformers.utils import cached_file
 
 
 __all__ = ["FP8Converter"]
@@ -71,19 +72,16 @@ class FP8Converter(Converter):
         self.weight_block_size = tuple(weight_block_size)
 
     @classmethod
-    def from_pretrained(
-        cls,
-        model_name_or_path: str,
-        trust_remote_code: bool = False,
-    ) -> "FP8Converter":
-        config = AutoConfig.from_pretrained(
-            model_name_or_path, trust_remote_code=trust_remote_code
-        )
-        fp8_config = getattr(config, "quantization_config", None)
+    def from_pretrained(cls, model_name_or_path: str) -> "FP8Converter":
+        # read the quantization_config directly from the checkpoint's config
+        # file rather than AutoConfig, so checkpoints can be converted before
+        # their architecture is registered in a transformers release. cascades
+        # to text_config.quantization_config / compression_config like vllm
+        config_path = cached_file(model_name_or_path, CONFIG_NAME)
+        fp8_config = get_quantization_config(config_path)
         if fp8_config is None:
             raise ValueError("Model config does not contain quantization_config")
 
-        fp8_config = cast(dict[str, Any], fp8_config)
         if fp8_config.get("quant_method") != "fp8":
             raise ValueError("Model config is not an fp8 config")
 
