@@ -107,10 +107,6 @@ def convert_checkpoint(
 
         if shard_name.endswith("safetensors"):
             if shard_name not in inverse_weight_maps:
-                raise ValueError(
-                    f"Could not find inverse_weight_map for shard {shard_name}"
-                )
-            if not inverse_weight_maps[shard_name]:
                 # shard holds only dependency tensors, which are loaded and saved
                 # as part of the primary tensors' own jobs; nothing to do here
                 logger.debug(
