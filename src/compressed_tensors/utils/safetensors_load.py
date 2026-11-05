@@ -359,14 +359,19 @@ def get_weight_mappings(path_to_model_or_tensors: str) -> dict[str, str]:
     else:
         # we have a directory with multiple safetensors files
         safetensors_path = os.path.join(path_to_model_or_tensors, SAFE_WEIGHTS_NAME)
-        index_path = os.path.join(path_to_model_or_tensors, SAFE_WEIGHTS_INDEX_NAME)
+        index_path = find_safetensors_index_file(
+            {
+                name: os.path.join(path_to_model_or_tensors, name)
+                for name in os.listdir(path_to_model_or_tensors)
+            }
+        )
         if os.path.exists(safetensors_path):
             # we have a single safetensors file to read
             header = get_safetensors_header(safetensors_path)
             for key in header.keys():
                 header[key] = SAFE_WEIGHTS_NAME
             header.pop("__metadata__", None)
-        elif os.path.exists(index_path):
+        elif index_path is not None:
             # we have multiple safetensors file, read from index
             with open(index_path, "r", encoding="utf-8") as f:
                 index = json.load(f)
