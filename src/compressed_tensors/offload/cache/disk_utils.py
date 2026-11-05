@@ -115,8 +115,8 @@ def _file_key(file_path: str) -> str:
     """
     Identify the file a path actually reads from.
 
-    `DiskCache.create_checkpoint_symlink` gives every tensor its own symlink,
-    named after `id(offloaded)`, pointing into a shared checkpoint shard. Keying
+    `DiskCache.create_checkpoint_symlink` gives every tensor its own uniquely
+    named symlink pointing into a shared checkpoint shard. Keying
     on the path as given would treat N tensors from one shard as N files, so the
     cache would never hit on exactly the path where grouping matters.
     """
