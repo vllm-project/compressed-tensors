@@ -114,6 +114,40 @@ def test_repack_4bit(value):
 
 
 @pytest.mark.parametrize(
+    "shape",
+    [
+        (8, 2),  # issue reproducer: 8 channels, 2 groups
+        (8, 1),
+        (8, 3),
+        (16, 2),
+        (4, 2),
+    ],
+)
+def test_repack_4bit_packed_dim0_small(shape):
+    """
+    INT4 unpack with packed_dim=0 must round-trip on small tensors.
+
+    After transpose, shapes like (1, 2) become (2, 1) with stride (1, 2).
+    That layout is still is_contiguous() but stride(-1) != 1, which used to
+    break the int32→byte view in unpack_from_int32.
+    """
+    value = (
+        torch.arange(shape[0] * shape[1]).reshape(shape) % 16 - 8
+    ).to(torch.int8)
+    packed = pack_to_int32(value, 4, packed_dim=0).contiguous()
+
+    # Document the layout that previously triggered the failure.
+    transposed = packed.transpose(0, 1)
+    if transposed.shape[-1] == 1 and transposed.stride(-1) != 1:
+        assert transposed.is_contiguous()
+        assert transposed.stride(-1) != 1
+
+    unpacked = unpack_from_int32(packed, 4, value.shape, packed_dim=0)
+    assert torch.equal(unpacked, value)
+    assert unpacked.dtype == torch.int8
+
+
+@pytest.mark.parametrize(
     "value",
     [
         torch.tensor([[30, 40], [50, 60]]),
