@@ -26,5 +26,4 @@ convert_checkpoint(
             "re:.*vision.*",
         ],
     ),
-    max_workers=1,
 )

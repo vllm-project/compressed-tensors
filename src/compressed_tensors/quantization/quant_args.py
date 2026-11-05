@@ -13,6 +13,7 @@ from pydantic import (
     Field,
     field_serializer,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -20,6 +21,7 @@ from pydantic import (
 __all__ = [
     "FP8_E4M3_DATA",
     "FP4_E2M1_DATA",
+    "FP6_E2M3_DATA",
     "BFLOAT16_DATA",
     "FLOAT16_DATA",
     "FLOAT32_DATA",
@@ -64,6 +66,25 @@ class FP4_E2M1_DATA(FloatArgs):
         from compressed_tensors.quantization.utils.fp4_utils import cast_to_fp4
 
         return cast_to_fp4(x)
+
+
+class FP6_E2M3_DATA(FloatArgs):
+    exponent = 2
+    mantissa = 3
+    bits = 6
+    max = 7.5
+    min = -7.5
+
+    @staticmethod
+    def cast_to_fp6(x: torch.Tensor) -> torch.Tensor:
+        """Round float values to the nearest E2M3 representable value.
+
+        :param x: input tensor to quantize
+        :return: input tensor after rounding to fp6 (maintains same dtype)
+        """
+        from compressed_tensors.quantization.utils.fp6_utils import cast_to_fp6
+
+        return cast_to_fp6(x)
 
 
 class FP8_E4M3_DATA(FloatArgs):
@@ -216,6 +237,26 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             return None
         return str(dtype)
 
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        data = handler(self)
+
+        # Omit fields that are None when not explicitly user-specified
+        for field in ("actorder", "block_structure", "scale_dtype"):
+            if data.get(field) is None:
+                data.pop(field, None)
+
+        # Omit empty observer_kwargs
+        if not data.get("observer_kwargs"):
+            data.pop("observer_kwargs", None)
+
+        # Omit observer and zp_dtype when not explicitly user-specified or when None
+        for field in ("observer", "zp_dtype"):
+            if field not in self.model_fields_set or data.get(field) is None:
+                data.pop(field, None)
+
+        return data
+
     @field_validator("type", mode="before")
     def validate_type(cls, value) -> QuantizationType:
         if isinstance(value, str):
@@ -295,6 +336,11 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
 
     @model_validator(mode="after")
     def validate_model_after(model: "QuantizationArgs") -> "QuantizationArgs":
+        # Capture which fields the user explicitly provided before this
+        # validator modifies any fields via __setattr__ (which would otherwise
+        # expand model_fields_set)
+        _user_provided = set(model.model_fields_set)
+
         # extract user-passed values from dictionary
         strategy = model.strategy
         group_size = model.group_size
@@ -367,7 +413,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 raise ValueError("local is only supported for strategy tensor_group")
 
         if zp_dtype is None:
-            if model.num_bits == 4 and model.type == QuantizationType.FLOAT:
+            if model.num_bits in (4, 6) and model.type == QuantizationType.FLOAT:
                 zp_dtype = FP8_E4M3_DATA.dtype
             else:
                 zp_dtype = model.pytorch_dtype()
@@ -375,6 +421,12 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         # write back modified values
         model.strategy = strategy
         model.zp_dtype = zp_dtype
+
+        # Restore model_fields_set to only the fields explicitly provided by the user,
+        # undoing any additions made by the __setattr__ calls above. This ensures
+        # that inferred fields (zp_dtype, strategy) are not mistakenly treated as
+        # user-specified during serialization.
+        object.__setattr__(model, "__pydantic_fields_set__", _user_provided)
 
         return model
 
@@ -450,10 +502,12 @@ def round_to_quantized_type_args(
     if args.type == QuantizationType.FLOAT:
         if args.num_bits == 8:
             rounded = tensor.to(FP8_E4M3_DATA.dtype)
+        elif args.num_bits == 6:
+            rounded = FP6_E2M3_DATA.cast_to_fp6(tensor)
         elif args.num_bits == 4:
             rounded = FP4_E2M1_DATA.cast_to_fp4(tensor)
         else:
-            raise NotImplementedError("Only num_bits in (4, 8) are supported")
+            raise NotImplementedError("Only num_bits in (4, 6, 8) are supported")
     elif args.type == QuantizationType.INT:
         rounded = torch.round(tensor)
     else:

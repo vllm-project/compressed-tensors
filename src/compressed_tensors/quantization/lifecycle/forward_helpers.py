@@ -12,6 +12,7 @@ from compressed_tensors.quantization.quant_args import (
 )
 from compressed_tensors.quantization.utils import maybe_pad_tensor_for_block_quant
 from compressed_tensors.quantization.utils.fp4_utils import _round_to_fp4
+from compressed_tensors.quantization.utils.fp6_utils import _round_to_fp6
 from compressed_tensors.utils.impl_backend import ImplBackend
 from compressed_tensors.utils.triton import tl, triton, triton_req
 
@@ -136,7 +137,7 @@ def _process_group(
         scale = scale.unsqueeze(1)
         zero_point = zero_point.unsqueeze(1) if zero_point is not None else None
 
-    if columns >= group_size and columns % group_size != 0:
+    if columns % group_size != 0:
         raise ValueError(
             "tensor column shape must be divisble "
             f"by the given group_size {group_size} but got {columns}"
@@ -232,7 +233,7 @@ def _quantize_kernel(
     group_size,
     num_scale_cols,
     quant_type: tl.constexpr,  # QUANT_TYPE_INT or QUANT_TYPE_FLOAT
-    num_bits: tl.constexpr,  # 4 or 8
+    num_bits: tl.constexpr,  # 4, 6 or 8
     use_intel_libdevice: tl.constexpr,
     BLOCK_SIZE_R: tl.constexpr,
     BLOCK_SIZE_C: tl.constexpr,
@@ -317,6 +318,8 @@ def _quantize_kernel(
         output = tl.clamp(output, q_min, q_max)
         if num_bits == 4:
             output = _round_to_fp4(output)
+        elif num_bits == 6:
+            output = _round_to_fp6(output, use_intel_libdevice)
         elif num_bits == 8:
             output = output.to(tl.float8e4nv).to(output.dtype)
 
@@ -435,6 +438,9 @@ def _quantize_triton(
 
     num_rows = dim_0 * dim_1
     num_cols = dim_2 * dim_3
+    scale, zero_point = adapt_scale_and_zp_for_triton(
+        scale, zero_point, num_rows, num_scale_cols
+    )
     block_size_r: int = 32
     block_size_c: int = 32
 

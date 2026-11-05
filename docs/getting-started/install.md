@@ -31,6 +31,19 @@ pip install -e .
 The following example loads Llama 3 8B, applies round-to-nearest (RTN) MXFP4 weight quantization, compresses the weights, and saves the result. No calibration data is needed — scales are computed directly from the weights.
 
 ```python
+import math
+
+import torch
+from transformers import AutoModelForCausalLM
+
+from compressed_tensors.compressors import ModelCompressor
+from compressed_tensors.offload import update_offload_parameter
+from compressed_tensors.quantization import (
+    QuantizationConfig,
+    apply_quantization_config,
+)
+from compressed_tensors.quantization.utils import calculate_qparams
+
 model_name = "meta-llama/Meta-Llama-3-8B"
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 

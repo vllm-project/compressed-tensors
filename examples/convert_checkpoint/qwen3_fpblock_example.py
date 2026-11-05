@@ -21,5 +21,4 @@ convert_checkpoint(
         ],
         weight_block_size=[128, 128],
     ),
-    max_workers=8,
 )

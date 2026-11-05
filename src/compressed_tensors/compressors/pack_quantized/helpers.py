@@ -9,6 +9,7 @@ multiple values into 32-bit integers.
 """
 
 import math
+import sys
 from typing import Literal
 
 import torch
@@ -98,7 +99,7 @@ def pack_to_int32(
     if packed_dim == 0:
         output = output.transpose(0, 1)
 
-    return output
+    return output.contiguous()
 
 
 def unpack_from_int32(
@@ -142,6 +143,18 @@ def unpack_from_int32(
 
     rows, num_words = value.shape
     cols = int(shape[packed_dim])
+
+    # 4-bit values never straddle a byte, so split bytes instead of gathering
+    # words. Big-endian hosts store each word's bytes in reverse order.
+    if num_bits == 4:
+        nibbles = value.contiguous().view(torch.uint8)
+        # Note: only CPU devices can be big-endian
+        # https://github.com/pytorch/pytorch/blob/orig/release/2.15/torch/_tensor.py#L74
+        if value.device.type == "cpu" and sys.byteorder == "big":
+            nibbles = nibbles.view(rows, num_words, 4).flip(-1)
+        output = torch.stack((nibbles & 0xF, nibbles >> 4), dim=-1)
+        output = output.view(torch.int8).view(rows, -1)[:, :cols] - 8
+        return output.transpose(0, 1) if packed_dim == 0 else output
 
     # Pad to a multiple of num_bits words so we can reshape into groups
     if num_words % num_bits != 0:

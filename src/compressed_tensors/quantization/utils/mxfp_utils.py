@@ -10,6 +10,7 @@ from compressed_tensors.quantization.quant_args import (
     FLOAT32_DATA,
     FLOAT64_DATA,
     FP4_E2M1_DATA,
+    FP6_E2M3_DATA,
     FP8_E4M3_DATA,
     QuantizationArgs,
     QuantizationType,
@@ -28,16 +29,18 @@ __all__ = [
 # The exponent offset maps the group max into the quantized type's
 # representable range.  It equals floor(log2(type_max)):
 #   FP4 E2M1  max=6.0   -> floor(log2(6))   = 2
+#   FP6 E2M3  max=7.5   -> floor(log2(7.5)) = 2
 #   FP8 E4M3  max=448.0 -> floor(log2(448)) = 8
 _MX_ELEM_OFFSET = {
     4: int(math.floor(math.log2(FP4_E2M1_DATA.max))),  # 2
+    6: int(math.floor(math.log2(FP6_E2M3_DATA.max))),  # 2
     8: int(math.floor(math.log2(FP8_E4M3_DATA.max))),  # 8
 }
 
 
 def should_generate_mx_scales(args: QuantizationArgs):
     return (
-        args.num_bits in (4, 8)
+        args.num_bits in (4, 6, 8)
         and args.type == QuantizationType.FLOAT.value
         and args.group_size == 32
         and args.scale_dtype == torch.uint8
@@ -48,7 +51,7 @@ def maybe_convert_from_mx_exp(
     args: QuantizationArgs, scale: torch.Tensor
 ) -> torch.Tensor:
     """
-    Conditionally converts MX (MXFP4/MXFP8) scales from their E8M0 exponent
+    Conditionally converts MX (MXFP4/MXFP6/MXFP8) scales from their E8M0 exponent
     format to float scales.
 
     If the quantization arguments indicate an MX format, the input `scale`
@@ -67,7 +70,9 @@ def maybe_convert_from_mx_exp(
     return scale
 
 
-def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
+def round_to_power_2(
+    x: torch.Tensor, elem_mantissa: int = FP4_E2M1_DATA.mantissa
+) -> torch.Tensor:
     """
     Round values to the closest power of 2.
     This is done by masking the values with SIGN_EXPONENT_MASK,
@@ -83,6 +88,8 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
         Keep the exponent + sign bit to give you the closest power of 2, 0.0625
 
     :param x: tensor to round to closest power of 2
+    :param elem_mantissa: mantissa width of the quantized element type, which
+        sets the threshold for rounding up to the next power of 2
     """
     scale_dtype = x.dtype
     if scale_dtype is torch.bfloat16:
@@ -110,7 +117,7 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
         x = x.view(int_dtype).to(torch.int64)
 
     # Find closest power of 2
-    VAL_TO_ADD = 1 << (mantissa - FP4_E2M1_DATA.mantissa - 1)
+    VAL_TO_ADD = 1 << (mantissa - elem_mantissa - 1)
     # Add value to push the value to the next exponent
     SIGN_EXPONENT_MASK = ((1 << (exponent + 1)) - 1) << mantissa
     # mask to only keep exponent - we conservatively round down
@@ -123,7 +130,7 @@ def round_to_power_2(x: torch.Tensor) -> torch.Tensor:
 
 def generate_mx_scales(x: torch.Tensor, num_bits: int = 4) -> torch.Tensor:
     """
-    Generate MX scales (for MXFP4 and MXFP8). The scales require the
+    Generate MX scales (for MXFP4, MXFP6 and MXFP8). The scales require the
     following steps:
     1. Round to the closest power of 2
     2. Subtract the element-format offset so that the largest group
@@ -133,10 +140,13 @@ def generate_mx_scales(x: torch.Tensor, num_bits: int = 4) -> torch.Tensor:
     Called when calculating qparams using observers.
 
     :param x: tensor of per-group max absolute values
-    :param num_bits: quantized element width (4 for MXFP4, 8 for MXFP8)
+    :param num_bits: quantized element width (4, 6 or 8)
     :returns scales as E8M0 exponents (uint8 after rounding)
     """
     offset = _MX_ELEM_OFFSET[num_bits]
+    # E2M3's max has an all-ones mantissa, so rounding with its mantissa width
+    # bumps the exponent only when the group max would round past 7.5
+    mantissa = FP6_E2M3_DATA.mantissa if num_bits == 6 else FP4_E2M1_DATA.mantissa
     # Round to closest power of 2
-    scale_power_2 = round_to_power_2(x)
+    scale_power_2 = round_to_power_2(x, mantissa)
     return 127 + torch.floor(torch.log2(scale_power_2)) - offset

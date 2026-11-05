@@ -41,8 +41,9 @@ def send_tensors(value: T, *args, **kwargs) -> T:
             with torch.no_grad():
                 tensor = value.to(*args, **kwargs)
 
-            # special case: avoid changing param pointer when possible
-            if tensor.data_ptr() == value.data_ptr():
+            # special case: avoid changing param pointer when possible. Compare devices
+            # too, since tensors without elements have a null data pointer everywhere
+            if tensor.device == value.device and tensor.data_ptr() == value.data_ptr():
                 return value
 
             tensor.__class__ = value.__class__
@@ -176,13 +177,18 @@ def to_tensor(dst: torch.Tensor, src: TensorCls) -> TensorCls:
     """
     Copy the subclass, dict, and attributes into `dst` from `src`
 
+    Gradients are restored only for floating-point or complex destination dtypes.
+
     :param dst: tensor to copy attributes into
     :param src: tensor to copy attributes from
     :return: dst tensor with copied attributes
     """
     dst.__class__ = src.__class__
     dst.__dict__ = src.__dict__.copy()
-    dst.requires_grad = src.requires_grad
+    # Match Tensor.to: integer and boolean destinations cannot require gradients.
+    dst.requires_grad = src.requires_grad and (
+        dst.is_floating_point() or dst.is_complex()
+    )
     return dst
 
 
@@ -240,3 +246,15 @@ def as_single_threaded():
         patch_attr(DistributedDiskCache, "offload", DiskCache.offload),
     ):
         yield
+
+
+def _pin_memory(tensor: torch.Tensor) -> torch.Tensor:
+    if tensor.is_pinned():
+        return tensor
+    if not torch.accelerator.is_available():
+        return tensor
+
+    pinned = to_empty(tensor, device="cpu", pin_memory=True)
+    with torch.no_grad():
+        pinned.copy_(tensor)
+    return pinned

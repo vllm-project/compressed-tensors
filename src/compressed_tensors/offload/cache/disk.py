@@ -4,15 +4,20 @@
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
+from uuid import uuid4
 
 import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import is_source_process
 from compressed_tensors.logger import logger
-from compressed_tensors.offload.cache import OffloadCache
-from compressed_tensors.offload.utils import send_tensors, to_tensor
+from compressed_tensors.offload.cache.base import OffloadCache
+from compressed_tensors.offload.cache.disk_utils import _evict
+from compressed_tensors.offload.cache.utils import (
+    catch_pinned_mem_error,
+    load_disk_tensor_from_offload,
+)
+from compressed_tensors.offload.utils import send_tensors
 from compressed_tensors.utils import is_accelerator_type
-from safetensors import safe_open
 from safetensors.torch import save_file
 
 
@@ -58,6 +63,31 @@ class DiskCache(OffloadCache):
         # Resolve relative paths to absolute paths for symlink creation
         self.offload_dir = Path(offload_dir).resolve()
 
+    @catch_pinned_mem_error
+    def stage(
+        self,
+        offloaded: torch.Tensor | None,
+        pin_memory: bool = False,
+    ) -> torch.Tensor | None:
+        """
+        Stage a disk-backed tensor for a later onload.
+
+        :param offloaded: meta tensor to stage
+        :param pin_memory: whether to use page-locked CPU memory
+        :return: staged tensor
+        """
+        if offloaded is None:
+            return None
+
+        weight_info = self.index[offloaded]
+
+        return load_disk_tensor_from_offload(
+            weight_info,
+            device="cpu",
+            template=offloaded,
+            pin_memory=pin_memory and torch.device(self.onload_device).type != "cpu",
+        )
+
     def onload(self, offloaded: torch.Tensor | None) -> torch.Tensor | None:
         """
         Onload a tensor from disk/meta to device
@@ -68,16 +98,17 @@ class DiskCache(OffloadCache):
         if offloaded is None:
             return None
 
-        weight_info = self.index[offloaded]
         device = _get_safe_open_device(self.onload_device)
 
-        with safe_open(
-            weight_info["safetensors_file"], framework="pt", device=device
-        ) as file:
-            onloaded = file.get_tensor(weight_info["weight_name"])
-            onloaded = to_tensor(onloaded, offloaded)
-            onloaded = onloaded.to(getattr(torch, weight_info["dtype"]))
-            return onloaded
+        if self.is_staged:
+            onloaded = send_tensors(offloaded, device=device, copy=False)
+        else:
+            weight_info = self.index[offloaded]
+            onloaded = load_disk_tensor_from_offload(
+                weight_info, device=device, template=offloaded
+            )
+
+        return onloaded
 
     def offload(
         self, tensor: torch.Tensor | None, offloaded: Optional[torch.Tensor] = None
@@ -131,9 +162,13 @@ class DiskCache(OffloadCache):
         if not self.onloading_disabled:
             file_path = self.index[offloaded]["safetensors_file"]
             if self._is_ct_file_path(file_path):
-                os.remove(file_path)
+                self._remove_file(file_path)
             del self.index[offloaded]
         super().__delitem__(key)
+
+    def _remove_file(self, file_path: str) -> None:
+        """Remove a cache-owned file when its last in-process reference is gone."""
+        os.remove(file_path)
 
     def update_offload(self, offloaded: torch.Tensor, data: torch.Tensor | None):
         """
@@ -149,14 +184,23 @@ class DiskCache(OffloadCache):
         weight_name = weight_info["weight_name"]
         dtype = getattr(torch, weight_info["dtype"])
 
-        # create new file if old file was a symlink to a checkpoint file
-        if os.path.islink(file_path):
-            assert self._is_ct_file_path(file_path), f"Attempted to remove {file_path}"
-            os.unlink(file_path)
-
-        # save with data using original weight_name
         assert self._is_ct_file_path(file_path), f"Attempted to write to {file_path}"
-        save_file({weight_name: data.reshape_as(offloaded).to(dtype=dtype)}, file_path)
+
+        # Replacing the path atomically handles checkpoint symlinks without an unlink
+        # gap. Evict a cached handle to regular files so later reads see new contents.
+        if not os.path.islink(file_path):
+            _evict(file_path)
+
+        temporary_path = f"{file_path}.tmp-{os.getpid()}-{id(offloaded)}"
+        try:
+            save_file(
+                {weight_name: data.reshape_as(offloaded).to(dtype=dtype)},
+                temporary_path,
+            )
+            os.replace(temporary_path, file_path)
+        finally:
+            if os.path.lexists(temporary_path):
+                os.remove(temporary_path)
 
     @classmethod
     def create_checkpoint_symlink(
@@ -202,7 +246,9 @@ class DiskCache(OffloadCache):
     @classmethod
     def _get_ct_file_path(cls, offload_dir: str, offloaded: torch.Tensor) -> str:
         """Create file path with a prefix marking it as modifiable"""
-        file_name = f"{cls._ct_file_prefix}_{_get_rank()}_{id(offloaded)}.safetensors"
+        if offloaded in cls.index:
+            return cls.index[offloaded]["safetensors_file"]
+        file_name = f"{cls._ct_file_prefix}_{_get_rank()}_{uuid4().hex}.safetensors"
         return os.path.join(offload_dir, file_name)
 
 

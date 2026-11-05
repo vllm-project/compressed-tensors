@@ -11,7 +11,11 @@ from compressed_tensors.modeling import (
     QuantizedAttentionImpl,
     QuantizedKVCache,
 )
-from compressed_tensors.offload import disable_onloading, unwrap_offload_forward
+from compressed_tensors.offload import (
+    disable_onloading,
+    get_offloaded_device,
+    unwrap_offload_forward,
+)
 from compressed_tensors.quantization import (
     DynamicType,
     QuantizationArgs,
@@ -22,12 +26,7 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle.forward import set_forward_quantized
 from compressed_tensors.quantization.utils import strategy_cdiv
-from compressed_tensors.utils import (
-    get_execution_device,
-    get_head_dim,
-    get_num_attn_heads,
-    get_num_kv_heads,
-)
+from compressed_tensors.utils import get_head_dim, get_num_attn_heads, get_num_kv_heads
 from compressed_tensors.utils.helpers import deprecated
 from loguru import logger
 from torch.nn import Module, Parameter
@@ -40,6 +39,17 @@ __all__ = [
     "initialize_qparams",
     "initialize_attn_qparams",
 ]
+
+_ATTENTION_PROJECTION_NAMES = (
+    "k_proj",
+    "v_proj",
+    "qkv_proj",
+    "kv_b_proj",
+    "q_a_proj",
+    "kv_proj",
+    "q",
+)
+_KV_CACHE_PROJECTION_NAMES = ("k_proj", "v_proj", "qkv_proj", "kv_b_proj")
 
 
 def initialize_module_for_quantization(
@@ -75,14 +85,15 @@ def initialize_module_for_quantization(
     elif isinstance(module, (torch.nn.Linear, torch.nn.Embedding)):
         with disable_onloading():
             weight = module.weight
+        weight_shape, weight_dtype = weight.shape, weight.dtype
 
         if scheme.input_activations is not None:
             initialize_qparams(
                 module,
                 "input",
                 scheme.input_activations,
-                observed_shape=weight.shape[-1:],
-                observed_dtype=weight.dtype,
+                observed_shape=weight_shape[-1:],
+                observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
             )
 
@@ -91,8 +102,8 @@ def initialize_module_for_quantization(
                 module,
                 "weight",
                 scheme.weights,
-                observed_shape=weight.shape,
-                observed_dtype=weight.dtype,
+                observed_shape=weight_shape,
+                observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
             )
 
@@ -101,8 +112,8 @@ def initialize_module_for_quantization(
                 module,
                 "output",
                 scheme.output_activations,
-                observed_shape=weight.shape[:-1],
-                observed_dtype=weight.dtype,
+                observed_shape=weight_shape[:-1],
+                observed_dtype=weight_dtype,
                 force_zero_point=force_zero_point,
             )
 
@@ -120,12 +131,12 @@ def initialize_module_for_quantization(
 
 
 def _is_attention_module(module: Module) -> bool:
-    return "attention" in module.__class__.__name__.lower() and (
-        hasattr(module, "k_proj")
-        or hasattr(module, "v_proj")
-        or hasattr(module, "qkv_proj")
-        or hasattr(module, "kv_b_proj")
-    )
+    class_name = type(module).__name__.lower()
+    if "attention" not in class_name:
+        return False
+
+    with disable_onloading():
+        return any(hasattr(module, name) for name in _ATTENTION_PROJECTION_NAMES)
 
 
 @deprecated("is_cached_attention_module")
@@ -136,6 +147,10 @@ def is_attention_module(module: Module) -> bool:
 def is_cached_attention_module(module: Module) -> bool:
     if not _is_attention_module(module):
         return False
+
+    with disable_onloading():
+        if not any(hasattr(module, name) for name in _KV_CACHE_PROJECTION_NAMES):
+            return False
 
     try:
         parameters = inspect.signature(module.forward).parameters
@@ -175,7 +190,9 @@ def initialize_qparams(
     """
     strategy = quantization_args.strategy
     dynamic = quantization_args.dynamic
-    device = get_execution_device(module)  # avoid performing intialization ops on cpu
+    device = get_offloaded_device(module)
+    if device == "disk":
+        device = torch.device("cpu")
 
     # Skip all intialization for fully dynamic quantization
     if dynamic is True:

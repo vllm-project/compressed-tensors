@@ -3,10 +3,13 @@
 
 import json
 import os
+from unittest.mock import patch
 
 import pytest
 import torch
+from compressed_tensors.quantization import QuantizationConfig, QuantizationScheme
 from compressed_tensors.utils.mtp import save_mtp_tensors_to_checkpoint
+from compressed_tensors.utils.safetensors_load import get_weight_mappings
 from safetensors import safe_open
 from safetensors.torch import save_file
 from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, SAFE_WEIGHTS_NAME
@@ -216,8 +219,86 @@ class TestSaveMtpTensorsToCheckpoint:
         with open(index_path) as f:
             index = json.load(f)
 
-        assert index["weight_map"].get("model.layer0.weight") == SAFE_WEIGHTS_NAME
+        assert (
+            index["weight_map"].get("model.layer0.weight")
+            == "model_backbone.safetensors"
+        )
         assert index["weight_map"].get("mtp.layer0.weight") == "model_mtp.safetensors"
+        assert not (dest / SAFE_WEIGHTS_NAME).exists()
+        assert set(get_weight_mappings(str(dest))) == set(index["weight_map"])
+
+    def test_selected_copy_preserves_weights_and_expanded_ignores(
+        self, tmp_path, dest_dir_with_index
+    ):
+        source = tmp_path / "selected.safetensors"
+        weights = {
+            f"model.mtp.layers.0.experts.{i}.up_proj.weight": torch.randn(4, 4)
+            for i in range(32)
+        }
+        weights["model.layers.2.eh_proj.weight"] = torch.randn(4, 4)
+        selected = dict.fromkeys(weights, str(source))
+        weights["model.layers.0.weight"] = torch.randn(4, 4)
+        _make_safetensors(str(source), weights)
+        config_path = dest_dir_with_index / "config.json"
+        user_regex = "re:.*preserve.*"
+        targets = ["Linear", r"re:^model\.layers\."]
+        initial = QuantizationConfig(
+            config_groups={"group_0": QuantizationScheme(targets=targets)},
+            ignore=["lm_head", user_regex],
+        )
+        config_path.write_text(
+            json.dumps({"quantization_config": initial.model_dump()})
+        )
+        index_path = dest_dir_with_index / SAFE_WEIGHTS_INDEX_NAME
+        snapshots = []
+        with patch(
+            "compressed_tensors.utils.mtp._fetch_and_save_prefix_tensors"
+        ) as fetch:
+            for _ in range(2):
+                save_mtp_tensors_to_checkpoint(
+                    "unused/source",
+                    str(dest_dir_with_index),
+                    source_weight_map=selected,
+                )
+                snapshots.append((config_path.read_bytes(), index_path.read_bytes()))
+            fetch.assert_not_called()
+        assert snapshots[0] == snapshots[1]
+        saved = _read_safetensors(str(dest_dir_with_index / "model_mtp.safetensors"))
+        assert set(saved) == set(selected)
+        assert all(torch.equal(tensor, weights[name]) for name, tensor in saved.items())
+        assert set(get_weight_mappings(str(dest_dir_with_index))) == {
+            "model.layer0.weight",
+            *selected,
+        }
+        config = json.loads(config_path.read_text())["quantization_config"]
+        names = [name.removesuffix(".weight") for name in selected]
+        assert config["ignore"] == ["lm_head", user_regex, *names]
+        assert config["config_groups"] == initial.model_dump()["config_groups"]
+        restored = QuantizationConfig.model_validate(config)
+        assert restored.ignore == ["lm_head", user_regex, *names]
+        assert restored.model_dump()["ignore"] == config["ignore"]
+        # Exact ignores can be removed by a later pass; user regexes stay.
+        scheme = QuantizationScheme(targets=[names[0], user_regex], format="dense")
+        with pytest.warns(UserWarning):
+            restored.merge(QuantizationConfig(config_groups={"mtp": scheme}))
+        expected = {"lm_head", user_regex, *names[1:]}
+        assert set(restored.ignore) == expected
+        reloaded = QuantizationConfig.model_validate_json(restored.model_dump_json())
+        assert set(reloaded.ignore) == expected
+
+    def test_empty_selection_warns_without_prefix_lookup(self, tmp_path):
+        with (
+            patch("compressed_tensors.utils.mtp.logger.warning") as warning,
+            patch(
+                "compressed_tensors.utils.mtp._fetch_and_save_prefix_tensors"
+            ) as fetch,
+        ):
+            save_mtp_tensors_to_checkpoint(
+                "unused/source", str(tmp_path), source_weight_map={}
+            )
+        fetch.assert_not_called()
+        warning.assert_called_once_with("No MTP weights were explicitly selected")
+        assert not list(tmp_path.iterdir())
 
     def test_no_mtp_tensors_no_op(self, dest_dir_with_index, tmp_path):
         """

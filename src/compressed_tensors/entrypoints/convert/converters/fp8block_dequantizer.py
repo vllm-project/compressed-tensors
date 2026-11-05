@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import os
 from typing import Iterable
 
 import torch
@@ -9,7 +10,11 @@ from compressed_tensors.quantization import QuantizationConfig
 from compressed_tensors.quantization.utils.helpers import (
     maybe_pad_tensor_for_block_quant,
 )
-from compressed_tensors.utils.match import match_name, match_quantizable_tensors
+from compressed_tensors.utils.match import match_name
+from compressed_tensors.utils.safetensors_load import (
+    get_checkpoint_files,
+    get_weight_map,
+)
 
 
 class FP8BlockDequantizer(Converter):
@@ -29,8 +34,49 @@ class FP8BlockDequantizer(Converter):
         self.targets = targets
         self.weight_block_size = weight_block_size
         self.dtype = dtype
+        self._checkpoint_targets: frozenset[str] | None = None
 
         self.param_names = ["weight", "weight_scale_inv"]
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        model_name_or_path: str | os.PathLike,
+        ignore: Iterable[str] = tuple(),
+        weight_block_size: tuple[int] = (128, 128),
+        dtype=torch.bfloat16,
+    ) -> "FP8BlockDequantizer":
+        """
+        Build the converter by scanning the checkpoint weight map and targeting
+        every module with a ``weight_scale_inv`` tensor.
+
+        :param model_name_or_path: HuggingFace stub or local checkpoint path
+        :param ignore: module names or regexes to exclude from dequantization
+        :param weight_block_size: block dimensions used during quantization
+        :param dtype: dtype to store dequantized weights in
+        """
+        model_files = get_checkpoint_files(model_name_or_path)
+        weight_map = get_weight_map(model_files)
+
+        targets = frozenset(
+            name.rpartition(".")[0]
+            for name in weight_map
+            if name.rpartition(".")[-1] == "weight_scale_inv"
+        )
+        if not targets:
+            raise ValueError(
+                "No weight_scale_inv tensors found in checkpoint "
+                f"{model_name_or_path}"
+            )
+
+        converter = cls(
+            ignore=ignore,
+            targets=targets,
+            weight_block_size=weight_block_size,
+            dtype=dtype,
+        )
+        converter._checkpoint_targets = targets
+        return converter
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
@@ -65,18 +111,21 @@ class FP8BlockDequantizer(Converter):
         Dequantize the fp8 block tensors (weight, weight_scale_inv) to full-precision
         weight tensors in dtype provided to constructor
         """
-        for module_name, name in match_quantizable_tensors(
-            tensors, self.ignore, self.targets, param_targets=self.param_names
-        ):
-            param_name = name.rpartition(".")[-1]
+        for name in list(tensors):
+            module_name, _, param_name = name.rpartition(".")
+            if (
+                param_name != "weight"
+                or module_name.endswith("norm")
+                or not self._is_targeted(module_name)
+            ):
+                continue
 
-            if param_name == "weight":
-                # weight * weight_scale_inv -> dequantized weight
-                tensors[f"{module_name}.weight"] = self._create_dequantized_weight(
-                    tensors[f"{module_name}.weight"],
-                    tensors[f"{module_name}.weight_scale_inv"],
-                )
-                del tensors[f"{module_name}.weight_scale_inv"]
+            # weight * weight_scale_inv -> dequantized weight
+            tensors[name] = self._create_dequantized_weight(
+                tensors[name],
+                tensors[f"{module_name}.weight_scale_inv"],
+            )
+            del tensors[f"{module_name}.weight_scale_inv"]
 
         return tensors
 
@@ -87,13 +136,22 @@ class FP8BlockDequantizer(Converter):
 
     def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, _, param_name = weight_name.rpartition(".")
-        if (
-            any([match_name(module_name, target) for target in self.targets])
-            and not any([match_name(module_name, ignore) for ignore in self.ignore])
-            and param_name == "weight"
-        ):
+        if param_name == "weight" and self._is_targeted(module_name):
             return {f"{module_name}.weight_scale_inv"}
         return set()
+
+    def _is_targeted(self, module_name: str) -> bool:
+        if any(match_name(module_name, ignore) for ignore in self.ignore):
+            return False
+
+        if self._checkpoint_targets is not None:
+            return module_name in self._checkpoint_targets
+
+        return (
+            len(self.targets) == 0
+            or "Linear" in self.targets
+            or any(match_name(module_name, target) for target in self.targets)
+        )
 
     def _create_dequantized_weight(
         self, weight: torch.Tensor, weight_scale_inv: torch.Tensor

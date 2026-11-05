@@ -11,6 +11,7 @@ from tests.test_offload.cache.helpers import (
     _test_disable_onloading,
     _test_garbage_collect,
     _test_offload,
+    _test_offload_empty_view,
     _test_onload,
     _test_onloading,
     _test_shared_attributes,
@@ -57,6 +58,12 @@ def test_garbage_collect(offload_device, onload_device, offload_cache):
 @requires_gpu
 def test_offload(offload_device, onload_device, offload_cache):
     _test_offload(offload_device, onload_device, offload_cache)
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_offload_empty_view(offload_device, onload_device, offload_cache):
+    _test_offload_empty_view(offload_device, onload_device, offload_cache)
 
 
 @pytest.mark.unit
@@ -141,3 +148,43 @@ def test_offload_logs_memory_hint_oserror(onload_device):
     assert any(
         "CPU offloading ran out of host RAM or mmap descriptors." in w for w in warnings
     )
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_stage_pinned_memory(onload_device):
+    cache = cpu_cache.CPUCache(onload_device)
+    offloaded = cache.offload(torch.ones(10, device=onload_device))
+
+    staged = cache.stage(offloaded, pin_memory=True)
+
+    assert staged.device.type == "cpu"
+    assert staged.is_pinned()
+
+
+@pytest.mark.unit
+@requires_gpu
+def test_stage_pinned_memory_logs_hint(onload_device):
+    cache = cpu_cache.CPUCache(onload_device)
+    offloaded = cache.offload(torch.ones(10, device=onload_device))
+
+    original_pin_memory = cpu_cache._pin_memory
+
+    def raise_memory_error(tensor):
+        raise RuntimeError("CUDA out of memory. Tried to allocate 1 GiB")
+
+    cpu_cache._pin_memory = raise_memory_error
+
+    warnings = []
+    handler_id = loguru_logger.add(
+        lambda msg: warnings.append(msg.record["message"]), level="WARNING"
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="Tried to allocate"):
+            cache.stage(offloaded, pin_memory=True)
+    finally:
+        cpu_cache._pin_memory = original_pin_memory
+        loguru_logger.remove(handler_id)
+
+    assert any("Pinned-memory staging ran out of host RAM" in w for w in warnings)

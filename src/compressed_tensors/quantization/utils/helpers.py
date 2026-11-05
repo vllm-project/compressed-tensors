@@ -8,6 +8,7 @@ from functools import lru_cache
 import torch
 from compressed_tensors.quantization.quant_args import (
     FP4_E2M1_DATA,
+    FP6_E2M3_DATA,
     FP8_E4M3_DATA,
     FloatArgs,
     QuantizationArgs,
@@ -88,11 +89,11 @@ def calculate_qparams(
         zero_points = torch.zeros(scales.shape, device=device, dtype=min_vals.dtype)
     else:
         if (
-            quantization_args.num_bits == 4
+            quantization_args.num_bits in (4, 6)
             and quantization_args.type == QuantizationType.FLOAT
         ):
             raise NotImplementedError(
-                "Asymmetric Quantization is not supported for FP4"
+                "Asymmetric Quantization is not supported for FP4 and FP6"
             )
         scales = (max_vals - min_vals) / bit_range.to(max_vals.dtype)
         zero_points = bit_min - (min_vals / scales)
@@ -208,12 +209,15 @@ def _calculate_range(
         if num_bits == 8:
             q_max = torch.tensor(FP8_E4M3_DATA.max, device=device)
             q_min = torch.tensor(FP8_E4M3_DATA.min, device=device)
+        elif num_bits == 6:
+            q_max = torch.tensor(FP6_E2M3_DATA.max, device=device)
+            q_min = torch.tensor(FP6_E2M3_DATA.min, device=device)
         elif num_bits == 4:
             q_max = torch.tensor(FP4_E2M1_DATA.max, device=device)
             q_min = torch.tensor(FP4_E2M1_DATA.min, device=device)
         else:
             raise NotImplementedError(
-                "Range calculation only supported for 4 and 8 bits"
+                "Range calculation only supported for 4, 6 and 8 bits"
             )
     else:
         raise ValueError(f"Invalid quantization type {quant_type}")

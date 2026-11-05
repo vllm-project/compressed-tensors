@@ -80,11 +80,15 @@ class NaiveQuantizationCompressor(BaseCompressor):
             dtype=weights.pytorch_dtype(),
         )
 
-        # Truncate back to original shape if padding was added
+        # Truncate back to original shape if padding was added. The slice is
+        # a view into the padded buffer, so it is non-contiguous whenever the
+        # columns were padded; copy it so that the compressed weight can be
+        # serialized (e.g. by safetensors, which rejects non-contiguous
+        # tensors)
         if quantized_weight.shape != original_weight_shape:
             quantized_weight = quantized_weight[
                 tuple([slice(v) for v in original_weight_shape])
-            ]
+            ].contiguous()
 
         state_dict["weight"] = quantized_weight
         state_dict = cls._remove_symmetric_zp(state_dict, scheme)
@@ -125,7 +129,10 @@ class NaiveQuantizationCompressor(BaseCompressor):
         Naive quantization is the fallback compressor - it matches any quantized
         scheme that doesn't match a more specific compressor.
         """
-        return module_type in COMPRESSIBLE_MODULE_TYPES and scheme.weights is not None
+        return (
+            issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
+            and scheme.weights is not None
+        )
 
 
 @BaseCompressor.register(name=CompressionFormat.int_quantized.value)
@@ -136,7 +143,7 @@ class IntQuantizationCompressor(NaiveQuantizationCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Int quantized matches w8a8 int quantization."""
         return (
-            module_type in COMPRESSIBLE_MODULE_TYPES
+            issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
             and scheme.input_activations is not None
             and scheme.weights is not None
             and scheme.weights.type == QuantizationType.INT.value
@@ -151,7 +158,7 @@ class FloatQuantizationCompressor(NaiveQuantizationCompressor):
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
         """Float quantized matches w8a8 float quantization."""
         return (
-            module_type in COMPRESSIBLE_MODULE_TYPES
+            issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
             and scheme.input_activations is not None
             and scheme.weights is not None
             and scheme.weights.type == QuantizationType.FLOAT.value

@@ -10,12 +10,9 @@ import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import is_distributed
 from compressed_tensors.offload.cache import OffloadCache
+from compressed_tensors.offload.cache.dist_batch import batch_offload_sync
 from compressed_tensors.offload.module import offload_module, remove_module_offload
-from compressed_tensors.offload.utils import (
-    get_module_device,
-    get_module_sizes,
-    module_size,
-)
+from compressed_tensors.offload.utils import get_module_sizes, module_size
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.binary_search import SearchFailureError, max_binary_search
 from compressed_tensors.utils.helpers import deprecated
@@ -40,27 +37,71 @@ DeviceMap = dict[str, tuple[torch.device | None, torch.device | str | None]]
 
 
 def set_onload_device(
-    model: ModelType,
+    module: ModelType,
     onload_device: torch.device | str,
-) -> ModelType:
+) -> tuple[bool, dict]:
     """
-    Modify the dispatch of a model to onload to the provided `onload_device`. Existing
-    offloaded tensors will not be modified. If a module is not already offloaded, it
-    will be offloaded to its current device.
+    Modify the dispatch of a model to onload to the provided `onload_device`. All
+    modules will be offloaded, with offload device set with the following priority:
+
+    1. Offloaded modules retain their existing offloads
+    2. Modules with existing parameters will be offloaded to the parameter device
+    3. Modules without parameters will adopt of the offloading of any offloaded children
+    4. Modules without parameters or children will be offloaded to cpu
 
     :param model: model to dispatch
     :param onload_device: device to move weights to during forward pass
-    :return: dispatched model
     """
-    for module in model.modules():
-        if isinstance(module._parameters, OffloadCache):
-            module._parameters.onload_device = onload_device
-            module._buffers.onload_device = onload_device
-        else:
-            offload_device = get_module_device(module, torch.device("cpu"))
-            offload_module(module, onload_device, offload_device)
+    from compressed_tensors.offload import get_cache_init_kwargs
+    from compressed_tensors.utils.module import get_direct_state_dict
 
-    return model
+    # recursively set onload device for children
+    child_offloaded = False
+    child_kwargs = {"onload_device": onload_device}
+    for child in module.children():
+        _offloaded, _kwargs = set_onload_device(child, onload_device)
+        if not child_offloaded and _offloaded:  # first child
+            child_offloaded = _offloaded
+            child_kwargs = _kwargs
+
+    # if this module is offloaded, set onload device
+    if isinstance(module._parameters, OffloadCache):
+        assert isinstance(module._buffers, OffloadCache)
+        module._parameters.onload_device = onload_device
+        module._buffers.onload_device = onload_device
+        offload_kwargs = get_cache_init_kwargs(module)
+        return True, offload_kwargs
+
+    # if not offloaded, need to determine how to offload
+    else:
+        tensors = {
+            name: tensor
+            for name, tensor in get_direct_state_dict(module).items()
+            if isinstance(tensor, torch.Tensor)
+        }
+
+        # if this module has parameters, offload with params device
+        if len(tensors) > 0:
+            offload_kwargs = {
+                "onload_device": onload_device,
+                "offload_device": next(iter(tensors.values())).device,
+            }
+            offload_module(module, **offload_kwargs)
+            return False, offload_kwargs
+
+        # if this module does not have parameters, offload with child module
+        elif child_offloaded:
+            offload_module(module, **child_kwargs)
+            return True, child_kwargs
+
+        # if not child was found, offload with cpu
+        else:
+            offload_kwargs = {
+                "onload_device": onload_device,
+                "offload_device": torch.device("cpu"),
+            }
+            offload_module(module, **offload_kwargs)
+            return False, offload_kwargs
 
 
 @deprecated("set_onload_device")
@@ -85,36 +126,44 @@ def dispatch_with_map(
     """
     Dispatch a model according to the provided device map
 
+    When distributed, the cpu and disk offload metadata of the whole model is
+    exchanged between ranks once, rather than once per tensor. See
+    `compressed_tensors.offload.cache.dist_batch::batch_offload_sync`.
+
     :param model: model to dispatch
     :param device_map: device map specifying the onload and offload of each module
     :param offload_dir: optional directory for disk offloading
     :param show_progress: show tqdm progress
     """
-    for name, (onload_device, offload_device) in tqdm(
-        list(device_map.items()),
-        desc="Dispatching model",
-        disable=(not show_progress),
-        position=(dist.get_rank() if is_distributed() else 0),
-    ):
-        try:
-            module = model.get_submodule(name)
-        except AttributeError:
-            # The device map is authored from the source rank's view of the
-            # module tree. On other ranks, sharded structures -- e.g. an
-            # nn.ModuleList of routed MoE experts where slots the rank does
-            # not own are None placeholders -- legitimately lack some of
-            # these submodules. Skip map entries with no local module rather
-            # than crashing the dispatch.
-            logger.debug(f"Skipping '{name}' from device map: not present locally")
-            continue
+    with batch_offload_sync() as batch:
+        for name, (onload_device, offload_device) in tqdm(
+            list(device_map.items()),
+            desc="Dispatching model",
+            disable=(not show_progress),
+            position=(dist.get_rank() if is_distributed() else 0),
+        ):
+            try:
+                module = model.get_submodule(name)
+            except AttributeError:
+                # The device map is authored from the source rank's view of the
+                # module tree. On other ranks, sharded structures -- e.g. an
+                # nn.ModuleList of routed MoE experts where slots the rank does
+                # not own are None placeholders -- legitimately lack some of
+                # these submodules. Skip map entries with no local module rather
+                # than crashing the dispatch.
+                logger.debug(f"Skipping '{name}' from device map: not present locally")
+                continue
 
-        if offload_device == "disk":
-            offload_module(
-                module, onload_device, offload_device, offload_dir=offload_dir
-            )
+            if batch is not None:
+                batch.module_name = name
 
-        elif offload_device is not None:
-            offload_module(module, onload_device, offload_device)
+            if offload_device == "disk":
+                offload_module(
+                    module, onload_device, offload_device, offload_dir=offload_dir
+                )
+
+            elif offload_device is not None:
+                offload_module(module, onload_device, offload_device)
 
 
 def get_device_map(

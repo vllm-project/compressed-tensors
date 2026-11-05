@@ -38,13 +38,10 @@ class ModelOptNvfp4Converter(Converter):
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Process, then flag any non-ignored qparam that a full process run would
-        only leave on a converted module. process renames weight to weight_packed
-        on every module it handles, so weight_packed marks a processed module,
-        and it only retypes k/v scales when a kv_cache_scheme is configured.
-        Checking both keys off process's output rather than re-deriving the
-        target matching. Returns the processed tensors so chained converters
-        observe the resulting format.
+        Process, then flag non-ignored qparams without a converted weight and
+        targeted packed weights with an invalid dtype or missing weight scales.
+        Returns the processed tensors so chained converters observe the
+        resulting format.
         """
         tensors = self.process(tensors)
 
@@ -67,6 +64,19 @@ class ModelOptNvfp4Converter(Converter):
                 f"weight_packed, indicating untargeted or orphan qparams: {orphans}"
             )
 
+        for module_name, name in match_quantizable_tensors(
+            tensors, self.ignore, self.targets, param_targets=("weight_packed",)
+        ):
+            if tensors[name].dtype != torch.uint8:
+                raise ValueError(
+                    f"Expected {name} to have dtype torch.uint8, "
+                    f"got {tensors[name].dtype}"
+                )
+            for param_name in ("weight_scale", "weight_global_scale"):
+                scale_name = f"{module_name}.{param_name}"
+                if scale_name not in tensors:
+                    raise ValueError(f"Found {name} without corresponding {scale_name}")
+
         return tensors
 
     def process(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -75,7 +85,7 @@ class ModelOptNvfp4Converter(Converter):
         NVFP4 format.
         Some tensors require rename, some require inversion
         - 1 / input_scale -> input_global_scale
-        - weight -> weight_packed
+        - uint8 weight -> weight_packed (unquantized weights are left unchanged)
         - 1 / weight_scale_2 -> weight_global_scale
         """
         for module_name, name in match_quantizable_tensors(
@@ -94,6 +104,10 @@ class ModelOptNvfp4Converter(Converter):
                     del tensors[name]
                 # weight -> weight_packed U8
                 case "weight":
+                    # ModelOpt packs two FP4 values per uint8; other weights
+                    # (e.g. embeddings and lm_head) remain in their original dtype.
+                    if tensors[name].dtype != torch.uint8:
+                        continue
                     tensors[f"{module_name}.weight_packed"] = tensors[name]
                     del tensors[name]
                 # weight_scale -> weight_scale F8_E4M3

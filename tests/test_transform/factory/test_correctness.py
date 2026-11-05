@@ -78,6 +78,48 @@ def test_correctness_embedding(type, randomize, embed_loc, linear_loc):
     assert torch.allclose(true_output, output, atol=1e-5, rtol=0.0)
 
 
+class _SubclassedEmbedding(torch.nn.Embedding):
+    pass
+
+
+class _SubclassedLinear(torch.nn.Linear):
+    pass
+
+
+@pytest.mark.parametrize("type", ("hadamard", "random-hadamard", "random-matrix"))
+@pytest.mark.parametrize("randomize", (True, False))
+def test_correctness_module_subclasses(type, randomize):
+    model = torch.nn.Sequential(
+        _SubclassedEmbedding(2, 4),
+        _SubclassedLinear(4, 8, bias=False),
+    )
+
+    input = torch.randint(high=2, low=0, size=(17, 5, 2))
+    true_output = model(input)
+
+    config = TransformConfig(
+        config_groups={
+            "": TransformScheme(
+                type=type,
+                randomize=randomize,
+                apply=[
+                    TransformArgs(targets="Embedding", location="weight_output"),
+                    TransformArgs(
+                        targets="Linear", location="weight_input", inverse=True
+                    ),
+                    TransformArgs(targets="Linear", location="weight_output"),
+                    TransformArgs(targets="Linear", location="output", inverse=True),
+                ],
+            )
+        }
+    )
+    apply_transform_config(model, config)
+
+    # compare outputs
+    output = model(input)
+    assert torch.allclose(true_output, output, atol=1e-5, rtol=0.0)
+
+
 @requires_gpu
 @pytest.mark.parametrize("type", ("hadamard", "random-hadamard", "random-matrix"))
 @pytest.mark.parametrize("randomize", (True, False))

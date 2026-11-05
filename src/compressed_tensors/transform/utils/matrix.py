@@ -99,7 +99,7 @@ def apply_transform_weight(
     if TransformLocation(location).is_online():
         return _multihead_matmul(value, transform_weight)
 
-    if module_type == torch.nn.Linear:
+    if issubclass(module_type, torch.nn.Linear):
         if location == TransformLocation.WEIGHT_INPUT:
             # equivalent to (transform_weight @ value.T).T
             return _multihead_matmul(value, transform_weight.T)
@@ -109,7 +109,7 @@ def apply_transform_weight(
             return _multihead_matmul(transform_weight.T, value)
 
     # similar derivation to torch.nn.Linear, but `y = (x W)`
-    elif module_type == torch.nn.Embedding:
+    elif issubclass(module_type, torch.nn.Embedding):
         if location == TransformLocation.WEIGHT_INPUT:
             return _multihead_matmul(transform_weight, value)
 

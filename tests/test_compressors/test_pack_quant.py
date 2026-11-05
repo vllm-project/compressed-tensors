@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import math
+import sys
 from collections import OrderedDict
 
 import pytest
@@ -21,6 +22,7 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.lifecycle.forward import fake_quantize
 from compressed_tensors.quantization.quant_args import ActivationOrdering
+from safetensors.torch import load_file, save_file
 from torch.nn.modules import Linear, Sequential
 
 
@@ -134,16 +136,20 @@ def test_repack_8bit(value):
 
 @pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
 @pytest.mark.parametrize("shape", [(256, 1024), (512, 100), (128, 33)])
-def test_pack_unpack_roundtrip(num_bits, shape):
-    """Pack/unpack roundtrip preserves values for all supported bit widths."""
+def test_pack_unpack_roundtrip(num_bits, shape, tmp_path):
+    """Pack/save/load/unpack preserves values for all supported bit widths."""
     lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
-    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
+    value = torch.randint(lo, hi + 1, shape, dtype=torch.int8, device="cpu")
 
     packed = pack_to_int32(value, num_bits)
     assert packed.dtype == torch.int32
 
     # Dense packing: 32 elements → num_bits int32 words
     assert packed.shape == (shape[0], math.ceil(shape[1] * num_bits / 32))
+
+    path = tmp_path / "packed.safetensors"
+    save_file({"weight_packed": packed}, path)
+    packed = load_file(path)["weight_packed"]
 
     unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
     assert torch.equal(unpacked, value)
@@ -356,17 +362,35 @@ def test_pack_unpack_3d_matches_stacked_2d(num_bits):
 
 @pytest.mark.parametrize("num_bits", [1, 2, 3, 4, 5, 6, 7, 8])
 @pytest.mark.parametrize("k", [33, 64, 100, 1024])
-def test_pack_unpack_round_trip(num_bits, k):
+@pytest.mark.parametrize("packed_dim", [0, 1])
+def test_pack_unpack_round_trip(num_bits, k, packed_dim):
     """Non-power-of-2 bit widths use cross-word-boundary packing."""
-    shape = (64, k)
+    shape = (64, k) if packed_dim == 1 else (k, 64)
     lo, hi = -(1 << (num_bits - 1)), (1 << (num_bits - 1)) - 1
     value = torch.randint(lo, hi + 1, shape, dtype=torch.int8)
 
-    packed = pack_to_int32(value, num_bits)
+    packed = pack_to_int32(value, num_bits, packed_dim)
     assert packed.dtype == torch.int32
-    assert packed.shape == (shape[0], math.ceil(shape[1] * num_bits / 32))
+    packed_len = math.ceil(k * num_bits / 32)
+    assert packed.shape == ((64, packed_len) if packed_dim == 1 else (packed_len, 64))
 
-    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape))
+    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape), packed_dim)
+    assert torch.equal(unpacked, value)
+
+
+@pytest.mark.parametrize("k", [33, 64, 100, 1024])
+@pytest.mark.parametrize("packed_dim", [0, 1])
+def test_unpack_4bit_big_endian(k, packed_dim, monkeypatch):
+    shape = (64, k) if packed_dim == 1 else (k, 64)
+    value = torch.randint(-8, 8, shape, dtype=torch.int8)
+    packed = pack_to_int32(value, 4, packed_dim)
+
+    # Reversing each word's bytes reproduces the memory a big-endian host holds
+    swapped = packed.contiguous().view(torch.uint8).view(*packed.shape, 4).flip(-1)
+    swapped = swapped.view(torch.int32).view(packed.shape)
+    monkeypatch.setattr(sys, "byteorder", "big")
+
+    unpacked = unpack_from_int32(swapped, 4, torch.Size(shape), packed_dim)
     assert torch.equal(unpacked, value)
 
 

@@ -3,6 +3,8 @@
 
 import functools
 import inspect
+from contextlib import contextmanager
+from threading import get_ident, local
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +14,7 @@ from compressed_tensors.entrypoints.convert.memory import (
     TensorProfiler,
     _free_bytes,
     _pick_device,
+    _run_job_on_device,
     estimate_job_memory,
     exec_jobs_dynamic,
 )
@@ -21,6 +24,10 @@ from tests.testing_utils import requires_gpu
 _LOAD_TARGET = (
     "compressed_tensors.entrypoints.convert.memory."
     "load_tensors_from_inverse_weight_map"
+)
+_PATCH_TARGET = (
+    "compressed_tensors.entrypoints.convert.memory"
+    ".torch.accelerator.memory.get_memory_info"
 )
 
 
@@ -109,6 +116,88 @@ def test_pick_skips_cpu_devices():
     assert _pick_device([cpu], 1000, {}, {cpu: 0}) is None
 
 
+# ── worker device context ─────────────────────────────────────────────
+
+
+def test_run_job_selects_assigned_accelerator_device():
+    events = []
+
+    class DeviceContext:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append("exit")
+
+    device = torch.device("cuda:3")
+
+    def job(dev):
+        assert events == ["enter"]
+        assert dev == device
+        return "passed"
+
+    with patch(
+        "compressed_tensors.entrypoints.convert.memory.torch.accelerator.device_index",
+        return_value=DeviceContext(),
+    ) as device_index:
+        assert _run_job_on_device(job, device) == "passed"
+
+    device_index.assert_called_once_with(3)
+    assert events == ["enter", "exit"]
+
+
+def test_run_job_does_not_enter_device_context_for_cpu():
+    device = torch.device("cpu")
+
+    with patch(
+        "compressed_tensors.entrypoints.convert.memory.torch.accelerator.device_index"
+    ) as device_index:
+        assert _run_job_on_device(lambda dev: dev, device) == device
+
+    device_index.assert_not_called()
+
+
+def test_dynamic_scheduler_selects_device_in_worker_threads():
+    devices = [torch.device("cuda:0"), torch.device("cuda:1")]
+    worker_state = local()
+    main_thread = get_ident()
+
+    @contextmanager
+    def select_device(index):
+        assert not hasattr(worker_state, "device_index")
+        worker_state.device_index = index
+        try:
+            yield
+        finally:
+            del worker_state.device_index
+
+    def make_job(job_id):
+        def job(device):
+            assert get_ident() != main_thread
+            assert worker_state.device_index == device.index
+            return job_id, device
+
+        return job
+
+    with (
+        patch(_PATCH_TARGET, return_value=(100, 100)),
+        patch(
+            "compressed_tensors.entrypoints.convert.memory."
+            "torch.accelerator.device_index",
+            side_effect=select_device,
+        ) as device_index,
+    ):
+        results = exec_jobs_dynamic(
+            jobs=[make_job(0), make_job(1)],
+            devices=devices,
+            max_workers=2,
+            memory_estimates=[60, 60],
+        )
+
+    assert results == [(0, devices[0]), (1, devices[1])]
+    assert {call.args[0] for call in device_index.call_args_list} == {0, 1}
+
+
 # ── exec_jobs_dynamic: CPU path (no GPU required) ──────────────────────
 
 
@@ -157,12 +246,6 @@ def test_raises_on_empty_devices_with_jobs():
 
 
 # ── exec_jobs_dynamic: error handling ─────────────────────────────────
-
-
-_PATCH_TARGET = (
-    "compressed_tensors.entrypoints.convert.memory"
-    ".torch.accelerator.memory.get_memory_info"
-)
 
 
 @patch(_PATCH_TARGET)
