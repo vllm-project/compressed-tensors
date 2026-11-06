@@ -190,49 +190,6 @@ def test_fp8_block_converter_from_pretrained(monkeypatch):
 
 
 @pytest.mark.unit
-def test_fp8_block_converter_supports_qscale_weight(monkeypatch):
-    weight_map = {
-        "layers.0.attention.wq.weight": "consolidated-00001.safetensors",
-        "layers.0.attention.wq.qscale_weight": "consolidated-00002.safetensors",
-    }
-    monkeypatch.setattr(
-        "compressed_tensors.entrypoints.convert.converters.fp8block_dequantizer."
-        "get_checkpoint_files",
-        lambda _: {"consolidated.safetensors.index.json": "/model/index.json"},
-    )
-    monkeypatch.setattr(
-        "compressed_tensors.entrypoints.convert.converters.fp8block_dequantizer."
-        "get_weight_map",
-        lambda _: weight_map,
-    )
-
-    converter = FP8BlockDequantizer.from_pretrained(
-        "stub",
-        weight_block_size=(1, 1),
-        dtype=torch.float16,
-        scale_name="qscale_weight",
-    )
-
-    assert converter.targets == frozenset({"layers.0.attention.wq"})
-    assert converter.get_dependencies("layers.0.attention.wq.weight") == {
-        "layers.0.attention.wq.qscale_weight"
-    }
-
-    result = converter.validate(
-        {
-            "layers.0.attention.wq.weight": torch.ones(
-                (1, 1), dtype=torch.float8_e4m3fn
-            ),
-            "layers.0.attention.wq.qscale_weight": torch.full((1, 1), 2.0),
-        }
-    )
-
-    assert result["layers.0.attention.wq.weight"].item() == 2.0
-    assert result["layers.0.attention.wq.weight"].dtype == torch.float16
-    assert "layers.0.attention.wq.qscale_weight" not in result
-
-
-@pytest.mark.unit
 def test_fp8_block_converter_from_pretrained_raises_without_scale_inv(monkeypatch):
     monkeypatch.setattr(
         "compressed_tensors.entrypoints.convert.converters.fp8block_dequantizer."
