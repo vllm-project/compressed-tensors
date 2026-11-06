@@ -34,12 +34,25 @@ class NaiveQuantizationCompressor(BaseCompressor):
 
     @classmethod
     def compression_param_names(cls, scheme: QuantizationScheme) -> tuple[str]:
+        """
+        Include static activation parameters so model-free dequantization
+        loads and consumes them along with the compressed weight.
+        """
         param_names = (
             "weight",
             "weight_scale",
         )
         if not getattr_chain(scheme, "weights.symmetric", True):
             param_names += ("weight_zero_point",)
+        for base_name, args in (
+            ("input", scheme.input_activations),
+            ("output", scheme.output_activations),
+        ):
+            if args is not None and not args.dynamic:
+                param_names += (f"{base_name}_scale",)
+                if not args.symmetric:
+                    param_names += (f"{base_name}_zero_point",)
+
         return param_names
 
     @classmethod
