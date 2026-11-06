@@ -78,25 +78,31 @@ def is_weights_file(file_name: str) -> bool:
     )
 
 
-def get_checkpoint_files(model_stub: str | os.PathLike) -> dict[str, str]:
+def get_checkpoint_files(
+    model_stub: str | os.PathLike, revision: str | None = None
+) -> dict[str, str]:
     """
     Given a local path or HuggingFace model stub, return a mapping from each
     file's relative path to its resolved local path. Local directories are
     walked recursively; HuggingFace stubs are resolved via the Hub API.
 
     :param model_stub: local path to a model directory or HuggingFace model stub
+    :param revision: optional Hub revision (branch, tag, or commit). Ignored for
+        local paths. Defaults to ``None``, which keeps the Hub default-branch
+        behaviour unchanged for existing callers.
     :return: dict mapping relative file path to resolved local file path
     """
-    # In the future, this function can accept and pass download kwargs to cached_file
-
     if os.path.exists(model_stub):
         file_paths = _walk_directory_files(
             model_stub, ignore=[".cache", ".gitattributes"]
         )
     else:
-        file_paths = list_repo_files(model_stub)
+        file_paths = list_repo_files(model_stub, revision=revision)
 
-    return {file_path: cached_file(model_stub, file_path) for file_path in file_paths}
+    return {
+        file_path: cached_file(model_stub, file_path, revision=revision)
+        for file_path in file_paths
+    }
 
 
 def _walk_directory_files(root_dir: str, ignore: Iterable[str]) -> list[str]:
