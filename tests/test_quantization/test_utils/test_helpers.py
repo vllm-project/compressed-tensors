@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import math
+
 import pytest
 import torch
 from compressed_tensors.quantization import (
@@ -9,6 +11,7 @@ from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationStrategy,
 )
+from compressed_tensors.quantization.lifecycle.forward import fake_quantize
 from compressed_tensors.quantization.utils import (
     calculate_block_padding,
     calculate_qparams,
@@ -110,6 +113,60 @@ def test_compute_dynamic_scales_and_zp_group(shape, group_size, exp_shape):
     scale, zp = compute_dynamic_scales_and_zp(value, args, module=torch.nn.Module())
     assert scale.shape == exp_shape
     assert zp.shape == exp_shape
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("shape", [(8,), (2, 8), (1, 2, 8), (2, 1, 2, 8)])
+@pytest.mark.parametrize("symmetric", [True, False])
+def test_compute_dynamic_scales_and_zp_token(shape, symmetric):
+    """Each token gets its own qparams regardless of activation rank."""
+    value = torch.arange(1, math.prod(shape) + 1, dtype=torch.float32).reshape(shape)
+    # Give each token a different range, including negative values.
+    value[..., ::2] *= -1
+    args = QuantizationArgs(strategy="token", dynamic=True, symmetric=symmetric)
+
+    scale, zp = compute_dynamic_scales_and_zp(value, args, module=torch.nn.Module())
+    expected = [
+        calculate_qparams(*torch.aminmax(row), args) for row in value.view(-1, 8)
+    ]
+    expected_shape = (*shape[:-1], 1)
+
+    assert scale.shape == expected_shape
+    assert zp.shape == expected_shape
+    torch.testing.assert_close(
+        scale, torch.cat([s for s, _ in expected]).reshape(expected_shape)
+    )
+    torch.testing.assert_close(
+        zp, torch.cat([z for _, z in expected]).reshape(expected_shape)
+    )
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("symmetric", [True, False])
+@pytest.mark.parametrize(
+    "value",
+    [
+        [[40.0, -30.0, 20.0, -10.0], [2.7, -1.6, 0.5, -0.4]],
+        [[0.0] * 4, [1.0] * 4, [-2.0] * 4],
+    ],
+)
+def test_dynamic_token_quantization_flattened_activations(value, symmetric):
+    """Flattening batch dimensions preserves per-token quantized values."""
+    value = torch.tensor(value)
+    args = QuantizationArgs(strategy="token", dynamic=True, symmetric=symmetric)
+    expected = []
+    for row in value:
+        scale, zp = calculate_qparams(*torch.aminmax(row), args)
+        expected.append(fake_quantize(row, scale, zp, args))
+    expected = torch.stack(expected)
+
+    for activations in (value, value.unsqueeze(0), value.unsqueeze(0).unsqueeze(0)):
+        scale, zp = compute_dynamic_scales_and_zp(
+            activations, args, module=torch.nn.Module()
+        )
+        output = fake_quantize(activations, scale, zp, args).reshape_as(value)
+        assert torch.isfinite(output).all()
+        torch.testing.assert_close(output, expected)
 
 
 # Tests for block quantization padding utilities
