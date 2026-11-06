@@ -190,7 +190,7 @@ def test_fp8_block_converter_from_pretrained(monkeypatch):
 
 
 @pytest.mark.unit
-def test_fp8_block_converter_detects_qscale_weight(monkeypatch):
+def test_fp8_block_converter_supports_qscale_weight(monkeypatch):
     weight_map = {
         "layers.0.attention.wq.weight": "consolidated-00001.safetensors",
         "layers.0.attention.wq.qscale_weight": "consolidated-00002.safetensors",
@@ -210,6 +210,7 @@ def test_fp8_block_converter_detects_qscale_weight(monkeypatch):
         "stub",
         weight_block_size=(1, 1),
         dtype=torch.float16,
+        scale_name="qscale_weight",
     )
 
     assert converter.targets == frozenset({"layers.0.attention.wq"})
