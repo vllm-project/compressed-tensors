@@ -9,7 +9,7 @@ from compressed_tensors.entrypoints.convert import (
 MODEL_ID = "Qwen/Qwen3-VL-30B-A3B-Instruct"
 SAVE_DIR = MODEL_ID.rstrip("/").split("/")[-1] + "-expert-pruned"
 
-# Prune half of the MoE experts by router-weight magnitude.
+# Prune half of the MoE experts by router-weight score (signed row sum).
 # Patterns are scoped to the language_model so the vision tower is left untouched.
 # Qwen3-VL-MoE stores experts as 3D stacked tensors (experts.gate_up_proj /
 # experts.down_proj) and the router as mlp.gate.weight, found by inspection.

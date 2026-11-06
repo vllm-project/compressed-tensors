@@ -4,6 +4,7 @@
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
+from uuid import uuid4
 
 import torch
 import torch.distributed as dist
@@ -245,7 +246,9 @@ class DiskCache(OffloadCache):
     @classmethod
     def _get_ct_file_path(cls, offload_dir: str, offloaded: torch.Tensor) -> str:
         """Create file path with a prefix marking it as modifiable"""
-        file_name = f"{cls._ct_file_prefix}_{_get_rank()}_{id(offloaded)}.safetensors"
+        if offloaded in cls.index:
+            return cls.index[offloaded]["safetensors_file"]
+        file_name = f"{cls._ct_file_prefix}_{_get_rank()}_{uuid4().hex}.safetensors"
         return os.path.join(offload_dir, file_name)
 
 

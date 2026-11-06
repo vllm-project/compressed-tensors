@@ -371,8 +371,8 @@ def test_disk_load_context_bounds_open_handles(tmp_path, monkeypatch):
 def _symlinked_shard(tmp_path, count):
     """A real multi-tensor shard plus one checkpoint symlink per tensor.
 
-    Mirrors `create_checkpoint_symlink`, which names each symlink after
-    `id(offloaded)`, so N tensors from one shard arrive as N distinct paths.
+    Mirrors `create_checkpoint_symlink`, which gives each tensor a unique
+    symlink, so N tensors from one shard arrive as N distinct paths.
     """
     offload_dir = tmp_path / "offload_dir"
     os.mkdir(offload_dir)
