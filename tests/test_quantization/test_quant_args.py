@@ -3,6 +3,7 @@
 
 import pytest
 import torch
+import yaml
 from compressed_tensors.quantization import (
     ActivationOrdering,
     QuantizationArgs,
@@ -75,12 +76,18 @@ def test_block_structure_requires_positive_dimensions(block_structure):
         QuantizationArgs(strategy="block", block_structure=block_structure)
 
 
-def test_infer_strategy():
-    args = QuantizationArgs(group_size=128)
-    assert args.strategy == QuantizationStrategy.GROUP
-
-    args = QuantizationArgs(group_size=-1)
-    assert args.strategy == QuantizationStrategy.CHANNEL
+@pytest.mark.parametrize(
+    "group_size,strategy", [(None, "tensor"), (128, "group"), (-1, "channel")]
+)
+def test_infer_strategy(group_size, strategy):
+    args = QuantizationArgs(group_size=group_size)
+    assert args.strategy == strategy
+    assert type(args.strategy) is str
+    assert "strategy" not in args.model_fields_set
+    assert (
+        QuantizationArgs.model_validate(yaml.safe_load(yaml.dump(args.model_dump())))
+        == args
+    )
 
 
 def test_observer_is_not_resolved():
@@ -142,20 +149,32 @@ def test_invalid():
         QuantizationArgs(strategy=QuantizationStrategy.GROUP)
 
 
-def test_serialize_args():
+@pytest.mark.parametrize(
+    "kwargs,expected_type",
+    [
+        ({}, "int"),
+        ({"type": QuantizationType.INT}, "int"),
+        ({"type": "int"}, "int"),
+        ({"type": QuantizationType.FLOAT}, "float"),
+        ({"type": "float"}, "float"),
+    ],
+)
+def test_serialize_args(kwargs, expected_type):
     """Test serialization of QuantizationArgs"""
     args = QuantizationArgs(
         num_bits=4,
-        type=QuantizationType.INT,
         symmetric=True,
+        strategy="group",
         group_size=128,
         actorder=ActivationOrdering.WEIGHT,
+        **kwargs,
     )
 
     # Serialize to dict
     args_dict = args.model_dump()
     assert args_dict["num_bits"] == 4
-    assert args_dict["type"] == "int"
+    assert args_dict["type"] == expected_type
+    assert type(args_dict["type"]) is str
     assert args_dict["symmetric"] is True
     assert args_dict["group_size"] == 128
     assert args_dict["strategy"] == "group"
@@ -164,6 +183,7 @@ def test_serialize_args():
     # Deserialize from dict
     reloaded = QuantizationArgs.model_validate(args_dict)
     assert reloaded == args
+    assert QuantizationArgs.model_validate(yaml.safe_load(yaml.dump(args_dict))) == args
 
 
 def test_default_fields_not_serialized():
