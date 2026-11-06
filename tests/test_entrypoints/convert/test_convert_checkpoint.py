@@ -74,6 +74,7 @@ class ConfigAppendingConverter(NoOpConverter):
         config.config_groups[self.group_name] = scheme
         return config
 
+
 @patch.object(_CHECKPOINT_MODULE, "update_safetensors_index")
 @patch.object(_CHECKPOINT_MODULE, "write_checkpoint_quantization_config")
 @patch.object(_CHECKPOINT_MODULE, "exec_jobs_dynamic")
@@ -142,6 +143,7 @@ def test_convert_checkpoint_cpu_uses_dynamic_scheduler(
         tmp_path, 4, {"weight": "model.safetensors"}
     )
 
+
 @patch.object(_CHECKPOINT_MODULE, "update_safetensors_index")
 @patch.object(_CHECKPOINT_MODULE, "write_checkpoint_quantization_config")
 @patch.object(_CHECKPOINT_MODULE, "exec_jobs_dynamic")
@@ -202,6 +204,7 @@ def test_convert_checkpoint_schedules_accelerator_jobs(
         tmp_path, 4, {"weight": "model.safetensors"}
     )
 
+
 @patch(f"{_CONVERT_FILE_MODULE}.save_file")
 @patch(f"{_CONVERT_FILE_MODULE}.load_tensors_from_inverse_weight_map")
 def test_convert_file_loads_tensors_on_requested_device(load_tensors, save_file):
@@ -225,6 +228,7 @@ def test_convert_file_loads_tensors_on_requested_device(load_tensors, save_file)
     save_file.assert_called_once_with(tensors, save_path)
     assert total_size == 4
     assert weight_map == {"weight": "model.safetensors"}
+
 
 @patch.object(_CHECKPOINT_MODULE, "get_checkpoint_files")
 def test_convert_checkpoint_rejects_empty_device_list(get_checkpoint_files, tmp_path):
@@ -467,6 +471,7 @@ def test_auto_max_workers_cpu_runs_sequentially(memory_estimates):
 
     snapshot_free.assert_not_called()
 
+
 @patch.object(_CHECKPOINT_MODULE, "update_safetensors_index")
 @patch.object(_CHECKPOINT_MODULE, "write_checkpoint_quantization_config")
 @patch.object(_CHECKPOINT_MODULE, "exec_jobs_dynamic")
@@ -614,6 +619,7 @@ def test_convert_checkpoint_auto_max_workers_runs_on_each_device(tmp_path):
     assert {call.args[1] for call in run_job.call_args_list} == set(devices)
     _assert_shards_equal(tmp_path / "output", tensors)
 
+
 @patch.object(_CHECKPOINT_MODULE, "write_checkpoint_quantization_config")
 @patch.object(_CHECKPOINT_MODULE, "update_safetensors_index")
 @patch.object(_CHECKPOINT_MODULE, "exec_jobs_dynamic")
@@ -621,7 +627,7 @@ def test_convert_checkpoint_auto_max_workers_runs_on_each_device(tmp_path):
 @patch.object(_CHECKPOINT_MODULE, "build_inverse_weight_maps")
 @patch.object(_CHECKPOINT_MODULE, "get_weight_map")
 @patch.object(_CHECKPOINT_MODULE, "get_checkpoint_files")
-def test_convert_checkpoint_forwards_revision(
+def test_convert_checkpoint_forwards_model_kwargs(
     get_checkpoint_files,
     get_weight_map,
     build_inverse_weight_maps,
@@ -637,6 +643,7 @@ def test_convert_checkpoint_forwards_revision(
     build_inverse_weight_maps.return_value = {"model.safetensors": inverse_weight_map}
     exec_jobs.return_value = []
     exec_jobs_dynamic.return_value = [(4, {"weight": "model.safetensors"})]
+    model_kwargs = {"revision": "deadbeef", "token": "hf_token"}
 
     with patch.object(
         _CHECKPOINT_MODULE, "_resolve_devices", return_value=[torch.device("cpu")]
@@ -645,7 +652,7 @@ def test_convert_checkpoint_forwards_revision(
             "org/model",
             tmp_path,
             Mock(),
-            revision="deadbeef",
+            model_kwargs=model_kwargs,
         )
 
-    get_checkpoint_files.assert_called_once_with("org/model", revision="deadbeef")
+    get_checkpoint_files.assert_called_once_with("org/model", model_kwargs=model_kwargs)

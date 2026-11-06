@@ -47,7 +47,7 @@ def convert_checkpoint(
     job_memory_estimator: Callable[
         [InverseWeightMap, list[Converter]], int
     ] = estimate_job_memory,
-    revision: str | None = None,
+    model_kwargs: dict | None = None,
 ):
     """
     Convert a model checkpoint to either:
@@ -76,9 +76,9 @@ def convert_checkpoint(
         scheduling.
     :param converter: single converter or list of converters to apply
         in order, e.g. a dequantizer followed by a re-quantizer
-    :param revision: optional Hub revision (branch, tag, or commit) forwarded
-        to ``get_checkpoint_files`` when ``model_stub`` is a Hub id. Ignored for
-        local paths. Defaults to ``None``.
+    :param model_kwargs: optional kwargs forwarded to ``get_checkpoint_files``
+        when ``model_stub`` is a Hub id, e.g. ``revision``, ``token``. Ignored
+        for local paths. Defaults to ``None``.
     """
     if max_workers != "auto" and not (isinstance(max_workers, int) and max_workers > 0):
         raise ValueError(
@@ -89,7 +89,7 @@ def convert_checkpoint(
     devices = _resolve_devices(device)
 
     # get all model_files for checkpoint
-    model_files = get_checkpoint_files(model_stub, revision=revision)
+    model_files = get_checkpoint_files(model_stub, model_kwargs=model_kwargs)
 
     weight_map = get_weight_map(model_files)
 
