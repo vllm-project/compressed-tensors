@@ -277,9 +277,8 @@ def test_actorder_compress_decompress_match(actorder, mock_per_group_calibration
         (QuantizationStrategy.CHANNEL, None),
     ],
 )
-def test_asymmetric_zero_point_decompression(strategy, group_size):
-    shape = (512, 1024)
-
+@pytest.mark.parametrize("shape", [(512, 1024), (8, 256)])
+def test_asymmetric_zero_point_decompression(strategy, group_size, shape):
     if strategy == QuantizationStrategy.CHANNEL:
         expected_zp_shape = (shape[0], 1)
     elif strategy == QuantizationStrategy.GROUP:
