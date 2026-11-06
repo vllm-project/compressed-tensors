@@ -3,6 +3,8 @@
 
 import pytest
 import torch
+from compressed_tensors.modeling import register_query_hook
+from compressed_tensors.modeling.kvcache import register_key_hook
 from compressed_tensors.offload import set_onload_device
 from compressed_tensors.transform import (
     TransformArgs,
@@ -307,7 +309,20 @@ def test_correctness_query_key_locations(type, randomize, head_dim, input_batch_
     )
     apply_transform_config(model, config)
 
+    calls = {"query": 0, "key": 0}
+
+    def query_hook(_, states):
+        calls["query"] += 1
+
+    def key_hook(_, states):
+        calls["key"] += 1
+
+    query_handle = register_query_hook(model.self_attn, query_hook)
+    key_handle = register_key_hook(model.self_attn, key_hook)
     output = model(input)
+    query_handle.remove()
+    key_handle.remove()
+    assert calls == {"query": 1, "key": 1}
     assert torch.allclose(true_output, output, atol=1e-5, rtol=0.0)
 
 

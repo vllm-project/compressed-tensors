@@ -2,9 +2,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import inspect
+from collections.abc import MutableMapping
+from threading import Lock
 from typing import Callable, Optional
 
 from compressed_tensors.modeling.kvcache import initialize_hooked_kv_cache
+from compressed_tensors.offload import unwrap_offload_forward
 from compressed_tensors.quantization.lifecycle.forward import forward_quantize
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.internal import InternalModule
@@ -26,6 +29,11 @@ __all__ = [
 
 IMPL_ATTR = "impl"
 HOOKED_ATTENTION_NAME = "ct_hooked_attention"
+_ORIGINAL_ATTENTION_ATTR = "_ct_original_attention"
+_IMPL_REQUIRED_ATTR = "_ct_attention_impl_required"
+# Aliases contain no model state and always retain the same mask implementation.
+_HOOKED_BACKENDS: dict[str, tuple[str, Optional[Callable]]] = {}
+_DISPATCH_LOCK = Lock()
 
 
 class QuantizedAttentionImpl(InternalModule):
@@ -41,8 +49,6 @@ class QuantizedAttentionImpl(InternalModule):
     function. After triggering hooks and quantization, this module calls the original
     attention implementation function.
     """
-
-    _original_impl = "eager"
 
     def __init__(self, config: PretrainedConfig):
         super().__init__()
@@ -65,7 +71,7 @@ class QuantizedAttentionImpl(InternalModule):
             query = forward_quantize(module, query, "q", quant_args)
 
         # original attention
-        return ALL_ATTENTION_FUNCTIONS[QuantizedAttentionImpl._original_impl](
+        return _call_original_attention(
             module,
             query,
             key,
@@ -79,35 +85,166 @@ class QuantizedAttentionImpl(InternalModule):
 
 
 def _hooked_attention(module: Module, *args, **kwargs):
-    assert hasattr(module, IMPL_ATTR), (
-        f"Using {HOOKED_ATTENTION_NAME} attention implementation, "
-        f"but attention module does not have {IMPL_ATTR} submodule."
-    )
-
+    if not hasattr(module, IMPL_ATTR):
+        if getattr(module, _IMPL_REQUIRED_ATTR, True):
+            raise ValueError(
+                f"Using {HOOKED_ATTENTION_NAME}, but {type(module).__name__} has no "
+                f"{IMPL_ATTR} submodule. Attention quantization must target every "
+                "attention module with key/value projections and a cache argument"
+            )
+        return _call_original_attention(module, *args, **kwargs)
     return getattr(module, IMPL_ATTR)(module, *args, **kwargs)
 
 
 def initialize_hooked_attention(model: PreTrainedModel, module: Module):
     """
-    Initialize `QuantizedAttentionImpl` and `QuantizedKVCache` instances
-    attached to attention. Assumes that only one model is hooked at a time.
+    Initialize query/cache hooks, preserving each component's native attention.
 
     :param model: parent model of attention module
     :param module: attention module to initialize with
     """
+    from compressed_tensors.quantization.lifecycle.initialize import (  # circ dep
+        is_cached_attention_module,
+    )
+
+    config = getattr(module, "config", model.config)
+    if (
+        not callable(getattr(module, _ORIGINAL_ATTENTION_ATTR, None))
+        or config._attn_implementation not in _HOOKED_BACKENDS
+    ):
+        candidates = list(_attention_modules_with_configs(model))
+        if not any(candidate is module for candidate, _ in candidates):
+            candidates.append((module, config))
+        plans = []
+        # Resolve all callbacks and registries before changing model state.
+        for candidate, owner_config in candidates:
+            backend = owner_config._attn_implementation or "eager"
+            backend, mask = _HOOKED_BACKENDS.get(
+                backend, (backend, ALL_MASK_ATTENTION_FUNCTIONS.get(backend))
+            )
+            attention, registries = _resolve_attention(candidate, backend)
+            if candidate is module and attention is None:
+                raise ValueError(
+                    f"Cannot resolve original attention for {type(candidate).__name__}"
+                )
+            required = is_cached_attention_module(candidate) or getattr(
+                candidate, _IMPL_REQUIRED_ATTR, False
+            )
+            plans.append(
+                (
+                    candidate,
+                    owner_config,
+                    attention,
+                    registries,
+                    backend,
+                    mask,
+                    required,
+                )
+            )
+
+        for (
+            candidate,
+            owner_config,
+            attention,
+            registries,
+            backend,
+            mask,
+            required,
+        ) in plans:
+            if attention is not None:
+                alias = _register_attention_dispatch(backend, mask)
+                for registry in registries:
+                    registry[alias] = _hooked_attention
+                # The public setter propagates to child configs, overwriting mixed
+                # text/vision backends. Change only this component's owning config.
+                owner_config._attn_implementation_internal = alias
+            setattr(candidate, _ORIGINAL_ATTENTION_ATTR, attention)
+            setattr(candidate, _IMPL_REQUIRED_ATTR, required)
+
+    setattr(module, _IMPL_REQUIRED_ATTR, True)
     if not hasattr(module, IMPL_ATTR):
         module.register_module(IMPL_ATTR, QuantizedAttentionImpl(model.config))
-
-    if model.config._attn_implementation != HOOKED_ATTENTION_NAME:
-        QuantizedAttentionImpl._original_impl = model.config._attn_implementation
-        original_mask = ALL_MASK_ATTENTION_FUNCTIONS[model.config._attn_implementation]
-
-        ALL_ATTENTION_FUNCTIONS.register(HOOKED_ATTENTION_NAME, _hooked_attention)
-        ALL_MASK_ATTENTION_FUNCTIONS.register(HOOKED_ATTENTION_NAME, original_mask)
-        model.set_attn_implementation(HOOKED_ATTENTION_NAME)
-        assert model.config._attn_implementation == HOOKED_ATTENTION_NAME
-
     initialize_hooked_kv_cache(model, module)
+
+
+def _attention_modules_with_configs(model: PreTrainedModel):
+    pending = [(model, model.config)]
+    seen = set()
+    while pending:
+        module, config = pending.pop()
+        if id(module) in seen:
+            continue
+        seen.add(id(module))
+        config = getattr(module, "config", config)
+        if not isinstance(module, InternalModule) and any(
+            "attention" in cls.__name__.lower() for cls in type(module).__mro__
+        ):
+            yield module, config
+        pending.extend((child, config) for child in reversed(list(module.children())))
+
+
+def _resolve_attention(module: Module, backend: str):
+    # Delegating overrides have user globals. Find the actual dispatching forward
+    # in the MRO, retaining its model-specific eager function and local registry.
+    with unwrap_offload_forward(module):
+        forwards = [module.forward] + [
+            cls.__dict__["forward"]
+            for cls in type(module).__mro__
+            if "forward" in cls.__dict__
+        ]
+        attention, registries = None, []
+        for forward in forwards:
+            forward = inspect.unwrap(forward)
+            forward = getattr(forward, "__func__", forward)
+            code = getattr(forward, "__code__", None)
+            if code is None or "ALL_ATTENTION_FUNCTIONS" not in code.co_names:
+                continue
+            namespace = forward.__globals__
+            registry = namespace.get("ALL_ATTENTION_FUNCTIONS", ALL_ATTENTION_FUNCTIONS)
+            if not isinstance(registry, MutableMapping):
+                raise ValueError(
+                    f"Cannot register hooked attention for {type(module).__name__}"
+                )
+            if attention is None:
+                attention = registry.get(backend)
+                if attention is None and backend == "eager":
+                    attention = namespace.get("eager_attention_forward")
+                if not callable(attention) or attention is _hooked_attention:
+                    raise ValueError(
+                        f"Cannot resolve {backend!r} attention for "
+                        f"{type(module).__name__}"
+                    )
+            if not any(registry is existing for existing in registries):
+                registries.append(registry)
+        # Inline attention never uses the registry and remains unchanged unless
+        # selected for query hooks, which initialization rejects above.
+        return attention, registries
+
+
+def _register_attention_dispatch(backend: str, mask: Optional[Callable]) -> str:
+    with _DISPATCH_LOCK:
+        for alias, (original_backend, original_mask) in _HOOKED_BACKENDS.items():
+            if backend == original_backend and mask is original_mask:
+                return alias
+        alias = (
+            HOOKED_ATTENTION_NAME
+            if backend == "sdpa" and HOOKED_ATTENTION_NAME not in _HOOKED_BACKENDS
+            else f"{HOOKED_ATTENTION_NAME}_{len(_HOOKED_BACKENDS)}"
+        )
+        ALL_ATTENTION_FUNCTIONS.register(alias, _hooked_attention)
+        if mask is not None:
+            ALL_MASK_ATTENTION_FUNCTIONS.register(alias, mask)
+        _HOOKED_BACKENDS[alias] = (backend, mask)
+        return alias
+
+
+def _call_original_attention(module: Module, *args, **kwargs):
+    attention = getattr(module, _ORIGINAL_ATTENTION_ATTR, None)
+    if attention is None:
+        raise ValueError(
+            f"Cannot resolve original attention for {type(module).__name__}"
+        )
+    return attention(module, *args, **kwargs)
 
 
 # ----- hooks ----- #
