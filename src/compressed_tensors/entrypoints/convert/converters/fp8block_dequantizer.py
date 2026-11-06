@@ -69,8 +69,7 @@ class FP8BlockDequantizer(Converter):
         )
         if not targets:
             raise ValueError(
-                f"No {scale_name} tensors found in checkpoint "
-                f"{model_name_or_path}"
+                f"No {scale_name} tensors found in checkpoint " f"{model_name_or_path}"
             )
 
         converter = cls(
