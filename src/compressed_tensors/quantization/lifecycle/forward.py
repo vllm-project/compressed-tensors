@@ -4,6 +4,7 @@
 from functools import wraps
 
 import torch
+from compressed_tensors.offload import disable_offloading
 from compressed_tensors.quantization.lifecycle.forward_helpers import (
     _apply_quantize_op,
     _process_block,
@@ -235,17 +236,23 @@ def set_forward_quantized(module: torch.nn.Linear | torch.nn.Embedding):
             and scheme is not None
             and status is not None
         )
-        weight = self.weight  # onload once
-        weight_data = weight.data
+        # offloaded modules return a new onloaded tensor on every access, so keep
+        # the onloaded weight cached; otherwise the forward below reads a fresh copy
+        # and the patched (fake quantized) weight data is silently ignored
+        with disable_offloading():
+            weight = self.weight  # onload once
+            weight_data = weight.data
 
-        if enabled and scheme.input_activations:
-            input = forward_quantize(self, input, "input", scheme.input_activations)
+            if enabled and scheme.input_activations:
+                input = forward_quantize(self, input, "input", scheme.input_activations)
 
-        if enabled and scheme.weights and status < QuantizationStatus.COMPRESSED:
-            weight_data = forward_quantize(self, weight_data, "weight", scheme.weights)
+            if enabled and scheme.weights and status < QuantizationStatus.COMPRESSED:
+                weight_data = forward_quantize(
+                    self, weight_data, "weight", scheme.weights
+                )
 
-        with patch_attr(weight, "data", weight_data):
-            output = self.__class__.forward(self, input)
+            with patch_attr(weight, "data", weight_data):
+                output = self.__class__.forward(self, input)
 
         if enabled and scheme.output_activations:
             output = forward_quantize(self, output, "output", scheme.output_activations)
