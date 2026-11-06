@@ -286,6 +286,43 @@ class TestMatchNamedModules:
         matches = list(match_named_modules(model, []))
         assert len(matches) == 0
 
+    @pytest.mark.parametrize(
+        "scope,ignore,expected",
+        [
+            (None, [], ["0", "1.0", "2"]),
+            ([], [], []),
+            (["2", "1.0", "0"], ["0"], ["1.0", "2"]),
+            (["1"], [], []),
+        ],
+    )
+    def test_module_scope(self, scope, ignore, expected):
+        model = nn.Sequential(
+            nn.Linear(4, 4), nn.Sequential(nn.Linear(4, 4)), nn.Linear(4, 4)
+        )
+        modules = (
+            None if scope is None else (model.get_submodule(name) for name in scope)
+        )
+
+        matches = list(match_named_modules(model, ["Linear"], ignore, modules=modules))
+
+        assert matches == [(name, model.get_submodule(name)) for name in expected]
+
+    @patch("compressed_tensors.utils.match._LOGGER")
+    def test_scope_does_not_warn_for_targets_in_other_subgraphs(self, mock_logger):
+        model = DummyModel()
+        matches = list(
+            match_named_modules(
+                model,
+                ["layer1", "layer2", "nonexistent_module"],
+                warn_on_fail=True,
+                modules=[model.layer2],
+            )
+        )
+
+        assert matches == [("layer2", model.layer2)]
+        mock_logger.warning.assert_called_once()
+        assert "nonexistent_module" in mock_logger.warning.call_args[0][0]
+
     @patch("compressed_tensors.utils.match._LOGGER")
     def test_warn_on_fail(self, mock_logger):
         """Test warning when targets don"t match"""

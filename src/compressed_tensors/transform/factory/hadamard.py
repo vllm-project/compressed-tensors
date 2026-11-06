@@ -25,7 +25,12 @@ class HadamardFactory(TransformFactory):
     :param seed: random seed used to transform weight randomization
     """
 
-    def __init__(self, name: str, scheme: TransformScheme, seed: int | None = None):
+    def __init__(
+        self,
+        name: str,
+        scheme: TransformScheme,
+        seed: int | None = None,
+    ):
         super().__init__(name, scheme, seed)
         self.weights = ParameterizedDefaultDict(self._create_weight)
         self.perms = ParameterizedDefaultDict(self._create_permutation)

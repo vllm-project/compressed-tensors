@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from copy import deepcopy
+
 import pytest
 import torch
 from compressed_tensors.offload import set_onload_device
@@ -118,6 +120,107 @@ def test_correctness_module_subclasses(type, randomize):
     # compare outputs
     output = model(input)
     assert torch.allclose(true_output, output, atol=1e-5, rtol=0.0)
+
+
+def test_apply_transform_config_respects_module_scope():
+    model = torch.nn.Sequential(
+        torch.nn.Linear(4, 4, bias=False),
+        torch.nn.Linear(4, 4, bias=False),
+    )
+    config = TransformConfig(
+        config_groups={
+            "input": TransformScheme(
+                type="hadamard",
+                apply=[TransformArgs(targets="Linear", location="input")],
+            )
+        }
+    )
+
+    apply_transform_config(model, config, modules=[model[0]])
+
+    assert "input_input" in model[0]._modules
+    assert "input_input" not in model[1]._modules
+
+
+@pytest.mark.parametrize("scope_type", [list, iter])
+def test_factory_module_scope_can_be_reused_across_transform_arguments(scope_type):
+    model = torch.nn.Sequential(
+        torch.nn.Linear(4, 4, bias=False),
+        torch.nn.Linear(4, 4, bias=False),
+    )
+    inputs = torch.randn(2, 4)
+    expected = model(inputs)
+    scheme = TransformScheme(
+        type="hadamard",
+        apply=[
+            TransformArgs(targets="Linear", location="input"),
+            TransformArgs(targets="Linear", location="weight_input", inverse=True),
+        ],
+    )
+    factory = TransformFactory.from_scheme(scheme, name="rotation")
+
+    factory.apply_to_model(model, use_tqdm=False, modules=scope_type([model[1]]))
+
+    assert "rotation_input" not in model[0]._modules
+    assert "rotation_input" in model[1]._modules
+    torch.testing.assert_close(model(inputs), expected)
+
+
+def test_apply_transform_config_reuses_factories_across_scopes():
+    model = torch.nn.Sequential(
+        torch.nn.Linear(4, 4, bias=False),
+        torch.nn.Linear(4, 4, bias=False),
+    )
+    config = TransformConfig(
+        config_groups={
+            "input": TransformScheme(
+                type="hadamard",
+                apply=[TransformArgs(targets="Linear", location="input")],
+            )
+        }
+    )
+    factories = {
+        "input": TransformFactory.from_scheme(
+            config.config_groups["input"], name="input"
+        )
+    }
+
+    apply_transform_config(model, config, modules=[model[0]], factories=factories)
+    apply_transform_config(model, config, modules=[model[1]], factories=factories)
+
+    assert model[0].input_input.weight is model[1].input_input.weight
+
+
+@pytest.mark.parametrize("type", ["hadamard", "random-hadamard", "random-matrix"])
+def test_shared_factories_preserve_paired_transforms_across_mixed_width_scopes(type):
+    torch.manual_seed(0)
+    model = torch.nn.Sequential(
+        torch.nn.Linear(4, 4, bias=False),
+        torch.nn.Linear(4, 8, bias=False),
+        torch.nn.Linear(8, 8, bias=False),
+    ).double()
+    inputs = torch.randn(2, 4, dtype=torch.float64)
+    expected = model(inputs)
+    eager_model = deepcopy(model)
+    scheme = TransformScheme(
+        type=type,
+        apply=[
+            TransformArgs(targets="0", location="weight_output"),
+            TransformArgs(targets="1", location="weight_input", inverse=True),
+            TransformArgs(targets="1", location="weight_output"),
+            TransformArgs(targets="2", location="weight_input", inverse=True),
+        ],
+    )
+    config = TransformConfig(config_groups={"rotation": scheme})
+    factories = {"rotation": TransformFactory.from_scheme(scheme, name="rotation")}
+
+    apply_transform_config(eager_model, config)
+    for module in model:
+        apply_transform_config(model, config, modules=[module], factories=factories)
+
+    torch.testing.assert_close(model(inputs), expected, atol=1e-10, rtol=0)
+    for actual, eager in zip(model.parameters(), eager_model.parameters()):
+        torch.testing.assert_close(actual, eager, atol=1e-10, rtol=0)
 
 
 @requires_gpu

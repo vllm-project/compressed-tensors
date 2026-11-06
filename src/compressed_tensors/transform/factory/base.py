@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 
 import torch
 import torch.distributed as dist
@@ -50,7 +51,12 @@ class TransformFactory(RegistryMixin, ABC):
 
     transforms: list["TransformBase"]
 
-    def __init__(self, name: str, scheme: TransformScheme, seed: int | None = None):
+    def __init__(
+        self,
+        name: str,
+        scheme: TransformScheme,
+        seed: int | None = None,
+    ):
         self.name = name
         self.scheme = scheme
         self.generator = torch.Generator()
@@ -81,16 +87,26 @@ class TransformFactory(RegistryMixin, ABC):
         """
         raise NotImplementedError()
 
-    def apply_to_model(self, model: Module, use_tqdm=True):
+    def apply_to_model(
+        self,
+        model: Module,
+        use_tqdm: bool = True,
+        modules: Iterable[Module] | None = None,
+    ):
         """
         Create transforms and apply them to the model
 
         :param model: module to apply transforms to
+        :param modules: optional module scope to restrict transform application to
         """
+        # Reuse a one-shot scope iterable across transform arguments.
+        modules = None if modules is None else tuple(modules)
         modules_args = [
             (module, arg)
             for arg in self.scheme.apply
-            for _, module in match_named_modules(model, arg.targets, arg.ignore)
+            for _, module in match_named_modules(
+                model, arg.targets, arg.ignore, modules=modules
+            )
         ]
 
         desc = f"Applying {self.name} transforms"

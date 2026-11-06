@@ -182,15 +182,36 @@ def subgraph_offload_modules(
     offload_kwargs: dict[str, dict],
 ):
     """
-    Offload a list of modules, using the provided device map and kwargs.
+    Offload the supplied modules and their new, unoffloaded descendants using
+    their saved settings, or those of their nearest configured ancestor. The
+    empty name refers to the model root.
+
+    Modules without saved settings for themselves or any ancestor retain the
+    device-based fallback. Already offloaded subtrees outside the supplied scope
+    are left untouched, including staged modules. The caller's dictionary is not
+    modified; its module references should remain valid throughout the iteration.
     """
     from compressed_tensors.offload import get_cache_init_kwargs
 
-    for name, module in modules.items():
-        if name in offload_kwargs:
-            offload_module(module, **offload_kwargs[name])
+    named_modules = list(modules.items())
+    seen = set(modules.values())
+    for name, module in named_modules:
+        for child_name, child in module.named_children():
+            if child in seen or isinstance(child._parameters, OffloadCache):
+                continue
+            child_name = f"{name}.{child_name}" if name else child_name
+            named_modules.append((child_name, child))
+            seen.add(child)
+
+    for name, module in named_modules:
+        offload_name = name
+        # search for closest ancestor with offload kwargs
+        # empty string (unable to resolve) gets default cache init kwargs
+        while offload_name not in offload_kwargs and offload_name:
+            offload_name = offload_name.rpartition(".")[0]
+
+        if offload_name in offload_kwargs:
+            module_offload_kwargs = offload_kwargs[offload_name]
         else:
-            # we should consider raising warnings, but observers will
-            # clog the output with warnings, so we will skip for now
             module_offload_kwargs = get_cache_init_kwargs(module)
-            offload_module(module, **module_offload_kwargs)
+        offload_module(module, **module_offload_kwargs)

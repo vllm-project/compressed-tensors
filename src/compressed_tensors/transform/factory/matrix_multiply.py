@@ -24,7 +24,12 @@ class RandomMatrixFactory(TransformFactory):
     :param seed: random seed used to transform weight randomization
     """
 
-    def __init__(self, name: str, scheme: TransformScheme, seed: int | None = None):
+    def __init__(
+        self,
+        name: str,
+        scheme: TransformScheme,
+        seed: int | None = None,
+    ):
         super().__init__(name, scheme, seed)
         self.weights = ParameterizedDefaultDict(self._create_weight)
         self.inverses = ParameterizedDefaultDict(self._create_inverse)

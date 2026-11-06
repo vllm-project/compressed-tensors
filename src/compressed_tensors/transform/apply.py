@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from collections.abc import Iterable
+
 import torch
 from compressed_tensors import TRANSFORM_CONFIG_NAME
 from compressed_tensors.offload import OffloadCache
@@ -11,17 +13,32 @@ from compressed_tensors.transform.factory.base import TransformBase
 __all__ = ["apply_transform_config"]
 
 
-def apply_transform_config(model: torch.nn.Module, config: TransformConfig):
+def apply_transform_config(
+    model: torch.nn.Module,
+    config: TransformConfig,
+    modules: Iterable[torch.nn.Module] | None = None,
+    factories: dict[str, TransformFactory] | None = None,
+):
     """
     Apply a transform config to a model. Weight transforms are fused into weights, while
     activation transforms are attached as submodules and trigger via pytorch hooks
 
     :param model: model to apply config to
     :param config: transform config to apply
+    :param modules: optional module scope to restrict transform application to
+    :param factories: optional factories keyed by config group name. Reuse the same
+        factories across scoped calls to preserve shared matrices, permutations, and
+        RNG state, including paired transforms applied in different scopes. Groups
+        absent from the mapping use a new factory for this call.
     """
+    module_scope = None if modules is None else tuple(modules)
     for name, scheme in config.config_groups.items():
-        factory = TransformFactory.from_scheme(scheme, name=name)
-        factory.apply_to_model(model)
+        factory = (
+            factories[name]
+            if factories is not None and name in factories
+            else TransformFactory.from_scheme(scheme, name=name)
+        )
+        factory.apply_to_model(model, modules=module_scope)
 
     # declare shared transform parameters as tied weights for save_pretrained compat
     _register_tied_transform_weights(model)
