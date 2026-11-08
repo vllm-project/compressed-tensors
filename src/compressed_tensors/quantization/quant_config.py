@@ -57,137 +57,6 @@ def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]
     return result
 
 
-def _path_sort_key(parts: tuple[str, ...]) -> tuple:
-    return tuple(int(part) if part.isdigit() else part for part in parts)
-
-
-def _signature(parts: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple("#" if part.isdigit() else part for part in parts)
-
-
-def _is_cartesian(paths: set[tuple[str, ...]], columns: list[int]) -> bool:
-    """True when `paths` is the full product of its numeric-column values."""
-    if not paths or not columns:
-        return True
-
-    pools = [{path[column] for path in paths} for column in columns]
-    expected = 1
-    for pool in pools:
-        expected *= len(pool)
-    if len(paths) != expected:
-        return False
-
-    seed = list(next(iter(paths)))
-    stack = [(0, seed)]
-    while stack:
-        depth, current = stack.pop()
-        if depth == len(columns):
-            if tuple(current) not in paths:
-                return False
-            continue
-        column = columns[depth]
-        for value in pools[depth]:
-            nxt = list(current)
-            nxt[column] = value
-            stack.append((depth + 1, nxt))
-    return True
-
-
-def _column_is_complete(
-    column: int,
-    ignored: set[tuple[str, ...]],
-    universe: set[tuple[str, ...]],
-) -> bool:
-    """True when every sibling index that exists on the model is ignored."""
-    return {path[column] for path in universe} == {path[column] for path in ignored}
-
-
-def _index_token(values: set[str], complete: bool) -> str:
-    ordered = sorted(values, key=int)
-    if len(ordered) == 1:
-        return re.escape(ordered[0])
-    if complete:
-        return r"\d+"
-    return "(?:%s)" % "|".join(re.escape(value) for value in ordered)
-
-
-def _alternation(paths: set[tuple[str, ...]]) -> str:
-    ordered = sorted(paths, key=_path_sort_key)
-    inner = "|".join(re.escape(".".join(parts)) for parts in ordered)
-    return f"re:^(?:{inner})\\Z"
-
-
-def _compress_group(
-    signature: tuple[str, ...],
-    ignored: set[tuple[str, ...]],
-    universe: set[tuple[str, ...]],
-) -> str:
-    if len(ignored) == 1:
-        return ".".join(next(iter(ignored)))
-
-    columns = [index for index, token in enumerate(signature) if token == "#"]
-    if not columns or not _is_cartesian(ignored, columns):
-        return _alternation(ignored)
-
-    pieces: list[str] = []
-    for index, token in enumerate(signature):
-        if token != "#":
-            pieces.append(re.escape(token))
-            continue
-        values = {path[index] for path in ignored}
-        pieces.append(
-            _index_token(values, _column_is_complete(index, ignored, universe))
-        )
-    return "re:^" + r"\.".join(pieces) + r"\Z"
-
-
-def _consolidate_ignore_names(ignore: list[str], universe: list[str]) -> list[str]:
-    """Compress a fully enumerated ignore list into exact anchored regexes.
-
-    Names that share a path shape are grouped. A numeric component becomes
-    ``\\d+`` only when every sibling index present in ``universe`` is ignored.
-    A partial index set becomes an alternation. A single name stays a literal
-    so loaders that rewrite full paths and skip ``re:`` entries still see it.
-    Patterns that are already ``re:`` are preserved.
-
-    The result matches the same names from ``universe`` as the input list.
-    ``\\d+`` can also match indexes that do not exist on the model.
-    """
-    universe_groups: dict[tuple[str, ...], set[tuple[str, ...]]] = defaultdict(set)
-    for name in universe:
-        if not name or name.startswith("re:"):
-            continue
-        parts = tuple(name.split("."))
-        universe_groups[_signature(parts)].add(parts)
-
-    grouped: dict[tuple[str, ...], list[tuple[str, ...]]] = {}
-    # Preserve input order: a regex stays put, a path group is emitted where
-    # its first concrete name appeared.
-    order: list[str | tuple[str, ...]] = []
-    for name in ignore:
-        if name.startswith("re:"):
-            order.append(name)
-            continue
-        if not name:
-            continue
-        parts = tuple(name.split("."))
-        signature = _signature(parts)
-        if signature not in grouped:
-            grouped[signature] = []
-            order.append(signature)
-        grouped[signature].append(parts)
-
-    consolidated: list[str] = []
-    for entry in order:
-        if isinstance(entry, str):
-            consolidated.append(entry)
-            continue
-        ignored = set(grouped[entry])
-        present = universe_groups.get(entry, set()) | ignored
-        consolidated.append(_compress_group(entry, ignored, present))
-    return consolidated
-
-
 class QuantizationStatus(str, Enum):
     """
     Enum storing the different states a quantized layer can be in
@@ -394,11 +263,10 @@ class QuantizationConfig(BaseModel):
             # existing quantization schemes so it won't be quantized
 
         consolidated_ignore = _map_to_checkpoint_names(model, consolidated_ignore)
-        module_names = [name for name, _ in model.named_modules() if name]
-        module_names = _map_to_checkpoint_names(model, module_names)
-        consolidated_ignore = _consolidate_ignore_names(
-            consolidated_ignore, module_names
-        )
+        # Keep each entry as a concrete checkpoint name. vLLM rewrites those
+        # names and only then folds names that share a path shape into a regex.
+        # A regex written here would skip hf_to_vllm_mapper, so a renamed or
+        # fused module would lose its ignore hole.
 
         # create config groups from all unique schemes
         config_groups = {}
