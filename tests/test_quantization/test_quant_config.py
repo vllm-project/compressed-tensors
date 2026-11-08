@@ -12,9 +12,11 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_config import (
+    _consolidate_ignore_names,
     _map_to_checkpoint_names,
     get_vllm_module_type,
 )
+from compressed_tensors.utils.match import match_name
 from pydantic import ValidationError
 from transformers import AutoModelForImageTextToText
 
@@ -207,9 +209,13 @@ def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, tar
 
     exported = QuantizationConfig.from_pretrained(model)
     prefix = "runtime" if conversion == "none" else "checkpoint"
-    expected_ignores = [f"{prefix}.{i}" for i in range(1, 33)]
+    indexes = "|".join(str(i) for i in range(1, 33))
+    expected_ignores = [f"re:^{prefix}\\.(?:{indexes})\\Z"]
     assert exported.ignore == expected_ignores
     assert exported.model_dump()["ignore"] == expected_ignores
+    for index in range(1, 33):
+        assert match_name(f"{prefix}.{index}", exported.ignore[0])
+    assert not match_name(f"{prefix}.0", exported.ignore[0])
     assert exported.config_groups["group_0"].model_dump() == original_scheme
     assert scheme.model_dump() == original_scheme
     restored = QuantizationConfig.model_validate_json(exported.model_dump_json())
@@ -295,3 +301,67 @@ def test_default_weight_observer_does_not_require_calibration_data():
     )
 
     assert not config.requires_calibration_data()
+
+
+def _ignored(pattern: str, universe: list[str]) -> set[str]:
+    return {name for name in universe if match_name(name, pattern)}
+
+
+def test_consolidate_ignore_names_collapses_complete_layer_index():
+    universe = [f"model.layers.{i}.mlp.gate" for i in range(4)]
+    consolidated = _consolidate_ignore_names(universe, universe)
+
+    assert consolidated == [r"re:^model\.layers\.\d+\.mlp\.gate\Z"]
+    assert _ignored(consolidated[0], universe) == set(universe)
+
+
+def test_consolidate_ignore_names_uses_alternation_for_partial_index():
+    universe = [f"model.layers.{i}.mlp.gate" for i in range(4)]
+    ignore = universe[1:]
+    consolidated = _consolidate_ignore_names(ignore, universe)
+
+    assert consolidated == [r"re:^model\.layers\.(?:1|2|3)\.mlp\.gate\Z"]
+    assert _ignored(consolidated[0], universe) == set(ignore)
+
+
+def test_consolidate_ignore_names_keeps_single_name_and_regex():
+    consolidated = _consolidate_ignore_names(
+        ["re:.*mtp.*", "lm_head", "model.layers.1.mlp.down_proj"],
+        ["lm_head", "model.layers.1.mlp.down_proj", "model.layers.0.mlp.down_proj"],
+    )
+
+    assert consolidated == [
+        "re:.*mtp.*",
+        "lm_head",
+        "model.layers.1.mlp.down_proj",
+    ]
+
+
+def test_consolidate_ignore_names_alternates_non_rectangular_experts():
+    universe = [
+        f"layers.{layer}.experts.{expert}.gate"
+        for layer in range(2)
+        for expert in range(2)
+    ]
+    ignore = [
+        "layers.0.experts.0.gate",
+        "layers.1.experts.1.gate",
+    ]
+    consolidated = _consolidate_ignore_names(ignore, universe)
+
+    assert consolidated == [
+        "re:^(?:layers\\.0\\.experts\\.0\\.gate|layers\\.1\\.experts\\.1\\.gate)\\Z"
+    ]
+    assert _ignored(consolidated[0], universe) == set(ignore)
+
+
+def test_consolidate_ignore_names_collapses_full_expert_rectangle():
+    universe = [
+        f"layers.{layer}.experts.{expert}.gate"
+        for layer in range(2)
+        for expert in range(3)
+    ]
+    consolidated = _consolidate_ignore_names(universe, universe)
+
+    assert consolidated == [r"re:^layers\.\d+\.experts\.\d+\.gate\Z"]
+    assert _ignored(consolidated[0], universe) == set(universe)
