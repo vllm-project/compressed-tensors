@@ -263,10 +263,11 @@ class QuantizationConfig(BaseModel):
             # existing quantization schemes so it won't be quantized
 
         consolidated_ignore = _map_to_checkpoint_names(model, consolidated_ignore)
-        # Keep each entry as a concrete checkpoint name. vLLM rewrites those
-        # names and only then folds names that share a path shape into a regex.
-        # A regex written here would skip hf_to_vllm_mapper, so a renamed or
-        # fused module would lose its ignore hole.
+        # Save concrete checkpoint names. Older vLLM rewrites those names and
+        # leaves entries that start with "re:" unchanged, so a regex written
+        # here would miss the renamed module when those versions load the
+        # checkpoint. New vLLM folds names that share a path shape only after
+        # that rewrite, and only in memory.
 
         # create config groups from all unique schemes
         config_groups = {}
