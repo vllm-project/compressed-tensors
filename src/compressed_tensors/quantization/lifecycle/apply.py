@@ -13,6 +13,7 @@ from compressed_tensors.modeling import (
 )
 from compressed_tensors.offload import update_offload_parameter
 from compressed_tensors.quantization.lifecycle.initialize import (
+    _validate_attention_config,
     initialize_module_for_quantization,
     is_cached_attention_module,
 )
@@ -121,6 +122,8 @@ def apply_quantization_config(
     if config is None:  # see PR #180
         return dict()
 
+    _validate_attention_application(model, config, allowed_modules)
+
     # force zero points during initialization
     # TODO: remove zero points from initialization
     force_zero_point = config.quantization_status < QuantizationStatus.COMPRESSED
@@ -178,6 +181,52 @@ def apply_quantization_config(
                 module, force_zero_point=force_zero_point
             )
             module.quantization_status = config.quantization_status
+
+
+def _validate_attention_application(model, config, allowed_modules):
+    """Do not silently drop an explicitly requested attention operation."""
+    targets = OrderedDict(
+        (target, scheme)
+        for scheme in config.config_groups.values()
+        for target in scheme.targets
+    )
+
+    def validate(module, scheme):
+        cache = getattr(module, "kv_cache", None)
+        owner = (
+            cache.config
+            if cache is not None
+            else model.config.get_text_config(decoder=True)
+        )
+        _validate_attention_config(module, scheme, owner)
+
+    for name, module in match_named_modules(model, targets, config.ignore):
+        if allowed_modules is not None and module not in allowed_modules:
+            continue
+        scheme = _scheme_from_targets(
+            targets, match_targets(name, module, targets), name
+        )
+        if not is_narrow_match(model, scheme.targets, name):
+            continue
+        if is_cached_attention_module(module):
+            validate(module, scheme)
+        elif not isinstance(module, (torch.nn.Linear, torch.nn.Embedding)) and (
+            "attention" in type(module).__name__.lower()
+            or any(hasattr(module, attr) for attr in ("q_proj", "qkv_proj", "query"))
+        ):
+            raise ValueError(
+                f"Quantization requested for unsupported attention module {name!r}; "
+                "target supported modules or explicitly ignore this module"
+            )
+    if config.kv_cache_scheme is not None:
+        scheme = QuantizationScheme(
+            targets=KV_CACHE_TARGETS, input_activations=config.kv_cache_scheme
+        )
+        for module in model.modules():
+            if (allowed_modules is None or module in allowed_modules) and (
+                is_cached_attention_module(module)
+            ):
+                validate(module, scheme)
 
 
 def _apply_kv_cache_scheme(
