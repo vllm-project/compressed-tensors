@@ -18,6 +18,7 @@ from compressed_tensors.utils import (
     match_named_modules,
     match_named_parameters,
     match_quantizable_tensors,
+    match_targets,
 )
 from compressed_tensors.utils.match import _match_class
 from transformers import AutoModelForCausalLM
@@ -231,6 +232,35 @@ class TestIsMatch:
         assert is_match("dummy.gate_up_proj", linear, "re:.*gate_proj", fused=mapping)
         assert is_match("dummy.gate_up_proj", linear, "re:.*up_proj", fused=mapping)
         assert is_match("dummy.gate_up_proj", linear, "Linear", fused=mapping)
+
+
+class TestMatchTargets:
+    """Test cases for match_targets priority ordering"""
+
+    def test_regex_specificity_beats_lexicographic_order(self):
+        linear = nn.Linear(10, 20)
+        name = "transformer.layers.0.self_attn.q_proj"
+        matches = match_targets(name, linear, ["re:.*proj", "re:.*q_proj"])
+
+        assert matches[0] == "re:.*q_proj"
+        assert "re:.*proj" in matches
+
+    def test_exact_name_beats_regex(self):
+        linear = nn.Linear(10, 20)
+        name = "model.layers.0.mlp.down_proj"
+        matches = match_targets(
+            name, linear, ["re:.*down_proj", "model.layers.0.mlp.down_proj"]
+        )
+
+        assert matches[0] == "model.layers.0.mlp.down_proj"
+        assert "re:.*down_proj" in matches
+
+    def test_class_match_comes_after_name_matches(self):
+        linear = nn.Linear(10, 20)
+        matches = match_targets("layer1", linear, ["Linear", "layer1"])
+
+        assert matches[0] == "layer1"
+        assert matches[-1] == "Linear"
 
 
 class TestMatchNamedModules:
