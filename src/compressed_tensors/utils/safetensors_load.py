@@ -56,6 +56,8 @@ str_to_torch_dtype = {
     "F8_E4M3": torch.float8_e4m3fn,
     "F8_E5M2": torch.float8_e5m2,
 }
+if hasattr(torch, "float8_e8m0fnu"):
+    str_to_torch_dtype["F8_E8M0"] = torch.float8_e8m0fnu
 
 
 def is_weights_file(file_name: str) -> bool:
