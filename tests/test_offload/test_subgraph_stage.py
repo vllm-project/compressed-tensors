@@ -69,16 +69,18 @@ def _checkpoint_subgraph(tmp_path, count):
 
 
 def _count_opens(monkeypatch):
+    import builtins
+
     from compressed_tensors.offload.cache import disk_utils
 
     opens = []
-    real = disk_utils.safe_open
+    real_open = builtins.open
 
     def counted(*args, **kwargs):
         opens.append(args[0])
-        return real(*args, **kwargs)
+        return real_open(*args, **kwargs)
 
-    monkeypatch.setattr(disk_utils, "safe_open", counted)
+    monkeypatch.setattr(disk_utils, "open", counted, raising=False)
     return opens
 
 
