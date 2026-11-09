@@ -454,6 +454,9 @@ def get_num_attn_heads(config: PretrainedConfig) -> int:
         )
 
 
+_OTHER_KV_HEAD_ATTRS = ("num_kv_heads", "multi_query", "multi_query_group_num")
+
+
 def get_num_kv_heads(config: PretrainedConfig) -> int:
     """
     Get the number of key-value attention heads used by a model
@@ -461,14 +464,19 @@ def get_num_kv_heads(config: PretrainedConfig) -> int:
     :param config: model config
     :return: num_key_value_heads of model
     """
-    if hasattr(config, "num_key_value_heads"):
-        return config.num_key_value_heads
+    num_kv_heads = getattr(config, "num_key_value_heads", None)
+    if num_kv_heads is not None:
+        return num_kv_heads
 
-    else:
+    # configs which describe grouped or multi-query attention under other names
+    if any(hasattr(config, attr) for attr in _OTHER_KV_HEAD_ATTRS):
         raise ValueError(
             "Cannot determine num_key_value_heads from config. Config must define "
             f"`num_key_value_heads`. {config}"
         )
+
+    # multi-head attention uses one key-value head per query head
+    return get_num_attn_heads(config)
 
 
 def get_head_dim(config: PretrainedConfig) -> int:
