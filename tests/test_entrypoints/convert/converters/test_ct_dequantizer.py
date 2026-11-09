@@ -1,18 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import json
+
 import pytest
 import torch
+from compressed_tensors.compressors import ModelCompressor
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.entrypoints.convert.converters.ct_dequantizer import (
     CompressedTensorsDequantizer,
 )
-from compressed_tensors.quantization import QuantizationConfig, QuantizationScheme
+from compressed_tensors.quantization import (
+    QuantizationConfig,
+    QuantizationScheme,
+    apply_quantization_config,
+)
 from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
     QuantizationStrategy,
     QuantizationType,
 )
+from safetensors.torch import save_file
 
 
 def _create_dequantizer(ignore=None):
@@ -215,3 +223,39 @@ def test_get_dependencies_returns_empty_for_ignored_module():
 
     deps = dequantizer.get_dependencies("model.embed_tokens.weight")
     assert deps == set()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("scheme_format_saved", [True, False])
+def test_init_uses_saved_format(tmp_path, scheme_format_saved):
+    model = torch.nn.Sequential(torch.nn.Linear(128, 64, bias=False))
+    config = QuantizationConfig(config_groups={"W4A16": ["Linear"]})
+    apply_quantization_config(model, config)
+    weight = model[0].weight
+    model[0].weight_scale.data = weight.abs().unflatten(-1, (-1, 128)).amax(-1) / 7
+
+    # W4A16 would be inferred as pack-quantized; save it as naive-quantized
+    compressor = ModelCompressor.from_pretrained_model(
+        model, quantization_format=CompressionFormat.naive_quantized.value
+    )
+    compressor.compress_model(model)
+    tensors = {k: v.contiguous() for k, v in model.state_dict().items()}
+    save_file(tensors, str(tmp_path / "model.safetensors"))
+    (tmp_path / "config.json").write_text("{}")
+    compressor.update_config(str(tmp_path))
+    if not scheme_format_saved:
+        # older checkpoints only record the format for the whole model
+        config_data = json.loads((tmp_path / "config.json").read_text())
+        for group in config_data["quantization_config"]["config_groups"].values():
+            group.pop("format", None)
+        (tmp_path / "config.json").write_text(json.dumps(config_data))
+
+    dequantizer = CompressedTensorsDequantizer(tmp_path)
+    for scheme in dequantizer.quant_config.config_groups.values():
+        assert scheme.format == CompressionFormat.naive_quantized
+
+    expected = tensors["0.weight"].to(torch.float32) * tensors["0.weight_scale"]
+    result = dequantizer.validate(tensors)
+    assert set(result) == {"0.weight"}
+    assert result["0.weight"].dtype == torch.bfloat16
+    assert torch.allclose(result["0.weight"].float(), expected, rtol=1e-2, atol=1e-3)

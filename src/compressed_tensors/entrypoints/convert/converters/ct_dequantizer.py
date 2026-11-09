@@ -57,11 +57,20 @@ class CompressedTensorsDequantizer(Converter):
                 "compressed-tensors quantization format"
             ) from e
 
-        # hydrate with additional ignore and inferred scheme formats
+        # hydrate with additional ignore and scheme formats: the scheme's saved
+        # format, else the model-wide format, else the inferred format
         self.quant_config.ignore += list(ignore)
+        scheme_formats = {f.value for f in CompressionFormat} - {
+            CompressionFormat.mixed_precision.value
+        }
+        global_format = self.quant_config.format
+        if global_format not in scheme_formats:
+            global_format = None
         for scheme in self.quant_config.config_groups.values():
             scheme.format = CompressionFormat(
-                infer_module_format(torch.nn.Linear, scheme)
+                scheme.format
+                or global_format
+                or infer_module_format(torch.nn.Linear, scheme)
             )
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
