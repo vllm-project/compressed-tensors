@@ -100,9 +100,7 @@ class TransformFactory(RegistryMixin, ABC):
         :param allowed_modules: optional module scope to restrict transform application to
         """
         # Reuse a one-shot scope iterable across transform arguments.
-        allowed_modules = (
-            None if allowed_modules is None else set(allowed_modules)
-        )
+        allowed_modules = None if allowed_modules is None else set(allowed_modules)
         modules_args = [
             (module, arg)
             for arg in self.scheme.apply
