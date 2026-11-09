@@ -297,6 +297,40 @@ class TestMatchNamedModules:
         assert "Could not match" in warning_msg
         assert "nonexistent_module" in warning_msg
 
+    @patch("compressed_tensors.utils.match._LOGGER")
+    def test_warn_on_fail_ignore(self, mock_logger):
+        """Test warning when an ignore entry matches no module"""
+        model = DummyModel()
+        list(
+            match_named_modules(
+                model, ["Linear"], ignore=["nonexistent_module"], warn_on_fail=True
+            )
+        )
+
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "Could not match" in warning_msg
+        assert "ignore" in warning_msg
+        assert "nonexistent_module" in warning_msg
+
+    @patch("compressed_tensors.utils.match._LOGGER")
+    def test_no_warn_when_ignore_matches(self, mock_logger):
+        """Test no warning when every ignore entry matches a module"""
+        model = DummyModel()
+        list(
+            match_named_modules(model, ["Linear"], ignore=["layer1"], warn_on_fail=True)
+        )
+
+        mock_logger.warning.assert_not_called()
+
+    @patch("compressed_tensors.utils.match._LOGGER")
+    def test_no_warn_when_ignore_matches_untargeted_module(self, mock_logger):
+        """An ignore entry matching a module which is not targeted still matched"""
+        model = DummyModel()
+        list(match_named_modules(model, ["layer1"], ignore=["norm"], warn_on_fail=True))
+
+        mock_logger.warning.assert_not_called()
+
     def test_internal_match(self):
         """Test not matching internal modules"""
 
@@ -420,6 +454,37 @@ class TestMatchNamedParameters:
         warning_msg = mock_logger.warning.call_args[0][0]
         assert "Could not match" in warning_msg
         assert "nonexistent.param" in warning_msg
+
+    @patch("compressed_tensors.utils.match._LOGGER")
+    def test_warn_on_fail_ignore_parameters(self, mock_logger):
+        """Test warning when an ignore entry matches no parameter"""
+        model = DummyModel()
+        list(
+            match_named_parameters(
+                model,
+                ["re:.*weight"],
+                ignore=["nonexistent.param"],
+                warn_on_fail=True,
+            )
+        )
+
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "Could not match" in warning_msg
+        assert "ignore" in warning_msg
+        assert "nonexistent.param" in warning_msg
+
+    @patch("compressed_tensors.utils.match._LOGGER")
+    def test_no_warn_when_ignore_matches_parameters(self, mock_logger):
+        """Test no warning when every ignore entry matches a parameter"""
+        model = DummyModel()
+        list(
+            match_named_parameters(
+                model, ["re:.*weight"], ignore=["layer1.weight"], warn_on_fail=True
+            )
+        )
+
+        mock_logger.warning.assert_not_called()
 
     def test_internal_match(self):
         """Test not matching internal modules"""
