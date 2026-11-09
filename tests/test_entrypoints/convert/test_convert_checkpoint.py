@@ -618,3 +618,41 @@ def test_convert_checkpoint_auto_max_workers_runs_on_each_device(tmp_path):
     assert spy.call_args.kwargs["max_workers"] == len(devices)
     assert {call.args[1] for call in run_job.call_args_list} == set(devices)
     _assert_shards_equal(tmp_path / "output", tensors)
+
+
+@patch.object(_CHECKPOINT_MODULE, "write_checkpoint_quantization_config")
+@patch.object(_CHECKPOINT_MODULE, "update_safetensors_index")
+@patch.object(_CHECKPOINT_MODULE, "exec_jobs_dynamic")
+@patch.object(_CHECKPOINT_MODULE, "exec_jobs")
+@patch.object(_CHECKPOINT_MODULE, "build_inverse_weight_maps")
+@patch.object(_CHECKPOINT_MODULE, "get_weight_map")
+@patch.object(_CHECKPOINT_MODULE, "get_checkpoint_files")
+def test_convert_checkpoint_forwards_model_kwargs(
+    get_checkpoint_files,
+    get_weight_map,
+    build_inverse_weight_maps,
+    exec_jobs,
+    exec_jobs_dynamic,
+    update_safetensors_index,
+    write_checkpoint_quantization_config,
+    tmp_path,
+):
+    model_files, inverse_weight_map = _checkpoint_dependencies()
+    get_checkpoint_files.return_value = model_files
+    get_weight_map.return_value = {"weight": "model.safetensors"}
+    build_inverse_weight_maps.return_value = {"model.safetensors": inverse_weight_map}
+    exec_jobs.return_value = []
+    exec_jobs_dynamic.return_value = [(4, {"weight": "model.safetensors"})]
+    model_kwargs = {"revision": "deadbeef", "token": "hf_token"}
+
+    with patch.object(
+        _CHECKPOINT_MODULE, "_resolve_devices", return_value=[torch.device("cpu")]
+    ):
+        convert_checkpoint(
+            "org/model",
+            tmp_path,
+            Mock(),
+            model_kwargs=model_kwargs,
+        )
+
+    get_checkpoint_files.assert_called_once_with("org/model", model_kwargs=model_kwargs)

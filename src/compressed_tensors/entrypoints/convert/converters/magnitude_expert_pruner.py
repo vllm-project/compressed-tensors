@@ -35,7 +35,7 @@ AUX_PATTERN = r"(?:mlp|ffn)\.(?:gate|router)\.(?:bias|e_score_correction_bias)$"
 class MagnitudeExpertPruner(Converter):
     """
     Prune MoE experts based on router weight magnitude. Scores each expert ``i``
-    by ``router.weight[i].abs().sum()`` (L1 magnitude) and prunes the
+    by ``router.weight[i].sum()`` (signed row sum) and prunes the
     lowest-scoring ``sparsity`` fraction of experts per layer, retaining the
     rest.
 
@@ -349,10 +349,9 @@ def _compute_retained_experts(
     sparsity: float,
 ) -> dict[str, list[int]]:
     """
-    Load each router weight, score experts by L1 magnitude
-    (``weight.abs().sum(dim=-1)``), and return the retained expert indices
-    (sorted) per router. Absolute values are used so positive and negative
-    router weights do not cancel. The number kept is derived per router as
+    Load each router weight, score experts by signed row sum
+    (``weight.sum(dim=-1)``), and return the retained expert indices
+    (sorted) per router. The number kept is derived per router as
     ``max(1, num_experts - round(sparsity * num_experts))``.
     """
     retained: dict[str, list[int]] = {}
@@ -368,7 +367,7 @@ def _compute_retained_experts(
         with safe_open(path, framework="pt") as f:
             for rname in names:
                 weight = f.get_tensor(rname)
-                scores = weight.abs().sum(dim=-1)
+                scores = weight.sum(dim=-1)
                 num_experts = scores.shape[0]
                 num_prune = round(sparsity * num_experts)
                 k = max(1, num_experts - num_prune)

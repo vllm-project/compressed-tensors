@@ -497,11 +497,11 @@ def mock_mixed_sign_checkpoint(tmp_path):
 
 
 @pytest.mark.unit
-def test_scoring_uses_absolute_magnitude(mock_mixed_sign_checkpoint):
+def test_scoring_uses_signed_sum(mock_mixed_sign_checkpoint):
     """
-    Experts must be ranked by L1 magnitude, not signed row-sum, so that positive
-    and negative router weights do not cancel. With sparsity=0.5 (keep 2), L1
-    retains experts {0, 3}; a signed-sum bug would instead keep {1, 2}.
+    Experts must be ranked by signed row-sum, not absolute magnitude, so that
+    router weight sign is respected. With sparsity=0.5 (keep 2), signed sum
+    retains experts {1, 2}; an abs bug would instead keep {0, 3}.
     """
     converter = MagnitudeExpertPruner.from_pretrained(
         model_name_or_path=str(mock_mixed_sign_checkpoint),
@@ -510,7 +510,7 @@ def test_scoring_uses_absolute_magnitude(mock_mixed_sign_checkpoint):
         sparsity=0.5,
     )
     retained = converter.retained_experts["model.layers.0.mlp.gate.weight"]
-    assert retained == [0, 3]
+    assert retained == [1, 2]
 
 
 @pytest.fixture
