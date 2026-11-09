@@ -196,6 +196,14 @@ Extends `DiskCache`. On `offload`:
 
 **Result:** all ranks share the same disk files for offloaded weights.
 
+For sequential subgraph staging, distributed disk-backed CUDA weights are staged
+on rank 0 only. During `subgraph_onload_modules(...)`, rank 0 loads each weight
+to its GPU and broadcasts it; the other ranks allocate the matching GPU tensor
+and receive the weight. This assumes every DDP rank has the same module and
+tensor layout. The prefetch worker does not run distributed collectives.
+`pin_memory=True` keeps the source rank's staged CPU tensors pinned for GPU
+transfers. GPU broadcast happens once per tensor during onload.
+
 ---
 
 ### `module.py` — Module-Level Offloading
@@ -220,12 +228,13 @@ offload_module(layer, onload_device="cuda:0", offload_device="cpu")
 
 ---
 
-#### `remove_module_offload(module, onload_tensors=False)`
+#### `remove_module_offload(module, onload_tensors=False, broadcast_onload=False)`
 
 Removes offloading from a single module, restoring plain dicts for `_parameters` and `_buffers` and restoring the original forward function.
 
 - `onload_tensors=True`: restores weights to the `onload_device` (GPU). Use before running a forward pass without offloading.
 - `onload_tensors=False` (default): keeps weights on the offload device. Use when freeing memory or re-dispatching.
+- `broadcast_onload=True`: for distributed disk caches targeting CUDA, rank 0 onloads each tensor and broadcasts it. All ranks must call this in the same module and tensor order. The sequential subgraph onload path uses this option.
 
 ---
 

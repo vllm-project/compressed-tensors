@@ -38,7 +38,9 @@ def test_subgraph_onload_skips_unoffloaded_modules(monkeypatch):
         calls.append(("init", module))
         return {"onload_device": "cpu", "offload_device": "cpu"}
 
-    def fake_remove_module_offload(module, onload_tensors=False):
+    def fake_remove_module_offload(
+        module, onload_tensors=False, broadcast_onload=False
+    ):
         calls.append(("onload", module, onload_tensors))
 
     monkeypatch.setattr(module_offload, "OffloadCache", _FakeOffloadCache)
@@ -66,7 +68,9 @@ def test_individual_expert_sequential_target_can_be_onloaded(monkeypatch):
         calls.append(("init", module))
         return {"onload_device": "cpu", "offload_device": "cpu"}
 
-    def fake_remove_module_offload(module, onload_tensors=False):
+    def fake_remove_module_offload(
+        module, onload_tensors=False, broadcast_onload=False
+    ):
         calls.append(("onload", module, onload_tensors))
 
     def fake_offload_module(module, **kwargs):
@@ -140,7 +144,9 @@ def test_subgraph_stage_values_are_consumed_by_onload(monkeypatch):
     def fake_get_cache_init_kwargs(module):
         return {"onload_device": "cpu", "offload_device": "cpu"}
 
-    def fake_remove_module_offload(module, onload_tensors=False):
+    def fake_remove_module_offload(
+        module, onload_tensors=False, broadcast_onload=False
+    ):
         assert onload_tensors is True
         module._parameters = {
             name: tensor + 10
