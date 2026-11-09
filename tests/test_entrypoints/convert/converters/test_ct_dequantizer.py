@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import json
+
 import pytest
 import torch
 from compressed_tensors.config import CompressionFormat
+from compressed_tensors.entrypoints.convert import convert_checkpoint
 from compressed_tensors.entrypoints.convert.converters.ct_dequantizer import (
     CompressedTensorsDequantizer,
 )
@@ -13,6 +16,7 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationStrategy,
     QuantizationType,
 )
+from safetensors.torch import load_file, save_file
 
 
 def _create_dequantizer(ignore=None):
@@ -215,3 +219,65 @@ def test_get_dependencies_returns_empty_for_ignored_module():
 
     deps = dequantizer.get_dependencies("model.embed_tokens.weight")
     assert deps == set()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("quant_type", ["int", "float"])
+@pytest.mark.parametrize("base_name", ["input", "output"])
+@pytest.mark.parametrize("symmetric", [True, False])
+@pytest.mark.parametrize("dynamic", [True, False])
+def test_convert_checkpoint_with_activation_quantization(
+    tmp_path, quant_type, base_name, symmetric, dynamic
+):
+    """Dequantizing W8A8 checkpoints consumes static activation parameters."""
+    activation_args = QuantizationArgs(
+        num_bits=8,
+        type=quant_type,
+        strategy="tensor",
+        symmetric=symmetric,
+        dynamic=dynamic,
+    )
+    activations = {f"{base_name}_activations": activation_args}
+    if base_name == "output":
+        activations["input_activations"] = QuantizationArgs(
+            num_bits=8, type=quant_type, strategy="tensor", dynamic=True
+        )
+    scheme = QuantizationScheme(
+        targets=["linear"],
+        weights=QuantizationArgs(num_bits=8, type=quant_type, strategy="channel"),
+        **activations,
+    )
+    config = QuantizationConfig(
+        config_groups={"group_0": scheme}, quantization_status="compressed"
+    )
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "config.json").write_text(
+        json.dumps({"quantization_config": config.model_dump(mode="json")})
+    )
+    weight = torch.tensor(
+        [[1, 2, -3, 4], [2, -1, 4, -2]], dtype=scheme.weights.pytorch_dtype()
+    )
+    scale = torch.tensor([[0.5], [0.25]])
+    tensors = {
+        "linear.weight": weight,
+        "linear.weight_scale": scale,
+        "linear.bias": torch.tensor([1.0, -1.0]),
+    }
+    if not dynamic:
+        tensors[f"linear.{base_name}_scale"] = torch.tensor([0.125])
+        if not symmetric:
+            tensors[f"linear.{base_name}_zero_point"] = torch.tensor(
+                [1], dtype=activation_args.zp_dtype
+            )
+    save_file(tensors, source / "model.safetensors")
+    dequantizer = CompressedTensorsDequantizer(source, dtype=torch.float32)
+    output = tmp_path / "output"
+
+    convert_checkpoint(source, output, dequantizer, device="cpu", max_workers=1)
+
+    result = load_file(output / "model.safetensors")
+    assert set(result) == {"linear.weight", "linear.bias"}
+    torch.testing.assert_close(result["linear.weight"], weight.float() * scale)
+    torch.testing.assert_close(result["linear.bias"], tensors["linear.bias"])
+    assert "quantization_config" not in json.loads((output / "config.json").read_text())
