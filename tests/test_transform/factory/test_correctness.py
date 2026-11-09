@@ -159,7 +159,9 @@ def test_factory_module_scope_can_be_reused_across_transform_arguments(scope_typ
     )
     factory = TransformFactory.from_scheme(scheme, name="rotation")
 
-    factory.apply_to_model(model, use_tqdm=False, modules=scope_type([model[1]]))
+    factory.apply_to_model(
+        model, use_tqdm=False, allowed_modules=scope_type([model[1]])
+    )
 
     assert "rotation_input" not in model[0]._modules
     assert "rotation_input" in model[1]._modules

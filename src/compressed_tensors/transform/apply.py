@@ -38,7 +38,7 @@ def apply_transform_config(
             if factories is not None and name in factories
             else TransformFactory.from_scheme(scheme, name=name)
         )
-        factory.apply_to_model(model, modules=module_scope)
+        factory.apply_to_model(model, allowed_modules=module_scope)
 
     # declare shared transform parameters as tied weights for save_pretrained compat
     _register_tied_transform_weights(model)
