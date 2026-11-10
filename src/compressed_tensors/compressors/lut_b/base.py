@@ -35,9 +35,10 @@ class LutBCompressor(BaseCompressor):
         weight = state_dict.pop("weight")
         codebooks = state_dict.pop("weight_codebook", None)
         scales = state_dict.pop("weight_scale", None)
+        importance = state_dict.pop("weight_importance", None)
 
         packed, codebooks, scales = quantize_lut_b(
-            weight, scheme.weights, codebooks, scales
+            weight, scheme.weights, codebooks, scales, importance=importance
         )
         state_dict["weight_packed"] = packed
         state_dict["weight_codebook"] = codebooks

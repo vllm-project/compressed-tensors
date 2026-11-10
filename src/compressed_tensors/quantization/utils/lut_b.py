@@ -14,6 +14,8 @@ first, so the helpers here read the args directly without re-validating them.
 Each tile stores a uint8 E8M0 exponent alongside its normalized E4M3 codebook.
 """
 
+import math
+
 import torch
 from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
@@ -149,6 +151,60 @@ def _weight_to_tiles(weight: torch.Tensor, args: QuantizationArgs) -> torch.Tens
     )
 
 
+def _importance_to_tiles(
+    importance: torch.Tensor | None,
+    weight: torch.Tensor,
+    args: QuantizationArgs,
+    start: int,
+    end: int,
+) -> torch.Tensor | None:
+    """Get importance scores for a flat range of LUT-B tiles."""
+    if importance is None:
+        return None
+
+    leading_shape, rows, columns = _validate_weight(weight, args)
+    block_n, block_k = args.block_structure
+    row_tiles = rows // block_n
+    column_tiles = columns // block_k
+    leading_tiles = math.prod(leading_shape) if leading_shape else 1
+    importance = torch.as_tensor(importance, device=weight.device, dtype=torch.float32)
+    if importance.ndim == 1 and importance.numel() == columns:
+        column_importance = importance.reshape(1, columns).expand(
+            leading_tiles, columns
+        )
+    elif importance.shape == (*leading_shape, columns):
+        column_importance = importance.reshape(leading_tiles, columns)
+    elif importance.shape == weight.shape:
+        if not torch.isfinite(importance).all():
+            raise ValueError("LUT-B importance must contain only finite values")
+        if torch.any(importance < 0):
+            raise ValueError("LUT-B importance must be non-negative")
+        return _weight_to_tiles(importance, args)[start:end]
+    else:
+        raise ValueError(
+            "LUT-B importance must have shape [K], [..., K], or match the weight; "
+            f"got {tuple(importance.shape)} for weight {tuple(weight.shape)}"
+        )
+
+    if not torch.isfinite(column_importance).all():
+        raise ValueError("LUT-B importance must contain only finite values")
+    if torch.any(column_importance < 0):
+        raise ValueError("LUT-B importance must be non-negative")
+
+    tile_ids = torch.arange(start, end, device=weight.device)
+    leading_ids = tile_ids // (row_tiles * column_tiles)
+    column_tile_ids = tile_ids % column_tiles
+    column_ids = column_tile_ids[:, None] * block_k + torch.arange(
+        block_k, device=weight.device
+    )
+    tile_column_importance = column_importance[leading_ids[:, None], column_ids]
+    return (
+        tile_column_importance.unsqueeze(1)
+        .expand(-1, block_n, -1)
+        .reshape(end - start, block_n * block_k)
+    )
+
+
 def _scale_lut_b_tiles(tiles: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """Normalize flattened LUT-B tiles and return their E8M0 scales.
 
@@ -195,7 +251,11 @@ def _snap_to_e4m3(values: torch.Tensor) -> torch.Tensor:
     )
 
 
-def _initialize_centers(values: torch.Tensor, args: QuantizationArgs) -> torch.Tensor:
+def _initialize_centers(
+    values: torch.Tensor,
+    args: QuantizationArgs,
+    importance: torch.Tensor,
+) -> torch.Tensor:
     codebook_size = 1 << args.num_bits
     centers = torch.empty(
         values.shape[0],
@@ -203,10 +263,11 @@ def _initialize_centers(values: torch.Tensor, args: QuantizationArgs) -> torch.T
         dtype=torch.float32,
         device=values.device,
     )
-    centers[:, 0] = values.mean(dim=1)
+    total_importance = importance.sum(dim=1, keepdim=True)
+    centers[:, 0] = (values * importance).sum(dim=1) / total_importance.squeeze(1)
     minimum_distance = (values - centers[:, :1]).square()
     for center_index in range(1, codebook_size):
-        farthest = minimum_distance.argmax(dim=1, keepdim=True)
+        farthest = (minimum_distance * importance).argmax(dim=1, keepdim=True)
         new_center = torch.gather(values, 1, farthest).squeeze(1)
         centers[:, center_index] = new_center
         minimum_distance = torch.minimum(
@@ -225,16 +286,41 @@ def _fit_codebooks(
     values: torch.Tensor,
     args: QuantizationArgs,
     num_iterations: int,
+    importance: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     values = values.to(torch.float32)
-    centers = _initialize_centers(values, args)
+    if importance is None:
+        importance = torch.ones_like(values)
+    else:
+        importance = torch.as_tensor(
+            importance, device=values.device, dtype=torch.float32
+        )
+        try:
+            importance = torch.broadcast_to(importance, values.shape)
+        except RuntimeError as exc:
+            raise ValueError(
+                f"LUT-B importance shape {tuple(importance.shape)} cannot broadcast "
+                f"to tile values {tuple(values.shape)}"
+            ) from exc
+        if not torch.isfinite(importance).all():
+            raise ValueError("LUT-B importance must contain only finite values")
+        if torch.any(importance < 0):
+            raise ValueError("LUT-B importance must be non-negative")
+        # A tile with no observed activation energy still needs a valid codebook.
+        importance = torch.where(
+            importance.sum(dim=1, keepdim=True) > 0,
+            importance,
+            torch.ones_like(importance),
+        )
+
+    centers = _initialize_centers(values, args, importance)
 
     for _ in range(num_iterations):
         indices = _assign_indices(values, centers)
         sums = torch.zeros_like(centers)
         counts = torch.zeros_like(centers)
-        sums.scatter_add_(1, indices, values)
-        counts.scatter_add_(1, indices, torch.ones_like(values))
+        sums.scatter_add_(1, indices, values * importance)
+        counts.scatter_add_(1, indices, importance)
         updated = sums / counts.clamp_min(1)
         centers = torch.where(counts > 0, updated, centers)
         centers = _snap_to_e4m3(centers).sort(dim=1).values
@@ -277,6 +363,7 @@ def quantize_lut_b(
     codebooks: torch.Tensor | None = None,
     scales: torch.Tensor | None = None,
     *,
+    importance: torch.Tensor | None = None,
     max_tiles_per_chunk: int = LUT_B_MAX_TILES_PER_CHUNK,
     num_iterations: int = LUT_B_LLOYD_ITERATIONS,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -364,7 +451,12 @@ def quantize_lut_b(
                 -(chunk_scales.to(torch.float32) - LUT_B_E8M0_BIAS)
             ).unsqueeze(1)
         if flat_codebooks is None:
-            indices, centers = _fit_codebooks(values, args, num_iterations)
+            chunk_importance = _importance_to_tiles(
+                importance, weight, args, start, end
+            )
+            indices, centers = _fit_codebooks(
+                values, args, num_iterations, importance=chunk_importance
+            )
         else:
             centers = flat_codebooks[start:end]
             indices = _assign_indices(values, centers.to(torch.float32)).to(torch.uint8)
@@ -460,10 +552,12 @@ def fake_quantize_lut_b(
     args: QuantizationArgs,
     codebooks: torch.Tensor | None = None,
     scales: torch.Tensor | None = None,
+    *,
+    importance: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Quantize and dequantize a weight through the canonical LUT-B format."""
     packed, fitted_codebooks, fitted_scales = quantize_lut_b(
-        weight, args, codebooks, scales
+        weight, args, codebooks, scales, importance=importance
     )
     return dequantize_lut_b(
         packed, fitted_codebooks, args, fitted_scales, dtype=weight.dtype

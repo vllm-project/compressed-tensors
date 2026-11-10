@@ -13,6 +13,10 @@ from compressed_tensors.quantization.utils import (
     quantize_lut_b,
     unpack_lut_b_indices,
 )
+from compressed_tensors.quantization.utils.lut_b import (
+    LUT_B_E8M0_BIAS,
+    _fit_codebooks,
+)
 
 
 def _lut_b_args(block_n: int, block_k: int, num_bits: int) -> QuantizationArgs:
@@ -53,18 +57,25 @@ def test_lut_b_canonical_layout_is_3_125_bits_per_weight():
     packed = pack_lut_b_indices(indices, CANONICAL_ARGS)
     weight = dequantize_lut_b(packed, codebooks, CANONICAL_ARGS, dtype=torch.float32)
 
-    repacked, fitted_codebooks = quantize_lut_b(weight, CANONICAL_ARGS, codebooks)
+    repacked, fitted_codebooks, fitted_scales = quantize_lut_b(
+        weight,
+        CANONICAL_ARGS,
+        codebooks,
+        torch.full((1, 1), LUT_B_E8M0_BIAS, dtype=torch.uint8),
+    )
     reconstructed = dequantize_lut_b(
         repacked,
         fitted_codebooks,
         CANONICAL_ARGS,
+        fitted_scales,
         dtype=torch.float32,
     )
 
     assert repacked.shape == (1, 1, 192)
     assert fitted_codebooks.shape == (1, 1, 8)
     assert fitted_codebooks.dtype == torch.float8_e4m3fn
-    assert repacked.numel() + fitted_codebooks.numel() == 200
+    assert fitted_scales.shape == (1, 1)
+    assert repacked.numel() + fitted_codebooks.numel() + fitted_scales.numel() == 201
     torch.testing.assert_close(reconstructed, weight)
 
 
@@ -80,21 +91,72 @@ def test_lut_b_qdq_fits_codebook_without_calibration():
     assert (reconstructed - weight).square().mean() < weight.square().mean()
 
 
+def test_lut_b_weighted_lloyd_reduces_importance_weighted_error():
+    args = _lut_b_args(block_n=1, block_k=12, num_bits=2)
+    values = torch.tensor(
+        [[0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 10.0, 10.0, 11.0, 11.0, 12.0, 12.0]]
+    )
+    importance = torch.tensor(
+        [[1.0, 1.0, 50.0, 50.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]]
+    )
+
+    base_indices, base_codebooks = _fit_codebooks(values, args, num_iterations=16)
+    weighted_indices, weighted_codebooks = _fit_codebooks(
+        values, args, num_iterations=16, importance=importance
+    )
+    base_reconstructed = base_codebooks.float().gather(1, base_indices.long())
+    weighted_reconstructed = weighted_codebooks.float().gather(
+        1, weighted_indices.long()
+    )
+
+    base_error = ((base_reconstructed - values).square() * importance).sum()
+    weighted_error = ((weighted_reconstructed - values).square() * importance).sum()
+    assert weighted_error < base_error
+
+
+def test_lut_b_quantize_accepts_per_column_importance():
+    torch.manual_seed(7)
+    weight = torch.randn(16, 128)
+    importance = torch.linspace(0.1, 4.0, 128)
+
+    packed, codebooks, scales = quantize_lut_b(
+        weight, CANONICAL_ARGS, importance=importance
+    )
+    reconstructed = dequantize_lut_b(
+        packed, codebooks, CANONICAL_ARGS, scales, dtype=weight.dtype
+    )
+
+    assert packed.shape == (2, 2, 192)
+    assert codebooks.shape == (2, 2, 8)
+    assert scales.shape == (2, 2)
+    assert torch.isfinite(reconstructed).all()
+
+
+def test_lut_b_rejects_invalid_importance():
+    weight = torch.randn(8, 64)
+    with pytest.raises(ValueError, match="importance must be non-negative"):
+        quantize_lut_b(weight, CANONICAL_ARGS, importance=-torch.ones(64))
+    with pytest.raises(ValueError, match="importance must have shape"):
+        quantize_lut_b(weight, CANONICAL_ARGS, importance=torch.ones(63))
+
+
 def test_lut_b_fused_expert_tensors_match_stacked_2d_results():
     torch.manual_seed(1)
     weight = torch.randn(3, 16, 128)
 
-    packed, codebooks = quantize_lut_b(weight, CANONICAL_ARGS)
+    packed, codebooks, scales = quantize_lut_b(weight, CANONICAL_ARGS)
     reconstructed = dequantize_lut_b(
-        packed, codebooks, CANONICAL_ARGS, dtype=weight.dtype
+        packed, codebooks, CANONICAL_ARGS, scales, dtype=weight.dtype
     )
     stacked = [quantize_lut_b(expert, CANONICAL_ARGS) for expert in weight]
 
     assert packed.shape == (3, 2, 2, 192)
     assert codebooks.shape == (3, 2, 2, 8)
+    assert scales.shape == (3, 2, 2)
     assert reconstructed.shape == weight.shape
     torch.testing.assert_close(packed, torch.stack([item[0] for item in stacked]))
     torch.testing.assert_close(codebooks, torch.stack([item[1] for item in stacked]))
+    torch.testing.assert_close(scales, torch.stack([item[2] for item in stacked]))
 
 
 def test_lut_b_public_fake_quantize_dispatches_to_codebook_qdq():
@@ -114,11 +176,17 @@ def test_lut_b_uses_supplied_calibrated_codebook():
         dtype=torch.float32,
     )
 
-    packed, stored_codebooks = quantize_lut_b(weight, CANONICAL_ARGS, codebooks)
+    packed, stored_codebooks, stored_scales = quantize_lut_b(
+        weight,
+        CANONICAL_ARGS,
+        codebooks,
+        torch.full((1, 1), LUT_B_E8M0_BIAS, dtype=torch.uint8),
+    )
     reconstructed = dequantize_lut_b(
         packed,
         stored_codebooks,
         CANONICAL_ARGS,
+        stored_scales,
         dtype=torch.float32,
     )
 
@@ -175,7 +243,7 @@ def test_lut_b_round_trip_supports_programmable_geometry(block_n, block_k):
         block_n * row_tiles, block_k * column_tiles, dtype=torch.float32
     )
 
-    packed, codebooks = quantize_lut_b(weight, args)
+    packed, codebooks, scales = quantize_lut_b(weight, args)
 
     codebook_size = 1 << num_bits
     packed_tile_bytes = block_n * block_k * num_bits // 8
@@ -184,7 +252,9 @@ def test_lut_b_round_trip_supports_programmable_geometry(block_n, block_k):
     assert codebooks.shape == (row_tiles, column_tiles, codebook_size)
     assert codebooks.dtype == torch.float8_e4m3fn
 
-    reconstructed = dequantize_lut_b(packed, codebooks, args, dtype=torch.float32)
+    reconstructed = dequantize_lut_b(
+        packed, codebooks, args, scales, dtype=torch.float32
+    )
     assert reconstructed.shape == weight.shape
     assert torch.isfinite(reconstructed).all()
 

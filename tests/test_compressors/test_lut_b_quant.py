@@ -79,15 +79,20 @@ def test_lut_b_compressor_uses_canonical_checkpoint_tensors():
     assert state_dict["weight_packed"].dtype == torch.uint8
     assert state_dict["weight_codebook"].shape == (2, 2, 8)
     assert state_dict["weight_codebook"].dtype == torch.float8_e4m3fn
+    assert state_dict["weight_scale"].shape == (2, 2)
+    assert state_dict["weight_scale"].dtype == torch.uint8
     assert (
-        state_dict["weight_packed"].numel() + state_dict["weight_codebook"].numel()
-        == 4 * 200
+        state_dict["weight_packed"].numel()
+        + state_dict["weight_codebook"].numel()
+        + state_dict["weight_scale"].numel()
+        == 4 * 201
     )
 
     expected = dequantize_lut_b(
         state_dict["weight_packed"],
         state_dict["weight_codebook"],
         scheme.weights,
+        state_dict["weight_scale"],
     )
     decompress_module(layer)
 
@@ -112,6 +117,22 @@ def test_lut_b_compressor_preserves_precomputed_codebook():
     torch.testing.assert_close(layer.weight_codebook, expected)
 
 
+def test_lut_b_compressor_uses_weight_importance():
+    torch.manual_seed(4)
+    weight = torch.randn(8, 64)
+    importance = torch.ones(64)
+    importance[:16] = 100
+    scheme = preset_name_to_scheme("LUTB", ["Linear"])
+
+    ordinary = LutBCompressor.compress({"weight": weight}, scheme)
+    weighted = LutBCompressor.compress(
+        {"weight": weight, "weight_importance": importance}, scheme
+    )
+
+    assert "weight_importance" not in weighted
+    assert not torch.equal(ordinary["weight_codebook"], weighted["weight_codebook"])
+
+
 def test_lut_b_checkpoint_safetensors_round_trip(tmp_path):
     layer = torch.nn.Linear(64, 8, bias=False, dtype=torch.bfloat16)
     scheme = preset_name_to_scheme("LUTB", ["Linear"])
@@ -127,9 +148,10 @@ def test_lut_b_checkpoint_safetensors_round_trip(tmp_path):
     save_file(state_dict, checkpoint)
     loaded = load_file(checkpoint)
 
-    assert set(loaded) == {"weight_packed", "weight_codebook"}
+    assert set(loaded) == {"weight_packed", "weight_codebook", "weight_scale"}
     torch.testing.assert_close(loaded["weight_packed"], layer.weight_packed)
     torch.testing.assert_close(loaded["weight_codebook"], layer.weight_codebook)
+    torch.testing.assert_close(loaded["weight_scale"], layer.weight_scale)
 
 
 def test_lut_b_meta_compression_creates_loadable_shapes():
@@ -143,6 +165,8 @@ def test_lut_b_meta_compression_creates_loadable_shapes():
     assert layer.weight_packed.device.type == "meta"
     assert layer.weight_codebook.shape == (2, 2, 8)
     assert layer.weight_codebook.device.type == "meta"
+    assert layer.weight_scale.shape == (2, 2)
+    assert layer.weight_scale.device.type == "meta"
 
 
 def test_lut_b_compression_parameter_names():
@@ -151,6 +175,7 @@ def test_lut_b_compression_parameter_names():
     assert LutBCompressor.compression_param_names(scheme) == (
         "weight_packed",
         "weight_codebook",
+        "weight_scale",
     )
 
 
@@ -159,7 +184,7 @@ def test_codebook_quantization_rejects_non_lut_b_contract():
         QuantizationScheme(
             targets=["Linear"],
             weights=QuantizationArgs(
-                num_bits=3,
+                num_bits=4,
                 type="codebook",
                 strategy="block",
                 block_structure=[8, 32],
