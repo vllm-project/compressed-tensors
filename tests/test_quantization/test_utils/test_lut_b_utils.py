@@ -48,7 +48,7 @@ def test_lut_b_index_pack_rejects_out_of_range_indices():
         pack_lut_b_indices(torch.tensor([[-1] * 8], dtype=torch.int8), CANONICAL_ARGS)
 
 
-def test_lut_b_canonical_layout_is_3_125_bits_per_weight():
+def test_lut_b_canonical_layout_includes_per_tile_scale():
     codebooks = torch.tensor(
         [[[-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 4.0]]],
         dtype=torch.float8_e4m3fn,
