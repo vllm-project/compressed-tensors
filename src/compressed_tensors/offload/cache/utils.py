@@ -120,8 +120,9 @@ def load_disk_tensor_from_offload(
     """
     dtype = getattr(torch, offloaded["dtype"])
     file_path = offloaded["safetensors_file"]
+    file_key = offloaded.get("checkpoint_file")
     pin_memory = pin_memory and torch.accelerator.is_available()
-    with _opened(file_path, device, raw=pin_memory) as (
+    with _opened(file_path, device, file_key=file_key, raw=pin_memory) as (
         file,
         header,
         data_offset,
@@ -132,7 +133,11 @@ def load_disk_tensor_from_offload(
         else:
             info = header[name]
             if str_to_torch_dtype.get(info["dtype"]) != dtype:
-                with _opened(file_path, device) as (source_file, _, _):
+                with _opened(file_path, device, file_key=file_key) as (
+                    source_file,
+                    _,
+                    _,
+                ):
                     onloaded = _pin_memory(source_file.get_tensor(name).to(dtype))
             else:
                 onloaded = torch.empty(
