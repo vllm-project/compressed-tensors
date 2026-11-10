@@ -75,6 +75,16 @@ class ConfigAppendingConverter(NoOpConverter):
         return config
 
 
+class ExtraFileConverter(NoOpConverter):
+    """Duck-typed converter contributing extra files via ``get_extra_files``."""
+
+    def __init__(self, *extra_files):
+        self.extra_files = list(extra_files)
+
+    def get_extra_files(self):
+        return self.extra_files
+
+
 @patch.object(_CHECKPOINT_MODULE, "update_safetensors_index")
 @patch.object(_CHECKPOINT_MODULE, "write_checkpoint_quantization_config")
 @patch.object(_CHECKPOINT_MODULE, "exec_jobs_dynamic")
@@ -109,6 +119,7 @@ def test_convert_checkpoint_cpu_uses_dynamic_scheduler(
     exec_jobs.return_value = []  # validation phase
     exec_jobs_dynamic.return_value = [(4, {"weight": "model.safetensors"})]
     converter = Mock()
+    converter.get_extra_files.return_value = []
     job_memory_estimator = Mock()
 
     with patch.object(
@@ -169,6 +180,7 @@ def test_convert_checkpoint_schedules_accelerator_jobs(
     build_inverse_weight_maps.return_value = {"model.safetensors": inverse_weight_map}
     exec_jobs_dynamic.return_value = [(4, {"weight": "model.safetensors"})]
     converter = Mock()
+    converter.get_extra_files.return_value = []
     job_memory_estimator = Mock(return_value=123)
     devices = ["cuda:0", torch.device("cuda:1")]
 
@@ -339,6 +351,71 @@ def test_convert_checkpoint_creates_nested_shard_directories(tmp_path):
     assert torch.equal(converted["weight"], tensors["weight"])
 
 
+def test_convert_checkpoint_copies_extra_files(tmp_path):
+    # extra files may live anywhere, e.g. a saliency report in the working
+    # directory rather than the source checkpoint
+    source = tmp_path / "source"
+    output = tmp_path / "output"
+    source.mkdir()
+    save_file({"weight": torch.ones(2)}, source / "model.safetensors")
+    report = tmp_path / "saliency_report.json"
+    report.write_text(json.dumps({"saliency": [[1.0, 2.0]]}))
+
+    converter = ExtraFileConverter(report)
+    convert_checkpoint(source, output, converter, device="cpu")
+
+    assert (output / "saliency_report.json").read_bytes() == report.read_bytes()
+
+
+def test_convert_checkpoint_extra_files_override_checkpoint_files(tmp_path):
+    # extra files are copied after the checkpoint's own files, so a converter
+    # can override a same-named file carried over from the source checkpoint
+    source = tmp_path / "source"
+    output = tmp_path / "output"
+    source.mkdir()
+    save_file({"weight": torch.ones(2)}, source / "model.safetensors")
+    (source / "recipe.yaml").write_text("stale")
+    replacement = tmp_path / "recipe.yaml"
+    replacement.write_text("fresh")
+
+    converter = ExtraFileConverter(replacement)
+    convert_checkpoint(source, output, converter, device="cpu")
+
+    assert (output / "recipe.yaml").read_text() == "fresh"
+
+
+def test_convert_checkpoint_collects_extra_files_from_chained_converters(tmp_path):
+    source = tmp_path / "source"
+    output = tmp_path / "output"
+    source.mkdir()
+    save_file({"weight": torch.ones(2)}, source / "model.safetensors")
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    first.write_text("{}")
+    second.write_text("{}")
+
+    convert_checkpoint(
+        source,
+        output,
+        [ExtraFileConverter(first), ExtraFileConverter(second)],
+        device="cpu",
+    )
+
+    assert (output / "first.json").is_file()
+    assert (output / "second.json").is_file()
+
+
+def test_convert_checkpoint_rejects_missing_extra_file(tmp_path):
+    source = tmp_path / "source"
+    output = tmp_path / "output"
+    source.mkdir()
+    save_file({"weight": torch.ones(2)}, source / "model.safetensors")
+
+    converter = ExtraFileConverter(tmp_path / "does_not_exist.json")
+    with pytest.raises(FileNotFoundError, match="does_not_exist.json"):
+        convert_checkpoint(source, output, converter, device="cpu")
+
+
 def test_convert_checkpoint_preserves_config_across_runs(tmp_path):
     source = tmp_path / "source"
     first_output = tmp_path / "first_output"
@@ -502,10 +579,12 @@ def test_convert_checkpoint_resolves_auto_max_workers(
     exec_jobs_dynamic.return_value = [(4, {"weight": shard_names[0]}), (0, {})]
     devices = [torch.device("cuda:0"), torch.device("cuda:1")]
 
+    converter = Mock()
+    converter.get_extra_files.return_value = []
     convert_checkpoint(
         "source",
         tmp_path,
-        Mock(),
+        converter,
         max_workers="auto",
         device=devices,
         job_memory_estimator=Mock(return_value=123),
@@ -645,13 +724,15 @@ def test_convert_checkpoint_forwards_model_kwargs(
     exec_jobs_dynamic.return_value = [(4, {"weight": "model.safetensors"})]
     model_kwargs = {"revision": "deadbeef", "token": "hf_token"}
 
+    converter = Mock()
+    converter.get_extra_files.return_value = []
     with patch.object(
         _CHECKPOINT_MODULE, "_resolve_devices", return_value=[torch.device("cpu")]
     ):
         convert_checkpoint(
             "org/model",
             tmp_path,
-            Mock(),
+            converter,
             model_kwargs=model_kwargs,
         )
 
