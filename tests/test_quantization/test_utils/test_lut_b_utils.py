@@ -13,10 +13,7 @@ from compressed_tensors.quantization.utils import (
     quantize_lut_b,
     unpack_lut_b_indices,
 )
-from compressed_tensors.quantization.utils.lut_b import (
-    LUT_B_E8M0_BIAS,
-    _fit_codebooks,
-)
+from compressed_tensors.quantization.utils.lut_b import LUT_B_E8M0_BIAS, _fit_codebooks
 
 
 def _lut_b_args(block_n: int, block_k: int, num_bits: int) -> QuantizationArgs:
@@ -91,7 +88,7 @@ def test_lut_b_qdq_fits_codebook_without_calibration():
     assert (reconstructed - weight).square().mean() < weight.square().mean()
 
 
-def test_lut_b_weighted_lloyd_reduces_importance_weighted_error():
+def test_lut_b_weighted_dp_reduces_importance_weighted_error():
     args = _lut_b_args(block_n=1, block_k=12, num_bits=2)
     values = torch.tensor(
         [[0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 10.0, 10.0, 11.0, 11.0, 12.0, 12.0]]
@@ -100,9 +97,9 @@ def test_lut_b_weighted_lloyd_reduces_importance_weighted_error():
         [[1.0, 1.0, 50.0, 50.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]]
     )
 
-    base_indices, base_codebooks = _fit_codebooks(values, args, num_iterations=16)
+    base_indices, base_codebooks = _fit_codebooks(values, args)
     weighted_indices, weighted_codebooks = _fit_codebooks(
-        values, args, num_iterations=16, importance=importance
+        values, args, importance=importance
     )
     base_reconstructed = base_codebooks.float().gather(1, base_indices.long())
     weighted_reconstructed = weighted_codebooks.float().gather(

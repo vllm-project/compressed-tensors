@@ -22,6 +22,7 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationStrategy,
     QuantizationType,
 )
+from compressed_tensors.quantization.utils.lut_b_dp import fit_lut_b_codebooks_dp
 
 
 __all__ = [
@@ -34,7 +35,6 @@ __all__ = [
 ]
 
 
-LUT_B_LLOYD_ITERATIONS = 8
 LUT_B_MAX_TILES_PER_CHUNK = 4096
 LUT_B_E8M0_BIAS = 127
 LUT_B_E4M3_MAX = torch.finfo(torch.float8_e4m3fn).max
@@ -251,32 +251,6 @@ def _snap_to_e4m3(values: torch.Tensor) -> torch.Tensor:
     )
 
 
-def _initialize_centers(
-    values: torch.Tensor,
-    args: QuantizationArgs,
-    importance: torch.Tensor,
-) -> torch.Tensor:
-    codebook_size = 1 << args.num_bits
-    centers = torch.empty(
-        values.shape[0],
-        codebook_size,
-        dtype=torch.float32,
-        device=values.device,
-    )
-    total_importance = importance.sum(dim=1, keepdim=True)
-    centers[:, 0] = (values * importance).sum(dim=1) / total_importance.squeeze(1)
-    minimum_distance = (values - centers[:, :1]).square()
-    for center_index in range(1, codebook_size):
-        farthest = (minimum_distance * importance).argmax(dim=1, keepdim=True)
-        new_center = torch.gather(values, 1, farthest).squeeze(1)
-        centers[:, center_index] = new_center
-        minimum_distance = torch.minimum(
-            minimum_distance,
-            (values - new_center[:, None]).square(),
-        )
-    return _snap_to_e4m3(centers).sort(dim=1).values
-
-
 def _assign_indices(values: torch.Tensor, centers: torch.Tensor) -> torch.Tensor:
     boundaries = ((centers[:, :-1] + centers[:, 1:]) * 0.5).contiguous()
     return torch.searchsorted(boundaries, values.contiguous()).to(torch.int64)
@@ -285,13 +259,12 @@ def _assign_indices(values: torch.Tensor, centers: torch.Tensor) -> torch.Tensor
 def _fit_codebooks(
     values: torch.Tensor,
     args: QuantizationArgs,
-    num_iterations: int,
     importance: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    values = values.to(torch.float32)
-    if importance is None:
-        importance = torch.ones_like(values)
-    else:
+    """Fit each LUT-B tile with exact 1D k-means DP."""
+    values = values.to(torch.float32).contiguous()
+    fit_weights = None
+    if importance is not None:
         importance = torch.as_tensor(
             importance, device=values.device, dtype=torch.float32
         )
@@ -312,19 +285,17 @@ def _fit_codebooks(
             importance,
             torch.ones_like(importance),
         )
+        fit_weights = importance / importance.amax(dim=1, keepdim=True).clamp_min(
+            torch.finfo(torch.float32).tiny
+        )
+        fit_weights = fit_weights.contiguous()
 
-    centers = _initialize_centers(values, args, importance)
-
-    for _ in range(num_iterations):
-        indices = _assign_indices(values, centers)
-        sums = torch.zeros_like(centers)
-        counts = torch.zeros_like(centers)
-        sums.scatter_add_(1, indices, values * importance)
-        counts.scatter_add_(1, indices, importance)
-        updated = sums / counts.clamp_min(1)
-        centers = torch.where(counts > 0, updated, centers)
-        centers = _snap_to_e4m3(centers).sort(dim=1).values
-
+    codebook_size = 1 << args.num_bits
+    centers = (
+        _snap_to_e4m3(fit_lut_b_codebooks_dp(values, codebook_size, fit_weights))
+        .sort(dim=1)
+        .values
+    )
     indices = _assign_indices(values, centers)
     return indices.to(torch.uint8), centers.to(torch.float8_e4m3fn)
 
@@ -365,14 +336,14 @@ def quantize_lut_b(
     *,
     importance: torch.Tensor | None = None,
     max_tiles_per_chunk: int = LUT_B_MAX_TILES_PER_CHUNK,
-    num_iterations: int = LUT_B_LLOYD_ITERATIONS,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Create canonical packed indices, E4M3 codebooks and E8M0 tile scales.
 
     Codebooks contain normalized values; multiplying them by the returned
     per-tile E8M0 scale reconstructs the represented weight. A supplied scale
     fixes the range for codebook fitting, and a supplied codebook is used after
-    E4M3 rounding and sorting.
+    E4M3 rounding and sorting. Codebooks are fitted with exact divide-and-conquer
+    dynamic programming.
     """
     block_n, block_k = args.block_structure
     codebook_size = 1 << args.num_bits
@@ -385,8 +356,6 @@ def quantize_lut_b(
 
     if max_tiles_per_chunk <= 0:
         raise ValueError("max_tiles_per_chunk must be positive")
-    if num_iterations < 0:
-        raise ValueError("num_iterations must be non-negative")
     if codebooks is not None:
         if codebooks.device != weight.device:
             raise ValueError("LUT-B weight and codebooks must be on the same device")
@@ -454,9 +423,7 @@ def quantize_lut_b(
             chunk_importance = _importance_to_tiles(
                 importance, weight, args, start, end
             )
-            indices, centers = _fit_codebooks(
-                values, args, num_iterations, importance=chunk_importance
-            )
+            indices, centers = _fit_codebooks(values, args, importance=chunk_importance)
         else:
             centers = flat_codebooks[start:end]
             indices = _assign_indices(values, centers.to(torch.float32)).to(torch.uint8)
