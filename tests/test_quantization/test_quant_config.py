@@ -14,7 +14,6 @@ from compressed_tensors.quantization import (
 from compressed_tensors.quantization.quant_config import (
     _consolidate_ignore_names,
     _map_to_checkpoint_names,
-    _resolve_regex_targets,
     get_vllm_module_type,
 )
 from compressed_tensors.utils.match import match_name
@@ -211,20 +210,13 @@ def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, tar
     exported = QuantizationConfig.from_pretrained(model)
     prefix = "runtime" if conversion == "none" else "checkpoint"
     expected_ignores = [f"{prefix}.{i}" for i in range(1, 33)]
-    expected_targets = _resolve_regex_targets(model, list(targets))
     assert exported.ignore == expected_ignores
     assert exported.model_dump()["ignore"] == expected_ignores
-    assert exported.config_groups["group_0"].targets == expected_targets
+    assert exported.config_groups["group_0"].model_dump() == original_scheme
     assert scheme.model_dump() == original_scheme
-    if any(target.startswith("re:") for target in targets):
-        assert f"{prefix}.0" in expected_targets
-        assert f"{prefix}.32" in expected_targets
-        assert not any(target.startswith("re:") for target in expected_targets)
-    else:
-        assert expected_targets == list(targets)
     restored = QuantizationConfig.model_validate_json(exported.model_dump_json())
     assert restored.ignore == expected_ignores
-    assert restored.config_groups["group_0"].targets == expected_targets
+    assert restored.config_groups["group_0"].targets == targets
     assert QuantizationConfig.from_pretrained(model) == exported
 
 

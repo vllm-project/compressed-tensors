@@ -187,35 +187,6 @@ def _consolidate_ignore_names(ignore: list[str]) -> list[str]:
     return consolidated
 
 
-def _resolve_regex_targets(model: Module, targets: list[str]) -> list[str]:
-    """Expand ``re:`` scheme targets to concrete checkpoint names.
-
-    Each regex is matched against ``model.named_modules()``. The matches are
-    then passed through ``_map_to_checkpoint_names``, the same translation
-    the ignore list uses. Class names and concrete paths are left as written.
-    A regex that matches nothing is left as written.
-
-    The saved names stay concrete. Older vLLM rewrites concrete names and
-    leaves ``re:`` entries unchanged. vLLM folds the expanded names after
-    that rewrite, on the loaded config.
-    """
-    module_names = [name for name, _ in model.named_modules() if name]
-    resolved: list[str] = []
-    seen: set[str] = set()
-    for target in targets:
-        if not target.startswith("re:"):
-            names = [target]
-        else:
-            matched = [name for name in module_names if match_name(name, target)]
-            names = _map_to_checkpoint_names(model, matched) if matched else [target]
-        for name in names:
-            if name in seen:
-                continue
-            seen.add(name)
-            resolved.append(name)
-    return resolved
-
-
 class QuantizationStatus(str, Enum):
     """
     Enum storing the different states a quantized layer can be in
@@ -427,18 +398,15 @@ class QuantizationConfig(BaseModel):
         # rewrites concrete names and leaves "re:" entries unchanged, so a
         # regex saved here would miss the renamed module.
 
-        # create config groups from all unique schemes
+        # Scheme targets stay as written, including re: patterns and class
+        # names such as Linear. Expanding a regex into one entry per module
+        # makes the config thousands of lines long and makes target matching
+        # O(N*M). vLLM rewrites literals inside a re: target without
+        # enumerating the modules.
         config_groups = {}
         for idx, scheme in enumerate(quantization_schemes):
             group_name = "group_" + str(idx)
-            resolved_targets = _resolve_regex_targets(model, list(scheme.targets))
-            if resolved_targets == list(scheme.targets):
-                config_groups[group_name] = scheme
-            else:
-                # Copy so the module keeps the regex the user wrote.
-                config_groups[group_name] = scheme.model_copy(
-                    update={"targets": resolved_targets}
-                )
+            config_groups[group_name] = scheme
 
         # infer format
         if format is None:
