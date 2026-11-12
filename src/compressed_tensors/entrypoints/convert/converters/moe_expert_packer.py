@@ -17,6 +17,7 @@ from compressed_tensors.utils.safetensors_load import (
 from loguru import logger
 
 from .moe_expert_packer_helpers import (
+    OutputTensor,
     build_output_tensors,
     repack_ignore,
     repack_target,
@@ -148,6 +149,12 @@ class MoEExpertPacker(Converter):
                     f"Cannot pack {output_tensor.name!r}: "
                     f"missing expert tensors {missing}"
                 )
+            if output_tensor.name.endswith(".weight_shape"):
+                result[output_tensor.name] = _packed_weight_shape(
+                    output_tensor, tensors
+                )
+                consumed.update(output_tensor.members)
+                continue
             # stack each projection over experts, then concatenate the
             # projections along the output-feature dim (a no-op when there is one)
             stacked = [
@@ -197,3 +204,42 @@ class MoEExpertPacker(Converter):
             # never treated as primary weights
             return set()
         return set(output_tensor.members) - {weight_name}
+
+
+def _packed_weight_shape(
+    output_tensor: OutputTensor, tensors: dict[str, torch.Tensor]
+) -> torch.Tensor:
+    """
+    ``weight_shape`` records the dense shape of its weight, so it is rebuilt as the
+    shape of the stacked weight, ``[E, out, in]`` (``out`` summed over fused
+    projections), which is what compressing a 3D weight stores. Stacking it like
+    the other tensors would give ``[E, 2]`` (``[E, 4]`` when fused) instead.
+    """
+    anchor = tensors[output_tensor.anchor]
+    if anchor.is_meta:
+        # validation pass: values are unknown, only the output layout matters
+        return torch.empty(3, dtype=anchor.dtype, device="meta")
+
+    out_features = 0
+    in_features = None
+    for group in output_tensor.sources:
+        shape = tensors[group[0]]
+        for name in group[1:]:
+            if not torch.equal(tensors[name], shape):
+                raise ValueError(
+                    f"Cannot pack {output_tensor.name!r}: {name} has shape "
+                    f"{tensors[name].tolist()}, but {group[0]} has {shape.tolist()}"
+                )
+        if in_features is not None and int(shape[-1]) != in_features:
+            raise ValueError(
+                f"Cannot pack {output_tensor.name!r}: fused projections have "
+                "different input sizes"
+            )
+        out_features += int(shape[0])
+        in_features = int(shape[-1])
+
+    num_experts = len(output_tensor.sources[0])
+    return torch.tensor(
+        [num_experts, out_features, in_features],
+        dtype=anchor.dtype,
+    )

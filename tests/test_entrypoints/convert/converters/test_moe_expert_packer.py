@@ -5,9 +5,14 @@ import json
 
 import pytest
 import torch
+from compressed_tensors.compressors.pack_quantized.base import (
+    PackedQuantizationCompressor,
+)
 from compressed_tensors.entrypoints.convert.converters.moe_expert_packer import (
     MoEExpertPacker,
 )
+from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
+from compressed_tensors.quantization.utils.helpers import calculate_qparams
 from safetensors import safe_open
 from safetensors.torch import save_file
 
@@ -346,3 +351,94 @@ def test_already_packed_raises(tmp_path):
 
     with pytest.raises(ValueError, match="already"):
         MoEExpertPacker.from_pretrained(str(tmp_path))
+
+
+def _pack_quantized_experts(symmetric: bool):
+    """Per-expert W4A16 (pack-quantized) tensors and their dequantized weights."""
+    args = QuantizationArgs(
+        num_bits=4, type="int", symmetric=symmetric, strategy="group", group_size=16
+    )
+    scheme = QuantizationScheme(targets=["Linear"], weights=args)
+    tensors, dense = {}, {}
+    for expert in range(NUM_EXPERTS):
+        for proj in PROJS:
+            weight = torch.randn(16, 32)
+            groups = weight.reshape(16, 2, 16)
+            scale, zero_point = calculate_qparams(
+                groups.amin(-1), groups.amax(-1), args
+            )
+            state_dict = {"weight": weight, "weight_scale": scale}
+            if not symmetric:
+                state_dict["weight_zero_point"] = zero_point
+            compressed = PackedQuantizationCompressor.compress(state_dict, scheme)
+            dense[expert, proj] = PackedQuantizationCompressor.decompress(
+                compressed, scheme
+            )["weight"]
+            for param, value in compressed.items():
+                tensors[_expert_name(0, expert, proj, param)] = value
+
+    groups = {}
+    for name in tensors:
+        parts = name.split(".")
+        del parts[5]
+        groups.setdefault(".".join(parts), []).append(name)
+    return tensors, groups, dense, scheme
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("symmetric", [True, False])
+@pytest.mark.parametrize("fuse_gate_up", [True, False])
+def test_pack_quantized_weight_shape_decompresses(symmetric, fuse_gate_up):
+    tensors, groups, dense, scheme = _pack_quantized_experts(symmetric)
+    packer = MoEExpertPacker(r"\.experts\.\d+\.", groups, fuse_gate_up=fuse_gate_up)
+    result = packer.process(tensors)
+
+    outputs = {"down_proj": ["down_proj"]}
+    if fuse_gate_up:
+        outputs["gate_up_proj"] = ["gate_proj", "up_proj"]
+    else:
+        outputs.update(gate_proj=["gate_proj"], up_proj=["up_proj"])
+
+    for packed_proj, projs in outputs.items():
+        prefix = _stacked_name(0, packed_proj, "")
+        state_dict = {
+            name.removeprefix(prefix): value
+            for name, value in result.items()
+            if name.startswith(prefix)
+        }
+        expected = torch.stack(
+            [
+                torch.cat([dense[expert, proj] for proj in projs])
+                for expert in range(NUM_EXPERTS)
+            ]
+        )
+        assert state_dict["weight_shape"].tolist() == list(expected.shape)
+
+        weight = PackedQuantizationCompressor.decompress(state_dict, scheme)["weight"]
+        assert torch.equal(weight, expected)
+
+
+@pytest.mark.unit
+def test_weight_shape_mismatch_raises():
+    tensors, groups, _, _ = _pack_quantized_experts(symmetric=True)
+    tensors[_expert_name(0, 1, "down_proj", "weight_shape")] = torch.tensor([16, 48])
+    packer = MoEExpertPacker(r"\.experts\.\d+\.", groups)
+
+    with pytest.raises(ValueError, match="weight_shape"):
+        packer.process(tensors)
+
+
+@pytest.mark.unit
+def test_pack_quantized_validate_is_meta_safe():
+    tensors, groups, _, _ = _pack_quantized_experts(symmetric=True)
+    meta = {name: t.to("meta") for name, t in tensors.items()}
+    packer = MoEExpertPacker(r"\.experts\.\d+\.", groups)
+
+    result = packer.validate(meta)
+
+    assert result[_stacked_name(0, "gate_up_proj", "weight_shape")].shape == (3,)
+    assert result[_stacked_name(0, "gate_up_proj", "weight_packed")].shape == (
+        NUM_EXPERTS,
+        32,
+        4,
+    )
