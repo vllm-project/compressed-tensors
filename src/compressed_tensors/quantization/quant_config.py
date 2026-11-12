@@ -117,11 +117,11 @@ def _pattern_for_ignore_group(paths: set[tuple[str, ...]]) -> str:
 def _consolidate_ignore_names(ignore: list[str]) -> list[str]:
     """Fold concrete ignore names that share a path shape into one regex.
 
-    Call this only after the runtime name mapping, such as vLLM's
-    ``hf_to_vllm_mapper``. ``from_pretrained`` does not call it. The saved
-    checkpoint keeps concrete names so older vLLM can still rewrite them.
-    Older vLLM leaves an entry that starts with ``re:`` unchanged, and the
-    renamed module would miss its ignore hole.
+    ``from_pretrained`` uses this for the modules in a scheme, after their
+    names are translated to checkpoint names. Ignore entries stay concrete
+    until older vLLM, which leaves ``re:`` entries unchanged, is no longer
+    the version in use. A regex saved for an ignore would miss the renamed
+    module on those versions.
 
     Names are grouped by path shape. A numeric component is a wildcard in
     the shape, so these two are one group::
@@ -335,6 +335,8 @@ class QuantizationConfig(BaseModel):
         # set of all quantization schemes
         # TODO: make quant config/scheme/args frozen/hashable and use a set
         quantization_schemes: list[QuantizationScheme] = list()
+        # module names that carry each scheme, in named_modules order
+        scheme_module_names: list[list[str]] = list()
 
         # use any status from modules (in practice, use the last module)
         model_status = None
@@ -365,8 +367,15 @@ class QuantizationConfig(BaseModel):
                 # add to running set of schemes/layer_type_names
                 model_status = getattr(submodule, "quantization_status", model_status)
                 quantization_type_names.add(layer_type)
-                if submodule.quantization_scheme not in quantization_schemes:
-                    quantization_schemes.append(submodule.quantization_scheme)
+                scheme = submodule.quantization_scheme
+                for index, existing in enumerate(quantization_schemes):
+                    if existing == scheme:
+                        if name:
+                            scheme_module_names[index].append(name)
+                        break
+                else:
+                    quantization_schemes.append(scheme)
+                    scheme_module_names.append([name] if name else [])
 
             if has_kv_cache:
                 model_status = getattr(submodule, "quantization_status", model_status)
@@ -393,20 +402,20 @@ class QuantizationConfig(BaseModel):
             # existing quantization schemes so it won't be quantized
 
         consolidated_ignore = _map_to_checkpoint_names(model, consolidated_ignore)
-        # Leave these as concrete checkpoint names. _consolidate_ignore_names
-        # runs after hf_to_vllm_mapper, on the loaded config. Older vLLM
-        # rewrites concrete names and leaves "re:" entries unchanged, so a
-        # regex saved here would miss the renamed module.
+        # Ignores stay concrete. Older vLLM rewrites those names and leaves
+        # "re:" entries unchanged. Ignore regexes wait until that vLLM is
+        # the one in use.
 
-        # Scheme targets stay as written, including re: patterns and class
-        # names such as Linear. Expanding a regex into one entry per module
-        # makes the config thousands of lines long and makes target matching
-        # O(N*M). vLLM rewrites literals inside a re: target without
-        # enumerating the modules.
+        # Targets: quantized module names -> checkpoint names -> regexes.
+        # A rectangle of indexes becomes one anchored regex, so the config
+        # does not list every module. vLLM rewrites literals inside that regex.
         config_groups = {}
         for idx, scheme in enumerate(quantization_schemes):
             group_name = "group_" + str(idx)
-            config_groups[group_name] = scheme
+            checkpoint_names = _map_to_checkpoint_names(model, scheme_module_names[idx])
+            config_groups[group_name] = scheme.model_copy(
+                update={"targets": _consolidate_ignore_names(checkpoint_names)}
+            )
 
         # infer format
         if format is None:

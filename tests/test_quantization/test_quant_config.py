@@ -212,12 +212,31 @@ def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, tar
     expected_ignores = [f"{prefix}.{i}" for i in range(1, 33)]
     assert exported.ignore == expected_ignores
     assert exported.model_dump()["ignore"] == expected_ignores
-    assert exported.config_groups["group_0"].model_dump() == original_scheme
+    # One quantized module stays a concrete checkpoint name. The scheme on
+    # the module still has the targets the user wrote.
+    assert exported.config_groups["group_0"].targets == [f"{prefix}.0"]
     assert scheme.model_dump() == original_scheme
     restored = QuantizationConfig.model_validate_json(exported.model_dump_json())
     assert restored.ignore == expected_ignores
-    assert restored.config_groups["group_0"].targets == targets
+    assert restored.config_groups["group_0"].targets == [f"{prefix}.0"]
     assert QuantizationConfig.from_pretrained(model) == exported
+
+
+def test_export_consolidates_targeted_modules_and_leaves_ignores_concrete():
+    model = torch.nn.Module()
+    model.runtime = torch.nn.ModuleList([torch.nn.Linear(4, 4) for _ in range(4)])
+    scheme = QuantizationScheme(
+        targets=["Linear"], weights=QuantizationArgs(num_bits=8)
+    )
+    for index in (0, 1, 2):
+        model.runtime[index].quantization_scheme = scheme
+        model.runtime[index].quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+
+    assert exported.config_groups["group_0"].targets == [r"re:^runtime\.(?:0|1|2)\Z"]
+    assert exported.ignore == ["runtime.3"]
+    assert scheme.targets == ["Linear"]
 
 
 def test_get_vllm_module_type():
