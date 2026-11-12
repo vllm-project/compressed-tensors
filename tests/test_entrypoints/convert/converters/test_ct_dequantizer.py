@@ -13,6 +13,7 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationStrategy,
     QuantizationType,
 )
+from compressed_tensors.quantization.quant_scheme import FP8
 
 
 def _create_dequantizer(ignore=None):
@@ -152,6 +153,60 @@ def test_validate_raises_on_untargeted_scale():
 
     with pytest.raises(ValueError):
         dequantizer.validate(tensors)
+
+
+def _create_static_fp8_dequantizer(ignore=None):
+    dequantizer = object.__new__(CompressedTensorsDequantizer)
+    dequantizer.dtype = torch.bfloat16
+    dequantizer.quant_config = QuantizationConfig(
+        config_groups={
+            "group_0": QuantizationScheme(
+                targets=["Linear"],
+                format=CompressionFormat.float_quantized,
+                **FP8,
+            )
+        },
+        ignore=ignore or [],
+    )
+    return dequantizer
+
+
+def _create_static_fp8_tensors(device: torch.device = torch.device("cpu")):
+    tensors = {}
+    with device:
+        for proj in ("q_proj", "o_proj"):
+            prefix = f"model.layers.0.self_attn.{proj}"
+            tensors[f"{prefix}.weight"] = torch.randn(64, 64).to(torch.float8_e4m3fn)
+            tensors[f"{prefix}.weight_scale"] = torch.rand(1)
+            tensors[f"{prefix}.input_scale"] = torch.rand(1)
+    return tensors
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("meta")])
+def test_static_activation_qparams_are_dropped(device):
+    dequantizer = _create_static_fp8_dequantizer()
+    tensors = _create_static_fp8_tensors(device=device)
+
+    result = dequantizer.validate(tensors)
+
+    assert sorted(result) == [
+        "model.layers.0.self_attn.o_proj.weight",
+        "model.layers.0.self_attn.q_proj.weight",
+    ]
+    assert result["model.layers.0.self_attn.q_proj.weight"].dtype == torch.bfloat16
+
+
+@pytest.mark.unit
+def test_static_activation_qparams_of_ignored_module_are_kept():
+    dequantizer = _create_static_fp8_dequantizer(ignore=["re:.*o_proj"])
+    tensors = _create_static_fp8_tensors(device=torch.device("meta"))
+
+    result = dequantizer.validate(tensors)
+
+    assert "model.layers.0.self_attn.q_proj.input_scale" not in result
+    assert "model.layers.0.self_attn.o_proj.weight_scale" in result
+    assert "model.layers.0.self_attn.o_proj.input_scale" in result
 
 
 @pytest.mark.unit
