@@ -135,14 +135,15 @@ def test_compression_example(
         )
         assert config.ignore == expected.ignore
         assert len(config.config_groups) == len(expected.config_groups)
-        actual_by_targets = {
-            tuple(group.targets): group for group in config.config_groups.values()
-        }
-        for scheme in expected.config_groups.values():
-            actual = actual_by_targets[tuple(scheme.targets)]
-            assert actual.targets == scheme.targets
+        actual_groups = list(config.config_groups.values())
+        expected_groups = list(expected.config_groups.values())
+        assert len(actual_groups) == len(expected_groups)
+        for actual, scheme in zip(actual_groups, expected_groups):
+            # Saved targets are folded checkpoint names of the modules
+            # that were quantized, not the recipe's class or regex.
             assert actual.weights == scheme.weights
             assert actual.input_activations == scheme.input_activations
+            assert actual.targets
     else:
         assert len(config.config_groups) == 1
         scheme = next(iter(config.config_groups.values()))

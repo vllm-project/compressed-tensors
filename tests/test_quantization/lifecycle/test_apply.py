@@ -21,6 +21,7 @@ from compressed_tensors.quantization import (
     QuantizationType,
 )
 from compressed_tensors.quantization.lifecycle import apply_quantization_config
+from compressed_tensors.quantization.quant_config import _consolidate_checkpoint_names
 from compressed_tensors.utils import is_match, match_named_modules
 from transformers import AutoModelForCausalLM
 
@@ -231,9 +232,21 @@ def test_from_pretrained(config: QuantizationConfig):
     model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
     apply_quantization_config(model, config)
     _config = QuantizationConfig.from_pretrained(model)
-    assert list(_config.config_groups.values()) == list(config.config_groups.values())
     assert _config.kv_cache_scheme == config.kv_cache_scheme
     assert _config.ignore == config.ignore
+    saved_groups = list(_config.config_groups.values())
+    original_groups = list(config.config_groups.values())
+    assert len(saved_groups) == len(original_groups)
+    for saved, original in zip(saved_groups, original_groups):
+        # Saved targets are the quantized modules, mapped and folded.
+        # The rest of the scheme is the one that was applied.
+        assert saved.model_copy(update={"targets": original.targets}) == original
+        names = [
+            name
+            for name, module in model.named_modules()
+            if name and getattr(module, "quantization_scheme", None) == original
+        ]
+        assert saved.targets == _consolidate_checkpoint_names(model, names)
 
 
 def test_serialize_config_tinyllama():
@@ -248,10 +261,26 @@ def test_serialize_config_tinyllama():
     apply_quantization_config(model, quant_config)
 
     serialized_config = QuantizationConfig.from_pretrained(model)
+    embedding_names = [
+        name
+        for name, module in model.named_modules()
+        if name and module.__class__.__name__ == "Embedding"
+    ]
+    linear_names = [
+        name
+        for name, module in model.named_modules()
+        if name
+        and module.__class__.__name__ == "Linear"
+        and name != "model.layers.1.mlp.down_proj"
+    ]
     assert len(serialized_config.config_groups) == 2
-    assert serialized_config.config_groups["group_0"].targets == ["Embedding"]
+    assert serialized_config.config_groups["group_0"].targets == (
+        _consolidate_checkpoint_names(model, embedding_names)
+    )
     assert serialized_config.config_groups["group_0"].input_activations is None
-    assert serialized_config.config_groups["group_1"].targets == ["Linear"]
+    assert serialized_config.config_groups["group_1"].targets == (
+        _consolidate_checkpoint_names(model, linear_names)
+    )
     assert serialized_config.config_groups["group_1"].input_activations is not None
     assert serialized_config.format == CompressionFormat.dense.value
     assert serialized_config.quant_method == DEFAULT_QUANTIZATION_METHOD

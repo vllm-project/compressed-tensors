@@ -12,9 +12,12 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_config import (
+    _consolidate_checkpoint_names,
+    _consolidate_module_names,
     _map_to_checkpoint_names,
     get_vllm_module_type,
 )
+from compressed_tensors.utils.match import match_name
 from pydantic import ValidationError
 from transformers import AutoModelForImageTextToText
 
@@ -210,12 +213,34 @@ def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, tar
     expected_ignores = [f"{prefix}.{i}" for i in range(1, 33)]
     assert exported.ignore == expected_ignores
     assert exported.model_dump()["ignore"] == expected_ignores
-    assert exported.config_groups["group_0"].model_dump() == original_scheme
+    # One quantized module stays a concrete checkpoint name. The scheme on
+    # the module still has the targets the user wrote.
+    assert exported.config_groups["group_0"].targets == [f"{prefix}.0"]
+    assert exported.config_groups["group_0"].targets == _consolidate_checkpoint_names(
+        model, ["runtime.0"]
+    )
     assert scheme.model_dump() == original_scheme
     restored = QuantizationConfig.model_validate_json(exported.model_dump_json())
     assert restored.ignore == expected_ignores
-    assert restored.config_groups["group_0"].targets == targets
+    assert restored.config_groups["group_0"].targets == [f"{prefix}.0"]
     assert QuantizationConfig.from_pretrained(model) == exported
+
+
+def test_export_consolidates_targeted_modules_and_leaves_ignores_concrete():
+    model = torch.nn.Module()
+    model.runtime = torch.nn.ModuleList([torch.nn.Linear(4, 4) for _ in range(4)])
+    scheme = QuantizationScheme(
+        targets=["Linear"], weights=QuantizationArgs(num_bits=8)
+    )
+    for index in (0, 1, 2):
+        model.runtime[index].quantization_scheme = scheme
+        model.runtime[index].quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+
+    assert exported.config_groups["group_0"].targets == [r"re:^runtime\.(?:0|1|2)\Z"]
+    assert exported.ignore == ["runtime.3"]
+    assert scheme.targets == ["Linear"]
 
 
 def test_get_vllm_module_type():
@@ -295,3 +320,64 @@ def test_default_weight_observer_does_not_require_calibration_data():
     )
 
     assert not config.requires_calibration_data()
+
+
+def _matched(pattern: str, names: list[str]) -> set[str]:
+    return {name for name in names if match_name(name, pattern)}
+
+
+def test_consolidate_module_names_keeps_single_name_and_regex():
+    consolidated = _consolidate_module_names(
+        ["re:.*mtp.*", "lm_head", "model.layers.1.mlp.down_proj"]
+    )
+
+    assert consolidated == [
+        "re:.*mtp.*",
+        "lm_head",
+        "model.layers.1.mlp.down_proj",
+    ]
+
+
+def test_consolidate_module_names_collapses_layer_rectangle():
+    ignore = [f"model.layers.{i}.mlp.gate" for i in (0, 1)]
+    consolidated = _consolidate_module_names(ignore)
+
+    assert consolidated == [r"re:^model\.layers\.(?:0|1)\.mlp\.gate\Z"]
+    assert _matched(consolidated[0], ignore) == set(ignore)
+    assert not match_name("model.layers.2.mlp.gate", consolidated[0])
+
+
+def test_consolidate_module_names_lists_only_present_indexes():
+    ignore = [f"model.layers.{i}.mlp.gate" for i in (1, 2, 3)]
+    universe = [f"model.layers.{i}.mlp.gate" for i in range(4)]
+    consolidated = _consolidate_module_names(ignore)
+
+    assert consolidated == [r"re:^model\.layers\.(?:1|2|3)\.mlp\.gate\Z"]
+    assert _matched(consolidated[0], universe) == set(ignore)
+
+
+def test_consolidate_module_names_alternates_diagonal_experts():
+    universe = [
+        f"layers.{layer}.experts.{expert}.gate"
+        for layer in range(2)
+        for expert in range(2)
+    ]
+    ignore = ["layers.0.experts.0.gate", "layers.1.experts.1.gate"]
+    consolidated = _consolidate_module_names(ignore)
+
+    assert consolidated == [
+        "re:^(?:layers\\.0\\.experts\\.0\\.gate|layers\\.1\\.experts\\.1\\.gate)\\Z"
+    ]
+    assert _matched(consolidated[0], universe) == set(ignore)
+
+
+def test_consolidate_module_names_collapses_expert_rectangle():
+    ignore = [
+        f"layers.{layer}.experts.{expert}.gate"
+        for layer in range(2)
+        for expert in range(2)
+    ]
+    consolidated = _consolidate_module_names(ignore)
+
+    assert consolidated == [r"re:^layers\.(?:0|1)\.experts\.(?:0|1)\.gate\Z"]
+    assert _matched(consolidated[0], ignore) == set(ignore)
