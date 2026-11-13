@@ -12,7 +12,8 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_config import (
-    _consolidate_ignore_names,
+    _consolidate_checkpoint_names,
+    _consolidate_module_names,
     _map_to_checkpoint_names,
     get_vllm_module_type,
 )
@@ -215,6 +216,9 @@ def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, tar
     # One quantized module stays a concrete checkpoint name. The scheme on
     # the module still has the targets the user wrote.
     assert exported.config_groups["group_0"].targets == [f"{prefix}.0"]
+    assert exported.config_groups["group_0"].targets == _consolidate_checkpoint_names(
+        model, ["runtime.0"]
+    )
     assert scheme.model_dump() == original_scheme
     restored = QuantizationConfig.model_validate_json(exported.model_dump_json())
     assert restored.ignore == expected_ignores
@@ -322,8 +326,8 @@ def _matched(pattern: str, names: list[str]) -> set[str]:
     return {name for name in names if match_name(name, pattern)}
 
 
-def test_consolidate_ignore_names_keeps_single_name_and_regex():
-    consolidated = _consolidate_ignore_names(
+def test_consolidate_module_names_keeps_single_name_and_regex():
+    consolidated = _consolidate_module_names(
         ["re:.*mtp.*", "lm_head", "model.layers.1.mlp.down_proj"]
     )
 
@@ -334,32 +338,32 @@ def test_consolidate_ignore_names_keeps_single_name_and_regex():
     ]
 
 
-def test_consolidate_ignore_names_collapses_layer_rectangle():
+def test_consolidate_module_names_collapses_layer_rectangle():
     ignore = [f"model.layers.{i}.mlp.gate" for i in (0, 1)]
-    consolidated = _consolidate_ignore_names(ignore)
+    consolidated = _consolidate_module_names(ignore)
 
     assert consolidated == [r"re:^model\.layers\.(?:0|1)\.mlp\.gate\Z"]
     assert _matched(consolidated[0], ignore) == set(ignore)
     assert not match_name("model.layers.2.mlp.gate", consolidated[0])
 
 
-def test_consolidate_ignore_names_lists_only_ignored_indexes():
+def test_consolidate_module_names_lists_only_present_indexes():
     ignore = [f"model.layers.{i}.mlp.gate" for i in (1, 2, 3)]
     universe = [f"model.layers.{i}.mlp.gate" for i in range(4)]
-    consolidated = _consolidate_ignore_names(ignore)
+    consolidated = _consolidate_module_names(ignore)
 
     assert consolidated == [r"re:^model\.layers\.(?:1|2|3)\.mlp\.gate\Z"]
     assert _matched(consolidated[0], universe) == set(ignore)
 
 
-def test_consolidate_ignore_names_alternates_diagonal_experts():
+def test_consolidate_module_names_alternates_diagonal_experts():
     universe = [
         f"layers.{layer}.experts.{expert}.gate"
         for layer in range(2)
         for expert in range(2)
     ]
     ignore = ["layers.0.experts.0.gate", "layers.1.experts.1.gate"]
-    consolidated = _consolidate_ignore_names(ignore)
+    consolidated = _consolidate_module_names(ignore)
 
     assert consolidated == [
         "re:^(?:layers\\.0\\.experts\\.0\\.gate|layers\\.1\\.experts\\.1\\.gate)\\Z"
@@ -367,13 +371,13 @@ def test_consolidate_ignore_names_alternates_diagonal_experts():
     assert _matched(consolidated[0], universe) == set(ignore)
 
 
-def test_consolidate_ignore_names_collapses_expert_rectangle():
+def test_consolidate_module_names_collapses_expert_rectangle():
     ignore = [
         f"layers.{layer}.experts.{expert}.gate"
         for layer in range(2)
         for expert in range(2)
     ]
-    consolidated = _consolidate_ignore_names(ignore)
+    consolidated = _consolidate_module_names(ignore)
 
     assert consolidated == [r"re:^layers\.(?:0|1)\.experts\.(?:0|1)\.gate\Z"]
     assert _matched(consolidated[0], ignore) == set(ignore)

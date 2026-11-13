@@ -58,12 +58,12 @@ def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]
     return result
 
 
-def _ignore_shape(parts: tuple[str, ...]) -> tuple[str, ...]:
+def _path_shape(parts: tuple[str, ...]) -> tuple[str, ...]:
     """Path shape. A numeric component, such as a layer index, becomes '#'."""
     return tuple("#" if part.isdigit() else part for part in parts)
 
 
-def _ignore_sort_key(parts: tuple[str, ...]) -> tuple:
+def _path_sort_key(parts: tuple[str, ...]) -> tuple:
     return tuple(int(part) if part.isdigit() else part for part in parts)
 
 
@@ -82,14 +82,14 @@ def _is_index_rectangle(paths: set[tuple[str, ...]], columns: list[int]) -> bool
 
 
 def _full_path_alternation(paths: set[tuple[str, ...]]) -> str:
-    ordered = sorted(paths, key=_ignore_sort_key)
+    ordered = sorted(paths, key=_path_sort_key)
     inner = "|".join(re.escape(".".join(parts)) for parts in ordered)
     return f"re:^(?:{inner})\\Z"
 
 
 def _rectangle_pattern(paths: set[tuple[str, ...]]) -> str:
-    """One anchored regex. Each numeric slot lists only indexes that were ignored."""
-    shape = _ignore_shape(next(iter(paths)))
+    """One anchored regex. Each numeric slot lists only the indexes present."""
+    shape = _path_shape(next(iter(paths)))
     pieces: list[str] = []
     for index, token in enumerate(shape):
         if token != "#":
@@ -104,24 +104,23 @@ def _rectangle_pattern(paths: set[tuple[str, ...]]) -> str:
     return "re:^" + r"\.".join(pieces) + r"\Z"
 
 
-def _pattern_for_ignore_group(paths: set[tuple[str, ...]]) -> str:
+def _pattern_for_name_group(paths: set[tuple[str, ...]]) -> str:
     if len(paths) == 1:
         return ".".join(next(iter(paths)))
-    shape = _ignore_shape(next(iter(paths)))
+    shape = _path_shape(next(iter(paths)))
     columns = [index for index, token in enumerate(shape) if token == "#"]
     if _is_index_rectangle(paths, columns):
         return _rectangle_pattern(paths)
     return _full_path_alternation(paths)
 
 
-def _consolidate_ignore_names(ignore: list[str]) -> list[str]:
-    """Fold concrete ignore names that share a path shape into one regex.
+def _consolidate_module_names(names: list[str]) -> list[str]:
+    """Fold module names that share a path shape into one regex.
 
-    ``from_pretrained`` uses this for the modules in a scheme, after their
-    names are translated to checkpoint names. Ignore entries stay concrete
-    until older vLLM, which leaves ``re:`` entries unchanged, is no longer
-    the version in use. A regex saved for an ignore would miss the renamed
-    module on those versions.
+    This is the last step of ``_consolidate_checkpoint_names``. It does not
+    know whether the names are targets or ignores. Ignore entries stay
+    concrete in the saved config until older vLLM, which leaves ``re:``
+    entries unchanged, is no longer the version in use.
 
     Names are grouped by path shape. A numeric component is a wildcard in
     the shape, so these two are one group::
@@ -133,7 +132,7 @@ def _consolidate_ignore_names(ignore: list[str]) -> list[str]:
 
     * One name stays a literal: ``model.layers.0.mlp.down_proj``.
     * A rectangle of indexes becomes one anchored regex. Each numeric
-      position lists only the indexes that were ignored::
+      position lists only the indexes in the group::
 
         model.layers.0.mlp.gate
         model.layers.1.mlp.gate
@@ -144,8 +143,8 @@ def _consolidate_ignore_names(ignore: list[str]) -> list[str]:
         layers.{0,1}.experts.{0,1}.gate
         -> re:^layers\\.(?:0|1)\\.experts\\.(?:0|1)\\.gate\\Z
 
-      ``\\d+`` is not used. An index missing from the ignore list may belong
-      to a module that is quantized, and ``\\d+`` would ignore that module.
+      ``\\d+`` is not used. A missing index may belong to a module that
+      should not match this pattern.
     * A set that is not a rectangle stays an alternation of the full paths,
       so a diagonal does not also match the other corners::
 
@@ -165,14 +164,14 @@ def _consolidate_ignore_names(ignore: list[str]) -> list[str]:
     # A regex stays where it is. A shape is emitted where its first concrete
     # name appeared.
     order: list[str | tuple[str, ...]] = []
-    for name in ignore:
+    for name in names:
         if name.startswith("re:"):
             order.append(name)
             continue
         if not name:
             continue
         parts = tuple(name.split("."))
-        shape = _ignore_shape(parts)
+        shape = _path_shape(parts)
         if shape not in groups:
             groups[shape] = []
             order.append(shape)
@@ -183,8 +182,16 @@ def _consolidate_ignore_names(ignore: list[str]) -> list[str]:
         if isinstance(entry, str):
             consolidated.append(entry)
             continue
-        consolidated.append(_pattern_for_ignore_group(set(groups[entry])))
+        consolidated.append(_pattern_for_name_group(set(groups[entry])))
     return consolidated
+
+
+def _consolidate_checkpoint_names(model: Module, names: list[str]) -> list[str]:
+    """Turn module names into consolidated checkpoint patterns.
+
+    list of modules → checkpoint mapper → consolidate
+    """
+    return _consolidate_module_names(_map_to_checkpoint_names(model, names))
 
 
 class QuantizationStatus(str, Enum):
@@ -406,15 +413,18 @@ class QuantizationConfig(BaseModel):
         # "re:" entries unchanged. Ignore regexes wait until that vLLM is
         # the one in use.
 
-        # Targets: quantized module names -> checkpoint names -> regexes.
+        # Targets: list of modules → checkpoint mapper → consolidate.
         # A rectangle of indexes becomes one anchored regex, so the config
         # does not list every module. vLLM rewrites literals inside that regex.
         config_groups = {}
         for idx, scheme in enumerate(quantization_schemes):
             group_name = "group_" + str(idx)
-            checkpoint_names = _map_to_checkpoint_names(model, scheme_module_names[idx])
             config_groups[group_name] = scheme.model_copy(
-                update={"targets": _consolidate_ignore_names(checkpoint_names)}
+                update={
+                    "targets": _consolidate_checkpoint_names(
+                        model, scheme_module_names[idx]
+                    )
+                }
             )
 
         # infer format
