@@ -244,7 +244,7 @@ def test_from_pretrained(config: QuantizationConfig):
         names = [
             name
             for name, module in model.named_modules()
-            if name and getattr(module, "quantization_scheme", None) == saved
+            if name and getattr(module, "quantization_scheme", None) == original
         ]
         assert saved.targets == _consolidate_checkpoint_names(model, names)
 

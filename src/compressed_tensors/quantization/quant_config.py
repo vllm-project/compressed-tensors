@@ -417,20 +417,16 @@ class QuantizationConfig(BaseModel):
         # A rectangle of indexes becomes one anchored regex, so the config
         # does not list every module. vLLM rewrites literals inside that regex.
         #
-        # The saved scheme is a copy so the caller's scheme keeps the targets
-        # they wrote. Compression fills in scheme.format afterwards, on the
-        # scheme attached to each module, so those modules must point at the
-        # copy or the saved format stays empty.
+        # The saved scheme is a copy. The module keeps the scheme it was
+        # given: compression and decompression read that object, and a
+        # checkpoint regex in its place leaves qparams behind.
         config_groups = {}
         for idx, scheme in enumerate(quantization_schemes):
             group_name = "group_" + str(idx)
             module_names = scheme_module_names[idx]
-            saved_scheme = scheme.model_copy(
+            config_groups[group_name] = scheme.model_copy(
                 update={"targets": _consolidate_checkpoint_names(model, module_names)}
             )
-            config_groups[group_name] = saved_scheme
-            for name in module_names:
-                model.get_submodule(name).quantization_scheme = saved_scheme
 
         # infer format
         if format is None:
@@ -531,6 +527,25 @@ class QuantizationConfig(BaseModel):
 
     # TODO set `extra="forbid"` when upstream transformers is compatible
     model_config = ConfigDict(extra="ignore")
+
+
+def _sync_saved_scheme_formats(config: "QuantizationConfig", model: Module) -> None:
+    """Copy each module's compression format onto the saved scheme.
+
+    ``infer_model_format`` writes ``scheme.format`` onto the live scheme
+    after ``from_pretrained`` has already copied it. The saved copy would
+    otherwise keep ``format=None``.
+    """
+    from compressed_tensors.utils.match import match_name
+
+    for name, module in model.named_modules():
+        live = getattr(module, "quantization_scheme", None)
+        if not name or live is None or getattr(live, "format", None) is None:
+            continue
+        for group in config.config_groups.values():
+            if any(match_name(name, target) for target in group.targets):
+                group.format = live.format
+                break
 
 
 def get_vllm_module_type(module_type: str) -> str:
