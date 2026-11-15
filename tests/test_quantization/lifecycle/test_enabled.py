@@ -24,6 +24,10 @@ def test_quantization_enabled_disabled():
             quantization_status="calibration",
         ),
     )
+    # apply_quantization_config allocates static qparams for observer/calibration
+    # setup. This test does not run observers, so give the weight scale a valid,
+    # deterministic value before exercising the forward enable flag.
+    quantized_model.weight_scale.fill_(1.0)
 
     # run one calibration pass
     quantized_model(inp)

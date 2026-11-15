@@ -180,17 +180,53 @@ def subgraph_onload_modules(
 def subgraph_offload_modules(
     modules: dict[str, torch.nn.Module],
     offload_kwargs: dict[str, dict],
+    default: dict | None = None,
 ):
     """
-    Offload a list of modules, using the provided device map and kwargs.
+    Offload the supplied modules and their new, unoffloaded descendants using
+    their saved settings, or those of their nearest configured ancestor. The
+    empty name refers to the model root.
+
+    Modules without saved settings for themselves or any ancestor retain the
+    device-based fallback, overridden by `default` when provided. Already offloaded
+    subtrees outside the supplied scope are left untouched, including staged modules.
+    The caller's dictionary is not modified; its module references should remain
+    valid throughout the iteration.
+
+    :param default: optional fallback cache kwargs for modules without saved settings
+        on themselves or an ancestor. These override device-inferred kwargs and can
+        include `onload_device`, `offload_device`, or cache-specific values such as
+        `offload_dir` for disk offloading.
     """
     from compressed_tensors.offload import get_cache_init_kwargs
 
+    scoped_modules = set(modules.values())
+
+    def get_offload_kwargs(name: str, module: torch.nn.Module) -> dict:
+        offload_name = name
+        # search for closest ancestor with offload kwargs
+        # empty string (unable to resolve) gets default cache init kwargs
+        while offload_name not in offload_kwargs and offload_name:
+            offload_name = offload_name.rpartition(".")[0]
+
+        if offload_name in offload_kwargs:
+            return offload_kwargs[offload_name]
+        module_kwargs = get_cache_init_kwargs(module)
+        if default is not None:
+            module_kwargs.update(default)
+        return module_kwargs
+
+    def offload_new_descendants(name: str, module: torch.nn.Module) -> None:
+        for child_name, child in module.named_children():
+            if child in scoped_modules or isinstance(child._parameters, OffloadCache):
+                continue
+
+            child_name = f"{name}.{child_name}" if name else child_name
+            offload_module(child, **get_offload_kwargs(child_name, child))
+            offload_new_descendants(child_name, child)
+
     for name, module in modules.items():
-        if name in offload_kwargs:
-            offload_module(module, **offload_kwargs[name])
-        else:
-            # we should consider raising warnings, but observers will
-            # clog the output with warnings, so we will skip for now
-            module_offload_kwargs = get_cache_init_kwargs(module)
-            offload_module(module, **module_offload_kwargs)
+        offload_module(module, **get_offload_kwargs(name, module))
+
+    for name, module in modules.items():
+        offload_new_descendants(name, module)

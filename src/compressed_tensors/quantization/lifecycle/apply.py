@@ -131,7 +131,7 @@ def apply_quantization_config(
             model,
             config.kv_cache_scheme,
             config.quantization_status,
-            allowed_modules=allowed_modules,
+            modules=allowed_modules,
         )
 
     # build mapping of targets to schemes for easier matching
@@ -184,7 +184,7 @@ def _apply_kv_cache_scheme(
     model: torch.nn.Module,
     kv_cache_scheme: QuantizationArgs,
     status: QuantizationStatus,
-    allowed_modules: list[Module] | None = None,
+    modules: list[Module] | None = None,
 ):
     if not kv_cache_scheme.symmetric:
         logger.warning("vLLM does not support asymmetric kv cache quantization")
@@ -197,7 +197,7 @@ def _apply_kv_cache_scheme(
         input_activations=kv_cache_scheme,
     )
     for submodule in model.modules():
-        if allowed_modules is not None and submodule not in allowed_modules:
+        if modules is not None and submodule not in modules:
             continue
         if is_cached_attention_module(submodule):
             submodule.quantization_scheme = scheme

@@ -29,14 +29,16 @@ class FP8BlockDequantizer(Converter):
         targets: Iterable[str] = tuple(),
         weight_block_size: tuple[int] = (128, 128),
         dtype=torch.bfloat16,
+        scale_name: str = "weight_scale_inv",
     ):
         self.ignore = ignore
         self.targets = targets
         self.weight_block_size = weight_block_size
         self.dtype = dtype
+        self.scale_name = scale_name
         self._checkpoint_targets: frozenset[str] | None = None
 
-        self.param_names = ["weight", "weight_scale_inv"]
+        self.param_names = ["weight", self.scale_name]
 
     @classmethod
     def from_pretrained(
@@ -45,15 +47,17 @@ class FP8BlockDequantizer(Converter):
         ignore: Iterable[str] = tuple(),
         weight_block_size: tuple[int] = (128, 128),
         dtype=torch.bfloat16,
+        scale_name: str = "weight_scale_inv",
     ) -> "FP8BlockDequantizer":
         """
         Build the converter by scanning the checkpoint weight map and targeting
-        every module with a ``weight_scale_inv`` tensor.
+        every module with the configured scale tensor.
 
         :param model_name_or_path: HuggingFace stub or local checkpoint path
         :param ignore: module names or regexes to exclude from dequantization
         :param weight_block_size: block dimensions used during quantization
         :param dtype: dtype to store dequantized weights in
+        :param scale_name: scale tensor suffix in the checkpoint
         """
         model_files = get_checkpoint_files(model_name_or_path)
         weight_map = get_weight_map(model_files)
@@ -61,12 +65,11 @@ class FP8BlockDequantizer(Converter):
         targets = frozenset(
             name.rpartition(".")[0]
             for name in weight_map
-            if name.rpartition(".")[-1] == "weight_scale_inv"
+            if name.rpartition(".")[-1] == scale_name
         )
         if not targets:
             raise ValueError(
-                "No weight_scale_inv tensors found in checkpoint "
-                f"{model_name_or_path}"
+                f"No {scale_name} tensors found in checkpoint " f"{model_name_or_path}"
             )
 
         converter = cls(
@@ -74,33 +77,32 @@ class FP8BlockDequantizer(Converter):
             targets=targets,
             weight_block_size=weight_block_size,
             dtype=dtype,
+            scale_name=scale_name,
         )
         converter._checkpoint_targets = targets
         return converter
 
     def validate(self, tensors: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """
-        Dequantize, then assert no leftover weight_scale_inv remains on a
-        non-ignored module. A residual weight_scale_inv means the configured
-        targets missed a block-quantized weight. A targeted weight missing its
-        weight_scale_inv surfaces as a KeyError from process and is re-raised as
-        a ValueError so CI catches it. Returns the processed tensors so chained
-        converters observe the resulting format.
+        Dequantize, then assert no leftover scale tensors remain on a
+        non-ignored module. A targeted weight missing its scale tensor surfaces
+        as a KeyError from process and is re-raised as a ValueError. Returns
+        processed tensors so chained converters observe the resulting format.
         """
         try:
             tensors = self.process(tensors)
         except KeyError as e:
-            raise ValueError(f"Missing expected weight_scale_inv {e}") from e
+            raise ValueError(f"Missing expected scale tensor {e}") from e
 
         residual = [
             name
             for name in tensors
-            if name.rpartition(".")[-1] == "weight_scale_inv"
+            if name.rpartition(".")[-1] == self.scale_name
             and not any(match_name(name.rpartition(".")[0], ign) for ign in self.ignore)
         ]
         if residual:
             raise ValueError(
-                f"Found {len(residual)} residual weight_scale_inv after "
+                f"Found {len(residual)} residual scale tensors after "
                 f"dequantization, indicating untargeted or orphan scales: {residual}"
             )
 
@@ -123,9 +125,9 @@ class FP8BlockDequantizer(Converter):
             # weight * weight_scale_inv -> dequantized weight
             tensors[name] = self._create_dequantized_weight(
                 tensors[name],
-                tensors[f"{module_name}.weight_scale_inv"],
+                tensors[f"{module_name}.{self.scale_name}"],
             )
-            del tensors[f"{module_name}.weight_scale_inv"]
+            del tensors[f"{module_name}.{self.scale_name}"]
 
         return tensors
 
@@ -137,7 +139,7 @@ class FP8BlockDequantizer(Converter):
     def get_dependencies(self, weight_name: str) -> set[str]:
         module_name, _, param_name = weight_name.rpartition(".")
         if param_name == "weight" and self._is_targeted(module_name):
-            return {f"{module_name}.weight_scale_inv"}
+            return {f"{module_name}.{self.scale_name}"}
         return set()
 
     def _is_targeted(self, module_name: str) -> bool:
