@@ -77,8 +77,21 @@ def test_decompress_model(model_stub, compressed_stub):
     true_decompressed = dict(true_decompressed_model.state_dict())
     decompressed = dict(model.state_dict())
 
-    assert decompressed.keys() == true_decompressed.keys()
-    for key in decompressed.keys():
+    # Transformers 5.23 dequantizes through the load mapping into a dense model
+    # and drops qparams. Earlier releases decompress in place and keep them.
+    # The dequantized weights are the keys both sides have.
+    missing = true_decompressed.keys() - decompressed.keys()
+    extra = decompressed.keys() - true_decompressed.keys()
+    assert not missing
+    qparam_suffixes = (
+        "weight_scale",
+        "weight_zero_point",
+        "weight_shape",
+        "weight_global_scale",
+        "weight_packed",
+    )
+    assert all(key.endswith(qparam_suffixes) for key in extra), extra
+    for key in true_decompressed.keys():
         assert decompressed[key].dtype == true_decompressed[key].dtype, key
         assert torch.equal(decompressed[key], true_decompressed[key])
 
