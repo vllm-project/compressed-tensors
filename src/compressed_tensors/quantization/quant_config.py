@@ -416,16 +416,21 @@ class QuantizationConfig(BaseModel):
         # Targets: list of modules → checkpoint mapper → consolidate.
         # A rectangle of indexes becomes one anchored regex, so the config
         # does not list every module. vLLM rewrites literals inside that regex.
+        #
+        # The saved scheme is a copy so the caller's scheme keeps the targets
+        # they wrote. Compression fills in scheme.format afterwards, on the
+        # scheme attached to each module, so those modules must point at the
+        # copy or the saved format stays empty.
         config_groups = {}
         for idx, scheme in enumerate(quantization_schemes):
             group_name = "group_" + str(idx)
-            config_groups[group_name] = scheme.model_copy(
-                update={
-                    "targets": _consolidate_checkpoint_names(
-                        model, scheme_module_names[idx]
-                    )
-                }
+            module_names = scheme_module_names[idx]
+            saved_scheme = scheme.model_copy(
+                update={"targets": _consolidate_checkpoint_names(model, module_names)}
             )
+            config_groups[group_name] = saved_scheme
+            for name in module_names:
+                model.get_submodule(name).quantization_scheme = saved_scheme
 
         # infer format
         if format is None:

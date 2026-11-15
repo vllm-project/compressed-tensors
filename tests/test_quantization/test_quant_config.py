@@ -241,6 +241,11 @@ def test_export_consolidates_targeted_modules_and_leaves_ignores_concrete():
     assert exported.config_groups["group_0"].targets == [r"re:^runtime\.(?:0|1|2)\Z"]
     assert exported.ignore == ["runtime.3"]
     assert scheme.targets == ["Linear"]
+    # Compression writes format onto the module scheme after export.
+    # That write has to land on the scheme stored in the config.
+    model.runtime[0].quantization_scheme.format = "int-quantized"
+    assert exported.config_groups["group_0"].format == "int-quantized"
+    assert scheme.format is None
 
 
 def test_get_vllm_module_type():
