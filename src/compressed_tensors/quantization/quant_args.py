@@ -195,6 +195,12 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     :param group_size: group length to use for the group strategy
     :param block_structure: 2d block structure to use for the block strategy; must be
         a list of two ints [rows, cols] like [128, 128].
+    :param scale_block_structure: optional 2d scale block inside a codebook block.
+        LUT-B defaults to one scale per codebook block when omitted.
+    :param scale_fit_iterations: optional LUT-B scale-coordinate update count. When
+        omitted, LUT-B chooses its default from the scale block geometry. Zero fits
+        once without searching scales; iteration one searches exponent offsets ±2,
+        and later iterations search ±1.
     :param dynamic: set True to perform dynamic quantization - values will not be
         calibrated during calibration phase, instead during inference new quantization
         ranges will be observed with every sample. Defaults to False for static
@@ -213,6 +219,19 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     group_size: int | None = None
     strategy: QuantizationStrategy | None = None
     block_structure: list[int] | None = None
+    scale_block_structure: list[int] | None = Field(
+        default=None,
+        description="LUT-B scale block [rows, cols] inside block_structure.",
+    )
+    scale_fit_iterations: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "LUT-B scale update count. Defaults to 0 for one scale per codebook "
+            "tile and 1 for multiple scales. The first update searches ±2 E8M0 "
+            "exponents; later updates search ±1."
+        ),
+    )
     dynamic: DynamicType | bool = False
     actorder: ActivationOrdering | bool | None = None
     scale_dtype: TorchDtype | None = None
@@ -244,7 +263,13 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         data = handler(self)
 
         # Omit fields that are None when not explicitly user-specified
-        for field in ("actorder", "block_structure", "scale_dtype"):
+        for field in (
+            "actorder",
+            "block_structure",
+            "scale_block_structure",
+            "scale_fit_iterations",
+            "scale_dtype",
+        ):
             if data.get(field) is None:
                 data.pop(field, None)
 
@@ -304,6 +329,40 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             return list(value)
         raise error
 
+    @field_validator("scale_block_structure", mode="before")
+    def validate_scale_block_structure(cls, value) -> list[int] | None:
+        if value is None:
+            return value
+
+        error = ValueError(
+            f"Invalid scale_block_structure '{value}'. Must be a list of positive "
+            "ints [rows, cols]."
+        )
+        if isinstance(value, str):
+            try:
+                value = [int(x) for x in value.split("x")]
+            except Exception:
+                raise error
+        if isinstance(value, (list, tuple)):
+            if (
+                len(value) != 2
+                or not all(
+                    isinstance(v, int) and not isinstance(v, bool) for v in value
+                )
+                or not all(v > 0 for v in value)
+            ):
+                raise error
+            return list(value)
+        raise error
+
+    @field_validator("scale_fit_iterations", mode="before")
+    def validate_scale_fit_iterations(cls, value) -> int | None:
+        if value is None:
+            return value
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError("scale_fit_iterations must be a non-negative integer")
+        return value
+
     @field_validator("strategy", mode="before")
     def validate_strategy(cls, value) -> QuantizationStrategy | None:
         if isinstance(value, str):
@@ -347,6 +406,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         strategy = model.strategy
         group_size = model.group_size
         block_structure = model.block_structure
+        scale_block_structure = model.scale_block_structure
         # commenting for linting, what should we do with this?
         # actorder = model.actorder
         dynamic = model.dynamic
@@ -394,6 +454,17 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
             raise ValueError(f"Block strategy requires block structure\n{model}")
         if has_block_structure and not has_block_strategy:
             raise ValueError(f"Block structure requires block strategy\n{model}")
+
+        if (
+            scale_block_structure is not None
+            and model.type != QuantizationType.CODEBOOK
+        ):
+            raise ValueError("scale_block_structure is currently supported for LUT-B")
+        if (
+            model.scale_fit_iterations is not None
+            and model.type != QuantizationType.CODEBOOK
+        ):
+            raise ValueError("scale_fit_iterations is currently supported for LUT-B")
 
         # validate dynamic quantization
         if dynamic:

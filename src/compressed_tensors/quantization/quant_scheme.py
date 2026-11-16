@@ -61,7 +61,8 @@ class QuantizationScheme(BaseModel, use_enum_values=True):
                 raise ValueError(
                     "Codebook weights currently require the LUT-B contract: "
                     "num_bits=3, strategy='block', a 2D block_structure, and "
-                    "scale_dtype=None or torch.uint8 (E8M0)"
+                    "scale_dtype=None or torch.uint8 (E8M0); scale_block_structure "
+                    "must divide block_structure"
                 )
             if format not in (None, CompressionFormat.lut_b):
                 raise ValueError(
@@ -193,6 +194,21 @@ LUTB = dict(
         type=QuantizationType.CODEBOOK,
         strategy=QuantizationStrategy.BLOCK,
         block_structure=[8, 64],
+        scale_block_structure=[8, 64],
+        scale_dtype=torch.uint8,
+        symmetric=True,
+        dynamic=False,
+    )
+)
+
+# One E8M0 scale for every 8x2 region inside an 8x64 LUT-B codebook tile.
+LUTB32 = dict(
+    weights=QuantizationArgs(
+        num_bits=3,
+        type=QuantizationType.CODEBOOK,
+        strategy=QuantizationStrategy.BLOCK,
+        block_structure=[8, 64],
+        scale_block_structure=[8, 2],
         scale_dtype=torch.uint8,
         symmetric=True,
         dynamic=False,
@@ -499,6 +515,7 @@ PRESET_SCHEMES: dict[str, dict] = {
     # Unquantized (no-op)
     "UNQUANTIZED": UNQUANTIZED,
     "LUTB": LUTB,
+    "LUTB32": LUTB32,
     # Special-cased integer schemes
     "W4A16_ASYM": W4A16_ASYM,
     "W8A8": INT8_W8A8,

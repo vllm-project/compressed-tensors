@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from compressed_tensors.compressors import LutBCompressor, ModelCompressor
 from compressed_tensors.compressors.base import compress_module, decompress_module
+from compressed_tensors.compressors.lut_b import base as lut_b_base
 from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization import (
     QuantizationArgs,
@@ -117,20 +118,29 @@ def test_lut_b_compressor_preserves_precomputed_codebook():
     torch.testing.assert_close(layer.weight_codebook, expected)
 
 
-def test_lut_b_compressor_uses_weight_importance():
+def test_lut_b_compressor_uses_weight_importance(monkeypatch):
     torch.manual_seed(4)
     weight = torch.randn(8, 64)
     importance = torch.ones(64)
     importance[:16] = 100
     scheme = preset_name_to_scheme("LUTB", ["Linear"])
 
-    ordinary = LutBCompressor.compress({"weight": weight}, scheme)
+    quantize_lut_b = lut_b_base.quantize_lut_b
+    received_importance = []
+
+    def quantize_lut_b_spy(*args, **kwargs):
+        received_importance.append(kwargs.get("importance"))
+        return quantize_lut_b(*args, **kwargs)
+
+    monkeypatch.setattr(lut_b_base, "quantize_lut_b", quantize_lut_b_spy)
+    LutBCompressor.compress({"weight": weight}, scheme)
     weighted = LutBCompressor.compress(
         {"weight": weight, "weight_importance": importance}, scheme
     )
 
     assert "weight_importance" not in weighted
-    assert not torch.equal(ordinary["weight_codebook"], weighted["weight_codebook"])
+    assert received_importance[0] is None
+    torch.testing.assert_close(received_importance[1], importance)
 
 
 def test_lut_b_checkpoint_safetensors_round_trip(tmp_path):
