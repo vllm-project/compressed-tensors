@@ -77,8 +77,12 @@ def test_decompress_model(model_stub, compressed_stub):
     true_decompressed = dict(true_decompressed_model.state_dict())
     decompressed = dict(model.state_dict())
 
-    assert decompressed.keys() == true_decompressed.keys()
-    for key in decompressed.keys():
+    # decompress_model retains quantization parameters (scales, packed shapes)
+    # so the model can be recompressed later, while transformers>=5.23 loads
+    # `dequantize=True` checkpoints fully dense. Require every reference
+    # weight to be present and match rather than requiring identical key sets
+    assert true_decompressed.keys() <= decompressed.keys()
+    for key in true_decompressed.keys():
         assert decompressed[key].dtype == true_decompressed[key].dtype, key
         assert torch.equal(decompressed[key], true_decompressed[key])
 
