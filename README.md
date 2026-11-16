@@ -78,6 +78,12 @@ To bypass the hooks for a single commit, use `git commit --no-verify`; to skip o
 
 The following example loads Llama 3 8B, applies round-to-nearest (RTN) MXFP4 weight quantization, compresses the weights, and saves the result. No calibration data is needed — scales are computed directly from the weights.
 
+Install the Accelerate extra required by Transformers' `device_map` argument:
+
+```bash
+pip install "compressed-tensors[accelerate]"
+```
+
 ```python
 import math
 
