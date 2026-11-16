@@ -261,9 +261,7 @@ def _lut_b_scale_grid(args: QuantizationArgs) -> tuple[int, int]:
     return scale_rows, block_k // scale_k
 
 
-def _tiles_to_scale_blocks(
-    tiles: torch.Tensor, args: QuantizationArgs
-) -> torch.Tensor:
+def _tiles_to_scale_blocks(tiles: torch.Tensor, args: QuantizationArgs) -> torch.Tensor:
     """View flat tiles as row-major scale blocks: [tiles, blocks, values]."""
     block_n, block_k, scale_n, scale_k, scale_count, _ = _lut_b_scale_geometry(args)
     scale_rows, scale_columns = _lut_b_scale_grid(args)
@@ -306,9 +304,7 @@ def _initial_lut_b_scale_exponents(
     log_maxima = torch.log2(maxima.clamp_min(torch.finfo(torch.float32).tiny))
     phases = log_maxima - torch.floor(log_maxima)
     _, scale_count = maxima.shape
-    sorted_phases = torch.sort(
-        torch.where(valid, phases, torch.inf), dim=1
-    ).values
+    sorted_phases = torch.sort(torch.where(valid, phases, torch.inf), dim=1).values
     valid_count = valid.sum(dim=1)
     positions = torch.arange(scale_count, device=tiles.device)[None, :]
     safe_count = valid_count.clamp_min(1)[:, None]
@@ -372,8 +368,7 @@ def _lut_b_tile_errors(
     values = _tiles_to_scale_blocks(tiles, args)
     scales = torch.exp2(exponents.to(torch.float32))
     differences = (
-        values[..., None]
-        - scales[:, :, None, None] * centers[:, None, None, :]
+        values[..., None] - scales[:, :, None, None] * centers[:, None, None, :]
     )
     errors = differences.square().amin(dim=-1)
     if importance is not None:
@@ -395,8 +390,7 @@ def _search_lut_b_scale_exponents(
     centers = centers.to(torch.float32)
     base_scales = torch.exp2(exponents.to(torch.float32))
     base_differences = (
-        values[..., None]
-        - base_scales[:, :, None, None] * centers[:, None, None, :]
+        values[..., None] - base_scales[:, :, None, None] * centers[:, None, None, :]
     )
     best_errors = base_differences.square().amin(dim=-1)
     if importance is not None:
@@ -411,13 +405,10 @@ def _search_lut_b_scale_exponents(
     for offset in range(-radius, radius + 1):
         if offset == 0:
             continue
-        candidate = (exponents + offset).clamp(
-            -LUT_B_E8M0_BIAS, LUT_B_E8M0_BIAS
-        )
+        candidate = (exponents + offset).clamp(-LUT_B_E8M0_BIAS, LUT_B_E8M0_BIAS)
         scales = torch.exp2(candidate.to(torch.float32))
         differences = (
-            values[..., None]
-            - scales[:, :, None, None] * centers[:, None, None, :]
+            values[..., None] - scales[:, :, None, None] * centers[:, None, None, :]
         )
         errors = differences.square().amin(dim=-1)
         if importance is not None:
@@ -657,13 +648,9 @@ def quantize_lut_b(
             exponents = exponents - LUT_B_E8M0_BIAS
 
         values = _normalize_lut_b_tiles(raw_values, exponents, args)
-        chunk_importance = _importance_to_tiles(
-            importance, weight, args, start, end
-        )
+        chunk_importance = _importance_to_tiles(importance, weight, args, start, end)
         if flat_codebooks is None:
-            fit_weights = _lut_b_fit_weights(
-                exponents, args, chunk_importance
-            )
+            fit_weights = _lut_b_fit_weights(exponents, args, chunk_importance)
             _, centers = _fit_codebooks(values, args, importance=fit_weights)
             centers = centers.to(torch.float32)
         else:
@@ -681,9 +668,7 @@ def quantize_lut_b(
             )
             if flat_codebooks is None:
                 values = _normalize_lut_b_tiles(raw_values, exponents, args)
-                fit_weights = _lut_b_fit_weights(
-                    exponents, args, chunk_importance
-                )
+                fit_weights = _lut_b_fit_weights(exponents, args, chunk_importance)
                 _, proposed_centers = _fit_codebooks(
                     values, args, importance=fit_weights
                 )
@@ -696,14 +681,12 @@ def quantize_lut_b(
                     importance=chunk_importance,
                 )
                 improved = proposed_errors <= fixed_center_errors
-                centers = torch.where(
-                    improved[:, None], proposed_centers, centers
-                )
+                centers = torch.where(improved[:, None], proposed_centers, centers)
 
         if flat_supplied_scales is None:
-            flat_fitted_scales[start:end] = (
-                exponents + LUT_B_E8M0_BIAS
-            ).to(torch.uint8)
+            flat_fitted_scales[start:end] = (exponents + LUT_B_E8M0_BIAS).to(
+                torch.uint8
+            )
 
         values = _normalize_lut_b_tiles(raw_values, exponents, args)
         indices = _assign_indices(values, centers.to(torch.float32)).to(torch.uint8)
@@ -779,9 +762,7 @@ def dequantize_lut_b(
             1,
             indices.to(torch.int64),
         )
-        values = (
-            values * _lut_b_scale_factors(exponents, args)
-        ).to(dtype)
+        values = (values * _lut_b_scale_factors(exponents, args)).to(dtype)
     values = values.reshape(
         *leading_shape,
         row_tiles,
