@@ -14,6 +14,10 @@ from compressed_tensors.quantization.utils import (
     unpack_lut_b_indices,
 )
 from compressed_tensors.quantization.utils.lut_b import LUT_B_E8M0_BIAS, _fit_codebooks
+from compressed_tensors.quantization.utils.lut_b_dp import (
+    _fit_lut_b_codebooks_dp_eager,
+)
+from compressed_tensors.utils.impl_backend import ImplBackend
 
 
 def _lut_b_args(block_n: int, block_k: int, num_bits: int) -> QuantizationArgs:
@@ -109,6 +113,19 @@ def test_lut_b_weighted_dp_reduces_importance_weighted_error():
     base_error = ((base_reconstructed - values).square() * importance).sum()
     weighted_error = ((weighted_reconstructed - values).square() * importance).sum()
     assert weighted_error < base_error
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+@pytest.mark.parametrize("weighted", [False, True])
+def test_lut_b_dp_triton_endpoint_matches_eager(weighted):
+    torch.manual_seed(17)
+    values = torch.randn(4, 64, device="cuda", dtype=torch.float32)
+    weights = torch.rand_like(values).add_(0.25).contiguous() if weighted else None
+
+    expected = _fit_lut_b_codebooks_dp_eager(values, 8, weights)
+    actual = ImplBackend.call("_fit_lut_b_codebooks_dp_triton", values, 8, weights)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
 
 
 def test_lut_b_quantize_accepts_per_column_importance():

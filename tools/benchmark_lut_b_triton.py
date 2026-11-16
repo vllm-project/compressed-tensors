@@ -644,8 +644,13 @@ def _dp_dc_fused_stages_kernel(
     MAX_STACK: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_I: tl.constexpr,
+    FINAL_ENDPOINT_ONLY: tl.constexpr,
 ):
-    """Run all D&C DP rows for one tile in a single CTA launch."""
+    """Run all D&C DP rows for one tile in a single CTA launch.
+
+    When ``FINAL_ENDPOINT_ONLY`` is set, the final row computes only D[k, N].
+    Backtracking needs only that endpoint's split; earlier rows remain complete.
+    """
     tile = tl.program_id(0)
     stride = N + 1
     task_base = tile * MAX_STACK * 4
@@ -664,9 +669,13 @@ def _dp_dc_fused_stages_kernel(
         d_next = first_dp_base + (stage % 2) * stride
         args_stage = ARGS + tile * (K + 1) * stride + stage * stride
         top = 0
-        tl.store(TASKS + task_base + 0, stage)
+        final_endpoint = FINAL_ENDPOINT_ONLY & (stage == K)
+        tl.store(TASKS + task_base + 0, tl.where(final_endpoint, N, stage))
         tl.store(TASKS + task_base + 1, N)
-        tl.store(TASKS + task_base + 2, stage - 1)
+        tl.store(
+            TASKS + task_base + 2,
+            tl.where(final_endpoint, K - 1, stage - 1),
+        )
         tl.store(TASKS + task_base + 3, N - 1)
 
         while top >= 0:
@@ -1323,8 +1332,13 @@ def dp_divide_conquer_fused_stages_triton(
     weights: torch.Tensor | None = None,
     presorted: bool = False,
     candidate_block_size: int = 32,
+    final_endpoint_only: bool = False,
 ) -> torch.Tensor:
-    """Run all D&C rows in one stage kernel launch per tile."""
+    """Run D&C rows in one kernel; optionally compute only the final endpoint.
+
+    The endpoint-only variant computes complete rows 1..k-1, then only
+    ``D[k, n]``. This is sufficient to backtrack the optimal k-cluster fit.
+    """
     if candidate_block_size <= 0 or candidate_block_size & (candidate_block_size - 1):
         raise ValueError("candidate_block_size must be a positive power of two")
     shortcut = _dp_center_shortcut(values, k)
@@ -1356,6 +1370,7 @@ def dp_divide_conquer_fused_stages_triton(
         max_stack,
         triton.next_power_of_2(stride),
         candidate_block_size,
+        final_endpoint_only,
         num_warps=1,
     )
 

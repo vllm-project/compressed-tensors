@@ -137,7 +137,12 @@ def _lut_b_dp_fused_stages_kernel(
     BLOCK_N: tl.constexpr,
     BLOCK_I: tl.constexpr,
 ):
-    """Run all DP rows for one tile with a parallel candidate scan."""
+    """Run DP rows with a parallel candidate scan.
+
+    Rows before the last are complete. The final row evaluates only endpoint N,
+    since the codebook backtrack starts at that endpoint and never reads other
+    values from the final row.
+    """
     tile = tl.program_id(0)
     stride = N + 1
     task_base = tile * MAX_STACK * 4
@@ -156,9 +161,13 @@ def _lut_b_dp_fused_stages_kernel(
         d_next = first_dp_base + (stage % 2) * stride
         args_stage = ARGS + tile * (K + 1) * stride + stage * stride
         top = 0
-        tl.store(TASKS + task_base + 0, stage)
+        final_endpoint = stage == K
+        tl.store(TASKS + task_base + 0, tl.where(final_endpoint, N, stage))
         tl.store(TASKS + task_base + 1, N)
-        tl.store(TASKS + task_base + 2, stage - 1)
+        tl.store(
+            TASKS + task_base + 2,
+            tl.where(final_endpoint, K - 1, stage - 1),
+        )
         tl.store(TASKS + task_base + 3, N - 1)
 
         while top >= 0:

@@ -1,0 +1,98 @@
+[
+  {
+    "tiles": 512,
+    "points_per_tile": 512,
+    "centers": 8,
+    "weighted": true,
+    "baseline_full_final_row_ms": 1.9658880233764648,
+    "endpoint_only_by_candidate_block": {
+      "32": {
+        "median_ms": 1.8140159845352173,
+        "max_center_difference": 0.0
+      },
+      "64": {
+        "median_ms": 1.7780159711837769,
+        "max_center_difference": 0.0
+      },
+      "128": {
+        "median_ms": 1.8492799997329712,
+        "max_center_difference": 0.0
+      },
+      "256": {
+        "median_ms": 2.8607358932495117,
+        "max_center_difference": 0.0
+      },
+      "512": {
+        "median_ms": 5.074848175048828,
+        "max_center_difference": 0.0
+      }
+    },
+    "best_endpoint_block": 64,
+    "best_endpoint_ms": 1.7780159711837769,
+    "speedup_vs_baseline": 1.105663872112243
+  },
+  {
+    "tiles": 4096,
+    "points_per_tile": 512,
+    "centers": 8,
+    "weighted": true,
+    "baseline_full_final_row_ms": 4.794559955596924,
+    "endpoint_only_by_candidate_block": {
+      "32": {
+        "median_ms": 4.276127815246582,
+        "max_center_difference": 0.0
+      },
+      "64": {
+        "median_ms": 4.784512042999268,
+        "max_center_difference": 0.0
+      },
+      "128": {
+        "median_ms": 6.39737606048584,
+        "max_center_difference": 0.0
+      },
+      "256": {
+        "median_ms": 10.542431831359863,
+        "max_center_difference": 0.0
+      },
+      "512": {
+        "median_ms": 20.43564796447754,
+        "max_center_difference": 0.0
+      }
+    },
+    "best_endpoint_block": 32,
+    "best_endpoint_ms": 4.276127815246582,
+    "speedup_vs_baseline": 1.1212386913463779
+  },
+  {
+    "tiles": 16384,
+    "points_per_tile": 512,
+    "centers": 8,
+    "weighted": true,
+    "baseline_full_final_row_ms": 16.551679611206055,
+    "endpoint_only_by_candidate_block": {
+      "32": {
+        "median_ms": 14.67843246459961,
+        "max_center_difference": 0.0
+      },
+      "64": {
+        "median_ms": 16.750656127929688,
+        "max_center_difference": 0.0
+      },
+      "128": {
+        "median_ms": 23.370336532592773,
+        "max_center_difference": 0.0
+      },
+      "256": {
+        "median_ms": 39.09907150268555,
+        "max_center_difference": 0.0
+      },
+      "512": {
+        "median_ms": 77.83229064941406,
+        "max_center_difference": 0.0
+      }
+    },
+    "best_endpoint_block": 32,
+    "best_endpoint_ms": 14.67843246459961,
+    "speedup_vs_baseline": 1.1276190186604877
+  }
+]
