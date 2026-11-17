@@ -12,12 +12,10 @@ from compressed_tensors.quantization import (
     QuantizationStatus,
 )
 from compressed_tensors.quantization.quant_config import (
-    _consolidate_checkpoint_names,
-    _consolidate_module_names,
     _map_to_checkpoint_names,
-    _sync_saved_scheme_formats,
     get_vllm_module_type,
 )
+from compressed_tensors.utils.consolidate import consolidate_module_names
 from compressed_tensors.utils.match import match_name
 from pydantic import ValidationError
 from transformers import AutoModelForImageTextToText
@@ -214,20 +212,22 @@ def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, tar
     expected_ignores = [f"{prefix}.{i}" for i in range(1, 33)]
     assert exported.ignore == expected_ignores
     assert exported.model_dump()["ignore"] == expected_ignores
-    # One quantized module stays a concrete checkpoint name. The scheme on
-    # the module still has the targets the user wrote.
-    assert exported.config_groups["group_0"].targets == [f"{prefix}.0"]
-    assert exported.config_groups["group_0"].targets == _consolidate_checkpoint_names(
-        model, ["runtime.0"]
-    )
+    # A class name such as "Linear" stays as written. A module path or a
+    # regex is replaced by the checkpoint name of the module that has it.
+    # The scheme on the module still has the targets the user wrote.
+    if all("." not in target and not target.startswith("re:") for target in targets):
+        expected_targets = list(targets)
+    else:
+        expected_targets = [f"{prefix}.0"]
+    assert exported.config_groups["group_0"].targets == expected_targets
     assert scheme.model_dump() == original_scheme
     restored = QuantizationConfig.model_validate_json(exported.model_dump_json())
     assert restored.ignore == expected_ignores
-    assert restored.config_groups["group_0"].targets == [f"{prefix}.0"]
+    assert restored.config_groups["group_0"].targets == expected_targets
     assert QuantizationConfig.from_pretrained(model) == exported
 
 
-def test_export_consolidates_targeted_modules_and_leaves_ignores_concrete():
+def test_export_keeps_class_targets_and_concrete_ignores():
     model = torch.nn.Module()
     model.runtime = torch.nn.ModuleList([torch.nn.Linear(4, 4) for _ in range(4)])
     scheme = QuantizationScheme(
@@ -239,15 +239,37 @@ def test_export_consolidates_targeted_modules_and_leaves_ignores_concrete():
 
     exported = QuantizationConfig.from_pretrained(model)
 
-    assert exported.config_groups["group_0"].targets == [r"re:^runtime\.(?:0|1|2)\Z"]
+    assert exported.config_groups["group_0"].targets == ["Linear"]
     assert exported.ignore == ["runtime.3"]
     assert scheme.targets == ["Linear"]
-    assert model.runtime[0].quantization_scheme is scheme
-    # Compression writes format onto the live scheme after export.
-    # The saved copy learns that format from the module.
+    # The saved group is the live scheme, so a format written at
+    # compression time is the format in the config.
+    assert exported.config_groups["group_0"] is scheme
     scheme.format = "int-quantized"
-    _sync_saved_scheme_formats(exported, model)
     assert exported.config_groups["group_0"].format == "int-quantized"
+
+
+def test_export_folds_module_path_targets():
+    WeightRenaming = pytest.importorskip(
+        "transformers.core_model_loading"
+    ).WeightRenaming
+    model = torch.nn.Module()
+    model.runtime = torch.nn.ModuleList([torch.nn.Linear(4, 4) for _ in range(4)])
+    model._weight_conversions = [WeightRenaming("checkpoint.", "runtime.")]
+    scheme = QuantizationScheme(
+        targets=["runtime.0", "runtime.1", "runtime.2"],
+        weights=QuantizationArgs(num_bits=8),
+    )
+    for index in (0, 1, 2):
+        model.runtime[index].quantization_scheme = scheme
+        model.runtime[index].quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+
+    assert exported.config_groups["group_0"].targets == [r"re:^checkpoint\.(?:0|1|2)\Z"]
+    assert exported.ignore == ["checkpoint.3"]
+    assert scheme.targets == ["runtime.0", "runtime.1", "runtime.2"]
+    assert model.runtime[0].quantization_scheme is scheme
 
 
 def test_get_vllm_module_type():
@@ -334,7 +356,7 @@ def _matched(pattern: str, names: list[str]) -> set[str]:
 
 
 def test_consolidate_module_names_keeps_single_name_and_regex():
-    consolidated = _consolidate_module_names(
+    consolidated = consolidate_module_names(
         ["re:.*mtp.*", "lm_head", "model.layers.1.mlp.down_proj"]
     )
 
@@ -347,7 +369,7 @@ def test_consolidate_module_names_keeps_single_name_and_regex():
 
 def test_consolidate_module_names_collapses_layer_rectangle():
     ignore = [f"model.layers.{i}.mlp.gate" for i in (0, 1)]
-    consolidated = _consolidate_module_names(ignore)
+    consolidated = consolidate_module_names(ignore)
 
     assert consolidated == [r"re:^model\.layers\.(?:0|1)\.mlp\.gate\Z"]
     assert _matched(consolidated[0], ignore) == set(ignore)
@@ -357,7 +379,7 @@ def test_consolidate_module_names_collapses_layer_rectangle():
 def test_consolidate_module_names_lists_only_present_indexes():
     ignore = [f"model.layers.{i}.mlp.gate" for i in (1, 2, 3)]
     universe = [f"model.layers.{i}.mlp.gate" for i in range(4)]
-    consolidated = _consolidate_module_names(ignore)
+    consolidated = consolidate_module_names(ignore)
 
     assert consolidated == [r"re:^model\.layers\.(?:1|2|3)\.mlp\.gate\Z"]
     assert _matched(consolidated[0], universe) == set(ignore)
@@ -370,7 +392,7 @@ def test_consolidate_module_names_alternates_diagonal_experts():
         for expert in range(2)
     ]
     ignore = ["layers.0.experts.0.gate", "layers.1.experts.1.gate"]
-    consolidated = _consolidate_module_names(ignore)
+    consolidated = consolidate_module_names(ignore)
 
     assert consolidated == [
         "re:^(?:layers\\.0\\.experts\\.0\\.gate|layers\\.1\\.experts\\.1\\.gate)\\Z"
@@ -384,7 +406,7 @@ def test_consolidate_module_names_collapses_expert_rectangle():
         for layer in range(2)
         for expert in range(2)
     ]
-    consolidated = _consolidate_module_names(ignore)
+    consolidated = consolidate_module_names(ignore)
 
     assert consolidated == [r"re:^layers\.(?:0|1)\.experts\.(?:0|1)\.gate\Z"]
     assert _matched(consolidated[0], ignore) == set(ignore)

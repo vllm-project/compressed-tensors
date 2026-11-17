@@ -113,13 +113,6 @@ class ModelCompressor:
         # update quantization config format for better UX when reading config.json
         if quantization_config is not None:
             quantization_config.format = infer_model_format(model, quantization_format)
-            # Live schemes receive the format above. Copy it onto the
-            # schemes stored in the config, which carry the folded targets.
-            from compressed_tensors.quantization.quant_config import (
-                _sync_saved_scheme_formats,
-            )
-
-            _sync_saved_scheme_formats(quantization_config, model)
 
         return cls(
             quantization_config=quantization_config,
