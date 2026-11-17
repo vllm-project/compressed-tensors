@@ -9,9 +9,11 @@ from compressed_tensors.config import CompressionFormat
 from compressed_tensors.quantization.quant_args import (
     FP8_E4M3_DATA,
     DynamicType,
+    GlobalScaleType,
     QuantizationArgs,
     QuantizationStrategy,
     QuantizationType,
+    ScaleFormat,
 )
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -94,6 +96,25 @@ class QuantizationScheme(BaseModel, use_enum_values=True):
                 UserWarning,
                 stacklevel=2,
             )
+
+        if format in (
+            CompressionFormat.nvfp4_e5m3_pack_quantized,
+            CompressionFormat.nvfp4_e5m3_gs_pack_quantized,
+        ):
+            global_scale = (
+                GlobalScaleType.NONE
+                if format == CompressionFormat.nvfp4_e5m3_pack_quantized
+                else GlobalScaleType.PER_TENSOR
+            )
+            for args in (weights, inputs):
+                if args is None:
+                    continue
+                if args.scale_format is None:
+                    args.scale_format = ScaleFormat.UE5M3.value
+                if args.global_scale is None:
+                    args.global_scale = global_scale.value
+                if args.scale_dtype is None:
+                    args.scale_dtype = torch.uint8
 
         return model
 
@@ -202,6 +223,59 @@ NVFP4 = dict(
         observer="static_minmax",
         scale_dtype=FP8_E4M3_DATA.dtype,
         zp_dtype=FP8_E4M3_DATA.dtype,
+    ),
+)
+
+
+NVFP4_E5M3 = dict(
+    weights=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=16,
+        scale_dtype=torch.uint8,
+        scale_format=ScaleFormat.UE5M3,
+        global_scale=GlobalScaleType.NONE,
+    ),
+    input_activations=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        symmetric=True,
+        dynamic=DynamicType.LOCAL,
+        group_size=16,
+        scale_dtype=torch.uint8,
+        scale_format=ScaleFormat.UE5M3,
+        global_scale=GlobalScaleType.NONE,
+    ),
+)
+
+
+NVFP4_E5M3_GS = dict(
+    weights=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        symmetric=True,
+        dynamic=False,
+        group_size=16,
+        scale_dtype=torch.uint8,
+        scale_format=ScaleFormat.UE5M3,
+        global_scale=GlobalScaleType.PER_TENSOR,
+    ),
+    input_activations=QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        symmetric=True,
+        dynamic=DynamicType.LOCAL,
+        group_size=16,
+        observer="static_minmax",
+        scale_dtype=torch.uint8,
+        scale_format=ScaleFormat.UE5M3,
+        global_scale=GlobalScaleType.PER_TENSOR,
     ),
 )
 
@@ -477,6 +551,12 @@ PRESET_SCHEMES: dict[str, dict] = {
     "FP8_BLOCK": FP8_BLOCK,
     "NVFP4A16": NVFP4A16,
     "NVFP4": NVFP4,
+    "NVFP4_E5M3": NVFP4_E5M3,
+    "NVFP4_UE5M3": NVFP4_E5M3,
+    "NVFP4+": NVFP4_E5M3,
+    "NVFP4_E5M3_GS": NVFP4_E5M3_GS,
+    "NVFP4_UE5M3_GS": NVFP4_E5M3_GS,
+    "NVFP4+_GS": NVFP4_E5M3_GS,
     "MXFP4A16": MXFP4A16,
     "MXFP4": MXFP4,
     "MXFP4XFP8": MXFP4xFP8,

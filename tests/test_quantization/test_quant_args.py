@@ -8,6 +8,8 @@ from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationStrategy,
     QuantizationType,
+    ScaleFormat,
+    GlobalScaleType,
 )
 from pydantic import ValidationError
 
@@ -246,3 +248,42 @@ def test_round_trip_with_optional_fields_omitted():
     ):
         reloaded = QuantizationArgs.model_validate(args.model_dump())
         assert args == reloaded
+
+
+def test_ue5m3_scale_arguments_round_trip():
+    args = QuantizationArgs(
+        num_bits=4,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.TENSOR_GROUP,
+        group_size=16,
+        scale_format=ScaleFormat.UE5M3,
+        global_scale=GlobalScaleType.NONE,
+    )
+
+    assert args.scale_dtype == torch.uint8
+    serialized = args.model_dump()
+    assert serialized["scale_format"] == "ue5m3"
+    assert serialized["global_scale"] == "none"
+    assert serialized["scale_dtype"] == "torch.uint8"
+    assert QuantizationArgs.model_validate(serialized) == args
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    (
+        {"group_size": 32},
+        {"scale_dtype": torch.float8_e4m3fn},
+        {"strategy": QuantizationStrategy.GROUP},
+    ),
+)
+def test_ue5m3_scale_arguments_validation(kwargs):
+    base = {
+        "num_bits": 4,
+        "type": QuantizationType.FLOAT,
+        "strategy": QuantizationStrategy.TENSOR_GROUP,
+        "group_size": 16,
+        "scale_format": ScaleFormat.UE5M3,
+    }
+    base.update(kwargs)
+    with pytest.raises(ValidationError):
+        QuantizationArgs(**base)

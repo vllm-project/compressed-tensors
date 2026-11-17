@@ -14,7 +14,12 @@ from compressed_tensors.quantization.quant_args import (
     QuantizationArgs,
     QuantizationStrategy,
     QuantizationType,
+    ScaleFormat,
     round_to_quantized_type_dtype,
+)
+from compressed_tensors.quantization.utils.ue5m3 import (
+    UE5M3_MIN_SUBNORMAL,
+    ue5m3_cast,
 )
 from compressed_tensors.quantization.utils.mxfp_utils import (
     generate_mx_scales,
@@ -104,7 +109,9 @@ def calculate_qparams(
         scales = global_scale * scales
 
     # 3. Conditionally round the scale to the quantized dtype, if scale_dtype is set
-    if quantization_args.scale_dtype is not None:
+    if quantization_args.scale_format == ScaleFormat.UE5M3:
+        scales = ue5m3_cast(scales)
+    elif quantization_args.scale_dtype is not None:
         scales = round_to_quantized_type_dtype(
             scales, dtype=quantization_args.scale_dtype
         )
@@ -114,13 +121,16 @@ def calculate_qparams(
 
     # 5. Update any 0s with small values to
     # prevent div by 0
-    eps = _get_dtype_eps(
-        dtype=(
-            quantization_args.scale_dtype
-            if quantization_args.scale_dtype is not None
-            else scales.dtype
+    if quantization_args.scale_format == ScaleFormat.UE5M3:
+        eps = UE5M3_MIN_SUBNORMAL
+    else:
+        eps = _get_dtype_eps(
+            dtype=(
+                quantization_args.scale_dtype
+                if quantization_args.scale_dtype is not None
+                else scales.dtype
+            )
         )
-    )
     scales = torch.where(
         scales == 0,
         torch.tensor(eps, dtype=scales.dtype, device=device),
@@ -167,7 +177,6 @@ def compute_dynamic_scales_and_zp(
         QuantizationStrategy.TENSOR_GROUP,
         QuantizationStrategy.GROUP,
     ):
-
         reduce_dims = -1
         keep_dims = False
 
