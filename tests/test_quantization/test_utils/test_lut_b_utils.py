@@ -14,9 +14,7 @@ from compressed_tensors.quantization.utils import (
     unpack_lut_b_indices,
 )
 from compressed_tensors.quantization.utils.lut_b import LUT_B_E8M0_BIAS, _fit_codebooks
-from compressed_tensors.quantization.utils.lut_b_dp import (
-    _fit_lut_b_codebooks_dp_eager,
-)
+from compressed_tensors.quantization.utils.lut_b_dp import _fit_lut_b_codebooks_dp_eager
 from compressed_tensors.utils.impl_backend import ImplBackend
 
 
