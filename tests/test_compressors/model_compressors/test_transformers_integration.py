@@ -77,9 +77,10 @@ def test_decompress_model(model_stub, compressed_stub):
     true_decompressed = dict(true_decompressed_model.state_dict())
     decompressed = dict(model.state_dict())
 
-    # Transformers 5.23 dequantizes through the load mapping into a dense model
-    # and drops qparams. Earlier releases decompress in place and keep them.
-    # The dequantized weights are the keys both sides have.
+    # decompress_model retains quantization parameters (scales, packed shapes)
+    # so the model can be recompressed later, while transformers>=5.23 loads
+    # `dequantize=True` checkpoints fully dense. Every reference weight must
+    # be present and match. Extra keys are only those qparams.
     missing = true_decompressed.keys() - decompressed.keys()
     extra = decompressed.keys() - true_decompressed.keys()
     assert not missing
