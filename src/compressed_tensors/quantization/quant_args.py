@@ -20,6 +20,7 @@ from pydantic import (
 
 __all__ = [
     "FP8_E4M3_DATA",
+    "UE5M3_DATA",
     "FP4_E2M1_DATA",
     "FP6_E2M3_DATA",
     "BFLOAT16_DATA",
@@ -34,6 +35,8 @@ __all__ = [
     "round_to_quantized_type_dtype",
     "ActivationOrdering",
     "DynamicType",
+    "ScaleFormat",
+    "GlobalScaleType",
 ]
 
 
@@ -96,6 +99,14 @@ class FP8_E4M3_DATA(FloatArgs):
     dtype = torch.float8_e4m3fn
 
 
+class UE5M3_DATA(FloatArgs):
+    exponent = 5
+    mantissa = 3
+    bits = 8
+    max = 114688.0
+    min = 0.0
+
+
 class BFLOAT16_DATA(FloatArgs):
     exponent = 8
     mantissa = 7
@@ -153,6 +164,24 @@ class DynamicType(str, Enum):
     """
 
     LOCAL = "local"
+
+
+class ScaleFormat(str, Enum):
+    """
+    Numeric interpretation of a quantization scale.
+    """
+
+    E4M3 = "e4m3"
+    UE5M3 = "ue5m3"
+
+
+class GlobalScaleType(str, Enum):
+    """
+    Global-scale policy for tensor-group quantization.
+    """
+
+    NONE = "none"
+    PER_TENSOR = "per_tensor"
 
 
 class ActivationOrdering(Aliasable, str, Enum):
@@ -215,6 +244,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     dynamic: DynamicType | bool = False
     actorder: ActivationOrdering | bool | None = None
     scale_dtype: TorchDtype | None = None
+    scale_format: ScaleFormat | None = None
+    global_scale: GlobalScaleType | None = None
     zp_dtype: TorchDtype | None = None
     observer: str | None = Field(
         default=None,
@@ -242,7 +273,13 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         data = handler(self)
 
         # Omit fields that are None when not explicitly user-specified
-        for field in ("actorder", "block_structure", "scale_dtype"):
+        for field in (
+            "actorder",
+            "block_structure",
+            "scale_dtype",
+            "scale_format",
+            "global_scale",
+        ):
             if data.get(field) is None:
                 data.pop(field, None)
 
@@ -349,6 +386,8 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         # actorder = model.actorder
         dynamic = model.dynamic
         zp_dtype = model.zp_dtype
+        scale_format = model.scale_format
+        global_scale = model.global_scale
 
         # infer strategy
         if strategy is None:
@@ -417,6 +456,31 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
                 zp_dtype = FP8_E4M3_DATA.dtype
             else:
                 zp_dtype = model.pytorch_dtype()
+
+        if scale_format == ScaleFormat.UE5M3:
+            if (
+                strategy != QuantizationStrategy.TENSOR_GROUP
+                or model.num_bits != 4
+                or model.type != QuantizationType.FLOAT
+                or group_size != 16
+            ):
+                raise ValueError(
+                    "UE5M3 scales require 4-bit float tensor-group quantization "
+                    "with group_size=16"
+                )
+            if model.scale_dtype not in (None, torch.uint8):
+                raise ValueError("UE5M3 scales must use uint8 physical storage")
+            if model.scale_dtype is None:
+                model.scale_dtype = torch.uint8
+
+        if global_scale is not None and (
+            strategy != QuantizationStrategy.TENSOR_GROUP
+            or model.num_bits != 4
+            or model.type != QuantizationType.FLOAT
+        ):
+            raise ValueError(
+                "global_scale policies require 4-bit float tensor-group quantization"
+            )
 
         # write back modified values
         model.strategy = strategy

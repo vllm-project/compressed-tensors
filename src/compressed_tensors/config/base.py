@@ -28,6 +28,8 @@ class CompressionFormat(str, Enum):
     marlin_24 = "marlin-24"  # legacy format
     mixed_precision = "mixed-precision"
     nvfp4_pack_quantized = "nvfp4-pack-quantized"
+    nvfp4_e5m3_pack_quantized = "nvfp4-e5m3-pack-quantized"
+    nvfp4_e5m3_gs_pack_quantized = "nvfp4-e5m3-gs-pack-quantized"
     mxfp4_pack_quantized = "mxfp4-pack-quantized"
     mxfp6_pack_quantized = "mxfp6-pack-quantized"
     mxfp8_quantized = "mxfp8-quantized"

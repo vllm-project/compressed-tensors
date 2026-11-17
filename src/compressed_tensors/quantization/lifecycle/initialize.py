@@ -18,6 +18,7 @@ from compressed_tensors.offload import (
 )
 from compressed_tensors.quantization import (
     DynamicType,
+    GlobalScaleType,
     QuantizationArgs,
     QuantizationMetadata,
     QuantizationScheme,
@@ -199,7 +200,10 @@ def initialize_qparams(
         return
 
     # 0. Create global scale for tensor-group quantization
-    if strategy == QuantizationStrategy.TENSOR_GROUP:
+    if (
+        strategy == QuantizationStrategy.TENSOR_GROUP
+        and quantization_args.global_scale != GlobalScaleType.NONE
+    ):
         init_global_scale = Parameter(
             torch.empty(1, dtype=torch.float32, device=device),
             requires_grad=False,

@@ -19,6 +19,8 @@ COMPRESSION_FORMAT_PRIORITY: List[CompressionFormat] = [
     CompressionFormat.mxfp4_pack_quantized,
     CompressionFormat.mxfp6_pack_quantized,
     CompressionFormat.mxfp8_quantized,
+    CompressionFormat.nvfp4_e5m3_gs_pack_quantized,
+    CompressionFormat.nvfp4_e5m3_pack_quantized,
     CompressionFormat.nvfp4_pack_quantized,
     CompressionFormat.int_quantized,
     CompressionFormat.pack_quantized,

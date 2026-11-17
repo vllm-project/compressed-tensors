@@ -15,6 +15,7 @@ from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationScheme,
     QuantizationType,
+    ScaleFormat,
 )
 from compressed_tensors.quantization.lifecycle.forward import dequantize
 from compressed_tensors.utils import TensorStateDict, getattr_chain
@@ -143,4 +144,5 @@ class NVFP4PackedCompressor(BaseCompressor):
             and scheme.weights.num_bits == 4
             and scheme.weights.type == QuantizationType.FLOAT.value
             and scheme.weights.group_size == 16
+            and scheme.weights.scale_format != ScaleFormat.UE5M3.value
         )
