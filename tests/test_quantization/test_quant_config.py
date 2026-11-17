@@ -272,6 +272,54 @@ def test_export_folds_module_path_targets():
     assert model.runtime[0].quantization_scheme is scheme
 
 
+def test_export_folds_deepseek_v4_small_targets():
+    # Shape of inference-optimization/DeepSeek-V4-Pro-3.7B-A3.4B-small:
+    # 2 layers and 8 routed experts. The checkpoint names the shared down
+    # projection w2. A class-name target such as Linear would stay Linear.
+    model = torch.nn.Module()
+    model.layers = torch.nn.ModuleList()
+    shared_names = []
+    expert_names = []
+    for layer_idx in range(2):
+        layer = torch.nn.Module()
+        layer.ffn = torch.nn.Module()
+        shared = torch.nn.Module()
+        shared.w2 = torch.nn.Linear(4, 4)
+        layer.ffn.shared_experts = shared
+        experts = torch.nn.ModuleList()
+        for expert_idx in range(8):
+            expert = torch.nn.Module()
+            expert.w1 = torch.nn.Linear(4, 4)
+            experts.append(expert)
+            expert_names.append(f"layers.{layer_idx}.ffn.experts.{expert_idx}.w1")
+        layer.ffn.experts = experts
+        model.layers.append(layer)
+        shared_names.append(f"layers.{layer_idx}.ffn.shared_experts.w2")
+
+    shared_scheme = QuantizationScheme(
+        targets=list(shared_names), weights=QuantizationArgs(num_bits=8)
+    )
+    expert_scheme = QuantizationScheme(
+        targets=list(expert_names), weights=QuantizationArgs(num_bits=4)
+    )
+    for layer in model.layers:
+        layer.ffn.shared_experts.w2.quantization_scheme = shared_scheme
+        layer.ffn.shared_experts.w2.quantization_status = QuantizationStatus.FROZEN
+        for expert in layer.ffn.experts:
+            expert.w1.quantization_scheme = expert_scheme
+            expert.w1.quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+    saved_targets = [group.targets for group in exported.config_groups.values()]
+
+    assert [r"re:^layers\.(?:0|1)\.ffn\.shared_experts\.w2\Z"] in saved_targets
+    assert [
+        r"re:^layers\.(?:0|1)\.ffn\.experts\.(?:0|1|2|3|4|5|6|7)\.w1\Z"
+    ] in saved_targets
+    assert shared_scheme.targets == shared_names
+    assert expert_scheme.targets == expert_names
+
+
 def test_get_vllm_module_type():
     assert get_vllm_module_type("ExpertMLP") == "ExpertMLP"
     assert get_vllm_module_type("ExpertMLPWithGate") == "ExpertMLPWithGate"
