@@ -24,8 +24,14 @@ from transformers import AutoModelForCausalLM
 
 @requires_gpu
 def test_apply_config_detects_deepseekv3_attention_and_hooks():
+    # pin the pre-fp8 upload of this checkpoint: newer revisions ship fp8
+    # attention weights, which load as transformers FP8Linear modules that
+    # require the external `kernels` package and propagate dtypes that break
+    # the fake-quantized forward below
     model = AutoModelForCausalLM.from_pretrained(
-        "trl-internal-testing/tiny-DeepseekV3ForCausalLM", device_map="cuda"
+        "trl-internal-testing/tiny-DeepseekV3ForCausalLM",
+        device_map="cuda",
+        revision="0626191666ec78e25374b8d4bf9b9490119d92a5",
     )
     inputs = {key: value.to("cuda") for key, value in model.dummy_inputs.items()}
 

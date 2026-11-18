@@ -193,7 +193,7 @@ def test_apply_quantization_config_tinyllama():
             )
 
 
-def test_apply_quantization_config_respects_allowed_modules():
+def test_apply_quantization_config_respects_module_scope():
     model = torch.nn.Sequential(
         torch.nn.Linear(4, 4),
         torch.nn.Linear(4, 4),
@@ -573,6 +573,7 @@ def test_apply_kv_cache_skips_non_cache_attention():
             super().__init__()
             self.config = CompositeConfig()
             self.text_attention = TextAttention()
+            self.text_attention_2 = TextAttention()
             self.vision_attention = VisionAttention()
 
     class CompositeConfig:
@@ -599,7 +600,9 @@ def test_apply_kv_cache_skips_non_cache_attention():
     )
     config = QuantizationConfig(config_groups={}, kv_cache_scheme=args)
 
-    apply_quantization_config(model, config)
+    apply_quantization_config(
+        model, config, allowed_modules=list(model.text_attention.modules())
+    )
 
     assert model.config.decoder is True
     assert model.config.vision_config.model_type == "vision"
@@ -607,6 +610,7 @@ def test_apply_kv_cache_skips_non_cache_attention():
     assert model.text_attention.kv_cache.config is model.config.text_config
     assert hasattr(model.text_attention, "k_scale")
     assert hasattr(model.text_attention, "v_scale")
+    assert not hasattr(model.text_attention_2, "kv_cache")
     assert not hasattr(model.vision_attention, "quantization_scheme")
     assert not hasattr(model.vision_attention, "kv_cache")
     assert not hasattr(model.vision_attention, "k_scale")

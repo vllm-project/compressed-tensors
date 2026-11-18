@@ -307,10 +307,17 @@ def print_offload_folder(model: torch.nn.Module, offload_folder: str):
     :param model: model whose parameters are offloaded to disk
     :param offload_folder: directory containing the offloaded safetensors files
     """
+    offload_folder = os.path.realpath(offload_folder)
     with disable_onloading():
         file_path_to_param_info = {}
         for param_path, param in model.named_parameters():
-            file_path = DiskCache._get_ct_file_path(offload_folder, param)
+            if param not in DiskCache.index:
+                continue
+            file_path = DiskCache.index[param]["safetensors_file"]
+            file_path = os.path.join(
+                os.path.realpath(os.path.dirname(file_path)),
+                os.path.basename(file_path),
+            )
             file_path_to_param_info[file_path] = {
                 "path": param_path,
                 "shape": tuple(param.shape),

@@ -145,8 +145,11 @@ class IntQuantizationCompressor(NaiveQuantizationCompressor):
         return (
             issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
             and scheme.input_activations is not None
+            and scheme.input_activations.type == QuantizationType.INT.value
+            and scheme.input_activations.num_bits == 8
             and scheme.weights is not None
             and scheme.weights.type == QuantizationType.INT.value
+            and scheme.weights.num_bits == 8
         )
 
 
@@ -160,6 +163,9 @@ class FloatQuantizationCompressor(NaiveQuantizationCompressor):
         return (
             issubclass(module_type, COMPRESSIBLE_MODULE_TYPES)
             and scheme.input_activations is not None
+            and scheme.input_activations.type == QuantizationType.FLOAT.value
+            and scheme.input_activations.num_bits == 8
             and scheme.weights is not None
             and scheme.weights.type == QuantizationType.FLOAT.value
+            and scheme.weights.num_bits == 8
         )
