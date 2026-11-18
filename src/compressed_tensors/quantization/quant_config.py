@@ -84,6 +84,31 @@ def copy_formats_after_compression(config: "QuantizationConfig", model: Module) 
                 break
 
 
+class _SchemeKey:
+    """Dict key for a scheme.
+
+    ``QuantizationScheme`` is not hashable: compression assigns ``format``
+    on the live object later. Equal schemes share a key. The hash is taken
+    once per object so that later format assignment does not move it.
+    """
+
+    _hashes: dict[int, int] = {}
+
+    def __init__(self, scheme: QuantizationScheme):
+        self.scheme = scheme
+        cached = self._hashes.get(id(scheme))
+        if cached is None:
+            cached = hash(scheme.model_dump_json())
+            self._hashes[id(scheme)] = cached
+        self._hash = cached
+
+    def __hash__(self) -> int:
+        return self._hash
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _SchemeKey) and self.scheme == other.scheme
+
+
 def _targets_are_class_names(targets: list[str]) -> bool:
     """True when every target is a class name, such as ``Linear``.
 
@@ -242,10 +267,8 @@ class QuantizationConfig(BaseModel):
             is_cached_attention_module,
         )
 
-        # Equal schemes share a group. QuantizationScheme is not hashable
-        # (format is assigned later, on the live object), so this stays a
-        # list. Insertion order is the group order.
-        grouped: list[tuple[QuantizationScheme, list[str]]] = []
+        # Equal schemes share a group. Insertion order is the group order.
+        grouped: dict[_SchemeKey, list[str]] = defaultdict(list)
 
         # use any status from modules (in practice, use the last module)
         model_status = None
@@ -277,13 +300,7 @@ class QuantizationConfig(BaseModel):
                 model_status = getattr(submodule, "quantization_status", model_status)
                 quantization_type_names.add(layer_type)
                 scheme = submodule.quantization_scheme
-                module_names = next(
-                    (found for existing, found in grouped if existing == scheme),
-                    None,
-                )
-                if module_names is None:
-                    module_names = []
-                    grouped.append((scheme, module_names))
+                module_names = grouped[_SchemeKey(scheme)]
                 if name:
                     module_names.append(name)
 
@@ -320,7 +337,8 @@ class QuantizationConfig(BaseModel):
         # The module keeps its own scheme. A copied scheme with a checkpoint
         # regex in its place leaves qparams behind after decompression.
         config_groups = {}
-        for idx, (scheme, module_names) in enumerate(grouped):
+        for idx, (key, module_names) in enumerate(grouped.items()):
+            scheme = key.scheme
             group_name = "group_" + str(idx)
             if _targets_are_class_names(scheme.targets):
                 config_groups[group_name] = scheme

@@ -228,6 +228,22 @@ def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, tar
     assert QuantizationConfig.from_pretrained(model) == exported
 
 
+def test_export_groups_equal_scheme_copies():
+    model = torch.nn.Module()
+    model.a = torch.nn.Linear(4, 4)
+    model.b = torch.nn.Linear(4, 4)
+    for module in (model.a, model.b):
+        module.quantization_scheme = QuantizationScheme(
+            targets=["Linear"], weights=QuantizationArgs(num_bits=8)
+        )
+        module.quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+
+    assert list(exported.config_groups) == ["group_0"]
+    assert exported.config_groups["group_0"].targets == ["Linear"]
+
+
 def test_export_keeps_class_targets_and_concrete_ignores():
     model = torch.nn.Module()
     model.runtime = torch.nn.ModuleList([torch.nn.Linear(4, 4) for _ in range(4)])
