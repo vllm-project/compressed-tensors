@@ -273,7 +273,7 @@ def _fit_lut_b_codebooks_dp_triton(
         block_n,
         block_n.bit_length() - 1,
         has_weights,
-        num_warps=4,
+        num_warps=1,
     )
 
     dp = torch.empty((tiles, 2, stride), device=values.device, dtype=torch.float32)
