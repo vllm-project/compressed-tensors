@@ -201,6 +201,21 @@ LUTB = dict(
     )
 )
 
+# One E8M0 scale per output channel per 32 K values, matching the native
+# block32 LUT-B scale layout: one 1x32 scale block inside each 8x64 tile.
+LUTB_BLOCK32 = dict(
+    weights=QuantizationArgs(
+        num_bits=3,
+        type=QuantizationType.CODEBOOK,
+        strategy=QuantizationStrategy.BLOCK,
+        block_structure=[8, 64],
+        scale_block_structure=[1, 32],
+        scale_dtype=torch.uint8,
+        symmetric=True,
+        dynamic=False,
+    )
+)
+
 # One E8M0 scale for every 8x2 region inside an 8x64 LUT-B codebook tile.
 LUTB32 = dict(
     weights=QuantizationArgs(
@@ -515,6 +530,7 @@ PRESET_SCHEMES: dict[str, dict] = {
     # Unquantized (no-op)
     "UNQUANTIZED": UNQUANTIZED,
     "LUTB": LUTB,
+    "LUTB_BLOCK32": LUTB_BLOCK32,
     "LUTB32": LUTB32,
     # Special-cased integer schemes
     "W4A16_ASYM": W4A16_ASYM,
