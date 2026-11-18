@@ -22,7 +22,7 @@ Each method often comes with its own storage format and loading procedures, maki
   * Non-uniform schemes (different layers can be quantized in different ways!)
 * **Sparsity Support**: Handles both unstructured and semi-structured (e.g., 2:4) sparsity patterns.
 * **Transform Support**: Rotation-based quantization techniques (Hadamard, random Hadamard, random matrix transforms).
-* **Checkpoint Conversion**: Convert between formats like AutoAWQ, ModelOpt NVFP4, FP8 block, and compressed-tensors.
+* **Checkpoint Conversion**: Convert between formats like AutoAWQ, ModelOpt (any quantization format, including mixed precision), FP8 block, and compressed-tensors.
 * **Model Offloading**: Transparent CPU/disk/distributed offloading for models larger than available VRAM.
 * **Open-Source Integration**: Designed to work seamlessly with Hugging Face models, PyTorch, [vLLM](https://github.com/vllm-project/vllm), and [SGLang](https://github.com/sgl-project/sglang).
 
