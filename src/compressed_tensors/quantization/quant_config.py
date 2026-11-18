@@ -58,6 +58,32 @@ def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]
     return result
 
 
+def copy_formats_after_compression(config: "QuantizationConfig", model: Module) -> None:
+    """Copy compression formats onto saved schemes that were folded.
+
+    Compression writes ``format`` on the live scheme. A class-name group is
+    that same object. A group whose targets were folded is a copy, and it
+    would otherwise stay unset.
+    """
+    from compressed_tensors.utils.match import match_name
+
+    for name, module in model.named_modules():
+        live = getattr(module, "quantization_scheme", None)
+        if not name or live is None or getattr(live, "format", None) is None:
+            continue
+        checkpoint_names = _map_to_checkpoint_names(model, [name])
+        checkpoint_name = checkpoint_names[0] if checkpoint_names else name
+        for group in config.config_groups.values():
+            if group is live:
+                break
+            if any(
+                match_name(checkpoint_name, target) or match_name(name, target)
+                for target in group.targets
+            ):
+                group.format = live.format
+                break
+
+
 def _targets_are_class_names(targets: list[str]) -> bool:
     """True when every target is a class name, such as ``Linear``.
 

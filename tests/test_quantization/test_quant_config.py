@@ -13,6 +13,7 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.quant_config import (
     _map_to_checkpoint_names,
+    copy_formats_after_compression,
     get_vllm_module_type,
 )
 from compressed_tensors.utils.consolidate import consolidate_module_names
@@ -318,6 +319,34 @@ def test_export_folds_deepseek_v4_small_targets():
     ] in saved_targets
     assert shared_scheme.targets == shared_names
     assert expert_scheme.targets == expert_names
+
+
+def test_compression_records_format_on_folded_schemes():
+    model = torch.nn.Module()
+    model.layers = torch.nn.ModuleList([torch.nn.Linear(4, 4), torch.nn.Linear(4, 4)])
+    attn = QuantizationScheme(
+        targets=[r"re:.*\.0$"], weights=QuantizationArgs(num_bits=8, type="float")
+    )
+    mlp = QuantizationScheme(
+        targets=[r"re:.*\.1$"], weights=QuantizationArgs(num_bits=4, type="float")
+    )
+    model.layers[0].quantization_scheme = attn
+    model.layers[0].quantization_status = QuantizationStatus.FROZEN
+    model.layers[1].quantization_scheme = mlp
+    model.layers[1].quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+    assert {group.format for group in exported.config_groups.values()} == {None}
+
+    attn.format = "float-quantized"
+    mlp.format = "nvfp4-pack-quantized"
+    copy_formats_after_compression(exported, model)
+
+    saved = {
+        tuple(group.targets): group.format for group in exported.config_groups.values()
+    }
+    assert saved[("layers.0",)] == "float-quantized"
+    assert saved[("layers.1",)] == "nvfp4-pack-quantized"
 
 
 def test_get_vllm_module_type():
