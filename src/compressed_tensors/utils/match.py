@@ -47,15 +47,27 @@ def match_named_modules(
     :param ignore: targets to ignore, potentially containing "re:" prefixes
     :fused: optional mapping from suffixes of fused modules to the suffixes of their
         corresponding shards. See `compressed_tensors.utils.match.is_match`
-    :param warn_on_fail: if True, warns if any targets do not match any modules in model
+    :param warn_on_fail: if True, warns if any targets or ignore entries do not match
+        any modules in model
     :return: generator of module names and modules
     """
     targets = targets or []
     ignore = ignore or []
 
     unmatched_targets = set(targets)
+    # only tracked when it will be reported, so the default path is unchanged
+    unmatched_ignore = set(ignore) if warn_on_fail else set()
 
     for name, module in model.named_modules():
+        # an entry stops being tracked once it matches, so each is tested against
+        # modules only until its first match
+        if unmatched_ignore:
+            unmatched_ignore -= {
+                ign
+                for ign in unmatched_ignore
+                if is_match(name, module, ign, fused=fused)
+            }
+
         for target in targets:
             if is_match(name, module, target, fused=fused):
                 unmatched_targets -= {target}
@@ -67,6 +79,11 @@ def match_named_modules(
         for target in unmatched_targets:
             _LOGGER.warning(
                 f"Could not match `{target}` in instance of {model.__class__.__name__}"
+            )
+        for ign in unmatched_ignore:
+            _LOGGER.warning(
+                f"Could not match ignore entry `{ign}` in instance of "
+                f"{model.__class__.__name__}"
             )
 
 
@@ -86,19 +103,31 @@ def match_named_parameters(
     :param ignore: targets to ignore, potentially containing "re:" prefixes
     :fused: optional mapping from suffixes of fused modules to the suffixes of their
         corresponding shards. See `compressed_tensors.utils.match.is_match`
-    :param warn_on_fail: if True, warns if any targets do not match any params in model
+    :param warn_on_fail: if True, warns if any targets or ignore entries do not match
+        any params in model
     :return: generator of fully-qualified param names, parent modules, and params
     """
     targets = targets or []
     ignore = ignore or []
 
     unmatched_targets = set(targets)
+    # only tracked when it will be reported, so the default path is unchanged
+    unmatched_ignore = set(ignore) if warn_on_fail else set()
+
     for module_name, module in model.named_modules():
         if isinstance(module, InternalModule):
             continue
 
         for param_name, param in module.named_parameters(recurse=False):
             param_fqn = f"{module_name}.{param_name}"
+
+            # an entry stops being tracked once it matches, so each is tested
+            # against params only until its first match
+            if unmatched_ignore:
+                unmatched_ignore -= {
+                    ign for ign in unmatched_ignore if match_name(param_fqn, ign, fused)
+                }
+
             for target in targets:
                 if match_name(param_fqn, target, fused):
                     unmatched_targets -= {target}
@@ -110,6 +139,11 @@ def match_named_parameters(
         for target in unmatched_targets:
             _LOGGER.warning(
                 f"Could not match `{target}` in instance of {model.__class__.__name__}"
+            )
+        for ign in unmatched_ignore:
+            _LOGGER.warning(
+                f"Could not match ignore entry `{ign}` in instance of "
+                f"{model.__class__.__name__}"
             )
 
 
