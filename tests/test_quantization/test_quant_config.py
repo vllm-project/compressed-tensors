@@ -228,7 +228,7 @@ def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, tar
     assert QuantizationConfig.from_pretrained(model) == exported
 
 
-def test_export_groups_equal_scheme_copies():
+def test_export_groups_each_scheme_object():
     model = torch.nn.Module()
     model.a = torch.nn.Linear(4, 4)
     model.b = torch.nn.Linear(4, 4)
@@ -240,8 +240,11 @@ def test_export_groups_equal_scheme_copies():
 
     exported = QuantizationConfig.from_pretrained(model)
 
-    assert list(exported.config_groups) == ["group_0"]
+    # apply_quantization_config puts one scheme object on every module in a
+    # group. Two separately built schemes stay two groups.
+    assert list(exported.config_groups) == ["group_0", "group_1"]
     assert exported.config_groups["group_0"].targets == ["Linear"]
+    assert exported.config_groups["group_1"].targets == ["Linear"]
 
 
 def test_export_keeps_class_targets_and_concrete_ignores():

@@ -59,11 +59,14 @@ def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]
 
 
 def copy_formats_after_compression(config: "QuantizationConfig", model: Module) -> None:
-    """Copy compression formats onto saved schemes that were folded.
+    """Write each module's compression format onto the saved scheme.
 
-    Compression writes ``format`` on the live scheme. A class-name group is
-    that same object. A group whose targets were folded is a copy, and it
-    would otherwise stay unset.
+    ``compress_module`` sets ``format`` on the scheme object stored on the
+    module. ``["Linear"]`` is saved as that same object, so the format is
+    already in the config. A module path or a regex is saved as a copy made
+    before compression, because the module keeps the targets the user wrote.
+    That copy's ``format`` is still unset. This copies the format
+    compression already chose. It does not choose a new one.
     """
     from compressed_tensors.utils.match import match_name
 
@@ -85,28 +88,21 @@ def copy_formats_after_compression(config: "QuantizationConfig", model: Module) 
 
 
 class _SchemeKey:
-    """Dict key for a scheme.
+    """Dict key for one scheme object.
 
-    ``QuantizationScheme`` is not hashable: compression assigns ``format``
-    on the live object later. Equal schemes share a key. The hash is taken
-    once per object so that later format assignment does not move it.
+    ``QuantizationScheme`` is not hashable, and compression assigns
+    ``format`` on that object later. Modules that share a scheme object
+    share a group.
     """
-
-    _hashes: dict[int, int] = {}
 
     def __init__(self, scheme: QuantizationScheme):
         self.scheme = scheme
-        cached = self._hashes.get(id(scheme))
-        if cached is None:
-            cached = hash(scheme.model_dump_json())
-            self._hashes[id(scheme)] = cached
-        self._hash = cached
 
     def __hash__(self) -> int:
-        return self._hash
+        return id(self.scheme)
 
     def __eq__(self, other: object) -> bool:
-        return isinstance(other, _SchemeKey) and self.scheme == other.scheme
+        return isinstance(other, _SchemeKey) and self.scheme is other.scheme
 
 
 def _targets_are_class_names(targets: list[str]) -> bool:
@@ -267,7 +263,7 @@ class QuantizationConfig(BaseModel):
             is_cached_attention_module,
         )
 
-        # Equal schemes share a group. Insertion order is the group order.
+        # One scheme object is one group. Insertion order is the group order.
         grouped: dict[_SchemeKey, list[str]] = defaultdict(list)
 
         # use any status from modules (in practice, use the last module)
