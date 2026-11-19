@@ -87,6 +87,15 @@ class PackedQuantizationCompressor(BaseCompressor):
                 packed_shape, dtype=torch.int32, device="meta"
             )
             state_dict["weight_shape"] = torch.tensor(weight.shape)
+            if not weights.symmetric and weights.strategy in PACK_ZP_STRATS:
+                # match the shape of the packed zero point written by a real compress
+                assert zero_point is not None, "Asymmetric quant requires zero-point"
+                packed_rows = math.ceil(zero_point.shape[-2] * weights.num_bits / 32)
+                state_dict["weight_zero_point"] = torch.empty(
+                    (*zero_point.shape[:-2], packed_rows, zero_point.shape[-1]),
+                    dtype=torch.int32,
+                    device="meta",
+                )
             state_dict = cls._remove_symmetric_zp(state_dict, scheme)
             return state_dict
 
