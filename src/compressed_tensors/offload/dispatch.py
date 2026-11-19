@@ -80,6 +80,11 @@ def set_onload_device(
             if isinstance(tensor, torch.Tensor)
         }
 
+        # Meta tensors have no storage to dispatch. Leave such modules alone; lazy
+        # restructuring will materialize them later with the source module's settings.
+        if any(tensor.device.type == "meta" for tensor in tensors.values()):
+            return child_offloaded, child_kwargs
+
         # if this module has parameters, offload with params device
         if len(tensors) > 0:
             offload_kwargs = {

@@ -157,23 +157,32 @@ def subgraph_stage_modules(
 
 def subgraph_onload_modules(
     modules: dict[str, torch.nn.Module],
+    recurse: bool = False,
 ) -> dict[str, dict]:
-    """Onload modules, consuming tensors staged in CPU memory."""
+    """Onload modules, consuming tensors staged in CPU memory.
+
+    When ``recurse`` is True, treat each supplied module as a root and onload all of
+    its descendants. Returned offload kwargs are keyed by each module's qualified name
+    relative to the model, using the supplied root name as a prefix.
+    """
     from compressed_tensors.offload import get_cache_init_kwargs
 
     offload_kwargs = {}
     # tensors that were not staged are read from disk here, grouped like staging
     with disk_load_context():
         for name, module in modules.items():
-            if isinstance(module._parameters, OffloadCache):
-                init_kwargs = get_cache_init_kwargs(module)
-                offload_kwargs[name] = init_kwargs
+            submodules = module.named_modules() if recurse else [("", module)]
+            for relative_name, submodule in submodules:
+                module_name = (
+                    f"{name}.{relative_name}"
+                    if name and relative_name
+                    else name or relative_name
+                )
+                if isinstance(submodule._parameters, OffloadCache):
+                    init_kwargs = get_cache_init_kwargs(submodule)
+                    offload_kwargs[module_name] = init_kwargs
 
-                remove_module_offload(module, onload_tensors=True)
-            else:
-                pass
-                # we should consider raising warnings, but observers will
-                # clog the output with warnings, so we will skip for now
+                    remove_module_offload(submodule, onload_tensors=True)
     return offload_kwargs
 
 
