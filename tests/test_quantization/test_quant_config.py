@@ -13,8 +13,11 @@ from compressed_tensors.quantization import (
 )
 from compressed_tensors.quantization.quant_config import (
     _map_to_checkpoint_names,
+    copy_formats_after_compression,
     get_vllm_module_type,
 )
+from compressed_tensors.utils.consolidate import consolidate_module_names
+from compressed_tensors.utils.match import match_name
 from pydantic import ValidationError
 from transformers import AutoModelForImageTextToText
 
@@ -210,12 +213,159 @@ def test_export_preserves_targets_and_expands_checkpoint_ignores(conversion, tar
     expected_ignores = [f"{prefix}.{i}" for i in range(1, 33)]
     assert exported.ignore == expected_ignores
     assert exported.model_dump()["ignore"] == expected_ignores
-    assert exported.config_groups["group_0"].model_dump() == original_scheme
+    # A class name such as "Linear" stays as written. A module path or a
+    # regex is replaced by the checkpoint name of the module that has it.
+    # The scheme on the module still has the targets the user wrote.
+    if all("." not in target and not target.startswith("re:") for target in targets):
+        expected_targets = list(targets)
+    else:
+        expected_targets = [f"{prefix}.0"]
+    assert exported.config_groups["group_0"].targets == expected_targets
     assert scheme.model_dump() == original_scheme
     restored = QuantizationConfig.model_validate_json(exported.model_dump_json())
     assert restored.ignore == expected_ignores
-    assert restored.config_groups["group_0"].targets == targets
+    assert restored.config_groups["group_0"].targets == expected_targets
     assert QuantizationConfig.from_pretrained(model) == exported
+
+
+def test_export_groups_each_scheme_object():
+    model = torch.nn.Module()
+    model.a = torch.nn.Linear(4, 4)
+    model.b = torch.nn.Linear(4, 4)
+    for module in (model.a, model.b):
+        module.quantization_scheme = QuantizationScheme(
+            targets=["Linear"], weights=QuantizationArgs(num_bits=8)
+        )
+        module.quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+
+    # apply_quantization_config puts one scheme object on every module in a
+    # group. Two separately built schemes stay two groups.
+    assert list(exported.config_groups) == ["group_0", "group_1"]
+    assert exported.config_groups["group_0"].targets == ["Linear"]
+    assert exported.config_groups["group_1"].targets == ["Linear"]
+
+
+def test_export_keeps_class_targets_and_concrete_ignores():
+    model = torch.nn.Module()
+    model.runtime = torch.nn.ModuleList([torch.nn.Linear(4, 4) for _ in range(4)])
+    scheme = QuantizationScheme(
+        targets=["Linear"], weights=QuantizationArgs(num_bits=8)
+    )
+    for index in (0, 1, 2):
+        model.runtime[index].quantization_scheme = scheme
+        model.runtime[index].quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+
+    assert exported.config_groups["group_0"].targets == ["Linear"]
+    assert exported.ignore == ["runtime.3"]
+    assert scheme.targets == ["Linear"]
+    # The saved group is the live scheme, so a format written at
+    # compression time is the format in the config.
+    assert exported.config_groups["group_0"] is scheme
+    scheme.format = "int-quantized"
+    assert exported.config_groups["group_0"].format == "int-quantized"
+
+
+def test_export_folds_module_path_targets():
+    WeightRenaming = pytest.importorskip(
+        "transformers.core_model_loading"
+    ).WeightRenaming
+    model = torch.nn.Module()
+    model.runtime = torch.nn.ModuleList([torch.nn.Linear(4, 4) for _ in range(4)])
+    model._weight_conversions = [WeightRenaming("checkpoint.", "runtime.")]
+    scheme = QuantizationScheme(
+        targets=["runtime.0", "runtime.1", "runtime.2"],
+        weights=QuantizationArgs(num_bits=8),
+    )
+    for index in (0, 1, 2):
+        model.runtime[index].quantization_scheme = scheme
+        model.runtime[index].quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+
+    assert exported.config_groups["group_0"].targets == [r"re:^checkpoint\.(?:0|1|2)\Z"]
+    assert exported.ignore == ["checkpoint.3"]
+    assert scheme.targets == ["runtime.0", "runtime.1", "runtime.2"]
+    assert model.runtime[0].quantization_scheme is scheme
+
+
+def test_export_folds_deepseek_v4_small_targets():
+    # Shape of inference-optimization/DeepSeek-V4-Pro-3.7B-A3.4B-small:
+    # 2 layers and 8 routed experts. The checkpoint names the shared down
+    # projection w2. A class-name target such as Linear would stay Linear.
+    model = torch.nn.Module()
+    model.layers = torch.nn.ModuleList()
+    shared_names = []
+    expert_names = []
+    for layer_idx in range(2):
+        layer = torch.nn.Module()
+        layer.ffn = torch.nn.Module()
+        shared = torch.nn.Module()
+        shared.w2 = torch.nn.Linear(4, 4)
+        layer.ffn.shared_experts = shared
+        experts = torch.nn.ModuleList()
+        for expert_idx in range(8):
+            expert = torch.nn.Module()
+            expert.w1 = torch.nn.Linear(4, 4)
+            experts.append(expert)
+            expert_names.append(f"layers.{layer_idx}.ffn.experts.{expert_idx}.w1")
+        layer.ffn.experts = experts
+        model.layers.append(layer)
+        shared_names.append(f"layers.{layer_idx}.ffn.shared_experts.w2")
+
+    shared_scheme = QuantizationScheme(
+        targets=list(shared_names), weights=QuantizationArgs(num_bits=8)
+    )
+    expert_scheme = QuantizationScheme(
+        targets=list(expert_names), weights=QuantizationArgs(num_bits=4)
+    )
+    for layer in model.layers:
+        layer.ffn.shared_experts.w2.quantization_scheme = shared_scheme
+        layer.ffn.shared_experts.w2.quantization_status = QuantizationStatus.FROZEN
+        for expert in layer.ffn.experts:
+            expert.w1.quantization_scheme = expert_scheme
+            expert.w1.quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+    saved_targets = [group.targets for group in exported.config_groups.values()]
+
+    assert [r"re:^layers\.(?:0|1)\.ffn\.shared_experts\.w2\Z"] in saved_targets
+    assert [
+        r"re:^layers\.(?:0|1)\.ffn\.experts\.(?:0|1|2|3|4|5|6|7)\.w1\Z"
+    ] in saved_targets
+    assert shared_scheme.targets == shared_names
+    assert expert_scheme.targets == expert_names
+
+
+def test_compression_records_format_on_folded_schemes():
+    model = torch.nn.Module()
+    model.layers = torch.nn.ModuleList([torch.nn.Linear(4, 4), torch.nn.Linear(4, 4)])
+    attn = QuantizationScheme(
+        targets=[r"re:.*\.0$"], weights=QuantizationArgs(num_bits=8, type="float")
+    )
+    mlp = QuantizationScheme(
+        targets=[r"re:.*\.1$"], weights=QuantizationArgs(num_bits=4, type="float")
+    )
+    model.layers[0].quantization_scheme = attn
+    model.layers[0].quantization_status = QuantizationStatus.FROZEN
+    model.layers[1].quantization_scheme = mlp
+    model.layers[1].quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+    assert {group.format for group in exported.config_groups.values()} == {None}
+
+    attn.format = "float-quantized"
+    mlp.format = "nvfp4-pack-quantized"
+    copy_formats_after_compression(exported, model)
+
+    saved = {
+        tuple(group.targets): group.format for group in exported.config_groups.values()
+    }
+    assert saved[("layers.0",)] == "float-quantized"
+    assert saved[("layers.1",)] == "nvfp4-pack-quantized"
 
 
 def test_get_vllm_module_type():
@@ -295,3 +445,64 @@ def test_default_weight_observer_does_not_require_calibration_data():
     )
 
     assert not config.requires_calibration_data()
+
+
+def _matched(pattern: str, names: list[str]) -> set[str]:
+    return {name for name in names if match_name(name, pattern)}
+
+
+def test_consolidate_module_names_keeps_single_name_and_regex():
+    consolidated = consolidate_module_names(
+        ["re:.*mtp.*", "lm_head", "model.layers.1.mlp.down_proj"]
+    )
+
+    assert consolidated == [
+        "re:.*mtp.*",
+        "lm_head",
+        "model.layers.1.mlp.down_proj",
+    ]
+
+
+def test_consolidate_module_names_collapses_layer_rectangle():
+    ignore = [f"model.layers.{i}.mlp.gate" for i in (0, 1)]
+    consolidated = consolidate_module_names(ignore)
+
+    assert consolidated == [r"re:^model\.layers\.(?:0|1)\.mlp\.gate\Z"]
+    assert _matched(consolidated[0], ignore) == set(ignore)
+    assert not match_name("model.layers.2.mlp.gate", consolidated[0])
+
+
+def test_consolidate_module_names_lists_only_present_indexes():
+    ignore = [f"model.layers.{i}.mlp.gate" for i in (1, 2, 3)]
+    universe = [f"model.layers.{i}.mlp.gate" for i in range(4)]
+    consolidated = consolidate_module_names(ignore)
+
+    assert consolidated == [r"re:^model\.layers\.(?:1|2|3)\.mlp\.gate\Z"]
+    assert _matched(consolidated[0], universe) == set(ignore)
+
+
+def test_consolidate_module_names_alternates_diagonal_experts():
+    universe = [
+        f"layers.{layer}.experts.{expert}.gate"
+        for layer in range(2)
+        for expert in range(2)
+    ]
+    ignore = ["layers.0.experts.0.gate", "layers.1.experts.1.gate"]
+    consolidated = consolidate_module_names(ignore)
+
+    assert consolidated == [
+        "re:^(?:layers\\.0\\.experts\\.0\\.gate|layers\\.1\\.experts\\.1\\.gate)\\Z"
+    ]
+    assert _matched(consolidated[0], universe) == set(ignore)
+
+
+def test_consolidate_module_names_collapses_expert_rectangle():
+    ignore = [
+        f"layers.{layer}.experts.{expert}.gate"
+        for layer in range(2)
+        for expert in range(2)
+    ]
+    consolidated = consolidate_module_names(ignore)
+
+    assert consolidated == [r"re:^layers\.(?:0|1)\.experts\.(?:0|1)\.gate\Z"]
+    assert _matched(consolidated[0], ignore) == set(ignore)

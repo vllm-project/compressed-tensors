@@ -173,6 +173,13 @@ class ModelCompressor:
         # update config status to reflect compression
         if self.quantization_config is not None:
             self.quantization_config.quantization_status = QuantizationStatus.COMPRESSED
+            # Folded targets live on a copy of the scheme. Compression set
+            # the format on the module's scheme; record it on the copy now.
+            from compressed_tensors.quantization.quant_config import (
+                copy_formats_after_compression,
+            )
+
+            copy_formats_after_compression(self.quantization_config, model)
 
         # attempting to perform forward passes with a compressed model
         # will cause to the model to decompress. This allows for generation

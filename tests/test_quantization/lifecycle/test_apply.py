@@ -231,9 +231,15 @@ def test_from_pretrained(config: QuantizationConfig):
     model = AutoModelForCausalLM.from_pretrained("nm-testing/llama2.c-stories15M")
     apply_quantization_config(model, config)
     _config = QuantizationConfig.from_pretrained(model)
-    assert list(_config.config_groups.values()) == list(config.config_groups.values())
     assert _config.kv_cache_scheme == config.kv_cache_scheme
     assert _config.ignore == config.ignore
+    saved_groups = list(_config.config_groups.values())
+    original_groups = list(config.config_groups.values())
+    assert len(saved_groups) == len(original_groups)
+    for saved, original in zip(saved_groups, original_groups):
+        # These configs target a class name. That target is kept.
+        assert saved.targets == original.targets
+        assert saved == original
 
 
 def test_serialize_config_tinyllama():

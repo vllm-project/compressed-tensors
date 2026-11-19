@@ -14,6 +14,7 @@ from compressed_tensors.quantization.quant_scheme import (
 )
 from compressed_tensors.quantization.utils import is_module_quantized
 from compressed_tensors.utils import find_unique_name
+from compressed_tensors.utils.consolidate import consolidate_module_names
 from compressed_tensors.utils.match import match_name
 from pydantic import BaseModel, ConfigDict, Field
 from torch.nn import Module
@@ -55,6 +56,66 @@ def _map_to_checkpoint_names(model: Module, ignore_list: list[str]) -> list[str]
         result.append(name.removesuffix(".weight"))
 
     return result
+
+
+def copy_formats_after_compression(config: "QuantizationConfig", model: Module) -> None:
+    """Write each module's compression format onto the saved scheme.
+
+    ``compress_module`` sets ``format`` on the scheme object stored on the
+    module. ``["Linear"]`` is saved as that same object, so the format is
+    already in the config. A module path or a regex is saved as a copy made
+    before compression, because the module keeps the targets the user wrote.
+    That copy's ``format`` is still unset. This copies the format
+    compression already chose. It does not choose a new one.
+    """
+    from compressed_tensors.utils.match import match_name
+
+    for name, module in model.named_modules():
+        live = getattr(module, "quantization_scheme", None)
+        if not name or live is None or getattr(live, "format", None) is None:
+            continue
+        checkpoint_names = _map_to_checkpoint_names(model, [name])
+        checkpoint_name = checkpoint_names[0] if checkpoint_names else name
+        for group in config.config_groups.values():
+            if group is live:
+                break
+            if any(
+                match_name(checkpoint_name, target) or match_name(name, target)
+                for target in group.targets
+            ):
+                group.format = live.format
+                break
+
+
+class _SchemeKey:
+    """Dict key for one scheme object.
+
+    ``QuantizationScheme`` is not hashable, and compression assigns
+    ``format`` on that object later. Modules that share a scheme object
+    share a group.
+    """
+
+    def __init__(self, scheme: QuantizationScheme):
+        self.scheme = scheme
+
+    def __hash__(self) -> int:
+        return id(self.scheme)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _SchemeKey) and self.scheme is other.scheme
+
+
+def _targets_are_class_names(targets: list[str]) -> bool:
+    """True when every target is a class name, such as ``Linear``.
+
+    A class name has no ``.`` and is not a ``re:`` pattern. Those targets
+    are already short. Folding every matched module into a regex only
+    makes the saved config longer.
+    """
+    return bool(targets) and all(
+        target and "." not in target and not target.startswith("re:")
+        for target in targets
+    )
 
 
 class QuantizationStatus(str, Enum):
@@ -202,9 +263,8 @@ class QuantizationConfig(BaseModel):
             is_cached_attention_module,
         )
 
-        # set of all quantization schemes
-        # TODO: make quant config/scheme/args frozen/hashable and use a set
-        quantization_schemes: list[QuantizationScheme] = list()
+        # One scheme object is one group. Insertion order is the group order.
+        grouped: dict[_SchemeKey, list[str]] = defaultdict(list)
 
         # use any status from modules (in practice, use the last module)
         model_status = None
@@ -235,8 +295,10 @@ class QuantizationConfig(BaseModel):
                 # add to running set of schemes/layer_type_names
                 model_status = getattr(submodule, "quantization_status", model_status)
                 quantization_type_names.add(layer_type)
-                if submodule.quantization_scheme not in quantization_schemes:
-                    quantization_schemes.append(submodule.quantization_scheme)
+                scheme = submodule.quantization_scheme
+                module_names = grouped[_SchemeKey(scheme)]
+                if name:
+                    module_names.append(name)
 
             if has_kv_cache:
                 model_status = getattr(submodule, "quantization_status", model_status)
@@ -248,9 +310,7 @@ class QuantizationConfig(BaseModel):
                     ignore[layer_type] = []
                 ignore[layer_type].append(name)
 
-        if (
-            len(quantization_schemes) == 0 and kv_cache_scheme is None
-        ):  # No quantized layers
+        if len(grouped) == 0 and kv_cache_scheme is None:  # No quantized layers
             return None
 
         # create ignore list, only include layers whose class has ever been targeted
@@ -263,12 +323,26 @@ class QuantizationConfig(BaseModel):
             # existing quantization schemes so it won't be quantized
 
         consolidated_ignore = _map_to_checkpoint_names(model, consolidated_ignore)
+        # Ignores stay concrete. Older vLLM rewrites those names and leaves
+        # "re:" entries unchanged. Ignore regexes wait until that vLLM is
+        # the one in use.
 
-        # create config groups from all unique schemes
+        # Class-name targets such as "Linear" stay as written. Replacing
+        # them lists every module and the config gets longer for no benefit.
+        # Module paths and regexes are checkpoint names, then folded.
+        # The module keeps its own scheme. A copied scheme with a checkpoint
+        # regex in its place leaves qparams behind after decompression.
         config_groups = {}
-        for idx, scheme in enumerate(quantization_schemes):
+        for idx, (key, module_names) in enumerate(grouped.items()):
+            scheme = key.scheme
             group_name = "group_" + str(idx)
-            config_groups[group_name] = scheme
+            if _targets_are_class_names(scheme.targets):
+                config_groups[group_name] = scheme
+                continue
+            checkpoint_names = _map_to_checkpoint_names(model, module_names)
+            config_groups[group_name] = scheme.model_copy(
+                update={"targets": consolidate_module_names(checkpoint_names)}
+            )
 
         # infer format
         if format is None:
