@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import json
+
 import pytest
 import torch
 from compressed_tensors.config import CompressionFormat
@@ -68,6 +70,33 @@ def _create_dummy_tensors(device: torch.device = torch.device("cpu")):
             ),
             "model.embed_tokens.weight": torch.randn(128, 64, dtype=torch.bfloat16),
         }
+
+
+@pytest.mark.unit
+def test_dequantizer_loads_nested_config_when_top_level_is_null(tmp_path):
+    quant_config = QuantizationConfig(config_groups={"W8A8": ["Linear"]}).model_dump(
+        mode="json"
+    )
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "quantization_config": None,
+                "text_config": {"quantization_config": quant_config},
+            }
+        )
+    )
+
+    dequantizer = CompressedTensorsDequantizer(tmp_path)
+    result = dequantizer.process(
+        {
+            "linear.weight": torch.ones((2, 2), dtype=torch.int8),
+            "linear.weight_scale": torch.full((2, 1), 0.5),
+        }
+    )
+
+    assert torch.equal(
+        result["linear.weight"], torch.full((2, 2), 0.5, dtype=torch.bfloat16)
+    )
 
 
 @pytest.mark.unit
