@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from typing import TYPE_CHECKING, Protocol
 
@@ -105,6 +106,21 @@ class Converter(Protocol):
         :returns: set[str] of dependency weight names
         """
         raise NotImplementedError()
+
+    def get_extra_files(self) -> list[os.PathLike]:
+        """
+        Extra files to copy into the save directory alongside the converted
+        checkpoint, e.g. provenance metadata such as the saliency report an
+        expert-pruning converter scored experts from. Each file is copied
+        under its basename. When converters are chained, files are collected
+        from every converter, with a later converter's file taking precedence
+        should two share a name.
+
+        Converters contribute no extra files by default.
+
+        :returns: list of files to copy into the save directory
+        """
+        return []
 
 
 def build_inverse_weight_maps(
