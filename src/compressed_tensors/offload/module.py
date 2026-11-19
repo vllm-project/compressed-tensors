@@ -5,9 +5,12 @@ import contextlib
 from functools import wraps
 
 import torch
+import torch.distributed as dist
+from compressed_tensors.distributed import as_broadcastable
 from compressed_tensors.offload.cache.base import OffloadCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
-from compressed_tensors.offload.utils import send_tensors
+from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
+from compressed_tensors.offload.utils import send_tensors, to_empty
 
 
 def offload_module(
@@ -88,12 +91,46 @@ def stage_module_offload(module: torch.nn.Module, pin_memory: bool = False):
         del module._original_forward_func
 
 
-def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False):
+def _broadcast_distributed_disk_cache(
+    cache: DistributedDiskCache,
+) -> dict[str, torch.Tensor | None]:
+    """Onload a distributed disk cache on rank 0 and broadcast its tensors."""
+    is_source = dist.get_rank() == 0
+    values = {}
+    for name, tensor in cache.offloaded_values.items():
+        if tensor is None:
+            values[name] = None
+            continue
+
+        gpu_tensor = (
+            cache.onload(tensor)
+            if is_source
+            else to_empty(
+                tensor,
+                device=cache.onload_device,
+                memory_format=torch.contiguous_format,
+            )
+        )
+        if gpu_tensor.numel():
+            dist.broadcast(as_broadcastable(gpu_tensor), src=0)
+        values[name] = gpu_tensor
+
+    return values
+
+
+def remove_module_offload(
+    module: torch.nn.Module,
+    onload_tensors: bool = False,
+    broadcast_onload: bool = False,
+):
     """
     Remove any offloading applied to the module
 
     :param onload_tensors: Whether to move tensors to the onloaded device, or keep them
         on the offload device. Defaults to False.
+    :param broadcast_onload: Whether to onload CUDA `DistributedDiskCache` tensors on
+        rank 0 and broadcast them. Every rank must call this in the same module and
+        tensor order.
     """
     if isinstance(module._parameters, OffloadCache):
         assert isinstance(module._buffers, OffloadCache)
@@ -104,14 +141,20 @@ def remove_module_offload(module: torch.nn.Module, onload_tensors: bool = False)
             del module._original_forward_func
 
         if onload_tensors:
-            module._parameters = {
-                name: module._parameters.onload(param)
-                for name, param in module._parameters.offloaded_values.items()
-            }
-            module._buffers = {
-                name: module._buffers.onload(param)
-                for name, param in module._buffers.offloaded_values.items()
-            }
+            for attr in ("_parameters", "_buffers"):
+                cache = getattr(module, attr)
+                if (
+                    broadcast_onload
+                    and isinstance(cache, DistributedDiskCache)
+                    and torch.device(cache.onload_device).type == "cuda"
+                ):
+                    values = _broadcast_distributed_disk_cache(cache)
+                else:
+                    values = {
+                        name: cache.onload(tensor)
+                        for name, tensor in cache.offloaded_values.items()
+                    }
+                setattr(module, attr, values)
         else:
             module._parameters = module._parameters.offloaded_values
             module._buffers = module._buffers.offloaded_values
@@ -145,11 +188,24 @@ def subgraph_stage_modules(
     Reads are grouped under `disk_load_context`, so tensors from the same
     safetensors shard share one open instead of re-parsing its header per read.
     """
+    is_distributed = (
+        dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
+    )
+    is_source = not is_distributed or dist.get_rank() == 0
     with disk_load_context():
         for name, module in modules.items():
             if not isinstance(module._parameters, OffloadCache):
                 # we should consider raising warnings, but observers will
                 # clog the output with warnings, so we will skip for now
+                continue
+
+            cache = module._parameters
+            if (
+                is_distributed
+                and not is_source
+                and isinstance(cache, DistributedDiskCache)
+                and torch.device(cache.onload_device).type == "cuda"
+            ):
                 continue
 
             stage_module_offload(module, pin_memory=pin_memory)
@@ -161,6 +217,10 @@ def subgraph_onload_modules(
     """Onload modules, consuming tensors staged in CPU memory."""
     from compressed_tensors.offload import get_cache_init_kwargs
 
+    broadcast_onload = (
+        dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
+    )
+
     offload_kwargs = {}
     # tensors that were not staged are read from disk here, grouped like staging
     with disk_load_context():
@@ -168,8 +228,11 @@ def subgraph_onload_modules(
             if isinstance(module._parameters, OffloadCache):
                 init_kwargs = get_cache_init_kwargs(module)
                 offload_kwargs[name] = init_kwargs
-
-                remove_module_offload(module, onload_tensors=True)
+                remove_module_offload(
+                    module,
+                    onload_tensors=True,
+                    broadcast_onload=broadcast_onload,
+                )
             else:
                 pass
                 # we should consider raising warnings, but observers will
