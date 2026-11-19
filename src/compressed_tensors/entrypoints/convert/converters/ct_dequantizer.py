@@ -145,6 +145,11 @@ class CompressedTensorsDequantizer(Converter):
         compression_param_names. The first param name in the returned list
         is treated as the root param, and is usually "weight" or "weight_packed"
 
+        Like `process`, the first scheme whose root param matches and which
+        targets the module is used, so a "Linear" scheme with a different root
+        (e.g. FP8 "weight") does not hide a later scheme (e.g. W4A16
+        "weight_packed") that actually owns the module.
+
         If weight_name is untargeted or ignored, an empty set is returned
         """
         module_name, _, param_name = weight_name.rpartition(".")
@@ -156,16 +161,12 @@ class CompressedTensorsDequantizer(Converter):
 
         for scheme in self.quant_config.config_groups.values():
             compressor = BaseCompressor.get_value_from_registry(scheme.format)
-            compression_param_names = compressor.compression_param_names(scheme)
+            root_name, *dependency_names = compressor.compression_param_names(scheme)
+            if param_name != root_name:
+                continue
 
             if "Linear" in scheme.targets or any(
                 [match_name(module_name, target) for target in scheme.targets]
             ):
-                if param_name == compression_param_names[0]:
-                    return set(
-                        f"{module_name}.{param_name}"
-                        for param_name in compression_param_names[1:]
-                    )
-                else:
-                    return set()
+                return set(f"{module_name}.{name}" for name in dependency_names)
         return set()
