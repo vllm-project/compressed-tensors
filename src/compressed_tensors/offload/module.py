@@ -176,7 +176,7 @@ def subgraph_onload_modules(
                 module_name = (
                     f"{name}.{relative_name}"
                     if name and relative_name
-                    else name or relative_name
+                    else name
                 )
                 if isinstance(submodule._parameters, OffloadCache):
                     init_kwargs = get_cache_init_kwargs(submodule)
