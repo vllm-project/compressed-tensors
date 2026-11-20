@@ -3,6 +3,7 @@
 
 import inspect
 import math
+import numbers
 
 import torch
 from compressed_tensors.modeling import (
@@ -298,10 +299,7 @@ def initialize_attn_qparams(
             "attributes are initialized using `apply_quantization_config`."
         )
 
-    _validate_attention_scheme(scheme)
-
-    # extract shapes from decoder config
-    config = kv_cache.config
+    config = _validate_attention_config(module, scheme, kv_cache.config)
     num_attn_heads = get_num_attn_heads(config)
     num_kv_heads = get_num_kv_heads(config)
     head_dim = get_head_dim(config)
@@ -354,3 +352,72 @@ def _validate_attention_scheme(scheme: QuantizationScheme):
 
     if scheme.output_activations is not None:
         raise ValueError("Cannot apply output quantization to attention")
+
+    args = scheme.input_activations
+    if args.dynamic is False and args.strategy in (
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        raise ValueError(
+            "Static group quantization is not supported for attention or the KV "
+            "cache; use tensor, attn_head, or dynamic quantization"
+        )
+
+
+def _get_layer_config(config, module: Module):
+    """Resolve the config of the attention module's owning decoder layer."""
+    if not getattr(config, "is_heterogeneous", False):
+        return config
+    index = getattr(module, "layer_idx", None)
+    layers = config.per_layer_config
+    if (
+        not isinstance(index, numbers.Integral)
+        or isinstance(index, bool)
+        or not 0 <= index < len(layers)
+    ):
+        raise ValueError(
+            f"Cannot initialize attention quantization for {type(module).__name__}: "
+            f"layer_idx ({index!r}) must select one of {len(layers)} layer configs "
+            f"for per-layer attributes {sorted(config.per_layer_attributes)}"
+        )
+    return layers[int(index)]
+
+
+def _validate_attention_config(module: Module, scheme: QuantizationScheme, owner):
+    """Check geometry before application mutates any attention modules."""
+    _validate_attention_scheme(scheme)
+    config = _get_layer_config(owner, module)
+    args = scheme.input_activations
+    dim = getattr(module, "head_dim", None)
+    projected = getattr(getattr(module, "k_proj", None), "out_features", None)
+    if (
+        args.strategy == QuantizationStrategy.ATTN_HEAD
+        and args.dynamic is False
+        and isinstance(dim, int)
+        and dim > 0
+        and isinstance(projected, int)
+        and projected % dim == 0
+        and projected // dim != get_num_kv_heads(config)
+    ):
+        message = (
+            f"attn_head quantization of {type(module).__name__} uses "
+            f"{get_num_kv_heads(config)} KV heads from the config, but k_proj "
+            f"projects to {projected // dim} heads of size {dim}"
+        )
+        if getattr(owner, "is_heterogeneous", False):
+            raise ValueError(message)
+        # Preserve homogeneous models whose attention is hooked with a different
+        # decoder config, such as the Idefics2 perceiver.
+        logger.warning(message, log_once=True)
+    if args.strategy in (
+        QuantizationStrategy.GROUP,
+        QuantizationStrategy.TENSOR_GROUP,
+    ):
+        head_dim = get_head_dim(config)
+        if isinstance(head_dim, int) and (dim is None or dim == head_dim):
+            if head_dim % args.group_size:
+                raise ValueError(
+                    f"group_size ({args.group_size}) must divide this attention "
+                    f"layer's head_dim ({head_dim})"
+                )
+    return config

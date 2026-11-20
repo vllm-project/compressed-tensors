@@ -5,6 +5,20 @@ import pytest
 import torch
 from compressed_tensors.transform import TransformArgs
 from transformers import PretrainedConfig, PreTrainedModel
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+
+def eager_attention_forward(module, query, key, value, attention_mask=None, **kwargs):
+    key = module.repeat_kv(key, module.num_key_value_groups)
+    value = module.repeat_kv(value, module.num_key_value_groups)
+    weights = torch.matmul(query, key.transpose(2, 3)) * module.scaling
+    if attention_mask is not None:
+        weights = weights + attention_mask
+    weights = torch.nn.functional.softmax(weights, dim=-1, dtype=torch.float32).to(
+        query.dtype
+    )
+    output = torch.matmul(weights, value).transpose(1, 2).contiguous()
+    return output, weights
 
 
 class TransformableModel(PreTrainedModel):
@@ -36,6 +50,8 @@ class MockAttention(torch.nn.Module):
         self.num_key_value_groups = num_attention_heads // num_key_value_heads
         self.head_dim = hidden_size // num_attention_heads
         self.scaling = self.head_dim**-0.5
+        self.config = PretrainedConfig()
+        self.config._attn_implementation = "eager"
         assert hidden_size >= num_attention_heads * self.head_dim
 
         self.q_proj = torch.nn.Linear(
@@ -62,20 +78,14 @@ class MockAttention(torch.nn.Module):
         value_states = self.v_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
         if past_key_values is not None:
-            past_key_values.update(key_states, value_states, 0, {})
+            key_states, value_states = past_key_values.update(
+                key_states, value_states, 0, {}
+            )
 
-        key_states = self.repeat_kv(key_states, self.num_key_value_groups)
-        value_states = self.repeat_kv(value_states, self.num_key_value_groups)
-
-        attn_weights = (
-            torch.matmul(query_states, key_states.transpose(2, 3)) * self.scaling
+        attention = ALL_ATTENTION_FUNCTIONS.get(
+            self.config._attn_implementation, eager_attention_forward
         )
-
-        attn_weights = torch.nn.functional.softmax(
-            attn_weights, dim=-1, dtype=torch.float32
-        ).to(query_states.dtype)
-        attn_output = torch.matmul(attn_weights, value_states)
-        attn_output = attn_output.transpose(1, 2).contiguous()
+        attn_output, _ = attention(self, query_states, key_states, value_states)
 
         attn_output = attn_output.reshape((batch_size, seq_len, -1)).contiguous()
 
@@ -101,6 +111,7 @@ class MockAttentionModel(PreTrainedModel):
             num_attention_heads=num_attention_heads,
             num_key_value_heads=num_key_value_heads,
         )
+        self.self_attn.config = self.config
 
     def forward(self, x):
         return self.self_attn(x)
