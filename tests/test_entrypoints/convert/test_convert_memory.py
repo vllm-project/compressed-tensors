@@ -437,3 +437,47 @@ def test_profiler_catches_exception():
         raise ValueError("boom")
 
     assert isinstance(prof.exception, ValueError)
+
+
+# ── exec_jobs_dynamic: stale free-memory snapshot ──────────────────────
+
+
+def test_dynamic_scheduler_refreshes_a_stale_snapshot():
+    """The snapshotted free memory can be stale by the time the queue stalls."""
+    devices = [torch.device("cuda:0")]
+    snapshots = iter([{devices[0]: 0}, {devices[0]: 1000}])
+
+    with (
+        patch(
+            "compressed_tensors.entrypoints.convert.memory._snapshot_free",
+            side_effect=lambda devs: next(snapshots),
+        ) as snapshot,
+        patch(
+            "compressed_tensors.entrypoints.convert.memory._run_job_on_device",
+            side_effect=lambda job, dev: (job(dev), dev),
+        ),
+    ):
+        results = exec_jobs_dynamic([lambda dev: "ran"], devices, 2, [100])
+
+    assert results == [("ran", devices[0])]
+    assert snapshot.call_count == 2
+
+
+def test_dynamic_scheduler_raises_when_memory_stays_insufficient():
+    devices = [torch.device("cuda:0")]
+
+    with (
+        patch(
+            "compressed_tensors.entrypoints.convert.memory._snapshot_free",
+            side_effect=lambda devs: {devices[0]: 0},
+        ) as snapshot,
+        patch(
+            "compressed_tensors.entrypoints.convert.memory._run_job_on_device",
+            side_effect=lambda job, dev: (job(dev), dev),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="No device has enough"):
+            exec_jobs_dynamic([lambda dev: "ran"], devices, 2, [100])
+
+    # one initial snapshot, one re-check, then give up rather than spin
+    assert snapshot.call_count == 2

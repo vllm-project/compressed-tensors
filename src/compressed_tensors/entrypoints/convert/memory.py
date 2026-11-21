@@ -340,6 +340,7 @@ def exec_jobs_dynamic(
         ThreadPoolExecutor(max_workers=max_workers) as pool,
     ):
         inflight: dict = {}
+        rechecked = False
 
         while pending or inflight:
             for idx in list(pending):
@@ -366,6 +367,16 @@ def exec_jobs_dynamic(
             if not inflight:
                 if not pending:
                     break
+                # `initial_free` was snapshotted before the first job ran, so it can
+                # be stale by the time the queue stalls: memory held by an earlier
+                # call in this process, or by another process that has exited since.
+                # Look again once before giving up on the whole batch.
+                if not rechecked:
+                    rechecked = True
+                    current = _snapshot_free(devices)
+                    if current and current != initial_free:
+                        initial_free = current
+                        continue
                 raise RuntimeError(
                     "No device has enough estimated free memory for any "
                     "remaining job. Consider reducing max_workers or "
