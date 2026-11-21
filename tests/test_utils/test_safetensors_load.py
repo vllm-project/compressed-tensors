@@ -137,3 +137,25 @@ def test_get_checkpoint_files_local_path_ignores_model_kwargs(
         assert call.kwargs == {}
     assert set(result) == {"config.json", "model.safetensors"}
     assert all(Path(path).is_file() for path in result.values())
+
+
+@patch("compressed_tensors.utils.safetensors_load.cached_file")
+def test_get_checkpoint_files_uses_forward_slashes_in_keys(cached_file, tmp_path):
+    """Weight maps name shards with forward slashes on every platform.
+
+    `os.walk` yields backslash-separated paths on Windows, so the keys must be
+    normalised or a lookup with a value taken from `safetensors.index.json` misses.
+    """
+    from compressed_tensors.utils.safetensors_load import get_checkpoint_files
+
+    nested = tmp_path / "nested" / "model.safetensors"
+    nested.parent.mkdir(parents=True)
+    nested.write_bytes(b"")
+    cached_file.side_effect = lambda stub, file_path, **kwargs: str(
+        tmp_path / file_path
+    )
+
+    result = get_checkpoint_files(tmp_path)
+
+    assert "nested/model.safetensors" in result
+    assert all("\\" not in key for key in result)
