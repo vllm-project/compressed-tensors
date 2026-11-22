@@ -231,6 +231,14 @@ class DiskCache(OffloadCache):
         source_path = Path(weight_info["safetensors_file"]).resolve()
         file_path = cls._get_ct_file_path(offload_dir, offloaded)
 
+        # A previous run against the same offload folder leaves this path behind, and
+        # os.symlink raises FileExistsError when it exists, on every platform, so
+        # re-loading into an existing offload folder failed. The path is cache-owned and
+        # rank 0 is the only writer, so it is replaced: whatever was there (a stale link
+        # from the previous load, or a real file from a previous run that wrote updated
+        # weights) is superseded by the checkpoint shard this call is asked to point at.
+        if os.path.lexists(file_path):
+            os.remove(file_path)
         os.symlink(source_path, file_path)
         cls.index[offloaded] = {
             "safetensors_file": file_path,

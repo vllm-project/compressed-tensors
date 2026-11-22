@@ -97,3 +97,32 @@ def test_print_offload_folder_uses_recorded_paths(
     assert "weight" in output
     assert "bias" in output
     assert "Unknown files" not in output
+
+
+def test_checkpoint_symlink_can_be_recreated(tmp_path):
+    """Loading twice into the same offload folder must not fail.
+
+    `os.symlink` raises FileExistsError when the target path exists, on every
+    platform, so a second load into a folder that still holds the previous run's
+    links failed. The cache owns those paths, so recreating them is safe.
+    """
+    checkpoint = tmp_path / "model.safetensors"
+    save_file({"weight": torch.ones(4)}, checkpoint)
+    offload_dir = tmp_path / "offload"
+    offload_dir.mkdir()
+
+    offloaded = torch.empty(0, dtype=torch.float32, device="meta")
+    weight_info = {
+        "safetensors_file": str(checkpoint),
+        "weight_name": "weight",
+        "dtype": "float32",
+    }
+
+    DiskCache.create_checkpoint_symlink(offloaded, weight_info, offload_dir)
+    first = sorted(p.name for p in offload_dir.iterdir())
+
+    DiskCache.create_checkpoint_symlink(offloaded, weight_info, offload_dir)
+    second = sorted(p.name for p in offload_dir.iterdir())
+
+    assert first == second, "recreating the link must not add or lose files"
+    assert len(first) == 1
