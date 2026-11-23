@@ -5,6 +5,7 @@ import inspect
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from weakref import ReferenceType, ref
 
+from compressed_tensors.modeling.cache_kwargs import get_kv_cache_kwarg_name
 from compressed_tensors.quantization.lifecycle.forward import forward_quantize
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.internal import InternalModule
@@ -116,19 +117,11 @@ def _kv_cache_attention_hook(
     The original kvcache object is assigned to QuantizedKVCache().past_key_values
     as a weakref to maintain original cache functionality and compute savings
     """
-    # transformers>=5.24 renamed the attention cache kwarg to `cache`;
-    # older versions use `past_key_values` (transformers#39956) or
-    # `past_key_value`. Pick whichever the forward signature declares,
-    # preferring the newest name.
-    parameters = inspect.signature(module.forward).parameters
-    _past_kv_name = next(
-        (
-            name
-            for name in ("cache", "past_key_values", "past_key_value")
-            if name in parameters
-        ),
-        "past_key_value",
-    )
+    # transformers>=5.24 renamed the attention cache kwarg to `cache`; older
+    # versions use `past_key_values` (transformers#39956) or `past_key_value`.
+    # Pick whichever the forward signature declares, preferring the newest
+    # name (see KV_CACHE_KWARG_NAMES).
+    _past_kv_name = get_kv_cache_kwarg_name(module) or "past_key_value"
     past_key_values: Optional[Cache] = kwargs.get(_past_kv_name, None)
 
     cache: QuantizedKVCache = getattr(module, KV_CACHE_ATTR)
