@@ -474,3 +474,46 @@ def test_decompress_on_meta(
     # group recovers in_features exactly from the scale; channel is a packed-width
     # upper bound, exact only when in_features packs with no padding
     assert weight.shape[-1] == expected_width
+
+
+@pytest.mark.parametrize(
+    "strategy,group_size,weight_shape,zp_shape",
+    [
+        (QuantizationStrategy.GROUP, 32, (256, 512), (256, 16)),
+        (QuantizationStrategy.GROUP, 128, (100, 512), (100, 4)),
+        (QuantizationStrategy.CHANNEL, None, (256, 512), (256, 1)),
+        (QuantizationStrategy.GROUP, 32, (4, 64, 128), (4, 64, 4)),
+    ],
+)
+def test_compress_on_meta_packs_asymmetric_zero_point(
+    strategy, group_size, weight_shape, zp_shape
+):
+    """
+    Compressing on meta must give the asymmetric zero point the same packed shape
+    as a real compression. transformers compresses the empty (meta) model before
+    loading a pack-quantized checkpoint, so an unpacked placeholder shape makes
+    every weight_zero_point fail to load with a size mismatch.
+    """
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(
+            num_bits=4,
+            strategy=strategy.value,
+            symmetric=False,
+            group_size=group_size,
+        ),
+    )
+    module_sd = {
+        "weight": torch.rand(weight_shape),
+        "weight_scale": torch.rand(zp_shape),
+        "weight_zero_point": torch.randint(-8, 8, zp_shape, dtype=torch.int8),
+    }
+    compressed = PackedQuantizationCompressor.compress(module_sd, scheme=scheme)
+
+    meta_sd = {k: v.to("meta") for k, v in module_sd.items()}
+    compressed_meta = PackedQuantizationCompressor.compress(meta_sd, scheme=scheme)
+
+    for name in ("weight_packed", "weight_zero_point"):
+        assert compressed_meta[name].device.type == "meta"
+        assert compressed_meta[name].shape == compressed[name].shape
+        assert compressed_meta[name].dtype == compressed[name].dtype
