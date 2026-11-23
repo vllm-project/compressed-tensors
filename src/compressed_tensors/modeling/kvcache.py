@@ -116,10 +116,18 @@ def _kv_cache_attention_hook(
     The original kvcache object is assigned to QuantizedKVCache().past_key_values
     as a weakref to maintain original cache functionality and compute savings
     """
-    _past_kv_name = (
-        "past_key_values"  # transformers#39956
-        if "past_key_values" in inspect.signature(module.forward).parameters
-        else "past_key_value"
+    # transformers>=5.24 renamed the attention cache kwarg to `cache`;
+    # older versions use `past_key_values` (transformers#39956) or
+    # `past_key_value`. Pick whichever the forward signature declares,
+    # preferring the newest name.
+    parameters = inspect.signature(module.forward).parameters
+    _past_kv_name = next(
+        (
+            name
+            for name in ("cache", "past_key_values", "past_key_value")
+            if name in parameters
+        ),
+        "past_key_value",
     )
     past_key_values: Optional[Cache] = kwargs.get(_past_kv_name, None)
 

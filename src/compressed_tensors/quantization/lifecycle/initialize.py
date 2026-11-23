@@ -162,7 +162,13 @@ def is_cached_attention_module(module: Module) -> bool:
         )
         return False
 
-    return "past_key_value" in parameters or "past_key_values" in parameters
+    # transformers>=5.24 renamed the attention cache argument from
+    # `past_key_values` to `cache` (older names remain as deprecated aliases)
+    return (
+        "cache" in parameters
+        or "past_key_value" in parameters
+        or "past_key_values" in parameters
+    )
 
 
 def initialize_qparams(
