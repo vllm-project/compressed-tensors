@@ -82,6 +82,29 @@ def has_memory_requirements(device_memory: dict[torch.device, int]):
     return True
 
 
+@pytest.mark.parametrize("onload_device", ["cpu", "cuda:0"])
+def test_set_onload_device_preserves_meta_modules(onload_device):
+    model = torch.nn.Sequential(
+        torch.nn.Linear(4, 4, device="meta"), torch.nn.Linear(4, 4)
+    )
+    # Observer initialization can add real buffers alongside meta parameters.
+    model[0].register_buffer("counter", torch.zeros(1))
+    weight = model[0].weight
+    counter = model[0].counter
+
+    set_onload_device(model, onload_device)
+
+    assert not isinstance(model[0]._parameters, OffloadCache)
+    assert not isinstance(model[0]._buffers, OffloadCache)
+    assert model[0].weight is weight
+    assert model[0].weight.is_meta
+    assert model[0].counter is counter
+    assert isinstance(model[1]._parameters, OffloadCache)
+    assert torch.device(model[1]._parameters.onload_device) == torch.device(
+        onload_device
+    )
+
+
 @pytest.mark.unit
 def test_dispatch_with_map_skips_missing_local_modules():
     # Sharded-MoE pattern: a device map is authored from the source rank's
