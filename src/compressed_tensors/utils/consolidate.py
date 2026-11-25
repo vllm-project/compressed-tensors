@@ -8,16 +8,19 @@ from itertools import product
 __all__ = ["consolidate_module_names"]
 
 
-def _path_shape(parts: tuple[str, ...]) -> tuple[str, ...]:
-    """Path shape. A numeric component, such as a layer index, becomes '#'."""
+def _get_fqn_spec(parts: tuple[str, ...]) -> tuple[str, ...]:
+    """Spec of a fully qualified name.
+
+    A numeric component, such as a layer index, becomes ``#``.
+    """
     return tuple("#" if part.isdigit() else part for part in parts)
 
 
-def _path_sort_key(parts: tuple[str, ...]) -> tuple:
+def _fqn_sort_key(parts: tuple[str, ...]) -> tuple:
     return tuple(int(part) if part.isdigit() else part for part in parts)
 
 
-def _is_index_rectangle(paths: set[tuple[str, ...]], columns: list[int]) -> bool:
+def _is_index_rectangle(fqns: set[tuple[str, ...]], columns: list[int]) -> bool:
     """True when every combination of the numeric columns is present.
 
     ``{(0, 0), (0, 1), (1, 0), (1, 1)}`` is a rectangle. ``{(0, 0), (1, 1)}``
@@ -26,26 +29,26 @@ def _is_index_rectangle(paths: set[tuple[str, ...]], columns: list[int]) -> bool
     """
     if not columns:
         return False
-    pools = [sorted({path[column] for path in paths}, key=int) for column in columns]
-    present = {tuple(path[column] for column in columns) for path in paths}
+    pools = [sorted({fqn[column] for fqn in fqns}, key=int) for column in columns]
+    present = {tuple(fqn[column] for column in columns) for fqn in fqns}
     return present == set(product(*pools))
 
 
-def _full_path_alternation(paths: set[tuple[str, ...]]) -> str:
-    ordered = sorted(paths, key=_path_sort_key)
+def _fqn_alternation(fqns: set[tuple[str, ...]]) -> str:
+    ordered = sorted(fqns, key=_fqn_sort_key)
     inner = "|".join(re.escape(".".join(parts)) for parts in ordered)
     return f"re:^(?:{inner})\\Z"
 
 
-def _rectangle_pattern(paths: set[tuple[str, ...]]) -> str:
+def _rectangle_pattern(fqns: set[tuple[str, ...]]) -> str:
     """One anchored regex. Each numeric slot lists only the indexes present."""
-    shape = _path_shape(next(iter(paths)))
+    spec = _get_fqn_spec(next(iter(fqns)))
     pieces: list[str] = []
-    for index, token in enumerate(shape):
+    for index, token in enumerate(spec):
         if token != "#":
             pieces.append(re.escape(token))
             continue
-        values = sorted({path[index] for path in paths}, key=int)
+        values = sorted({fqn[index] for fqn in fqns}, key=int)
         if len(values) == 1:
             pieces.append(re.escape(values[0]))
             continue
@@ -54,21 +57,21 @@ def _rectangle_pattern(paths: set[tuple[str, ...]]) -> str:
     return "re:^" + r"\.".join(pieces) + r"\Z"
 
 
-def _pattern_for_name_group(paths: set[tuple[str, ...]]) -> str:
-    if len(paths) == 1:
-        return ".".join(next(iter(paths)))
-    shape = _path_shape(next(iter(paths)))
-    columns = [index for index, token in enumerate(shape) if token == "#"]
-    if _is_index_rectangle(paths, columns):
-        return _rectangle_pattern(paths)
-    return _full_path_alternation(paths)
+def _pattern_for_name_group(fqns: set[tuple[str, ...]]) -> str:
+    if len(fqns) == 1:
+        return ".".join(next(iter(fqns)))
+    spec = _get_fqn_spec(next(iter(fqns)))
+    columns = [index for index, token in enumerate(spec) if token == "#"]
+    if _is_index_rectangle(fqns, columns):
+        return _rectangle_pattern(fqns)
+    return _fqn_alternation(fqns)
 
 
 def consolidate_module_names(names: list[str]) -> list[str]:
-    """Fold module names that share a path shape into one regex.
+    """Fold fully qualified names that share a spec into one regex.
 
-    Names are grouped by path shape. A numeric component is a wildcard in
-    the shape, so these two are one group::
+    Names are grouped by spec. A numeric component is a wildcard in the
+    spec, so these two are one group::
 
         model.layers.0.mlp.gate
         model.layers.1.mlp.gate
@@ -90,7 +93,7 @@ def consolidate_module_names(names: list[str]) -> list[str]:
 
       ``\\d+`` is not used. A missing index may belong to a module that
       should not match this pattern.
-    * A set that is not a rectangle stays an alternation of the full paths,
+    * A set that is not a rectangle stays an alternation of the full names,
       so a diagonal does not also match the other corners::
 
         layers.0.experts.0.gate
@@ -106,7 +109,7 @@ def consolidate_module_names(names: list[str]) -> list[str]:
     ``\\Z``.
     """
     groups: dict[tuple[str, ...], list[tuple[str, ...]]] = {}
-    # A regex stays where it is. A shape is emitted where its first concrete
+    # A regex stays where it is. A spec is emitted where its first concrete
     # name appeared.
     order: list[str | tuple[str, ...]] = []
     for name in names:
@@ -116,11 +119,11 @@ def consolidate_module_names(names: list[str]) -> list[str]:
         if not name:
             continue
         parts = tuple(name.split("."))
-        shape = _path_shape(parts)
-        if shape not in groups:
-            groups[shape] = []
-            order.append(shape)
-        groups[shape].append(parts)
+        spec = _get_fqn_spec(parts)
+        if spec not in groups:
+            groups[spec] = []
+            order.append(spec)
+        groups[spec].append(parts)
 
     consolidated: list[str] = []
     for entry in order:

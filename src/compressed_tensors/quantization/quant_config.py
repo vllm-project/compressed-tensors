@@ -105,12 +105,14 @@ class _SchemeKey:
         return isinstance(other, _SchemeKey) and self.scheme is other.scheme
 
 
-def _targets_are_class_names(targets: list[str]) -> bool:
-    """True when every target is a class name, such as ``Linear``.
+def _targets_stay_as_written(targets: list[str]) -> bool:
+    """True when every target is a class name or a module name.
 
-    A class name has no ``.`` and is not a ``re:`` pattern. Those targets
-    are already short. Folding every matched module into a regex only
-    makes the saved config longer.
+    ``Linear`` and ``lm_head`` have no ``.`` and are not ``re:`` patterns.
+    Both are already the string that should be saved. ``lm_head`` is the
+    fully qualified name of a top-level module, and ``match_name`` matches
+    it exactly. Folding the matched modules into a regex only makes the
+    saved config longer. A dotted name or a regex is rewritten.
     """
     return bool(targets) and all(
         target and "." not in target and not target.startswith("re:")
@@ -327,16 +329,17 @@ class QuantizationConfig(BaseModel):
         # "re:" entries unchanged. Ignore regexes wait until that vLLM is
         # the one in use.
 
-        # Class-name targets such as "Linear" stay as written. Replacing
-        # them lists every module and the config gets longer for no benefit.
-        # Module paths and regexes are checkpoint names, then folded.
-        # The module keeps its own scheme. A copied scheme with a checkpoint
-        # regex in its place leaves qparams behind after decompression.
+        # Class names and module names such as "Linear" and "lm_head" stay
+        # as written. Replacing them lists every module and the config gets
+        # longer for no benefit. Dotted names and regexes are checkpoint
+        # names, then folded. The module keeps its own scheme. A copied
+        # scheme with a checkpoint regex in its place leaves qparams behind
+        # after decompression.
         config_groups = {}
         for idx, (key, module_names) in enumerate(grouped.items()):
             scheme = key.scheme
             group_name = "group_" + str(idx)
-            if _targets_are_class_names(scheme.targets):
+            if _targets_stay_as_written(scheme.targets):
                 config_groups[group_name] = scheme
                 continue
             checkpoint_names = _map_to_checkpoint_names(model, module_names)

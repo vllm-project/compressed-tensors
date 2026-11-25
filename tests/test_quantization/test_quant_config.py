@@ -247,6 +247,22 @@ def test_export_groups_each_scheme_object():
     assert exported.config_groups["group_1"].targets == ["Linear"]
 
 
+def test_export_keeps_module_name_targets():
+    model = torch.nn.Module()
+    model.lm_head = torch.nn.Linear(4, 4)
+    scheme = QuantizationScheme(
+        targets=["lm_head"], weights=QuantizationArgs(num_bits=8)
+    )
+    model.lm_head.quantization_scheme = scheme
+    model.lm_head.quantization_status = QuantizationStatus.FROZEN
+
+    exported = QuantizationConfig.from_pretrained(model)
+
+    assert exported.config_groups["group_0"].targets == ["lm_head"]
+    assert exported.config_groups["group_0"] is scheme
+    assert scheme.targets == ["lm_head"]
+
+
 def test_export_keeps_class_targets_and_concrete_ignores():
     model = torch.nn.Module()
     model.runtime = torch.nn.ModuleList([torch.nn.Linear(4, 4) for _ in range(4)])
