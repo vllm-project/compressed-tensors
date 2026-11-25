@@ -165,6 +165,34 @@ def _process_group(
     return output
 
 
+_FP8_DTYPES = (torch.float8_e4m3fn, torch.float8_e5m2)
+
+
+def _get_quantize_compute_dtype(
+    x: torch.Tensor,
+    scale: torch.Tensor,
+    global_scale: torch.Tensor | None = None,
+) -> torch.dtype:
+    """Use at least float32 for scaling division to avoid double rounding on
+    low-precision inputs (e.g. bfloat16/float16) and match _quantize_kernel."""
+    dtypes = (
+        (x.dtype, scale.dtype, global_scale.dtype)
+        if global_scale is not None
+        else (x.dtype, scale.dtype)
+    )
+    if torch.float64 in dtypes:
+        return torch.float64
+    return torch.float32
+
+
+def _divide_by_scale(x: torch.Tensor, quant_scale: torch.Tensor) -> torch.Tensor:
+    # Rely on PyTorch type promotion against compute-dtype quant_scale to avoid
+    # materializing a full float32 copy of x; FP8 inputs cannot auto-promote.
+    if x.dtype in _FP8_DTYPES:
+        return x.to(quant_scale.dtype) / quant_scale
+    return x / quant_scale
+
+
 @torch.no_grad()
 def _quantize_dequantize(
     x: torch.Tensor,
@@ -178,29 +206,41 @@ def _quantize_dequantize(
     """
     Fused quantize-then-dequantize in a single pass, avoiding:
     - Double scale/global_scale division
-    - Intermediate quantized dtype allocation
+    - Redundant cast back to compute_dtype before dequantization
     """
-    # compute effective scale once
-    if global_scale is not None:
-        scale = scale / global_scale
+    compute_dtype = _get_quantize_compute_dtype(x, scale, global_scale)
 
-    scaled = x / scale
+    # compute effective scale once in at least fp32 to avoid double rounding
+    if global_scale is not None:
+        dequant_dtype = torch.promote_types(scale.dtype, global_scale.dtype)
+        quant_scale = scale.to(compute_dtype) / global_scale.to(compute_dtype)
+        dequant_scale = quant_scale.to(dequant_dtype)
+    else:
+        dequant_dtype = scale.dtype
+        quant_scale = scale.to(compute_dtype)
+        dequant_scale = scale
+
+    scaled = _divide_by_scale(x, quant_scale)
 
     if zero_point is not None:
-        scaled += zero_point.to(x.dtype)
+        scaled += zero_point.to(compute_dtype)
 
-    # clamp and round (stays in float — no int8/fp8 intermediate)
+    # clamp and round without casting back to compute_dtype
     quantized = round_to_quantized_type_args(
-        tensor=scaled, args=args, min=q_min, max=q_max
+        tensor=scaled,
+        args=args,
+        min=q_min,
+        max=q_max,
+        cast_to_original_dtype=False,
     )
 
     # dequantize: subtract zero_point and multiply by scale
-    # cast to scale.dtype to match _dequantize behavior
-    dequant = quantized.to(scale.dtype)
+    # cast to dequant_dtype to match _dequantize behavior
+    dequant = quantized.to(dequant_dtype)
     if zero_point is not None:
-        dequant = dequant - zero_point.to(scale.dtype)
+        dequant = dequant - zero_point.to(dequant_dtype)
 
-    return dequant * scale
+    return dequant * dequant_scale
 
 
 # Quantization type constants for Triton kernel
@@ -328,8 +368,7 @@ def _quantize_kernel(
 
 def _needs_fp8(*tensors, args: QuantizationArgs) -> bool:
     """Check if operation involves FP8 (dtype or quantization type)."""
-    fp8_dtypes = (torch.float8_e4m3fn, torch.float8_e5m2)
-    has_fp8_tensor = any(t is not None and t.dtype in fp8_dtypes for t in tensors)
+    has_fp8_tensor = any(t is not None and t.dtype in _FP8_DTYPES for t in tensors)
     is_fp8_quant = args.type == QuantizationType.FLOAT and args.num_bits == 8
     return has_fp8_tensor or is_fp8_quant
 
@@ -530,18 +569,23 @@ def _quantize(
     dtype: torch.dtype | None = None,
     global_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    compute_dtype = _get_quantize_compute_dtype(x, scale, global_scale)
+    quant_scale = scale.to(compute_dtype)
     if global_scale is not None:
-        scale = scale / global_scale
+        quant_scale = quant_scale / global_scale.to(compute_dtype)
 
-    scaled = x / scale
+    scaled = _divide_by_scale(x, quant_scale)
     if zero_point is not None:
-        scaled += zero_point.to(x.dtype)
+        scaled += zero_point.to(compute_dtype)
     quantized_ground = round_to_quantized_type_args(
-        tensor=scaled, args=args, min=q_min, max=q_max
+        tensor=scaled,
+        args=args,
+        min=q_min,
+        max=q_max,
+        cast_to_original_dtype=False,
     )
-    if dtype is not None:
-        quantized_ground = quantized_ground.to(dtype)
-    return quantized_ground
+    output_dtype = dtype if dtype is not None else x.dtype
+    return quantized_ground.to(output_dtype)
 
 
 @torch.no_grad()
