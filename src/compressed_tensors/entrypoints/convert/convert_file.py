@@ -128,6 +128,8 @@ def convert_file(
     save_path: str | os.PathLike,
     converters: list[Converter],
     device: str | torch.device = torch.device("cpu"),
+    *,
+    index_path: str | None = None,
 ) -> tuple[int, dict[str, str]]:
     """
     Convert tensors in a given safetensors file
@@ -141,6 +143,8 @@ def convert_file(
     :param converters: list of converters to apply in order. Each
         converter's process output is fed to the next.
     :param device: device on which tensors are loaded and converted
+    :param index_path: checkpoint-relative output shard path for the weight map.
+        Defaults to the basename of save_path.
     :returns: tuple of (total_size, weight_map), respectively the total size in bytes
         of the saved file and dictionary of weight name -> save path
     """
@@ -150,5 +154,6 @@ def convert_file(
 
     save_file(tensors, save_path)
     total_size = sum(tensor.nbytes for tensor in tensors.values())
-    weight_map = {key: os.path.basename(save_path) for key in tensors.keys()}
+    shard_path = index_path if index_path is not None else os.path.basename(save_path)
+    weight_map = dict.fromkeys(tensors, shard_path)
     return total_size, weight_map

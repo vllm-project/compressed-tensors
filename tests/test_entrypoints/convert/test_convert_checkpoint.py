@@ -198,6 +198,7 @@ def test_convert_checkpoint_schedules_accelerator_jobs(
         Path(tmp_path) / "model.safetensors",
         [converter],
         torch.device("cuda:1"),
+        index_path="model.safetensors",
     )
     write_checkpoint_quantization_config.assert_called_once_with(tmp_path, [converter])
     update_safetensors_index.assert_called_once_with(
@@ -325,18 +326,25 @@ def test_convert_checkpoint_creates_output_for_weights_only_checkpoint(tmp_path)
 def test_convert_checkpoint_creates_nested_shard_directories(tmp_path):
     source = tmp_path / "source"
     output = tmp_path / "output"
-    shard_path = source / "nested" / "model.safetensors"
-    shard_path.parent.mkdir(parents=True)
-    tensors = {"weight": torch.ones(2)}
-    save_file(tensors, shard_path)
+    weight_map = {
+        "left.weight": "left/model.safetensors",
+        "right.weight": "right/model.safetensors",
+    }
+    tensors = {"left.weight": torch.ones(2), "right.weight": torch.zeros(2)}
+    for weight, shard in weight_map.items():
+        shard_path = source / shard
+        shard_path.parent.mkdir(parents=True)
+        save_file({weight: tensors[weight]}, shard_path)
     (source / "model.safetensors.index.json").write_text(
-        json.dumps({"weight_map": {"weight": "nested/model.safetensors"}})
+        json.dumps({"weight_map": weight_map})
     )
 
     convert_checkpoint(source, output, NoOpConverter(), device="cpu")
 
-    converted = load_file(output / "nested" / "model.safetensors")
-    assert torch.equal(converted["weight"], tensors["weight"])
+    index = json.loads((output / "model.safetensors.index.json").read_text())
+    assert index["weight_map"] == weight_map
+    for weight, shard in index["weight_map"].items():
+        assert torch.equal(load_file(output / shard)[weight], tensors[weight])
 
 
 def test_convert_checkpoint_preserves_config_across_runs(tmp_path):
