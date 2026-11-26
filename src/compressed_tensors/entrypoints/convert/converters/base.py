@@ -119,7 +119,6 @@ def build_inverse_weight_maps(
     This is necessary because some converters require that a set of tensors are
     accessible in order for them to be processed correctly.
 
-    :param shard_name: the shard filename this job will process and save
     :param weight_map: tensor name -> shard filename (from safetensors.index.json)
     :param model_files: shard filename -> resolved absolute path
     :return: {resolved_file_path: [tensor_names_to_load]}
