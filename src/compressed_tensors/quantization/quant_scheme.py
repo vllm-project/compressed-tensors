@@ -20,6 +20,7 @@ __all__ = [
     "QuantizationScheme",
     "preset_name_to_scheme",
     "is_preset_scheme",
+    "HIF8_KV",
 ]
 
 
@@ -333,6 +334,27 @@ MXFP8 = dict(
         scale_dtype=torch.uint8,
         zp_dtype=torch.uint8,
     ),
+)
+
+
+# HiF8 (HiFloat8) KV cache static scale contract.
+#
+# Declares the scale for HiF8 (HiFloat8) KV-cache quantization of sparse (DSA/NoPE)
+# attention layers: one static per-tensor FLOAT32 scale governs the whole latent tensor
+# (``absmax / 32768``), as the HiF8 operator supports no per-tile/per-group scales.
+#
+# This preset declares only that granularity/dtype contract (per-tensor, FLOAT32); the
+# HiF8 element quantization itself runs on the inference side, which consumes the
+# calibrated FLOAT32 scale produced here. Pass as ``kv_cache_scheme=`` to
+# ``QuantizationConfig``.
+HIF8_KV = QuantizationArgs(
+    num_bits=8,
+    type=QuantizationType.FLOAT,
+    strategy=QuantizationStrategy.TENSOR,
+    symmetric=True,
+    dynamic=False,
+    observer="static_minmax",
+    scale_dtype=torch.float32,
 )
 
 
