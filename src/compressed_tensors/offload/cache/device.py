@@ -33,7 +33,7 @@ class DeviceCache(OffloadCache):
         """
         Typically a no op, except when onload device has been modified
 
-        :param key: device tensor to onload
+        :param offloaded: device tensor to onload
         :return: device tensor
         """
         # move because onload_device might be modified after init
