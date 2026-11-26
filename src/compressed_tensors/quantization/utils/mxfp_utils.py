@@ -119,10 +119,16 @@ def round_to_power_2(
     # Find closest power of 2
     VAL_TO_ADD = 1 << (mantissa - elem_mantissa - 1)
     # Add value to push the value to the next exponent
-    SIGN_EXPONENT_MASK = ((1 << (exponent + 1)) - 1) << mantissa
     # mask to only keep exponent - we conservatively round down
     # to better represent smaller numbers / prevent overflow
-    block_max_uint = torch.bitwise_and(x + VAL_TO_ADD, SIGN_EXPONENT_MASK)
+    if int_dtype is torch.uint64:
+        # float64's sign+exponent mask is 0xFFF0000000000000, which does not fit
+        # the int64 the bits are carried in, and uint64 has no addition in torch.
+        # Shifting the mantissa away and back is the same mask without the literal.
+        block_max_uint = ((x + VAL_TO_ADD) >> mantissa) << mantissa
+    else:
+        SIGN_EXPONENT_MASK = ((1 << (exponent + 1)) - 1) << mantissa
+        block_max_uint = torch.bitwise_and(x + VAL_TO_ADD, SIGN_EXPONENT_MASK)
     if int_dtype is torch.uint16:
         return block_max_uint.to(int_dtype).view(scale_dtype)
     return block_max_uint.view(scale_dtype)
