@@ -176,7 +176,7 @@ def get_quantization_config(config_path: str) -> dict | None:
     :return: quantization config as dictionary pulled from config.json. If not found,
         returns None.
     """
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
 
     quant_config = None
@@ -221,7 +221,7 @@ def get_weight_map(model_files: dict[str, str]) -> dict[str, str]:
     """
     index_file = find_safetensors_index_file(model_files)
     if index_file is not None:
-        with open(index_file, "r") as f:
+        with open(index_file, "r", encoding="utf-8") as f:
             return json.load(f)["weight_map"]
 
     # if no index_file, use model.saftensors instead.
@@ -253,7 +253,7 @@ def update_safetensors_index(
     if file_path is None:
         file_path = os.path.join(save_directory, SAFE_WEIGHTS_INDEX_NAME)
 
-    with open(file_path, "w") as file:
+    with open(file_path, "w", encoding="utf-8") as file:
         json.dump(
             {
                 "metadata": {
