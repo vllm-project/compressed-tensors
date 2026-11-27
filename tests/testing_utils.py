@@ -184,3 +184,19 @@ def requires_gpu(test_case_or_num):
         return decorator
     else:
         return decorator(test_case_or_num)
+
+
+def _has_triton():
+    """Check if Triton is available."""
+    try:
+        from compressed_tensors.utils.triton import HAS_TRITON
+
+        return HAS_TRITON
+    except ImportError:
+        return False
+
+
+requires_triton = pytest.mark.skipif(
+    not _has_triton(),
+    reason="Triton is not available",
+)
