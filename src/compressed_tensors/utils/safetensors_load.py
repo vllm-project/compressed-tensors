@@ -103,8 +103,11 @@ def get_checkpoint_files(
         hub_kwargs = model_kwargs or {}
         file_paths = list_repo_files(model_stub, **hub_kwargs)
 
+    # Weight maps in `safetensors.index.json` always name shards with forward
+    # slashes, and on Windows `os.walk` yields backslashes, so normalise the keys
+    # here where every caller can rely on them.
     return {
-        file_path: cached_file(model_stub, file_path, **hub_kwargs)
+        file_path.replace(os.sep, "/"): cached_file(model_stub, file_path, **hub_kwargs)
         for file_path in file_paths
     }
 
