@@ -1227,3 +1227,358 @@ def test_calculate_range_memoized_on_field_values():
     q_min_8, q_max_8 = calculate_range(QuantizationArgs(num_bits=8, type="int"), device)
     assert q_min_8.item() == -128.0
     assert q_max_8.item() == 127.0
+
+
+@pytest.mark.parametrize("input_dtype", [torch.bfloat16, torch.float16])
+def test_quantize_fp8_avoids_low_precision_double_rounding(input_dtype):
+    """Verify PyTorch _quantize and fake_quantize promote low-precision inputs
+    to float32 before division so scaling does not suffer double rounding."""
+    torch.manual_seed(0)
+    x = (torch.randn(128, 256, dtype=torch.float32) * 0.02).to(input_dtype)
+    scale = x.abs().amax(dim=1, keepdim=True) / torch.tensor(448.0, dtype=input_dtype)
+    args = QuantizationArgs(
+        num_bits=8,
+        type=QuantizationType.FLOAT,
+        strategy=QuantizationStrategy.CHANNEL,
+        symmetric=True,
+    )
+    q_min, q_max = calculate_range(args, torch.device("cpu"))
+
+    expected_fp8 = (x.float() / scale.float()).clamp(-448.0, 448.0)
+    expected_fp8 = expected_fp8.to(torch.float8_e4m3fn)
+    naive_low_prec_fp8 = (x / scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn)
+    # Sanity check: this input actually exercises double-rounding cases
+    assert not torch.equal(
+        expected_fp8.view(torch.uint8), naive_low_prec_fp8.view(torch.uint8)
+    )
+
+    out_fp8 = ImplBackend.call(
+        "_quantize",
+        x=x,
+        scale=scale,
+        zero_point=None,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        dtype=torch.float8_e4m3fn,
+    )
+    assert out_fp8.dtype == torch.float8_e4m3fn
+    assert torch.equal(out_fp8.view(torch.uint8), expected_fp8.view(torch.uint8))
+
+    out_input_dtype = ImplBackend.call(
+        "_quantize",
+        x=x,
+        scale=scale,
+        zero_point=None,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        dtype=None,
+    )
+    assert out_input_dtype.dtype == input_dtype
+    assert torch.equal(out_input_dtype, expected_fp8.to(input_dtype))
+
+    # Mixed dtype contract: dtype=None preserves x.dtype even with fp32 scale
+    out_mixed_scale = ImplBackend.call(
+        "_quantize",
+        x=x,
+        scale=scale.float(),
+        zero_point=None,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        dtype=None,
+    )
+    assert out_mixed_scale.dtype == input_dtype
+    assert torch.equal(out_mixed_scale, expected_fp8.to(input_dtype))
+
+    # End-to-end public fake_quantize also avoids double rounding
+    fake_out = fake_quantize(x=x, scale=scale, zero_point=None, args=args)
+    expected_dequant = expected_fp8.to(input_dtype) * scale
+    naive_dequant = naive_low_prec_fp8.to(input_dtype) * scale
+    assert not torch.equal(expected_dequant, naive_dequant)
+    assert fake_out.dtype == input_dtype
+    assert torch.equal(fake_out, expected_dequant)
+
+
+@requires_gpu
+@pytest.mark.parametrize("input_dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize(
+    "args,shape,scale_shape,zp_dtype,global_scale_dtype",
+    [
+        (
+            QuantizationArgs(
+                num_bits=8, type="int", strategy=QuantizationStrategy.CHANNEL
+            ),
+            (128, 256),
+            (128, 1),
+            None,
+            None,
+        ),
+        (
+            QuantizationArgs(
+                num_bits=8,
+                type="int",
+                symmetric=False,
+                strategy=QuantizationStrategy.CHANNEL,
+            ),
+            (128, 256),
+            (128, 1),
+            torch.int8,
+            None,
+        ),
+        (
+            QuantizationArgs(
+                num_bits=4,
+                type="int",
+                strategy=QuantizationStrategy.GROUP,
+                group_size=128,
+            ),
+            (64, 4, 128),
+            (64, 4, 1),
+            None,
+            None,
+        ),
+        (
+            QuantizationArgs(
+                num_bits=4,
+                type="float",
+                strategy=QuantizationStrategy.GROUP,
+                group_size=16,
+            ),
+            (64, 16, 16),
+            (64, 16, 1),
+            None,
+            torch.float32,
+        ),
+        (
+            QuantizationArgs(
+                num_bits=6,
+                type="float",
+                strategy=QuantizationStrategy.GROUP,
+                group_size=32,
+            ),
+            (64, 8, 32),
+            (64, 8, 1),
+            None,
+            None,
+        ),
+        (
+            QuantizationArgs(
+                num_bits=8, type="float", strategy=QuantizationStrategy.CHANNEL
+            ),
+            (128, 256),
+            (128, 1),
+            None,
+            None,
+        ),
+        (
+            QuantizationArgs(
+                num_bits=8,
+                type="float",
+                strategy=QuantizationStrategy.BLOCK,
+                block_structure=[32, 64],
+            ),
+            (4, 32, 4, 64),
+            (4, 4, 1, 1),
+            None,
+            None,
+        ),
+    ],
+)
+def test_quantize_backends_match_low_precision(
+    input_dtype, args, shape, scale_shape, zp_dtype, global_scale_dtype
+):
+    """Verify PyTorch fallback _quantize matches Triton _quantize_triton exactly
+    on bfloat16/float16 inputs without double-rounding divergence."""
+    accel = torch.accelerator.current_accelerator()
+    is_fp8 = args.type == QuantizationType.FLOAT and args.num_bits == 8
+    if is_fp8 and not _is_fp8_supported(accel):
+        pytest.skip("FP8 Triton kernel requires SM90+ (Hopper)")
+
+    torch.manual_seed(42)
+    x = (torch.randn(shape, dtype=torch.float32) * 0.02).to(input_dtype)
+    if args.strategy == QuantizationStrategy.BLOCK:
+        # Mirror _process_block's non-contiguous (nr, nc, bh, bw) layout
+        x = x.transpose(1, 2)
+        assert not x.is_contiguous()
+    scale = (torch.rand(scale_shape, dtype=torch.float32) * 0.01 + 0.001).to(
+        input_dtype
+    )
+    zero_point = (
+        torch.full(scale_shape, 3, dtype=zp_dtype) if zp_dtype is not None else None
+    )
+    global_scale = (
+        torch.tensor([2.0], dtype=global_scale_dtype)
+        if global_scale_dtype is not None
+        else None
+    )
+
+    q_min_cpu, q_max_cpu = calculate_range(args, torch.device("cpu"))
+    q_min_accel, q_max_accel = calculate_range(args, accel)
+
+    torch_out = ImplBackend.call(
+        "_quantize",
+        x=x,
+        scale=scale,
+        zero_point=zero_point,
+        q_min=q_min_cpu,
+        q_max=q_max_cpu,
+        args=args,
+        dtype=None,
+        global_scale=global_scale,
+    )
+    triton_out = ImplBackend.call(
+        "_quantize_triton",
+        _to_accel(x),
+        _to_accel(scale),
+        _to_accel(zero_point),
+        q_min_accel,
+        q_max_accel,
+        args,
+        None,
+        _to_accel(global_scale),
+    ).cpu()
+
+    assert torch_out.dtype == input_dtype
+    assert triton_out.dtype == input_dtype
+    assert torch.equal(torch_out, triton_out), (
+        f"Mismatch between PyTorch and Triton on {input_dtype}: "
+        f"{(torch_out != triton_out).sum().item()} / {torch_out.numel()} elements"
+    )
+
+
+@pytest.mark.parametrize("device_kind", ["cpu", "meta", "accel"])
+@pytest.mark.parametrize("input_dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize(
+    "num_bits,type_,zp_dtype,global_scale_dtype",
+    [
+        (8, "float", None, None),
+        (8, "float", None, torch.bfloat16),
+        (8, "float", None, torch.float32),
+        (8, "int", None, None),
+        (8, "int", torch.int8, None),
+        (4, "float", None, torch.float32),
+    ],
+)
+def test_quantize_dequantize_low_precision_matches_sequential(
+    device_kind, input_dtype, num_bits, type_, zp_dtype, global_scale_dtype
+):
+    """Verify fused _quantize_dequantize avoids low-precision double rounding
+    and preserves output dtype matching sequential _quantize + _dequantize."""
+    if device_kind == "accel":
+        if not torch.accelerator.is_available():
+            pytest.skip("requires accelerator")
+        device = torch.accelerator.current_accelerator()
+    else:
+        device = torch.device(device_kind)
+
+    symmetric = zp_dtype is None
+    args = QuantizationArgs(
+        num_bits=num_bits,
+        type=type_,
+        symmetric=symmetric,
+        strategy=QuantizationStrategy.CHANNEL,
+    )
+    if device.type == "meta":
+        x = torch.empty((64, 128), dtype=input_dtype, device=device)
+        scale = torch.empty((64, 1), dtype=input_dtype, device=device)
+        zero_point = (
+            torch.empty((64, 1), dtype=zp_dtype, device=device)
+            if zp_dtype is not None
+            else None
+        )
+        global_scale = (
+            torch.empty((1,), dtype=global_scale_dtype, device=device)
+            if global_scale_dtype is not None
+            else None
+        )
+    else:
+        torch.manual_seed(7)
+        x = (torch.randn(64, 128, dtype=torch.float32) * 0.02).to(
+            device=device, dtype=input_dtype
+        )
+        scale = (torch.rand(64, 1, dtype=torch.float32) * 0.01 + 0.001).to(
+            device=device, dtype=input_dtype
+        )
+        zero_point = (
+            torch.full((64, 1), 3, dtype=zp_dtype, device=device)
+            if zp_dtype is not None
+            else None
+        )
+        global_scale = (
+            torch.tensor([2.0], dtype=global_scale_dtype, device=device)
+            if global_scale_dtype is not None
+            else None
+        )
+    q_min, q_max = calculate_range(args, device)
+
+    q = ImplBackend.call(
+        "_quantize",
+        x=x,
+        scale=scale,
+        zero_point=zero_point,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        global_scale=global_scale,
+    )
+    sequential_out = _dequantize(
+        x_q=q,
+        scale=scale,
+        zero_point=zero_point,
+        global_scale=global_scale,
+    )
+    fused_out = _quantize_dequantize(
+        x=x,
+        scale=scale,
+        zero_point=zero_point,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+        global_scale=global_scale,
+    )
+
+    assert fused_out.dtype == sequential_out.dtype
+    assert fused_out.shape == sequential_out.shape
+    if device.type == "meta":
+        return
+    assert torch.equal(fused_out, sequential_out)
+
+
+@pytest.mark.parametrize("scale_dtype", [torch.float64, torch.float32])
+def test_quantize_preserves_float64_precision(scale_dtype):
+    """Verify float64 inputs are not downcast to float32 during scaling."""
+    args = QuantizationArgs(
+        num_bits=8,
+        type=QuantizationType.INT,
+        strategy=QuantizationStrategy.TENSOR,
+        symmetric=True,
+    )
+    # 0.5 + 1e-10 rounds to 0.5 (then 0) in float32, but rounds to 1 in float64
+    x = torch.tensor([[0.5 + 1e-10]], dtype=torch.float64)
+    scale = torch.tensor([1.0], dtype=scale_dtype)
+    q_min, q_max = calculate_range(args, torch.device("cpu"))
+
+    out = ImplBackend.call(
+        "_quantize",
+        x=x,
+        scale=scale,
+        zero_point=None,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+    )
+    assert out.dtype == torch.float64
+    assert out.item() == 1.0
+
+    qdq_out = _quantize_dequantize(
+        x=x,
+        scale=scale,
+        zero_point=None,
+        q_min=q_min,
+        q_max=q_max,
+        args=args,
+    )
+    assert qdq_out.dtype == scale_dtype
+    assert qdq_out.item() == 1.0
