@@ -10,6 +10,7 @@ from compressed_tensors.offload import disable_onloading
 from compressed_tensors.offload.cache.disk import DiskCache
 from compressed_tensors.offload.cache.disk_utils import disk_load_context
 from compressed_tensors.offload.cache.dist_disk import DistributedDiskCache
+from compressed_tensors.offload.cache.utils import load_disk_tensor_from_offload
 from safetensors import safe_open
 from safetensors.torch import save_file
 from tests.test_offload.cache.helpers import (
@@ -259,7 +260,6 @@ def test_disk_load_context_is_per_rank(tmp_path_factory):
     must not close a handle the other rank is still holding.
     """
     from compressed_tensors.offload.cache import disk_utils
-    from compressed_tensors.offload.cache.disk_utils import _opened
 
     rank = dist.get_rank()
     # every rank writes its own shard so the test does not depend on a shared FS
@@ -267,13 +267,16 @@ def test_disk_load_context_is_per_rank(tmp_path_factory):
     shard = directory / "shard.safetensors"
     save_file({f"w{i}": torch.full((4,), float(i)) for i in range(4)}, shard)
 
+    def load(name):
+        return load_disk_tensor_from_offload(
+            {"safetensors_file": str(shard), "weight_name": name, "dtype": "float32"},
+            device="cpu",
+        )
+
     with disk_load_context():
         for i in range(4):
-            with _opened(str(shard), "cpu") as (file, _, _):
-                assert_tensor_equal(
-                    file.get_tensor(f"w{i}"), torch.full((4,), float(i))
-                )
-        held = list(disk_utils._open_files.cache.values())
+            assert_tensor_equal(load(f"w{i}"), torch.full((4,), float(i)))
+        held = [entry[0] for entry in disk_utils._open_files.cache.values()]
         assert len(held) == 1, f"rank {rank} expected one cached handle"
         dist.barrier()
         # the other rank has also entered and is holding its own handle
@@ -281,9 +284,8 @@ def test_disk_load_context_is_per_rank(tmp_path_factory):
 
     dist.barrier()
     assert disk_utils._open_files.cache is None, f"rank {rank} leaked its cache"
-    for handle, _, _ in held:
-        with pytest.raises(Exception, match="closed"):
-            handle.get_tensor("w0")
+    for file in held:
+        assert file.closed
 
 
 @pytest.mark.unit
