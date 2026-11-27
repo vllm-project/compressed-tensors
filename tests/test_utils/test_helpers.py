@@ -7,6 +7,7 @@ import pytest
 from compressed_tensors import (
     ParameterizedDefaultDict,
     get_nested_value,
+    get_num_kv_heads,
     patch_attr,
     patch_attrs,
 )
@@ -75,3 +76,29 @@ def test_get_nested_value(key, default, expected_value):
     a = {"b": 1, "c": {"d": 4}}
 
     assert get_nested_value(a, key, default) == expected_value
+
+
+@pytest.mark.parametrize(
+    "config,expected",
+    [
+        (SimpleNamespace(num_attention_heads=8, num_key_value_heads=2), 2),
+        (SimpleNamespace(num_attention_heads=8), 8),
+        (SimpleNamespace(num_attention_heads=8, num_key_value_heads=None), 8),
+    ],
+)
+def test_get_num_kv_heads(config, expected):
+    assert get_num_kv_heads(config) == expected
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        # falcon
+        SimpleNamespace(num_attention_heads=8, num_kv_heads=8, multi_query=True),
+        # chatglm
+        SimpleNamespace(num_attention_heads=8, multi_query_group_num=2),
+    ],
+)
+def test_get_num_kv_heads_other_names(config):
+    with pytest.raises(ValueError, match="num_key_value_heads"):
+        get_num_kv_heads(config)
