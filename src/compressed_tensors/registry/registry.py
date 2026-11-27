@@ -236,13 +236,12 @@ def get_from_registry(
     :return: value from retrieved the registry for the given name, raises
         error if not found
     """
-    name = standardize_lookup_name(name)
-
     if ":" in name:
         # user specifying specific module to load and value to import
-        module_path, value_name = name.split(":")
+        module_path, value_name = name.rsplit(":", 1)
         retrieved_value = _import_and_get_value_from_module(module_path, value_name)
     else:
+        name = standardize_lookup_name(name)
         # look up name in alias registry
         name = _ALIAS_REGISTRY[parent_class].get(name, name)
         # look up name in registry
