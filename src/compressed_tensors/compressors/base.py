@@ -2,15 +2,18 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from abc import ABC
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
 from compressed_tensors.compressors.format import infer_module_format
 from compressed_tensors.config import CompressionFormat
+from compressed_tensors.offload import unwrap_offload_forward
 from compressed_tensors.quantization import (
     QuantizationMetadata,
     QuantizationScheme,
     QuantizationStatus,
+    remove_forward_compressed,
+    set_forward_compressed,
 )
 from compressed_tensors.registry import RegistryMixin
 from compressed_tensors.utils import (
@@ -97,13 +100,33 @@ class BaseCompressor(RegistryMixin, ABC):
         )
 
     @classmethod
+    def get_compressed_forward(
+        cls, module: torch.nn.Module
+    ) -> Callable[[torch.nn.Module, torch.Tensor], torch.Tensor] | None:
+        """
+        Resolve a forward function which runs directly on the module's compressed
+        parameters, for example by calling a quantized kernel.
+
+        This is called once by `compress_module` after the module has been
+        compressed, so any dispatch which depends on the module (scheme, shapes,
+        execution device, hardware support) should be done here rather than within
+        the returned forward function.
+
+        :param module: module which has been compressed by this compressor
+        :return: unbound forward function which takes the module and its input, or
+            None if the module should keep its existing forward function
+        """
+        return None
+
+    @classmethod
     def compress_module(cls, module: torch.nn.Module) -> None:
         """
         Compress a module in-place by compressing its state dict.
 
         Extracts the module's parameters and buffers, compresses them using the
         compress classmethod, and replaces the module's state with the compressed
-        version.
+        version. If the compressor provides a compressed forward function (see
+        `get_compressed_forward`), it replaces the module's forward function.
 
         :param module: the module to compress in-place
         """
@@ -115,6 +138,11 @@ class BaseCompressor(RegistryMixin, ABC):
 
         module.quantization_status = QuantizationStatus.COMPRESSED
 
+        forward = cls.get_compressed_forward(module)
+        if forward is not None:
+            with unwrap_offload_forward(module):
+                set_forward_compressed(module, forward)
+
     @classmethod
     def decompress_module(
         cls, module: torch.nn.Module, leave_decompressed: bool = True
@@ -124,7 +152,8 @@ class BaseCompressor(RegistryMixin, ABC):
 
         Extracts the module's parameters and buffers, decompresses them using the
         decompress classmethod, and replaces the module's state with the decompressed
-        version.
+        version. Any compressed forward function is replaced with the module's
+        original forward function.
 
         :param module: the module to decompress in-place
         :param leave_decompressed: if True, set quantization_status to DECOMPRESSED
@@ -133,6 +162,9 @@ class BaseCompressor(RegistryMixin, ABC):
             module as if quantization had never been applied.
         """
         scheme = getattr(module, "quantization_scheme")
+
+        with unwrap_offload_forward(module):
+            remove_forward_compressed(module)
 
         state_dict = get_direct_state_dict(module)
         decompressed_state_dict = cls.decompress(state_dict, scheme)
