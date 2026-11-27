@@ -36,7 +36,7 @@ def load_model_config(model_files: dict[str, str]) -> dict:
             "Could not find config.json. "
             "Please specify num_experts_config_key explicitly."
         )
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 

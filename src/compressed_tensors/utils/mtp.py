@@ -101,7 +101,7 @@ def save_mtp_tensors_to_checkpoint(
     # know not to apply quantization to MTP layers
     config_path = find_config_path(dest_dir)
     if config_path is not None:
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
 
         quant_config = config.get(QUANTIZATION_CONFIG_NAME)
@@ -119,7 +119,7 @@ def save_mtp_tensors_to_checkpoint(
             updated_ignores = list(dict.fromkeys([*ignore_list, *ignores]))
             if updated_ignores != ignore_list:
                 quant_config["ignore"] = updated_ignores
-                with open(config_path, "w") as f:
+                with open(config_path, "w", encoding="utf-8") as f:
                     json.dump(config, f, indent=2)
 
     logger.info(f"Copied MTP weights from {source_model} to {dest_dir}")

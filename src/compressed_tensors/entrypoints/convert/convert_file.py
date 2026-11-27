@@ -49,7 +49,7 @@ def write_checkpoint_quantization_config(
     config_data = None
     config = None
     if config_file_path is not None:
-        with open(config_file_path, "r") as file:
+        with open(config_file_path, "r", encoding="utf-8") as file:
             config_data = json.load(file)
 
         existing_config_data = config_data.get(QUANTIZATION_CONFIG_NAME)
@@ -93,7 +93,7 @@ def write_checkpoint_quantization_config(
         for converter in converters:
             config_data = converter.update_model_config(config_data)
 
-        with open(config_file_path, "w") as file:
+        with open(config_file_path, "w", encoding="utf-8") as file:
             json.dump(config_data, file, indent=2, sort_keys=True)
 
     else:
