@@ -110,6 +110,14 @@ class BaseCompressor(RegistryMixin, ABC):
         scheme = getattr(module, "quantization_scheme")
 
         state_dict = get_direct_state_dict(module)
+
+        # Some formats store scales in a dtype that does not match the dense
+        # weight (e.g. fp8 or e8m0 scales for NVFP4 / MX formats), so remember
+        # the dense dtype here to restore it on decompression
+        weight = state_dict.get("weight", None)
+        if isinstance(weight, torch.Tensor) and weight.is_floating_point():
+            module.quantization_dense_dtype = weight.dtype
+
         compressed_state_dict = cls.compress(state_dict, scheme)
         replace_direct_state_dict(module, compressed_state_dict)
 
@@ -136,6 +144,21 @@ class BaseCompressor(RegistryMixin, ABC):
 
         state_dict = get_direct_state_dict(module)
         decompressed_state_dict = cls.decompress(state_dict, scheme)
+
+        # Restore the dense dtype recorded at compression time. Without this, formats
+        # whose scales are not stored in the dense dtype decompress to a fixed dtype
+        # (bfloat16), which breaks the forward pass of float16 and float32 models
+        dense_dtype = getattr(module, "quantization_dense_dtype", None)
+        weight = decompressed_state_dict.get("weight", None)
+        if (
+            dense_dtype is not None
+            and isinstance(weight, torch.Tensor)
+            and weight.is_floating_point()
+            and weight.dtype != dense_dtype
+        ):
+            decompressed_state_dict = decompressed_state_dict.copy()
+            decompressed_state_dict["weight"] = weight.to(dense_dtype)
+
         replace_direct_state_dict(module, decompressed_state_dict)
 
         if leave_decompressed:
@@ -144,6 +167,8 @@ class BaseCompressor(RegistryMixin, ABC):
             QuantizationMetadata.clear_quantization(module)
             if hasattr(module, "quantization_status"):
                 delattr(module, "quantization_status")
+            if hasattr(module, "quantization_dense_dtype"):
+                delattr(module, "quantization_dense_dtype")
 
     @classmethod
     def can_compress(cls, module_type: type, scheme: QuantizationScheme) -> bool:
