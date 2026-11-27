@@ -79,9 +79,19 @@ def test_decompress_model(model_stub, compressed_stub):
 
     # decompress_model retains quantization parameters (scales, packed shapes)
     # so the model can be recompressed later, while transformers>=5.23 loads
-    # `dequantize=True` checkpoints fully dense. Require every reference
-    # weight to be present and match rather than requiring identical key sets
-    assert true_decompressed.keys() <= decompressed.keys()
+    # `dequantize=True` checkpoints fully dense. Every reference weight must
+    # be present and match. Extra keys are only those qparams.
+    missing = true_decompressed.keys() - decompressed.keys()
+    extra = decompressed.keys() - true_decompressed.keys()
+    assert not missing
+    qparam_suffixes = (
+        "weight_scale",
+        "weight_zero_point",
+        "weight_shape",
+        "weight_global_scale",
+        "weight_packed",
+    )
+    assert all(key.endswith(qparam_suffixes) for key in extra), extra
     for key in true_decompressed.keys():
         assert decompressed[key].dtype == true_decompressed[key].dtype, key
         assert torch.equal(decompressed[key], true_decompressed[key])

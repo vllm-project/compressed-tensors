@@ -3,6 +3,7 @@
 
 # flake8: noqa
 
+from .consolidate import *
 from .helpers import *
 from .internal import *
 from .match import *
