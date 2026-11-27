@@ -22,6 +22,13 @@ from compressed_tensors.utils.safetensors_load import (
 from transformers.file_utils import CONFIG_NAME
 
 
+_ACTIVATION_QPARAM_NAMES = tuple(
+    name
+    for name in QuantizationMetadata.all_qparam_names()
+    if name.startswith(("input_", "output_"))
+)
+
+
 class CompressedTensorsDequantizer(Converter):
     """
     Dequantize a checkpoint in the compressed-tensors quant format
@@ -124,6 +131,16 @@ class CompressedTensorsDequantizer(Converter):
                 dequantized_tensors[f"{module_name}.weight"] = dequantized_state_dict[
                     "weight"
                 ].to(self.dtype)
+
+            # Static activation qparams (e.g. input_scale) of dequantized modules
+            # have no use in the dense checkpoint, so drop them as well
+            for _, tensor_name in match_quantizable_tensors(
+                tensors,
+                ignore=self.quant_config.ignore,
+                targets=scheme.targets,
+                param_targets=_ACTIVATION_QPARAM_NAMES,
+            ):
+                del tensors[tensor_name]
 
         # Copy over any remaining ignored/untargeted tensors, skipping kv cache qparams
         kv_cache_param_names = [v.value for v in KVCacheScaleType]
