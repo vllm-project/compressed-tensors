@@ -4,6 +4,7 @@
 import pytest
 import torch
 from compressed_tensors.config import CompressionFormat
+from compressed_tensors.entrypoints.convert.converters import build_inverse_weight_maps
 from compressed_tensors.entrypoints.convert.converters.ct_dequantizer import (
     CompressedTensorsDequantizer,
 )
@@ -215,3 +216,77 @@ def test_get_dependencies_returns_empty_for_ignored_module():
 
     deps = dequantizer.get_dependencies("model.embed_tokens.weight")
     assert deps == set()
+
+
+def _create_mixed_dequantizer():
+    """FP8 "Linear" group listed before a W4A16 group for the experts"""
+    dequantizer = object.__new__(CompressedTensorsDequantizer)
+    dequantizer.dtype = torch.bfloat16
+
+    fp8 = QuantizationScheme(
+        targets=["Linear"],
+        weights=QuantizationArgs(
+            num_bits=8,
+            type=QuantizationType.FLOAT,
+            strategy=QuantizationStrategy.CHANNEL,
+            symmetric=True,
+        ),
+        format=CompressionFormat.float_quantized,
+    )
+    w4a16 = QuantizationScheme(
+        targets=["re:.*mlp.experts.*"],
+        weights=QuantizationArgs(
+            num_bits=4,
+            type=QuantizationType.INT,
+            strategy=QuantizationStrategy.GROUP,
+            group_size=32,
+            symmetric=True,
+        ),
+        format=CompressionFormat.pack_quantized,
+    )
+    dequantizer.quant_config = QuantizationConfig(
+        config_groups={"group_0": fp8, "group_1": w4a16}, ignore=["lm_head"]
+    )
+    return dequantizer
+
+
+@pytest.mark.unit
+def test_get_dependencies_skips_schemes_with_other_root_param():
+    dequantizer = _create_mixed_dequantizer()
+    expert = "model.layers.0.mlp.experts.0.down_proj"
+
+    assert dequantizer.get_dependencies(f"{expert}.weight_packed") == {
+        f"{expert}.weight_scale",
+        f"{expert}.weight_shape",
+    }
+    assert dequantizer.get_dependencies("model.layers.0.self_attn.q_proj.weight") == {
+        "model.layers.0.self_attn.q_proj.weight_scale"
+    }
+    assert dequantizer.get_dependencies(f"{expert}.weight_scale") == set()
+
+
+@pytest.mark.unit
+def test_build_inverse_weight_maps_mixed_schemes_across_shards():
+    dequantizer = _create_mixed_dequantizer()
+    expert = "model.layers.0.mlp.experts.0.down_proj"
+    weight_map = {
+        f"{expert}.weight_packed": "shard-1.safetensors",
+        "model.layers.0.self_attn.q_proj.weight": "shard-1.safetensors",
+        "model.layers.0.self_attn.q_proj.weight_scale": "shard-1.safetensors",
+        f"{expert}.weight_scale": "shard-2.safetensors",
+        f"{expert}.weight_shape": "shard-2.safetensors",
+    }
+    model_files = {
+        "shard-1.safetensors": "/ckpt/shard-1.safetensors",
+        "shard-2.safetensors": "/ckpt/shard-2.safetensors",
+    }
+
+    maps = build_inverse_weight_maps(weight_map, model_files, [dequantizer])
+
+    # the expert qparams are loaded alongside weight_packed, so shard-2 has no
+    # primary tensors left to process on its own
+    assert set(maps) == {"shard-1.safetensors"}
+    assert sorted(maps["shard-1.safetensors"]["/ckpt/shard-2.safetensors"]) == [
+        f"{expert}.weight_scale",
+        f"{expert}.weight_shape",
+    ]
