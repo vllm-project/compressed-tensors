@@ -207,7 +207,7 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     """
 
     num_bits: int = 8
-    type: QuantizationType = QuantizationType.INT
+    type: QuantizationType = Field(default=QuantizationType.INT, validate_default=True)
     symmetric: bool = True
     group_size: int | None = None
     strategy: QuantizationStrategy | None = None
@@ -353,11 +353,11 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
         # infer strategy
         if strategy is None:
             if group_size is None:
-                strategy = QuantizationStrategy.TENSOR
+                strategy = QuantizationStrategy.TENSOR.value
             elif group_size > 0:
-                strategy = QuantizationStrategy.GROUP
+                strategy = QuantizationStrategy.GROUP.value
             elif group_size == -1:
-                strategy = QuantizationStrategy.CHANNEL
+                strategy = QuantizationStrategy.CHANNEL.value
             else:
                 raise ValueError(
                     f"Invalid group size {group_size}. Use group_size > 0 for "
