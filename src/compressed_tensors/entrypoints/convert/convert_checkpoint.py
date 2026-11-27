@@ -57,7 +57,8 @@ def convert_checkpoint(
     safetensors files. This entrypoint operates on a model stub or folder containing
     weights saved in safetensors files, and updates the corresponding
     quantization_config field in the config.json. All additional files will be
-    copied to new checkpoint.
+    copied to new checkpoint, along with any extra files its converters
+    contribute (see ``Converter.get_extra_files``).
 
     :param model_stub: huggingface model hub or path to local weights files
     :param save_directory: new checkpoint will be saved in this directory.
@@ -163,9 +164,44 @@ def convert_checkpoint(
         total_size += _total_size
         weight_map.update(_weight_map)
 
+    # Copy converter-contributed extra files (e.g. the saliency report an
+    # expert-pruning converter scored from) alongside the converted checkpoint
+    _copy_extra_files(converters, save_directory)
+
     # Update config and safetensors index
     write_checkpoint_quantization_config(save_directory, converters)
     update_safetensors_index(save_directory, total_size, weight_map)
+
+
+def _copy_extra_files(converters: list[Converter], save_directory: str | os.PathLike):
+    """
+    Copy each converter's extra files (see ``Converter.get_extra_files``) into
+    the save directory, under their basename.
+
+    Extra files are copied after the checkpoint's own files, so a converter
+    can override a same-named file copied from the source checkpoint. The
+    hook is looked up with ``getattr``, so converters written before it was
+    added to the ``Converter`` protocol keep working.
+
+    :param converters: converters applied to the checkpoint
+    :param save_directory: directory the converted checkpoint was saved to
+    """
+    for converter in converters:
+        get_extra_files = getattr(converter, "get_extra_files", None)
+        if get_extra_files is None:
+            continue
+        for extra_file in get_extra_files():
+            source = Path(extra_file)
+            if not source.is_file():
+                raise FileNotFoundError(
+                    f"{type(converter).__name__}.get_extra_files returned "
+                    f"{source}, which is not a file"
+                )
+            destination = Path(save_directory) / source.name
+            if destination.exists() and source.samefile(destination):
+                continue
+            logger.debug(f"Copying extra file {source} -> {destination}")
+            shutil.copyfile(source, destination)
 
 
 def _resolve_devices(
