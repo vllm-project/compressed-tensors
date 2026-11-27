@@ -151,9 +151,8 @@ def compute_dynamic_scales_and_zp(
 
     :param value: tensor to calculate quantization parameters for
     :param args: quantization args
-    :param reduce_dims: optional tuple of dimensions to reduce along,
-        returned scale and zero point will be shaped (1,) along the
-        reduced dimensions
+    :param module: module the tensor belongs to
+    :param global_scale: optional pre-computed global scale to multiply by
     :return: tuple of scale and zero point derived from the observed tensor
     """
 

@@ -24,7 +24,7 @@ class CPUCache(OffloadCache):
         """
         Onload a tensor from cpu to device
 
-        :param key: cpu tensor to onload
+        :param offloaded: cpu tensor to onload
         :return: device tensor
         """
         return send_tensors(offloaded, device=self.onload_device, copy=False)
@@ -51,7 +51,7 @@ class CPUCache(OffloadCache):
         """
         Offload a tensor from any device to cpu
 
-        :param value: tensor on any device
+        :param tensor: tensor on any device
         :return: tensor on cpu
         """
         return send_tensors(tensor, device=self.offload_device, copy=False)

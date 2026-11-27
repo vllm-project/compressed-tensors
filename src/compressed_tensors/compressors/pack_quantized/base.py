@@ -70,8 +70,7 @@ class PackedQuantizationCompressor(BaseCompressor):
         also packed; otherwise it is dropped.
 
         :param state_dict: local-name state dict (weight, weight_scale, …)
-        :param quantization_args: quantization parameters for the weight
-        :param device: device to move compressed tensors to
+        :param scheme: quantization scheme to use for packing
         :return: compressed state dict
         """
         state_dict = state_dict.copy()
@@ -129,7 +128,7 @@ class PackedQuantizationCompressor(BaseCompressor):
         ``weight_packed``, and unpacks the zero-point if present.
 
         :param state_dict: local-name state dict (weight_packed, weight_scale, …)
-        :param quantization_args: quantization parameters for the weight
+        :param scheme: quantization scheme the tensors were packed with
         :return: decompressed state dict with weight in float dtype
         """
         state_dict = state_dict.copy()
