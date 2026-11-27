@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import json
 import re
 import shutil
 from types import SimpleNamespace
@@ -20,9 +21,66 @@ from compressed_tensors.quantization import (
     QuantizationStrategy,
     QuantizationType,
 )
-from compressed_tensors.quantization.lifecycle import apply_quantization_config
+from compressed_tensors.quantization.lifecycle import (
+    apply_quantization_config,
+    load_pretrained_quantization_parameters,
+)
 from compressed_tensors.utils import is_match, match_named_modules
+from safetensors.torch import save_file
 from transformers import AutoModelForCausalLM
+
+
+@pytest.mark.parametrize(
+    "index_name",
+    [None, "model.safetensors.index.json", "consolidated.safetensors.index.json"],
+)
+@pytest.mark.parametrize("load_weight_qparams", [False, True])
+def test_load_quantization_parameters_from_checkpoint(
+    tmp_path, index_name, load_weight_qparams
+):
+    model = torch.nn.Sequential(torch.nn.Linear(4, 4), torch.nn.Linear(4, 4))
+    args = QuantizationArgs(symmetric=False)
+    scheme = QuantizationScheme(
+        targets=["Linear"],
+        weights=args,
+        input_activations=args,
+        output_activations=args,
+    )
+    apply_quantization_config(
+        model, QuantizationConfig(config_groups={"group": scheme})
+    )
+    qparams = {
+        name: torch.full_like(param, 0.25 if name.endswith("_scale") else 3)
+        for name, param in model.named_parameters()
+        if name.endswith(("_scale", "_zero_point"))
+    }
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            if name in qparams:
+                param.zero_()
+
+    checkpoint = {**model.state_dict(), **qparams}
+    if index_name is None:
+        save_file(checkpoint, tmp_path / "model.safetensors")
+    else:
+        weight_map = {}
+        for shard in range(2):
+            filename = f"model-{shard}.safetensors"
+            tensors = dict(list(checkpoint.items())[shard::2])
+            save_file(tensors, tmp_path / filename)
+            weight_map.update({name: filename for name in tensors})
+        (tmp_path / index_name).write_text(json.dumps({"weight_map": weight_map}))
+
+    load_pretrained_quantization_parameters(
+        model, str(tmp_path), load_weight_qparams=load_weight_qparams
+    )
+
+    for name, param in model.named_parameters():
+        if name in qparams:
+            expected = qparams[name]
+            if ".weight_" in name and not load_weight_qparams:
+                expected = torch.zeros_like(expected)
+            torch.testing.assert_close(param, expected)
 
 
 @pytest.fixture(scope="module", autouse=True)
