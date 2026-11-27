@@ -5,9 +5,14 @@ import json
 
 import pytest
 import torch
+from compressed_tensors.compressors.pack_quantized.base import (
+    PackedQuantizationCompressor,
+)
 from compressed_tensors.entrypoints.convert.converters.moe_expert_packer import (
     MoEExpertPacker,
 )
+from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
+from compressed_tensors.quantization.utils.helpers import calculate_qparams
 from safetensors import safe_open
 from safetensors.torch import save_file
 
@@ -299,9 +304,11 @@ def test_convert_checkpoint_shard_of_only_dependencies(mock_2d_moe_checkpoint):
     index = {
         "metadata": {"total_size": 0},
         "weight_map": {
-            name: "model-00001.safetensors"
-            if name in anchors
-            else "model-00002.safetensors"
+            name: (
+                "model-00001.safetensors"
+                if name in anchors
+                else "model-00002.safetensors"
+            )
             for name in tensors
         },
     }
@@ -346,3 +353,76 @@ def test_already_packed_raises(tmp_path):
 
     with pytest.raises(ValueError, match="already"):
         MoEExpertPacker.from_pretrained(str(tmp_path))
+
+
+def _pack_quantized_experts(shapes, group_size=16):
+    """Per-expert W4A16 (gate_proj, up_proj) tensors and their group names."""
+    args = QuantizationArgs(
+        num_bits=4,
+        type="int",
+        symmetric=True,
+        strategy="group",
+        group_size=group_size,
+    )
+    scheme = QuantizationScheme(targets=["Linear"], weights=args)
+    tensors, groups = {}, {}
+    for expert, (out_f, in_f) in enumerate(shapes):
+        for proj in ("gate_proj", "up_proj"):
+            weight = torch.randn(out_f, in_f)
+            grouped = weight.reshape(out_f, in_f // group_size, group_size)
+            scale, _ = calculate_qparams(grouped.amin(-1), grouped.amax(-1), args)
+            compressed = PackedQuantizationCompressor.compress(
+                {"weight": weight, "weight_scale": scale}, scheme
+            )
+            for param, value in compressed.items():
+                name = _expert_name(0, expert, proj, param)
+                tensors[name] = value
+                groups.setdefault(_stacked_name(0, proj, param), []).append(name)
+    return tensors, groups, scheme, args
+
+
+@pytest.mark.unit
+def test_weight_shape_is_the_dense_packed_shape():
+    """
+    ``weight_shape`` records the dense weight, so for stacked experts it has to be
+    ``[E, gate_out + up_out, in]``. Stacking the per-expert ``[out, in]`` gives
+    ``[E, 4]`` (``[E, 2]`` per projection), which
+    ``PackedQuantizationCompressor.decompress`` then cannot unpack.
+    """
+    num_experts, out_f, in_f, group_size = 2, 8, 64, 16
+    shapes = [(out_f, in_f)] * num_experts
+    tensors, groups, scheme, args = _pack_quantized_experts(shapes, group_size)
+
+    packed = MoEExpertPacker(r"\.experts\.\d+\.", groups).process(tensors)
+    weight_shape = packed[_stacked_name(0, "gate_up_proj", "weight_shape")]
+
+    # the reference: compress the fused dense weight directly and read its shape
+    fused = torch.randn(num_experts, out_f * 2, in_f)
+    grouped = fused.reshape(num_experts, out_f * 2, in_f // group_size, group_size)
+    scale, _ = calculate_qparams(grouped.amin(-1), grouped.amax(-1), args)
+    expected = PackedQuantizationCompressor.compress(
+        {"weight": fused, "weight_scale": scale}, scheme
+    )["weight_shape"]
+
+    assert weight_shape.tolist() == expected.tolist(), (
+        f"packed weight_shape {weight_shape.tolist()} != "
+        f"the shape compress stores for the fused weight {expected.tolist()}"
+    )
+    assert weight_shape.tolist() == [num_experts, out_f * 2, in_f]
+
+    # and the checkpoint now decompresses (it raised IndexError before the fix)
+    local = {name.rsplit(".", 1)[1]: value for name, value in packed.items()}
+    decompressed = PackedQuantizationCompressor.decompress(local, scheme)
+    assert decompressed["weight"].shape[0] == num_experts
+
+
+@pytest.mark.unit
+def test_experts_with_mismatched_shapes_raise():
+    """
+    Experts of one projection must agree on their dense shape. The packed tensors
+    happen to still stack here, so the failure has to come from the shape check
+    rather than from torch.stack.
+    """
+    tensors, groups, _, _ = _pack_quantized_experts([(8, 64), (16, 64)])
+    with pytest.raises(ValueError, match="has shape"):
+        MoEExpertPacker(r"\.experts\.\d+\.", groups).process(tensors)
