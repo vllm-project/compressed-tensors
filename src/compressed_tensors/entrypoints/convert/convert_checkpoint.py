@@ -122,7 +122,15 @@ def convert_checkpoint(
                 (validate_file, inverse_weight_maps[shard_name], converters)
             )
             convert_jobs.append(
-                (convert_file, inverse_weight_maps[shard_name], save_path, converters)
+                (
+                    partial(
+                        convert_file,
+                        index_path=save_path.relative_to(save_directory).as_posix(),
+                    ),
+                    inverse_weight_maps[shard_name],
+                    save_path,
+                    converters,
+                )
             )
 
         else:
