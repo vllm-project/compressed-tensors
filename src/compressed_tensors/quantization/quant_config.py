@@ -85,7 +85,7 @@ class QuantizationStatus(str, Enum):
         """
         :return: list of correct quantization lifecycle order
         """
-        return
+        return LIFECYCLE_ORDER
 
     def __ge__(self, other):
         if other is None:
