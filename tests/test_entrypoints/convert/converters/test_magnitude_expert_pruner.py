@@ -292,6 +292,74 @@ def test_process_prunes_router_bias(tmp_path, router_module, bias_name):
 
 
 @pytest.mark.unit
+def test_process_3d_mixed_rank_experts(tmp_path):
+    """
+    Stacked experts can mix ranks under one prefix (gpt-oss stores 2D biases
+    next to 4D mxfp4 blocks). The layout must not depend on which tensor is
+    listed first, and every stacked tensor is sliced on dim 0.
+    """
+    num_experts = 4
+    hidden = 32
+    intermediate = 64
+
+    router_weight = torch.zeros(num_experts, hidden)
+    router_weight[0] = torch.ones(hidden) * 10.0
+    router_weight[1] = torch.ones(hidden) * 1.0
+    router_weight[2] = torch.ones(hidden) * 5.0
+    router_weight[3] = torch.ones(hidden) * 8.0
+
+    prefix = "model.layers.0.mlp.experts"
+    tensors = {
+        "model.layers.0.mlp.router.weight": router_weight,
+        # 2D bias sorts before the 3D/4D tensors
+        f"{prefix}.down_proj_bias": torch.randn(num_experts, hidden),
+        f"{prefix}.down_proj_blocks": torch.randint(
+            0, 255, (num_experts, hidden, intermediate // 32, 16), dtype=torch.uint8
+        ),
+        f"{prefix}.down_proj_scales": torch.randint(
+            0, 255, (num_experts, hidden, intermediate // 32), dtype=torch.uint8
+        ),
+        f"{prefix}.gate_up_proj_bias": torch.randn(num_experts, 2 * intermediate),
+    }
+    save_file(tensors, str(tmp_path / "model.safetensors"))
+    with open(tmp_path / "config.json", "w") as f:
+        json.dump({"num_local_experts": num_experts, "model_type": "test"}, f)
+
+    converter = MagnitudeExpertPruner.from_pretrained(
+        model_name_or_path=str(tmp_path),
+        router_pattern=r"\.router\.weight$",
+        expert_pattern=r"\.experts\.",
+        sparsity=0.5,
+    )
+    assert converter.is_3d
+
+    result = converter.validate(dict(tensors))
+    retained = torch.tensor([0, 3])
+    for name, tensor in tensors.items():
+        assert torch.equal(result[name], tensor[retained])
+
+
+@pytest.mark.unit
+def test_from_pretrained_mixed_expert_layout_raises(tmp_path):
+    tensors = {
+        "model.layers.0.mlp.gate.weight": torch.randn(4, 8),
+        "model.layers.0.mlp.experts.0.gate_proj.weight": torch.randn(16, 8),
+        "model.layers.0.mlp.experts.up_proj.weight": torch.randn(4, 16, 8),
+    }
+    save_file(tensors, str(tmp_path / "model.safetensors"))
+    with open(tmp_path / "config.json", "w") as f:
+        json.dump({"num_local_experts": 4, "model_type": "test"}, f)
+
+    with pytest.raises(ValueError, match="not a mix"):
+        MagnitudeExpertPruner.from_pretrained(
+            model_name_or_path=str(tmp_path),
+            router_pattern=r"\.gate\.weight$",
+            expert_pattern=r"\.experts\.",
+            sparsity=0.5,
+        )
+
+
+@pytest.mark.unit
 def test_update_model_config(mock_2d_checkpoint):
     converter = MagnitudeExpertPruner.from_pretrained(
         model_name_or_path=str(mock_2d_checkpoint),

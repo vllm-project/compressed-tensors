@@ -157,9 +157,7 @@ class MagnitudeExpertPruner(Converter):
         aux_to_router = build_expert_to_router_map(aux_names, router_names)
 
         # detect 2D vs 3D and extract expert indices for 2D
-        expert_indices, is_3d = _detect_moe_layout(
-            expert_names, weight_map, model_files
-        )
+        expert_indices, is_3d = _detect_moe_layout(expert_names)
 
         if not 0 <= sparsity <= 1:
             raise ValueError(f"sparsity must be in [0, 1], got {sparsity}")
@@ -306,40 +304,36 @@ def _set_nested_key(config_data: dict, key: str, value: int):
         logger.info(f"config.json: added {key} = {value}")
 
 
-def _detect_moe_layout(
-    expert_names: list[str],
-    weight_map: dict[str, str],
-    model_files: dict[str, str],
-) -> tuple[dict[str, int], bool]:
+def _detect_moe_layout(expert_names: list[str]) -> tuple[dict[str, int], bool]:
     """
     Detect whether experts are 2D (per-expert tensors) or 3D (stacked).
     For 2D, also extract the expert index from each tensor name.
 
+    The layout is read from the tensor names rather than from a sampled
+    shape: stacked checkpoints can mix ranks under the same expert prefix,
+    e.g. gpt-oss stores 2D ``experts.down_proj_bias`` next to 3D/4D
+    ``experts.down_proj_blocks``, so the rank of one tensor is not reliable.
+
     Returns (expert_indices, is_3d).
     """
-    sample_name = expert_names[0]
-    sample_shard = weight_map[sample_name]
-    sample_path = model_files[sample_shard]
+    indices = {name: extract_expert_index(name) for name in expert_names}
+    indexed = [name for name, idx in indices.items() if idx is not None]
 
-    with safe_open(sample_path, framework="pt") as f:
-        sample_shape = f.get_slice(sample_name).get_shape()
-
-    if len(sample_shape) >= 3:
+    # 3D: stacked tensors carry no per-expert index in their names
+    if not indexed:
         return {}, True
 
-    # 2D: extract expert index from each tensor name
-    expert_indices: dict[str, int] = {}
-    for name in expert_names:
-        idx = extract_expert_index(name)
-        if idx is None:
-            raise ValueError(
-                f"Expert tensor {name} appears to be 2D but could not extract "
-                "expert index from tensor name. Expected a numeric segment "
-                "following an 'expert'-containing segment (e.g. experts.3.weight)"
-            )
-        expert_indices[name] = idx
+    # 2D: every tensor must carry an expert index
+    if len(indexed) != len(expert_names):
+        unindexed = next(name for name, idx in indices.items() if idx is None)
+        raise ValueError(
+            f"Expert tensor {unindexed} has no expert index in its name, but "
+            f"{indexed[0]} does. Expected either per-expert tensors with a "
+            "numeric segment following an 'expert'-containing segment (e.g. "
+            "experts.3.weight) or stacked tensors without one, not a mix"
+        )
 
-    return expert_indices, False
+    return {name: indices[name] for name in indexed}, False
 
 
 def _compute_retained_experts(
