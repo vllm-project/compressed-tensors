@@ -234,7 +234,7 @@ class ModelCompressor:
 
         config_file_path = os.path.join(save_directory, CONFIG_NAME)
         if os.path.exists(config_file_path):
-            with open(config_file_path, "r") as file:
+            with open(config_file_path, "r", encoding="utf-8") as file:
                 config_data = json.load(file)
         else:
             config_data = {}
@@ -257,7 +257,7 @@ class ModelCompressor:
             TRANSFORM_CONFIG_NAME: tconfig_data,
             **qconfig_data,
         }
-        with open(config_file_path, "w") as config_file:
+        with open(config_file_path, "w", encoding="utf-8") as config_file:
             json.dump(config_data, config_file, indent=2, sort_keys=True)
 
     def add_decompress_hook(self, model: torch.nn.Module):

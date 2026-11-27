@@ -5,6 +5,7 @@ import math
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import compressed_tensors.modeling.cache_kwargs as modeling_cache_kwargs
 import compressed_tensors.quantization.lifecycle.initialize as initialize_lifecycle
 import pytest
 import torch
@@ -44,21 +45,23 @@ class CacheAwareAttention(torch.nn.Module):
         return hidden_states
 
 
-class CacheKeywordAttention(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.k_proj = torch.nn.Linear(4, 4)
-
-    def forward(self, hidden_states, cache=None):
-        return hidden_states
-
-
 class PluralCacheAwareAttention(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.k_proj = torch.nn.Linear(4, 4)
 
     def forward(self, hidden_states, past_key_values=None):
+        return hidden_states
+
+
+class RenamedCacheAwareAttention(torch.nn.Module):
+    """Attention using the `cache` kwarg of transformers>=5.24"""
+
+    def __init__(self):
+        super().__init__()
+        self.k_proj = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states, cache=None):
         return hidden_states
 
 
@@ -104,7 +107,7 @@ def layer():
     [
         (CacheAwareAttention, True),
         (PluralCacheAwareAttention, True),
-        (CacheKeywordAttention, True),
+        (RenamedCacheAwareAttention, True),
         (EncoderAttention, False),
         (T5StyleAttention, False),
         (ProjectionOnlyBlock, False),
@@ -137,7 +140,7 @@ def test_is_cached_attention_module_warns_and_returns_false_when_uninspectable(
 ):
     warning = Mock()
     monkeypatch.setattr(
-        initialize_lifecycle.inspect,
+        modeling_cache_kwargs.inspect,
         "signature",
         Mock(side_effect=error_type("signature unavailable")),
     )

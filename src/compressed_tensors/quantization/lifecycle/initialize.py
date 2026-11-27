@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import inspect
 import math
 
 import torch
@@ -10,8 +9,8 @@ from compressed_tensors.modeling import (
     KV_CACHE_ATTR,
     QuantizedAttentionImpl,
     QuantizedKVCache,
+    get_kv_cache_kwarg_name,
 )
-from compressed_tensors.modeling.kvcache import CACHE_ARGUMENT_NAMES
 from compressed_tensors.offload import (
     disable_onloading,
     get_offloaded_device,
@@ -154,7 +153,7 @@ def is_cached_attention_module(module: Module) -> bool:
             return False
 
     try:
-        parameters = inspect.signature(module.forward).parameters
+        return get_kv_cache_kwarg_name(module) is not None
     except (TypeError, ValueError):
         logger.warning(
             "Unable to inspect an attention module's forward signature; "
@@ -162,10 +161,6 @@ def is_cached_attention_module(module: Module) -> bool:
             log_once=True,
         )
         return False
-
-    # ``cache`` is the transformers>=5.40 name. Older modules use
-    # ``past_key_values`` or ``past_key_value``.
-    return any(name in parameters for name in CACHE_ARGUMENT_NAMES)
 
 
 def initialize_qparams(

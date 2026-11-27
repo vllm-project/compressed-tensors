@@ -46,7 +46,7 @@ def test_genuinely_missing_attribute_still_raises():
         getattr(qkv, "this_attr_does_not_exist_anywhere")
 
 
-def test_hook_replaces_cache_and_legacy_alias():
+def test_hook_replaces_cache_kwarg():
     class Attn(torch.nn.Module):
         def forward(self, hidden_states, cache=None):
             return hidden_states
@@ -72,13 +72,6 @@ def test_hook_replaces_cache_and_legacy_alias():
 
     _args, kwargs = _kv_cache_attention_hook(parent.attn, [], {"cache": sentinel})
     assert kwargs["cache"] is parent.attn.kv_cache
-    assert parent.attn.kv_cache.past_key_values() is sentinel
-
-    _args, kwargs = _kv_cache_attention_hook(
-        parent.attn, [], {"past_key_values": sentinel}
-    )
-    assert kwargs["cache"] is parent.attn.kv_cache
-    assert "past_key_values" not in kwargs
     assert parent.attn.kv_cache.past_key_values() is sentinel
 
 

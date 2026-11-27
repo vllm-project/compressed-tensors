@@ -449,6 +449,24 @@ class QuantizationArgs(BaseModel, use_enum_values=True):
     model_config = ConfigDict(extra="forbid")
 
 
+def _clamp_to_range(
+    tensor: torch.Tensor, low: float | int, high: float | int
+) -> torch.Tensor:
+    """
+    Clamps ``tensor`` to ``[low, high]``, skipping any bound that lies outside
+    the range of ``tensor.dtype``. Such a bound cannot clip a finite value, and
+    passing it to ``torch.clamp`` raises an overflow error on CPU (for example a
+    float32 bound on a bfloat16 tensor).
+    """
+    if torch.is_floating_point(tensor):
+        tensor_info = torch.finfo(tensor.dtype)
+        low = low if low >= tensor_info.min else None
+        high = high if high <= tensor_info.max else None
+        if low is None and high is None:
+            return tensor
+    return torch.clamp(tensor, low, high)
+
+
 def round_to_quantized_type_dtype(
     tensor: torch.Tensor,
     dtype: torch.dtype,
@@ -467,10 +485,12 @@ def round_to_quantized_type_dtype(
     original_dtype = tensor.dtype
     if torch.is_floating_point(torch.tensor([], dtype=dtype)):
         finfo = torch.finfo(dtype)
-        rounded = torch.clamp(tensor, finfo.min, finfo.max).to(dtype)
+        clamped = _clamp_to_range(tensor, finfo.min, finfo.max)
+        rounded = clamped.to(dtype)
     else:
         iinfo = torch.iinfo(dtype)
-        rounded = torch.round(torch.clamp(tensor, iinfo.min, iinfo.max)).to(dtype)
+        clamped = _clamp_to_range(tensor, iinfo.min, iinfo.max)
+        rounded = torch.round(clamped).to(dtype)
 
     if cast_to_original_dtype:
         return rounded.to(original_dtype)

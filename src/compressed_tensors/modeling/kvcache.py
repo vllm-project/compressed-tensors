@@ -5,6 +5,7 @@ import inspect
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from weakref import ReferenceType, ref
 
+from compressed_tensors.modeling.cache_kwargs import get_kv_cache_kwarg_name
 from compressed_tensors.quantization.lifecycle.forward import forward_quantize
 from compressed_tensors.utils import getattr_chain
 from compressed_tensors.utils.internal import InternalModule
@@ -24,9 +25,6 @@ __all__ = [
 
 
 KV_CACHE_ATTR = "kv_cache"
-# transformers 5.40 renamed `past_key_values` to `cache`. Older models still
-# use `past_key_values` or `past_key_value`.
-CACHE_ARGUMENT_NAMES = ("cache", "past_key_values", "past_key_value")
 
 
 class QuantizedKVCache(InternalModule):
@@ -108,45 +106,27 @@ class QuantizedKVCache(InternalModule):
 # ----- initialize ----- #
 
 
-def cache_argument_name(module: Module) -> Optional[str]:
-    """Name of the KV-cache argument on ``module.forward``, if it has one."""
-    try:
-        parameters = inspect.signature(module.forward).parameters
-    except (TypeError, ValueError):
-        return None
-    for name in CACHE_ARGUMENT_NAMES:
-        if name in parameters:
-            return name
-    return None
-
-
 def _kv_cache_attention_hook(
     module: Module, args: List[Any], kwargs: Dict[str, Any]
 ) -> Tuple[List[Any], Dict[str, Any]]:
     """
     Hook which should be called before each quantized attention forward pass.
-    This hook replaces the cache argument of the attention forward function.
+    This hook dynamically replaces the `past_key_values` kwarg to the attention
+    forward function.
 
     The original kvcache object is assigned to QuantizedKVCache().past_key_values
-    as a weakref to maintain original cache functionality and compute savings.
+    as a weakref to maintain original cache functionality and compute savings
     """
-    argument = cache_argument_name(module)
-    if argument is None:
-        argument = next((name for name in CACHE_ARGUMENT_NAMES if name in kwargs), None)
-    if argument is None:
-        return args, kwargs
-
-    # Drop every alias. A caller may still pass ``past_key_values`` while the
-    # signature parameter is ``cache``; leaving the old alias in kwargs lets
-    # ``deprecate_kwarg`` overwrite the wrapper.
-    passed: Optional[Cache] = None
-    for name in CACHE_ARGUMENT_NAMES:
-        if name in kwargs:
-            passed = kwargs.pop(name)
+    # transformers>=5.24 renamed the attention cache kwarg to `cache`; older
+    # versions use `past_key_values` (transformers#39956) or `past_key_value`.
+    # Pick whichever the forward signature declares, preferring the newest
+    # name (see KV_CACHE_KWARG_NAMES).
+    _past_kv_name = get_kv_cache_kwarg_name(module) or "past_key_value"
+    past_key_values: Optional[Cache] = kwargs.get(_past_kv_name, None)
 
     cache: QuantizedKVCache = getattr(module, KV_CACHE_ATTR)
-    cache.add_past_key_values(passed)
-    kwargs[argument] = cache
+    cache.add_past_key_values(past_key_values)
+    kwargs[_past_kv_name] = cache
 
     return args, kwargs
 

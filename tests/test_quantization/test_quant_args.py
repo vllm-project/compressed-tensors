@@ -8,7 +8,9 @@ from compressed_tensors.quantization import (
     QuantizationArgs,
     QuantizationStrategy,
     QuantizationType,
+    round_to_quantized_type_dtype,
 )
+from compressed_tensors.quantization.utils import calculate_qparams
 from pydantic import ValidationError
 
 
@@ -246,3 +248,52 @@ def test_round_trip_with_optional_fields_omitted():
     ):
         reloaded = QuantizationArgs.model_validate(args.model_dump())
         assert args == reloaded
+
+
+@pytest.mark.parametrize(
+    "tensor_dtype,target_dtype",
+    [
+        (torch.bfloat16, torch.float32),
+        (torch.float16, torch.float32),
+        (torch.float16, torch.int32),
+    ],
+)
+def test_round_to_wider_dtype_does_not_overflow(tensor_dtype, target_dtype):
+    # the target dtype's bounds are not representable in the input dtype, which
+    # used to make torch.clamp raise an overflow error on CPU
+    tensor = torch.tensor([-3.0, 0.0, 1.25, 7.0], dtype=tensor_dtype)
+    rounded = round_to_quantized_type_dtype(tensor, dtype=target_dtype)
+    if torch.is_floating_point(torch.tensor([], dtype=target_dtype)):
+        expected = tensor
+    else:
+        expected = torch.tensor([-3.0, 0.0, 1.0, 7.0], dtype=tensor_dtype)
+    assert rounded.dtype == tensor_dtype
+    assert torch.equal(rounded, expected)
+
+
+def test_round_to_dtype_still_clamps_representable_bounds():
+    # bounds that fit in the input dtype must still be applied
+    tensor = torch.tensor([-float("inf"), 2.0, float("inf")], dtype=torch.bfloat16)
+    rounded = round_to_quantized_type_dtype(tensor, dtype=torch.bfloat16)
+    bf16 = torch.finfo(torch.bfloat16)
+    assert torch.equal(
+        rounded, torch.tensor([bf16.min, 2.0, bf16.max], dtype=torch.bfloat16)
+    )
+
+    ints = round_to_quantized_type_dtype(
+        torch.tensor([-300.0, 2.25, 300.0], dtype=torch.bfloat16), dtype=torch.int8
+    )
+    assert torch.equal(ints, torch.tensor([-128, 2, 127], dtype=torch.bfloat16))
+
+
+def test_calculate_qparams_bfloat16_with_float32_scale_dtype():
+    args = QuantizationArgs(
+        num_bits=8, strategy="token", dynamic=True, scale_dtype=torch.float32
+    )
+    min_vals = torch.tensor([[-2.0], [-0.5]], dtype=torch.bfloat16)
+    max_vals = torch.tensor([[1.0], [4.0]], dtype=torch.bfloat16)
+    scales, zero_points = calculate_qparams(min_vals, max_vals, args)
+    assert scales.dtype == torch.bfloat16
+    expected = (torch.tensor([[2.0], [4.0]]) / 127.5).to(torch.bfloat16)
+    assert torch.equal(scales, expected)
+    assert torch.equal(zero_points, torch.zeros_like(zero_points, dtype=torch.int8))
