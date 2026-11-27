@@ -6,6 +6,7 @@ from copy import deepcopy
 from functools import partial
 from typing import Any, Optional, TypeVar
 
+import psutil
 import torch
 import torch.distributed as dist
 from compressed_tensors.distributed import is_distributed
@@ -306,10 +307,10 @@ def get_device_memory() -> dict[torch.device, int]:
     :return: mapping from torch device to total memory
     """
     if not torch.accelerator.is_available():
-        import os
-
-        total_ram = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-        return {torch.device("cpu"): total_ram}
+        # os.sysconf is POSIX-only, so this raises AttributeError on Windows.
+        # psutil is already a hard dependency and is what offload/load.py uses
+        # to answer the same question.
+        return {torch.device("cpu"): psutil.virtual_memory().total}
 
     accel_type = torch.accelerator.current_accelerator().type
 
