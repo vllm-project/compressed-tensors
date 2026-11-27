@@ -3,7 +3,11 @@
 
 import pytest
 import torch
-from compressed_tensors.modeling.kvcache import QuantizedKVCache
+from compressed_tensors.modeling.kvcache import (
+    QuantizedKVCache,
+    _kv_cache_attention_hook,
+    initialize_hooked_kv_cache,
+)
 from transformers import DynamicCache, PretrainedConfig
 
 
@@ -40,6 +44,42 @@ def test_genuinely_missing_attribute_still_raises():
 
     with pytest.raises(AttributeError):
         getattr(qkv, "this_attr_does_not_exist_anywhere")
+
+
+def test_hook_replaces_cache_and_legacy_alias():
+    class Attn(torch.nn.Module):
+        def forward(self, hidden_states, cache=None):
+            return hidden_states
+
+    class Parent(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.attn = Attn()
+
+        @property
+        def config(self):
+            return self
+
+        def get_text_config(self, decoder=False):
+            return self
+
+    class _Cache:
+        pass
+
+    parent = Parent()
+    initialize_hooked_kv_cache(parent, parent.attn)
+    sentinel = _Cache()
+
+    _args, kwargs = _kv_cache_attention_hook(parent.attn, [], {"cache": sentinel})
+    assert kwargs["cache"] is parent.attn.kv_cache
+    assert parent.attn.kv_cache.past_key_values() is sentinel
+
+    _args, kwargs = _kv_cache_attention_hook(
+        parent.attn, [], {"past_key_values": sentinel}
+    )
+    assert kwargs["cache"] is parent.attn.kv_cache
+    assert "past_key_values" not in kwargs
+    assert parent.attn.kv_cache.past_key_values() is sentinel
 
 
 def test_missing_attribute_raises_when_no_cache_attached():

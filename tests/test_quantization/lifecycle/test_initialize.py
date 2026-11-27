@@ -44,6 +44,15 @@ class CacheAwareAttention(torch.nn.Module):
         return hidden_states
 
 
+class CacheKeywordAttention(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.k_proj = torch.nn.Linear(4, 4)
+
+    def forward(self, hidden_states, cache=None):
+        return hidden_states
+
+
 class PluralCacheAwareAttention(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -95,6 +104,7 @@ def layer():
     [
         (CacheAwareAttention, True),
         (PluralCacheAwareAttention, True),
+        (CacheKeywordAttention, True),
         (EncoderAttention, False),
         (T5StyleAttention, False),
         (ProjectionOnlyBlock, False),

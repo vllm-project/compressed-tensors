@@ -11,6 +11,7 @@ from compressed_tensors.modeling import (
     QuantizedAttentionImpl,
     QuantizedKVCache,
 )
+from compressed_tensors.modeling.kvcache import CACHE_ARGUMENT_NAMES
 from compressed_tensors.offload import (
     disable_onloading,
     get_offloaded_device,
@@ -162,7 +163,9 @@ def is_cached_attention_module(module: Module) -> bool:
         )
         return False
 
-    return "past_key_value" in parameters or "past_key_values" in parameters
+    # ``cache`` is the transformers>=5.40 name. Older modules use
+    # ``past_key_values`` or ``past_key_value``.
+    return any(name in parameters for name in CACHE_ARGUMENT_NAMES)
 
 
 def initialize_qparams(
