@@ -66,8 +66,14 @@ def write_checkpoint_quantization_config(
                 existing_config = QuantizationConfig.model_validate(
                     existing_config_data
                 )
-            except ValidationError:
-                pass
+            except ValidationError as error:
+                # The config cannot be reused, and it is dropped from the saved
+                # checkpoint below, so say why rather than leaving the user with a
+                # checkpoint that lost its quantization metadata.
+                logger.warning(
+                    f"The quantization config in {config_file_path} could not be "
+                    f"parsed and will not be preserved: {error}"
+                )
             else:
                 if existing_config.quant_method == DEFAULT_QUANTIZATION_METHOD:
                     config = existing_config
