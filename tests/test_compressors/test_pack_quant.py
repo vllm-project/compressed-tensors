@@ -377,6 +377,29 @@ def test_pack_unpack_round_trip(num_bits, k, packed_dim):
     assert torch.equal(unpacked, value)
 
 
+@pytest.mark.parametrize("num_bits", [3, 4, 5])
+@pytest.mark.parametrize("packed_dim", [0, 1])
+@pytest.mark.parametrize("rows,cols", [(0, 8), (8, 0), (0, 0)])
+def test_pack_unpack_round_trip_zero_size(num_bits, rows, cols, packed_dim):
+    """A tensor with no elements round-trips like any other shape.
+
+    4 bits takes the byte-splitting fast path in `unpack_from_int32`, the other bit
+    widths take the general path; both must agree.
+    """
+    shape = (rows, cols)
+    value = torch.empty(shape, dtype=torch.int8)
+
+    packed = pack_to_int32(value, num_bits, packed_dim)
+    packed_len = math.ceil(shape[packed_dim] * num_bits / 32)
+    assert packed.shape == (
+        (rows, packed_len) if packed_dim == 1 else (packed_len, cols)
+    )
+
+    unpacked = unpack_from_int32(packed, num_bits, torch.Size(shape), packed_dim)
+    assert unpacked.dtype == torch.int8
+    assert unpacked.shape == value.shape
+
+
 @pytest.mark.parametrize("k", [33, 64, 100, 1024])
 @pytest.mark.parametrize("packed_dim", [0, 1])
 def test_unpack_4bit_big_endian(k, packed_dim, monkeypatch):
