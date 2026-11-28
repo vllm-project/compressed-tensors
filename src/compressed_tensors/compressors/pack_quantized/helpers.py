@@ -154,7 +154,8 @@ def unpack_from_int32(
         if value.device.type == "cpu" and sys.byteorder == "big":
             nibbles = nibbles.view(rows, num_words, 4).flip(-1)
         output = torch.stack((nibbles & 0xF, nibbles >> 4), dim=-1)
-        output = output.view(torch.int8).view(rows, -1)[:, :cols] - 8
+        # flatten, not view(rows, -1): -1 is ambiguous when there are no rows
+        output = output.view(torch.int8).flatten(1)[:, :cols] - 8
         return output.transpose(0, 1) if packed_dim == 0 else output
 
     # Pad to a multiple of num_bits words so we can reshape into groups
